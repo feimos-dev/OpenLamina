@@ -286,6 +286,7 @@ def join_dump(dump, what):
       last_frame       {"frame", "layers": every layer of the last frame that had any, as the dump has them}
       counters         frames_ended, frame_order_errors, refresh_rate_requests, images_left_acquired,
                        swapchain_call_order_errors
+      last_layer:<type>  the last layer of that type (quad, cylinder, ...), as the dump has it
     """
     if not dump:
         return None
@@ -303,6 +304,9 @@ def join_dump(dump, what):
             return None
         frame = layers[-1].get("frame")
         return {"frame": frame, "layers": [layer for layer in layers if layer.get("frame") == frame]}
+    if what.startswith("last_layer:"):
+        of_type = [layer for layer in layers if layer.get("type") == what[len("last_layer:"):]]
+        return of_type[-1] if of_type else None
     if what == "counters":
         return {k: dump.get(k) for k in ("frames_ended", "frame_order_errors", "refresh_rate_requests",
                                          "images_left_acquired", "swapchain_call_order_errors")}

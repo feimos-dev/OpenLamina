@@ -190,6 +190,26 @@ XruCachedViews XrSessionGlobals::GetCachedViews(XrSpace space)
 	return cws;
 }
 
+const std::vector<int64_t>& XrSessionGlobals::SwapchainFormats()
+{
+	std::lock_guard lock(swapchainFormatsMtx);
+	if (swapchainFormatsKnown)
+		return swapchainFormats;
+	swapchainFormatsKnown = true;
+	uint32_t count = 0;
+	if (XR_FAILED(xrEnumerateSwapchainFormats(xr_session.get(), 0, &count, nullptr))) {
+		OOVR_LOG("xrEnumerateSwapchainFormats failed: no swapchain formats known for this session");
+		return swapchainFormats;
+	}
+	swapchainFormats.resize(count);
+	if (XR_FAILED(xrEnumerateSwapchainFormats(xr_session.get(), count, &count, swapchainFormats.data()))) {
+		OOVR_LOG("xrEnumerateSwapchainFormats failed: no swapchain formats known for this session");
+		count = 0;
+	}
+	swapchainFormats.resize(count);
+	return swapchainFormats;
+}
+
 void XrSessionGlobals::ClearCachedViews()
 {
 	std::lock_guard lock(cachedViewsMtx);

@@ -16,6 +16,7 @@
 #ifdef SUPPORT_GL
 
 #include "../DrvOpenXR/XrBackend.h"
+#include "../Misc/Image.h"
 #include <algorithm>
 #include <cinttypes>
 #include <string>
@@ -180,6 +181,48 @@ void GLBaseCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::V
 	// Release the swapchain - OpenXR will use the last-released image in a swapchain
 	XrSwapchainImageReleaseInfo releaseInfo{ XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
 	SwapchainCallFailed(xrReleaseSwapchainImage(chain, &releaseInfo), "xrReleaseSwapchainImage");
+}
+
+bool GLBaseCompositor::ReadbackToCpu(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, Image& out)
+{
+	// Read in the game's context, current on this thread: the whole of level 0 as RGBA8 (OpenGL converts), then the
+	// bounds' area of it. Rows run bottom-up, and so do the bounds' v.
+	auto name = (GLuint)(intptr_t)texture->handle;
+	if (!name)
+		return false;
+	while (glGetError() != GL_NO_ERROR) {
+	}
+	GLint previous = 0, width = 0, height = 0, internalFormat = 0;
+	glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous);
+	glBindTexture(GL_TEXTURE_2D, name);
+	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
+	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height);
+	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, &internalFormat);
+	TextureRegion region;
+	if (width <= 0 || height <= 0 || !RegionFromBounds(bounds, (uint32_t)width, (uint32_t)height, region)) {
+		glBindTexture(GL_TEXTURE_2D, (GLuint)previous);
+		return false;
+	}
+	std::vector<uint8_t> texels((size_t)width * height * 4);
+	GLint alignment = 4;
+	glGetIntegerv(GL_PACK_ALIGNMENT, &alignment);
+	glPixelStorei(GL_PACK_ALIGNMENT, 1);
+	glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, texels.data());
+	glPixelStorei(GL_PACK_ALIGNMENT, alignment);
+	glBindTexture(GL_TEXTURE_2D, (GLuint)previous);
+	if (glGetError() != GL_NO_ERROR) {
+		OOVR_LOG_ONCEF("An OpenGL texture of internal format 0x%x couldn't be read back into memory", internalFormat);
+		return false;
+	}
+	const uint8_t* first = &texels[((size_t)region.y0 * width + region.x0) * 4];
+	out = DecodeTexels(TexelLayout::RGBA8, first, region.Width(), region.Height(), (size_t)width * 4, true, false);
+	// Float and 10-bit textures hold linear values (GL_RGBA16F, GL_RGBA32F, GL_R11F_G11F_B10F, GL_RGB10_A2)
+	const bool wide = internalFormat == 0x881A || internalFormat == 0x8814 || internalFormat == 0x8C3A || internalFormat == 0x8059;
+	if (wide && texture->eColorSpace != vr::ColorSpace_Gamma)
+		EncodeSrgbInPlace(out);
+	// Flipped bounds' v counts from the bottom, so a flipped image is upright when read top-down
+	FlipImage(out, region.flipX, region.flipY);
+	return !out.Empty();
 }
 
 void GLBaseCompositor::InvokeCubemap(const vr::Texture_t* textures)

@@ -2,6 +2,7 @@
 #include <cmath>
 #include <openxr/openxr.h>
 #define BASE_IMPL
+#include "../../DrvOpenXR/CpuSwapchain.h"
 #include "../../DrvOpenXR/XrBackend.h"
 #include "BaseCompositor.h"
 #include "BaseOverlay.h"
@@ -11,6 +12,7 @@
 #include "Compositor/compositor.h"
 #include "Drivers/Backend.h"
 #include "Misc/Config.h"
+#include "Misc/Image.h"
 #include "Misc/ScopeGuard.h"
 #include "convert.h"
 #include "generated/static_bases.gen.h"
@@ -71,6 +73,9 @@ public:
 	} compositionLayer;
 
 	std::weak_ptr<Compositor> compositor;
+	// SetOverlayRaw's image (empty for a texture overlay), shown through a swapchain filled from memory
+	Image rawImage;
+	std::unique_ptr<CpuSwapchain> raw;
 	float distance;
 	uint32_t sortOrder = 0;
 
@@ -232,9 +237,16 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 		if (kv.second) {
 			OverlayData& overlay = *kv.second;
 
-			// Skip hiddden overlays, and those without a valid texture (eg, after calling ClearOverlayTexture).
-			if (!overlay.visible || overlay.texture.handle == nullptr)
+			// Skip hiddden overlays, and those without a valid texture or image (eg, after calling ClearOverlayTexture).
+			if (!overlay.visible || (overlay.texture.handle == nullptr && overlay.rawImage.Empty()))
 				continue;
+
+			// An image from memory whose swapchain went with the last session is put into one on this session
+			if (!overlay.rawImage.Empty()) {
+				if (overlay.raw && !overlay.raw->Live())
+					overlay.raw->Upload(overlay.rawImage);
+				overlay.compositionLayer.quad.subImage = overlay.raw && overlay.raw->Live() ? overlay.raw->SubImage() : XrSwapchainSubImage{};
+			}
 
 			// Quick hack to get around Boneworks creating overlays and setting them to an opacity of
 			// zero to hide them. Leave 1% of margin in case of weird float issues.
@@ -467,7 +479,32 @@ EVROverlayError BaseOverlay::GetOverlayImageData(VROverlayHandle_t ulOverlayHand
 		*punWidth = 0;
 	if (punHeight)
 		*punHeight = 0;
-	OC_UNSUPPORTED(VROverlayError_RequestFailed, "GetOverlayImageData: overlay images can't be read back");
+
+	// The last image from memory, or the texture read back
+	Image readBack;
+	const Image* image = &overlay->rawImage;
+	if (image->Empty()) {
+		if (!overlay->texture.handle)
+			return VROverlayError_InvalidTexture;
+		std::shared_ptr<Compositor> shared = overlay->compositor.lock();
+		std::unique_ptr<Compositor> own;
+		Compositor* comp = shared.get();
+		if (!comp) {
+			own = BaseCompositor::CreateCompositorAPI(&overlay->texture);
+			comp = own.get();
+		}
+		if (!comp || !comp->ReadbackToCpu(&overlay->texture, &overlay->textureBounds, readBack))
+			OC_UNSUPPORTED(VROverlayError_RequestFailed, "GetOverlayImageData: this overlay's texture (type %d) can't be read back", (int)overlay->texture.eType);
+		image = &readBack;
+	}
+	if (punWidth)
+		*punWidth = image->width;
+	if (punHeight)
+		*punHeight = image->height;
+	if (!pvBuffer || unBufferSize < image->rgba.size())
+		return VROverlayError_ArrayTooSmall;
+	memcpy(pvBuffer, image->rgba.data(), image->rgba.size());
+	return VROverlayError_None;
 }
 const char* BaseOverlay::GetOverlayErrorNameFromEnum(EVROverlayError error)
 {
@@ -1171,6 +1208,9 @@ EVROverlayError BaseOverlay::SetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 	if (!pTexture)
 		return VROverlayError_InvalidTexture;
 	overlay->texture = *pTexture;
+	// A texture replaces an image from memory
+	overlay->raw.reset();
+	overlay->rawImage = {};
 
 	BackendManager::Instance().OnOverlayTexture(&overlay->texture);
 
@@ -1202,6 +1242,8 @@ EVROverlayError BaseOverlay::ClearOverlayTexture(VROverlayHandle_t ulOverlayHand
 {
 	USEH();
 	overlay->texture = {};
+	overlay->raw.reset();
+	overlay->rawImage = {};
 
 	if (std::shared_ptr<Compositor> comp = overlay->compositor.lock()) {
 		auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
@@ -1213,7 +1255,33 @@ EVROverlayError BaseOverlay::ClearOverlayTexture(VROverlayHandle_t ulOverlayHand
 EVROverlayError BaseOverlay::SetOverlayRaw(VROverlayHandle_t ulOverlayHandle, void* pvBuffer, uint32_t unWidth, uint32_t unHeight, uint32_t unDepth)
 {
 	USEH();
-	OC_UNSUPPORTED(VROverlayError_RequestFailed, "SetOverlayRaw: CPU images on overlays aren't supported yet");
+	// One byte (grey), three (RGB) or four (RGBA) per pixel, rows top to bottom
+	if (!pvBuffer || !unWidth || !unHeight || (unDepth != 1 && unDepth != 3 && unDepth != 4))
+		return VROverlayError_InvalidParameter;
+	Image image = ConvertToRgba8(pvBuffer, unWidth, unHeight, unWidth * unDepth, unDepth);
+	if (image.Empty())
+		return VROverlayError_InvalidParameter;
+
+	// An image replaces a texture: shown as a texture overlay is, through its own swapchain
+	if (std::shared_ptr<Compositor> comp = overlay->compositor.lock()) {
+		auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
+		backend->UnregisterOverlayCompositor(comp);
+	}
+	overlay->compositor.reset();
+	overlay->texture = {};
+	overlay->rawImage = std::move(image);
+	if (!overlay->raw)
+		overlay->raw = CpuSwapchain::Create(unWidth, unHeight);
+	if (!overlay->raw) {
+		// Logged (a soft failure) by Create: no session with a graphics API
+		overlay->rawImage = {};
+		return VROverlayError_RequestFailed;
+	}
+	// A failed upload (logged) is tried again when the frame's layers are built
+	if (overlay->raw->Upload(overlay->rawImage))
+		overlay->compositionLayer.quad.subImage = overlay->raw->SubImage();
+	overlay->compositionLayer.base.space = xr_space_from_ref_space_type(BaseSystem::currentSpace);
+	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::SetOverlayFromFile(VROverlayHandle_t ulOverlayHandle, const char* pchFilePath)
 {

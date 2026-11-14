@@ -46,6 +46,157 @@ DX12Compositor::~DX12Compositor()
 	for (auto event : frameFenceEvents) {
 		CloseHandle(event);
 	}
+	if (oneShotEvent)
+		CloseHandle(oneShotEvent);
+}
+
+ID3D12GraphicsCommandList* DX12Compositor::BeginOneShot()
+{
+	if (!oneShotList) {
+		if (FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&oneShotAllocator)))
+		    || FAILED(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, oneShotAllocator.Get(), nullptr, IID_PPV_ARGS(&oneShotList)))
+		    || FAILED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&oneShotFence)))) {
+			oneShotList.Reset();
+			return nullptr;
+		}
+		oneShotList->Close();
+		oneShotEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+	}
+	if (!oneShotEvent || FAILED(oneShotAllocator->Reset()) || FAILED(oneShotList->Reset(oneShotAllocator.Get(), nullptr)))
+		return nullptr;
+	return oneShotList.Get();
+}
+
+bool DX12Compositor::EndOneShot(ID3D12CommandQueue* q)
+{
+	if (FAILED(oneShotList->Close()))
+		return false;
+	ID3D12CommandList* lists[] = { oneShotList.Get() };
+	q->ExecuteCommandLists(1, lists);
+	const UINT64 value = ++oneShotValue;
+	if (FAILED(q->Signal(oneShotFence.Get(), value)))
+		return false;
+	if (oneShotFence->GetCompletedValue() < value) {
+		oneShotFence->SetEventOnCompletion(value, oneShotEvent);
+		if (WaitForSingleObject(oneShotEvent, 5000) != WAIT_OBJECT_0)
+			return false;
+	}
+	return true;
+}
+
+D3D12_RESOURCE_BARRIER Dx12Transition(ID3D12Resource* resource, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after, UINT subresource)
+{
+	D3D12_RESOURCE_BARRIER b{};
+	b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+	b.Transition.pResource = resource;
+	b.Transition.Subresource = subresource;
+	b.Transition.StateBefore = before;
+	b.Transition.StateAfter = after;
+	return b;
+}
+
+bool DX12Compositor::ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTextureBounds_t* bounds, Image& out)
+{
+	// The game's texture is in PIXEL_SHADER_RESOURCE (as OpenVR's D3D12 textures are given), and is put back there
+	auto* input = tex ? (D3D12TextureData_t*)tex->handle : nullptr;
+	if (!input || !input->m_pResource || !input->m_pCommandQueue)
+		return false;
+	D3D12_RESOURCE_DESC desc = input->m_pResource->GetDesc();
+	const TexelLayout layout = TexelLayoutOfDxgi(desc.Format);
+	if (layout == TexelLayout::Unknown || desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D) {
+		OOVR_LOG_ONCEF("A D3D12 texture of format %d can't be read back into memory", (int)desc.Format);
+		return false;
+	}
+	TextureRegion region;
+	if (!RegionFromBounds(bounds, (uint32_t)desc.Width, desc.Height, region))
+		return false;
+
+	D3D12_HEAP_PROPERTIES defaultHeap{ D3D12_HEAP_TYPE_DEFAULT };
+	D3D12_HEAP_PROPERTIES readbackHeap{ D3D12_HEAP_TYPE_READBACK };
+	const DXGI_FORMAT typed = TypedDxgi(desc.Format);
+
+	// A multisampled texture is resolved first
+	ComPtr<ID3D12Resource> resolved;
+	if (desc.SampleDesc.Count > 1) {
+		D3D12_RESOURCE_DESC rd = desc;
+		rd.Format = typed;
+		rd.DepthOrArraySize = 1;
+		rd.MipLevels = 1;
+		rd.SampleDesc = { 1, 0 };
+		rd.Flags = D3D12_RESOURCE_FLAG_NONE;
+		if (FAILED(device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_RESOLVE_DEST, nullptr, IID_PPV_ARGS(&resolved))))
+			return false;
+	}
+
+	D3D12_RESOURCE_DESC footprintOf = desc;
+	footprintOf.Width = region.Width();
+	footprintOf.Height = region.Height();
+	footprintOf.DepthOrArraySize = 1;
+	footprintOf.MipLevels = 1;
+	footprintOf.SampleDesc = { 1, 0 };
+	footprintOf.Format = resolved ? typed : desc.Format;
+	D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
+	UINT64 total = 0;
+	device->GetCopyableFootprints(&footprintOf, 0, 1, 0, &footprint, nullptr, nullptr, &total);
+	D3D12_RESOURCE_DESC bd{};
+	bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+	bd.Width = total;
+	bd.Height = 1;
+	bd.DepthOrArraySize = 1;
+	bd.MipLevels = 1;
+	bd.SampleDesc = { 1, 0 };
+	bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+	ComPtr<ID3D12Resource> buffer;
+	if (FAILED(device->CreateCommittedResource(&readbackHeap, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&buffer))))
+		return false;
+
+	ID3D12GraphicsCommandList* list = BeginOneShot();
+	if (!list) {
+		OOVR_LOG_ONCE("Couldn't make a D3D12 command list to read a texture back");
+		return false;
+	}
+	const D3D12_RESOURCE_STATES given = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+	ID3D12Resource* from = input->m_pResource;
+	if (resolved) {
+		D3D12_RESOURCE_BARRIER toResolve = Dx12Transition(from, given, D3D12_RESOURCE_STATE_RESOLVE_SOURCE);
+		list->ResourceBarrier(1, &toResolve);
+		list->ResolveSubresource(resolved.Get(), 0, from, 0, typed);
+		D3D12_RESOURCE_BARRIER back[2] = { Dx12Transition(from, D3D12_RESOURCE_STATE_RESOLVE_SOURCE, given),
+			Dx12Transition(resolved.Get(), D3D12_RESOURCE_STATE_RESOLVE_DEST, D3D12_RESOURCE_STATE_COPY_SOURCE) };
+		list->ResourceBarrier(2, back);
+		from = resolved.Get();
+	} else {
+		D3D12_RESOURCE_BARRIER toCopy = Dx12Transition(from, given, D3D12_RESOURCE_STATE_COPY_SOURCE);
+		list->ResourceBarrier(1, &toCopy);
+	}
+	D3D12_TEXTURE_COPY_LOCATION dst{};
+	dst.pResource = buffer.Get();
+	dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+	dst.PlacedFootprint = footprint;
+	D3D12_TEXTURE_COPY_LOCATION srcLoc{};
+	srcLoc.pResource = from;
+	srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+	srcLoc.SubresourceIndex = 0;
+	D3D12_BOX box{ region.x0, region.y0, 0, region.x1, region.y1, 1 };
+	list->CopyTextureRegion(&dst, 0, 0, 0, &srcLoc, &box);
+	if (!resolved) {
+		D3D12_RESOURCE_BARRIER back = Dx12Transition(from, D3D12_RESOURCE_STATE_COPY_SOURCE, given);
+		list->ResourceBarrier(1, &back);
+	}
+	if (!EndOneShot(input->m_pCommandQueue)) {
+		OOVR_LOG_ONCE("A D3D12 texture readback didn't finish");
+		return false;
+	}
+	void* mapped = nullptr;
+	D3D12_RANGE range{ 0, (SIZE_T)total };
+	if (FAILED(buffer->Map(0, &range, &mapped)))
+		return false;
+	out = DecodeTexels(layout, (const uint8_t*)mapped + footprint.Offset, region.Width(), region.Height(), footprint.Footprint.RowPitch, false,
+	    TexelsAreLinear(layout, tex->eColorSpace == vr::ColorSpace_Gamma));
+	D3D12_RANGE none{ 0, 0 };
+	buffer->Unmap(0, &none);
+	FlipImage(out, region.flipX, region.flipY);
+	return !out.Empty();
 }
 
 void DX12Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, bool cube)

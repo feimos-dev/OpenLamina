@@ -532,6 +532,70 @@ void DX11Compositor::InvokeCubemap(const vr::Texture_t* textures)
 	tex->Release();
 }
 
+bool DX11Compositor::ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTextureBounds_t* bounds, Image& out)
+{
+	auto* src = tex ? (ID3D11Texture2D*)tex->handle : nullptr;
+	if (!src)
+		return false;
+	D3D11_TEXTURE2D_DESC desc;
+	src->GetDesc(&desc);
+	const TexelLayout layout = TexelLayoutOfDxgi(desc.Format);
+	if (layout == TexelLayout::Unknown) {
+		OOVR_LOG_ONCEF("A D3D11 texture of format %d can't be read back into memory", (int)desc.Format);
+		return false;
+	}
+	TextureRegion region;
+	if (!RegionFromBounds(bounds, desc.Width, desc.Height, region))
+		return false;
+
+	// A multisampled texture is resolved first: only single-sampled areas can be copied
+	ComPtr<ID3D11Texture2D> resolved;
+	ID3D11Texture2D* from = src;
+	const DXGI_FORMAT typed = TypedDxgi(desc.Format);
+	if (desc.SampleDesc.Count > 1) {
+		D3D11_TEXTURE2D_DESC rd = desc;
+		rd.Format = typed;
+		rd.ArraySize = 1;
+		rd.MipLevels = 1;
+		rd.SampleDesc = { 1, 0 };
+		rd.BindFlags = 0;
+		rd.CPUAccessFlags = 0;
+		rd.MiscFlags = 0;
+		if (FAILED(device->CreateTexture2D(&rd, nullptr, &resolved))) {
+			OOVR_LOG_ONCE("Couldn't make a texture to resolve a multisampled texture into, for reading it back");
+			return false;
+		}
+		context->ResolveSubresource(resolved.Get(), 0, src, 0, typed);
+		from = resolved.Get();
+	}
+
+	D3D11_TEXTURE2D_DESC sd{};
+	sd.Width = region.Width();
+	sd.Height = region.Height();
+	sd.MipLevels = 1;
+	sd.ArraySize = 1;
+	sd.Format = from == src ? desc.Format : typed;
+	sd.SampleDesc = { 1, 0 };
+	sd.Usage = D3D11_USAGE_STAGING;
+	sd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+	ComPtr<ID3D11Texture2D> staging;
+	if (FAILED(device->CreateTexture2D(&sd, nullptr, &staging))) {
+		OOVR_LOG_ONCE("Couldn't make a staging texture to read a texture back");
+		return false;
+	}
+	D3D11_BOX box{ region.x0, region.y0, 0, region.x1, region.y1, 1 };
+	context->CopySubresourceRegion(staging.Get(), 0, 0, 0, 0, from, 0, &box);
+	D3D11_MAPPED_SUBRESOURCE mapped{};
+	if (FAILED(context->Map(staging.Get(), 0, D3D11_MAP_READ, 0, &mapped))) {
+		OOVR_LOG_ONCE("Couldn't map a staging texture to read a texture back");
+		return false;
+	}
+	out = DecodeTexels(layout, mapped.pData, sd.Width, sd.Height, mapped.RowPitch, false, TexelsAreLinear(layout, tex->eColorSpace == vr::ColorSpace_Gamma));
+	context->Unmap(staging.Get(), 0);
+	FlipImage(out, region.flipX, region.flipY);
+	return !out.Empty();
+}
+
 bool DX11Compositor::CheckChainCompatible(D3D11_TEXTURE2D_DESC& inputDesc, vr::EColorSpace colourSpace)
 {
 	bool usable = true;

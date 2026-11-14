@@ -1,9 +1,12 @@
 #include "stdafx.h"
 
 #include "../Misc/Config.h"
+#include "../Misc/Image.h"
 #include "compositor.h"
 
 #include <algorithm>
+#include <cmath>
+#include <cstring>
 #include <mutex>
 #include <set>
 #include <string>
@@ -137,4 +140,47 @@ bool Compositor::CalculateViewport(const vr::VRTextureBounds_t* ptrBounds, int32
 		submitVerticallyFlipped = false;
 	}
 	return submitVerticallyFlipped;
+}
+
+bool Compositor::ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTextureBounds_t*, Image&)
+{
+	OOVR_LOG_ONCEF("Textures of type %d can't be read back into memory", tex ? (int)tex->eType : -1);
+	return false;
+}
+
+bool RegionFromBounds(const vr::VRTextureBounds_t* bounds, uint32_t width, uint32_t height, TextureRegion& out)
+{
+	vr::VRTextureBounds_t b = bounds ? *bounds : vr::VRTextureBounds_t{ 0, 0, 1, 1 };
+	out = {};
+	out.flipX = b.uMin > b.uMax;
+	out.flipY = b.vMin > b.vMax;
+	float u0 = std::min(b.uMin, b.uMax), u1 = std::max(b.uMin, b.uMax);
+	float v0 = std::min(b.vMin, b.vMax), v1 = std::max(b.vMin, b.vMax);
+	// Clamped to the texture; NaN bounds give an empty area
+	auto at = [](float f, uint32_t size) {
+		if (!(f > 0))
+			return 0u;
+		if (f >= 1)
+			return size;
+		return (uint32_t)std::lround(f * (float)size);
+	};
+	out.x0 = at(u0, width), out.x1 = at(u1, width);
+	out.y0 = at(v0, height), out.y1 = at(v1, height);
+	return out.x1 > out.x0 && out.y1 > out.y0;
+}
+
+void FlipImage(Image& image, bool flipX, bool flipY)
+{
+	if (image.Empty() || (!flipX && !flipY))
+		return;
+	const uint32_t w = image.width, h = image.height;
+	std::vector<uint8_t> flipped(image.rgba.size());
+	for (uint32_t y = 0; y < h; y++) {
+		uint32_t sy = flipY ? h - 1 - y : y;
+		for (uint32_t x = 0; x < w; x++) {
+			uint32_t sx = flipX ? w - 1 - x : x;
+			std::memcpy(&flipped[((size_t)y * w + x) * 4], &image.rgba[((size_t)sy * w + sx) * 4], 4);
+		}
+	}
+	image.rgba.swap(flipped);
 }
