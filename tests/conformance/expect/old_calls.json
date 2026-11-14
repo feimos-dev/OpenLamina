@@ -1,5 +1,5 @@
 {
- "#": "The old IVRSystem and IVRTrackedCamera_001 calls on the stand-in (run.py --cases old-calls,old-events --script scripts/legacy_click.json --expect expect/old_calls.json); old-events' last frame wrote nothing past the old 32-byte event, and the right trigger's press and unpress (200, 201) read as the old struct has them: device 2 at offset 4, the button (33, the trigger) at 8, eventAgeSeconds (OpenComposite answers 0) at 24",
+ "#": "The old IVRSystem and IVRTrackedCamera_001 calls on the stand-in (run.py --cases old-calls,old-events --script scripts/legacy_click.json --expect expect/old_calls.json); old-events' last frame wrote nothing past the old 32-byte event, and the right trigger's press and unpress (200, 201) read as the old struct has them: device 2 at offset 4, the button (33, the trigger) at 8, eventAgeSeconds (OpenLamina answers 0) at 24",
  "old-calls/ApplyTransform/-/-": {
   "position": [
    13.0,
