@@ -33,6 +33,7 @@
 #include "IVRSystem_022.h"
 #include "IVRSystem_026.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -1717,6 +1718,103 @@ void SubmitEdges(CaseContext& c)
 	c.Record("Background submit", bg);
 }
 
+// One frame of the game's: poses, then both eyes
+void GameFrame(Frames& f, const vr::Texture_t* tex)
+{
+	vr::TrackedDevicePose_t poses[16];
+	f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+	f.comp->Submit(vr::Eye_Left, tex, nullptr, vr::Submit_Default);
+	f.comp->Submit(vr::Eye_Right, tex, nullptr, vr::Submit_Default);
+}
+
+// The frame numbers (as the stand-in counts them, per session) of the dump's projection layers, in order
+std::vector<int64_t> ProjectionFrames(const Json::Value& dump)
+{
+	std::vector<int64_t> frames;
+	for (const Json::Value& layer : dump["layers"]) {
+		if (layer["type"].asString() == "projection")
+			frames.push_back(layer["frame"].asInt64());
+	}
+	return frames;
+}
+
+// OpenComposite's own frames while the game stalls (expect/own_frames.json): 10 frames, a second without any call,
+// then 10 more. With the stand-in at 90 Hz, OpenComposite runs at least 60 frames of its own in that second, none
+// with a projection layer (only the game's frames have one), and no frame call comes out of order.
+void OwnFramesCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	for (int frame = 0; frame < 10; frame++)
+		GameFrame(f, tex.get());
+	std::this_thread::sleep_for(std::chrono::seconds(1));
+	for (int frame = 0; frame < 10; frame++)
+		GameFrame(f, tex.get());
+	c.core->Cleanup();
+
+	Json::Value r;
+	r["frames"] = 20;
+	Json::Value dump = ReadStandInDump();
+	if (!dump.isNull()) {
+		std::vector<int64_t> projections = ProjectionFrames(dump);
+		// Only the game's frames have one (its first may be lost to the session's move onto its device)
+		r["projection_layers_at_most_20"] = projections.size() <= 20;
+		r["frames_ended_at_least_80"] = dump["frames_ended"].asInt64() >= 10 + 10 + 60;
+		// The frames in the pause (the longest gap between two of the game's frames), all OpenComposite's own
+		int64_t pause = 0;
+		for (size_t i = 1; i < projections.size(); i++)
+			pause = std::max<int64_t>(pause, projections[i] - projections[i - 1] - 1);
+		r["own_frames_in_the_pause_at_least_60"] = pause >= 60;
+		r["frame_order_errors"] = dump["frame_order_errors"];
+	}
+	c.Record("frames", r);
+}
+
+// The game stalling and coming back again and again while another thread reads input (expect/own_frames.json): 20
+// rounds of 5 frames and a 150 ms pause, each pause long enough for OpenComposite's own frames to start, so the game's
+// next frame often meets one of them. No frame call may come out of order, and nothing may crash.
+void OwnFramesRaceCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	std::atomic<bool> done{ false };
+	std::atomic<int> polls{ 0 };
+	std::thread reader([&] {
+		// Until the game's thread is done, but no more than 100000 passes
+		for (int pass = 0; !done && pass < 100000; pass++) {
+			for (vr::TrackedDeviceIndex_t dev = 1; dev <= 2; dev++) {
+				vr::VRControllerState_t state{};
+				f.sys->GetControllerState(dev, &state, sizeof(state));
+			}
+			polls++;
+			std::this_thread::yield();
+		}
+	});
+	const int rounds = 20, framesPerRound = 5;
+	for (int round = 0; round < rounds; round++) {
+		for (int frame = 0; frame < framesPerRound; frame++)
+			GameFrame(f, tex.get());
+		std::this_thread::sleep_for(std::chrono::milliseconds(150));
+	}
+	done = true;
+	reader.join();
+	c.core->Cleanup();
+
+	Json::Value r;
+	r["frames"] = rounds * framesPerRound;
+	r["polled"] = polls > 0;
+	Json::Value dump = ReadStandInDump();
+	if (!dump.isNull()) {
+		r["own_frames_ran"] = dump["frames_ended"].asInt64() > rounds * framesPerRound;
+		r["frame_order_errors"] = dump["frame_order_errors"];
+	}
+	c.Record("frames", r);
+}
+
 } // namespace
 
 const std::map<std::string, CaseFn>& conformance::Cases()
@@ -1750,6 +1848,8 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "events-commit", EventsCommitCase },
 		{ "submit-edges", SubmitEdges },
 		{ "observer", ObserverCase },
+		{ "own-frames", OwnFramesCase },
+		{ "own-frames-race", OwnFramesRaceCase },
 	};
 	static const std::map<std::string, CaseFn> all = [] {
 		std::map<std::string, CaseFn> m = cases;

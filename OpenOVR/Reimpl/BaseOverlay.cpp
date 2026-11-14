@@ -148,6 +148,7 @@ static VROverlayHandle_t gamepadFocusOverlay = k_ulOverlayHandleInvalid;
 
 BaseOverlay::~BaseOverlay()
 {
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	for (const auto& kv : overlays) {
 		if (kv.second) {
 			delete kv.second;
@@ -372,6 +373,7 @@ EVROverlayError BaseOverlay::CreateOverlay(const char* pchOverlayKey, const char
 		return VROverlayError_KeyInUse;
 	}
 
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	OverlayData* data = new OverlayData(pchOverlayKey, pchOverlayName);
 	OVL = data;
 
@@ -397,6 +399,7 @@ EVROverlayError BaseOverlay::DestroyOverlay(VROverlayHandle_t ulOverlayHandle)
 	if (highQualityOverlay == ulOverlayHandle)
 		highQualityOverlay = vr::k_ulOverlayHandleInvalid;
 
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	if (std::shared_ptr<Compositor> comp = overlay->compositor.lock()) {
 		auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
 		backend->UnregisterOverlayCompositor(comp);
@@ -1217,6 +1220,8 @@ EVROverlayError BaseOverlay::SetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 	if (!BackendManager::Instance().IsGraphicsConfigured())
 		return VROverlayError_None;
 
+	// After OnOverlayTexture, which may restart the session
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	std::shared_ptr<Compositor> compositor = overlay->compositor.lock();
 	if (!compositor) {
 		// Overlay apps needn't have asked for IVRCompositor
@@ -1241,6 +1246,7 @@ EVROverlayError BaseOverlay::SetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 EVROverlayError BaseOverlay::ClearOverlayTexture(VROverlayHandle_t ulOverlayHandle)
 {
 	USEH();
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	overlay->texture = {};
 	overlay->raw.reset();
 	overlay->rawImage = {};
@@ -1458,7 +1464,10 @@ void BaseOverlay::HideKeyboard()
 	}
 
 	// Delete the keyboard instance
-	keyboard.reset();
+	{
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		keyboard.reset();
+	}
 
 	BaseSystem* system = GetUnsafeBaseSystem();
 	if (system) {

@@ -610,6 +610,11 @@ void XrBackend::WaitForTrackingData()
 		return;
 	}
 
+	// The game's frame from here to its xrEndFrame (SubmitFrames): an own frame in flight is ended first
+	std::unique_lock<std::mutex> owner(frameOwner);
+	if (ownFrames)
+		ownFrames->OnAppFrameStart();
+
 	// A waited frame not yet begun is begun now, with its predicted display time
 	if (!frameAwaitingBegin) {
 		auto waitCall = std::chrono::steady_clock::now();
@@ -638,7 +643,9 @@ void XrBackend::WaitForTrackingData()
 		return;
 	}
 	frameAwaitingBegin = false;
+	frameBegun = true;
 	frameCallFailures = 0;
+	owner.unlock();
 
 	xr_gbl->ClearCachedViews();
 
@@ -819,6 +826,9 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 	bool skipRender = postPresentStatus && !postPresent;
 	postPresentStatus = postPresent;
 
+	// Through this frame's xrEndFrame (see frameOwner)
+	std::unique_lock<std::mutex> owner(frameOwner);
+
 	if (!renderingFrame || skipRender)
 		return;
 
@@ -859,9 +869,11 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 		submittedEyeTextures = false;
 	}
 
-	// If we have an overlay then add
+	// If we have an overlay then add. Its layers stay as they are until the frame has ended.
 	BaseOverlay* overlay = GetUnsafeBaseOverlay();
+	std::unique_lock<std::recursive_mutex> overlayLock;
 	if (overlay) {
+		overlayLock = std::unique_lock(overlay->_LayersLock());
 		layer_count = overlay->_BuildLayers(app_layer, headers);
 	} else if (app_layer) {
 		layer_count = 1;
@@ -874,6 +886,12 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 	info.layerCount = layer_count;
 
 	OOVR_FAILED_XR_SOFT_ABORT(xrEndFrame(xr_session.get(), &info));
+	frameBegun = false;
+	if (overlayLock.owns_lock())
+		overlayLock.unlock();
+	if (ownFrames)
+		ownFrames->OnAppFrameEnd();
+	owner.unlock();
 
 	BaseSystem* sys = GetUnsafeBaseSystem();
 	if (sys) {
@@ -906,6 +924,11 @@ IBackend::openvr_enum_t XrBackend::SetSkyboxOverride(const vr::Texture_t* pTextu
 		auto lock = xr_session.lock_shared();
 		if (!sessionActive)
 			return 0; // a restart this thread waited behind left no running session
+
+		// This frame is run here, from its xrWaitFrame to its xrEndFrame (see frameOwner)
+		std::unique_lock<std::mutex> owner(frameOwner);
+		if (ownFrames)
+			ownFrames->OnAppFrameStart();
 
 		// Make sure any unfinished frames don't call xrEndFrame after this call
 		renderingFrame = false;
@@ -942,7 +965,14 @@ IBackend::openvr_enum_t XrBackend::SetSkyboxOverride(const vr::Texture_t* pTextu
 			return 1; // VRCompositorError_RequestFailed
 		}
 		frameAwaitingBegin = false;
+		frameBegun = true;
 		frameCallFailures = 0;
+		// Every way out of here ends the frame
+		auto ended = [this] {
+			frameBegun = false;
+			if (ownFrames)
+				ownFrames->OnAppFrameEnd();
+		};
 
 		if (skybox_compositor == nullptr)
 			skybox_compositor = BaseCompositor::CreateCompositorAPI(pTextures);
@@ -952,6 +982,7 @@ IBackend::openvr_enum_t XrBackend::SetSkyboxOverride(const vr::Texture_t* pTextu
 			empty.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
 			empty.displayTime = xr_gbl->nextPredictedFrameTime;
 			xrEndFrame(xr_session.get(), &empty);
+			ended();
 			return 1; // VRCompositorError_RequestFailed
 		}
 
@@ -969,6 +1000,7 @@ IBackend::openvr_enum_t XrBackend::SetSkyboxOverride(const vr::Texture_t* pTextu
 			empty.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
 			empty.displayTime = xr_gbl->nextPredictedFrameTime;
 			xrEndFrame(xr_session.get(), &empty);
+			ended();
 			return 1; // VRCompositorError_RequestFailed
 		}
 		layerQuad.type = XR_TYPE_COMPOSITION_LAYER_QUAD;
@@ -989,6 +1021,7 @@ IBackend::openvr_enum_t XrBackend::SetSkyboxOverride(const vr::Texture_t* pTextu
 		info.layerCount = 1;
 
 		OOVR_FAILED_XR_SOFT_ABORT(xrEndFrame(xr_session.get(), &info));
+		ended();
 
 	} else {
 		OOVR_SOFT_ABORT("Unsupported texture count");
@@ -1216,6 +1249,8 @@ void XrBackend::PumpEvents()
 				// Start the session running - this means we're supposed to start submitting frames
 				XrSessionBeginInfo beginInfo{ XR_TYPE_SESSION_BEGIN_INFO };
 				beginInfo.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+				// Not while a frame of either side's is in flight (see frameOwner)
+				std::lock_guard<std::mutex> owner(frameOwner);
 				if (XrResult begin = xrBeginSession(xr_session.get(), &beginInfo); XR_FAILED(begin)) {
 					// READY doesn't come again: without a running session the game is told to quit
 					OOVR_LOGF("xrBeginSession failed: %d", (int)begin);
@@ -1224,6 +1259,7 @@ void XrBackend::PumpEvents()
 				}
 				sessionActive = true;
 				frameAwaitingBegin = false;
+				frameBegun = false;
 				frameCallFailures = 0;
 				break;
 			}
@@ -1231,10 +1267,14 @@ void XrBackend::PumpEvents()
 				// End the session. The session is still valid and we can still query some information
 				// from it, but we're not allowed to submit frames anymore. This is done when the engagement
 				// sensor detects the user has taken off the headset, for example.
+				// Not while a frame of either side's is in flight (see frameOwner)
+				std::lock_guard<std::mutex> owner(frameOwner);
 				if (sessionActive && XR_FAILED(xrEndSession(xr_session.get()))) // could be inactive if we missed XR_SESSION_STATE_READY
 					OOVR_LOG("xrEndSession failed");
 				sessionActive = false;
 				renderingFrame = false;
+				frameBegun = false;
+				frameAwaitingBegin = false;
 				break;
 			}
 			case XR_SESSION_STATE_EXITING: {
@@ -1317,6 +1357,7 @@ void XrBackend::OnSessionCreated()
 	sessionActive = false;
 	renderingFrame = false;
 	frameAwaitingBegin = false;
+	frameBegun = false;
 	frameCallFailures = 0;
 
 	PumpEvents();
@@ -1348,10 +1389,130 @@ void XrBackend::OnSessionCreated()
 	// A scene application's session makes it the scene application for every program
 	if (BaseClientCore::appType == vr::VRApplication_Scene)
 		BaseApplications::SetSceneProcess(true);
+
+	// Frames of OpenComposite's own while the game runs none, with the visible overlays
+	StopOwnFrames();
+	if (ownFramesStopped)
+		return;
+	ownFrames = std::make_unique<OwnFrameLoop>(
+	    OwnFrameLoop::Mode::WhenAppIdle,
+	    [](XrTime, std::vector<const XrCompositionLayerBaseHeader*>& layers) {
+		    BaseOverlay* overlay = GetUnsafeBaseOverlay();
+		    if (!overlay)
+			    return;
+		    // RunOwnFrame holds the overlays' lock until the frame has ended
+		    XrCompositionLayerBaseHeader const* const* headers = nullptr;
+		    int count = overlay->_BuildLayers(nullptr, headers);
+		    layers.insert(layers.end(), headers, headers + count);
+	    },
+	    std::chrono::milliseconds(100),
+	    [this](const OwnFrameLoop::LayerSource& source, const std::function<bool()>& wanted) {
+		    return RunOwnFrame(source, wanted);
+	    });
+}
+
+// Here rather than in OwnFrameLoop.cpp, which then needs nothing of the backend's
+OwnFrameLoop::OwnFrameLoop(Mode mode, LayerSource source, std::chrono::milliseconds idleAfter)
+    : OwnFrameLoop(mode, std::move(source), idleAfter, [](const LayerSource& source, const std::function<bool()>& wanted) -> XrDuration {
+	    BackendManager* manager = BackendManager::InstancePtr();
+	    auto* backend = manager ? (XrBackend*)manager->GetBackendInstance() : nullptr;
+	    return backend ? backend->RunOwnFrame(source, wanted) : 0;
+    })
+{
+}
+
+void XrBackend::StopOwnFrames(bool forGood)
+{
+	if (forGood)
+		ownFramesStopped = true;
+	// Joins its thread, which doesn't wait for the session lock that a session restart here holds
+	ownFrames.reset();
+}
+
+XrDuration XrBackend::RunOwnFrame(const OwnFrameLoop::LayerSource& source, const std::function<bool()>& wanted)
+{
+	// The session lock (shared) first, as the game's threads take it, but never waited for: a session restart holds
+	// it exclusively while it stops the own frames. Tried until it's free or the frame isn't wanted any more.
+	std::optional<SessionLock> lock;
+	while (true) {
+		if (!wanted())
+			return 0;
+		lock.emplace(xr_session, SessionLock::TryShared{});
+		if (lock->IsHeld())
+			break;
+		lock.reset();
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
+
+	std::unique_lock<std::mutex> owner(frameOwner);
+	// The game's frame is open (it ends it), or the session isn't running: no frame
+	if (!wanted() || !sessionActive || frameBegun || !xr_session.get() || !xr_gbl)
+		return 0;
+
+	XrFrameState state{ XR_TYPE_FRAME_STATE };
+	if (frameAwaitingBegin) {
+		// A frame the game waited for and couldn't begin: this one begins it instead
+		state.predictedDisplayTime = xr_gbl->nextPredictedFrameTime;
+		state.predictedDisplayPeriod = (XrDuration)(displayPeriodMs * 1e6f);
+		state.shouldRender = XR_TRUE;
+	} else {
+		XrFrameWaitInfo waitInfo{ XR_TYPE_FRAME_WAIT_INFO };
+		if (XrResult res = xrWaitFrame(xr_session.get(), &waitInfo, &state); XR_FAILED(res)) {
+			OOVR_LOG_ONCE("xrWaitFrame failed for an own frame: skipping it");
+			OnFrameCallFailed(res);
+			return 0;
+		}
+		if (state.predictedDisplayPeriod > 0)
+			displayPeriodMs = (float)state.predictedDisplayPeriod / 1e6f;
+		xr_gbl->nextPredictedFrameTime = state.predictedDisplayTime;
+		frameAwaitingBegin = true;
+	}
+
+	XrFrameBeginInfo beginInfo{ XR_TYPE_FRAME_BEGIN_INFO };
+	if (XrResult res = xrBeginFrame(xr_session.get(), &beginInfo); XR_FAILED(res)) {
+		OOVR_LOG_ONCE("xrBeginFrame failed for an own frame: dropping it");
+		if (res == XR_ERROR_CALL_ORDER_INVALID)
+			frameAwaitingBegin = false;
+		OnFrameCallFailed(res);
+		return 0;
+	}
+	frameAwaitingBegin = false;
+	frameCallFailures = 0;
+	// Not one of the game's frames, so the time since its last one isn't a frame interval
+	RestartFrameTiming();
+
+	XrFrameEndInfo info{ XR_TYPE_FRAME_END_INFO };
+	info.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+	info.displayTime = state.predictedDisplayTime;
+
+	// The source's layers (the overlays' among them) stay as they are until the frame has ended
+	BaseOverlay* overlay = GetUnsafeBaseOverlay();
+	std::unique_lock<std::recursive_mutex> overlayLock;
+	if (overlay)
+		overlayLock = std::unique_lock(overlay->_LayersLock());
+	std::vector<const XrCompositionLayerBaseHeader*> layers;
+	if (state.shouldRender && source)
+		source(state.predictedDisplayTime, layers);
+	info.layers = layers.data();
+	info.layerCount = (uint32_t)layers.size();
+	XrResult res = xrEndFrame(xr_session.get(), &info);
+	if (XR_FAILED(res) && !layers.empty()) {
+		// Ended without them, so the frame doesn't stay open
+		OOVR_LOG_ONCEF("xrEndFrame failed for an own frame with %u layers (%d): ending it without them", info.layerCount, (int)res);
+		info.layers = nullptr;
+		info.layerCount = 0;
+		res = xrEndFrame(xr_session.get(), &info);
+	}
+	if (XR_FAILED(res))
+		OOVR_LOG_ONCEF("xrEndFrame failed for an own frame: %d", (int)res);
+
+	XrDuration period = state.predictedDisplayPeriod > 0 ? state.predictedDisplayPeriod : (XrDuration)(displayPeriodMs * 1e6f);
+	return period > 0 ? period : (XrDuration)11000000;
 }
 
 void XrBackend::PrepareForSessionShutdown()
 {
+	StopOwnFrames();
 	for (std::unique_ptr<Compositor>& c : compositors) {
 		c.reset();
 	}

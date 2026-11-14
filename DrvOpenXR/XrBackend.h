@@ -8,10 +8,12 @@
 
 #include "XrDriverPrivate.h"
 
+#include "OwnFrameLoop.h"
 #include "XrController.h"
 #include "XrHMD.h"
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <vector>
 #include <mutex>
@@ -75,6 +77,20 @@ public:
 	 * Restarting the session should only be necessary if we've already created the infoSet.
 	 */
 	static void MaybeRestartForInputs();
+
+	/**
+	 * One frame of OpenComposite's own (OwnFrameLoop), with source's layers: on the calling thread, which mustn't hold
+	 * the frame (frameOwner) already. Runs none, answering 0, if wanted() turns false first, if the session isn't
+	 * running, or if the game's frame is open (begun and not yet ended: the game ends it). Otherwise answers the frame's
+	 * predicted display period.
+	 */
+	XrDuration RunOwnFrame(const OwnFrameLoop::LayerSource& source, const std::function<bool()>& wanted);
+
+	/**
+	 * Stops OpenComposite's own frames (and joins their thread) until the next session is created, or for good when
+	 * OpenComposite shuts down (before the interfaces their layers come from are destroyed)
+	 */
+	void StopOwnFrames(bool forGood = false);
 
 #ifdef SUPPORT_VK
 	static void VkGetPhysicalDevice(VkInstance instance, VkPhysicalDevice* out);
@@ -143,6 +159,17 @@ private:
 
 	// Have we started rendering a frame yet? If not, calling xrEndFrame would result in an error
 	bool renderingFrame = false;
+
+	// Who runs the frame: held from xrWaitFrame to xrEndFrame by OpenComposite's own frames, and around each frame call
+	// of the game's (its xrWaitFrame and xrBeginFrame, its xrEndFrame), whose frame is open in between (frameBegun), so
+	// that no frame of one starts while the other's is open. Taken after the session lock (shared), and never held while
+	// waiting for the session lock or for the own frames' thread.
+	std::mutex frameOwner;
+	// A frame was begun (by the game, or SetSkyboxOverride) and not yet ended; under frameOwner
+	bool frameBegun = false;
+	// OpenComposite's frames while the game runs none; created with each session, stopped before it ends
+	std::unique_ptr<OwnFrameLoop> ownFrames;
+	bool ownFramesStopped = false; // for good: OpenComposite is shutting down
 
 	// A frame xrWaitFrame gave whose xrBeginFrame failed: the next frame begins it again instead of waiting, as a
 	// second xrWaitFrame blocks until xrBeginFrame is called. Repeated failures lose the session.

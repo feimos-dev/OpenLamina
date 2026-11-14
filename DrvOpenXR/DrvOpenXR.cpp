@@ -430,8 +430,18 @@ XrResult DrvOpenXR::SetupSession()
 	return XR_SUCCESS;
 }
 
+void DrvOpenXR::StopOwnFrames()
+{
+	if (currentBackend)
+		currentBackend->StopOwnFrames(true);
+}
+
 void DrvOpenXR::ShutdownSession()
 {
+	// No frames of OpenComposite's own on a session that's ending
+	if (currentBackend)
+		currentBackend->StopOwnFrames();
+
 	BackendManager* instance = BackendManager::InstancePtr();
 	// Is it already being shut down?
 	// Note that this is indirectly called by the XrBackend destructor, which will have
