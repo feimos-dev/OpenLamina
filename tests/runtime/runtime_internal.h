@@ -118,8 +118,11 @@ struct RtSpace {
 
 enum class RtApi { None, D3D11, D3D12, Vulkan, OpenGL };
 
-// The layout of a swapchain format's texels, whatever the API's enum for it
-enum class PixelLayout { Unknown, RGBA8, BGRA8, RGBA16F, RGB10A2, Depth };
+// The layout of a swapchain format's texels, whatever the API's enum for it: DepthF32 is a 32-bit float depth format
+// (read back, the value in every channel), Depth the others (not read back)
+enum class PixelLayout { Unknown, RGBA8, BGRA8, RGBA16F, RGB10A2, Depth, DepthF32 };
+
+inline bool IsDepthLayout(PixelLayout layout) { return layout == PixelLayout::Depth || layout == PixelLayout::DepthF32; }
 
 struct RtSwapchain {
 	XrSwapchainCreateInfo info{};

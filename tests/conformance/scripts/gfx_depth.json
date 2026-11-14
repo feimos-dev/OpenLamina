@@ -1,0 +1,5 @@
+{
+ "#": "The pose and depth cases (gfx-*-pose-depth): every graphics API, XR_KHR_composition_layer_depth, and swapchain formats of each API's own enum with a 32-bit float depth format: DXGI 29, 28, 40 (D32_FLOAT), Vulkan 43, 37, 126 (D32_SFLOAT), OpenGL 0x8C43, 0x8058, 0x8CAC (DEPTH_COMPONENT32F); each API's session uses its own",
+ "extensions": ["XR_KHR_D3D11_enable", "XR_KHR_D3D12_enable", "XR_KHR_vulkan_enable", "XR_KHR_vulkan_enable2", "XR_KHR_opengl_enable", "XR_KHR_composition_layer_depth"],
+ "swapchain_formats": [29, 28, 40, 43, 37, 126, 35907, 32856, 36012]
+}

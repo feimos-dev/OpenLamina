@@ -125,6 +125,11 @@ jobs:
           # Formats the runtime doesn't offer (it has RGBA8 sRGB only), converted into the one it has
           python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases gfx-d3d11-formats,gfx-d3d12-formats,gfx-vk-formats,gfx-gl-formats --script tests/conformance/scripts/gfx_rgba8_only.json --expect tests/conformance/expect/gfx_formats.json --known-failures tests/conformance/expect/gfx_known.json --allow-skip ".*-(vk|gl)(-.*)?" --out conformance/gfx-formats
           if ($LASTEXITCODE) { $failed++ }
+          # The pose and depth a frame was submitted with: used with useSubmittedPose and submitDepth on, not without
+          python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases gfx-d3d11-pose-depth,gfx-d3d12-pose-depth,gfx-vk-pose-depth,gfx-gl-pose-depth --script tests/conformance/scripts/gfx_depth.json --ini tests/conformance/ini/pose_depth.ini --expect tests/conformance/expect/gfx_pose_depth.json --known-failures tests/conformance/expect/gfx_known.json --allow-skip ".*-(vk|gl)(-.*)?" --out conformance/gfx-pose-depth
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases gfx-d3d11-pose-depth,gfx-d3d12-pose-depth,gfx-vk-pose-depth,gfx-gl-pose-depth --script tests/conformance/scripts/gfx_depth.json --expect tests/conformance/expect/gfx_pose_depth_off.json --known-failures tests/conformance/expect/gfx_known.json --allow-skip ".*-(vk|gl)(-.*)?" --out conformance/gfx-pose-depth-off
+          if ($LASTEXITCODE) { $failed++ }
           # The old input as SteamVR's legacy binding files map it, under inputEvaluator=steamvr
           python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases events --script tests/conformance/scripts/legacy_click.json --ini tests/conformance/ini/steamvr_evaluator.ini --expect tests/conformance/expect/events_steamvr.json --out conformance/events-steamvr
           if ($LASTEXITCODE) { $failed++ }

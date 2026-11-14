@@ -13,8 +13,9 @@ namespace {
 constexpr GLenum kTexture2DArray = 0x8C1A, kTextureBinding2DArray = 0x8C1D, kTexture2DMultisample = 0x9100,
                  kTextureBinding2DMultisample = 0x9104, kTextureCubeMap = 0x8513, kTextureBindingCubeMap = 0x8514,
                  kCubeMapPositiveX = 0x8515, kReadFramebuffer = 0x8CA8, kReadFramebufferBinding = 0x8CAA,
-                 kColorAttachment0 = 0x8CE0, kFramebufferComplete = 0x8CD5, kPixelPackBuffer = 0x88EB,
-                 kPixelPackBufferBinding = 0x88ED, kHalfFloat = 0x140B, kUnsignedInt2101010Rev = 0x8368;
+                 kColorAttachment0 = 0x8CE0, kDepthAttachment = 0x8D00, kFramebufferComplete = 0x8CD5,
+                 kPixelPackBuffer = 0x88EB, kPixelPackBufferBinding = 0x88ED, kHalfFloat = 0x140B,
+                 kUnsignedInt2101010Rev = 0x8368;
 constexpr int64_t kSRGB8Alpha8 = 0x8C43, kRGBA8 = 0x8058, kRGBA16F = 0x881A, kRGB10A2 = 0x8059, kDepth32F = 0x8CAC,
                   kDepth24 = 0x81A6, kDepth16 = 0x81A5;
 
@@ -137,9 +138,11 @@ bool IsDepth(int64_t format)
 	return format == kDepth32F || format == kDepth24 || format == kDepth16;
 }
 
-// The layout Read returns the stored texels in (depth isn't read)
+// The layout Read returns the stored texels in (32-bit float depth as floats; other depth formats aren't read)
 PixelLayout Layout(int64_t format)
 {
+	if (format == kDepth32F)
+		return PixelLayout::DepthF32;
 	if (IsDepth(format))
 		return PixelLayout::Depth;
 	if (format == kSRGB8Alpha8 || format == kRGBA8)
@@ -247,20 +250,24 @@ void Enumerate(const RtSwapchain* sc, XrSwapchainImageBaseHeader* images)
 		out[i].image = (uint32_t)sc->images[i];
 }
 
-// A read framebuffer on one layer (face) of a texture, the one before it back when it goes
+// A read framebuffer on one layer (face) of a texture, the one before it back when it goes; a depth texture is its
+// depth attachment, with no color buffer to read
 class ReadFramebuffer {
 public:
-	ReadFramebuffer(GLenum target, GLuint tex, uint32_t layer)
+	ReadFramebuffer(GLenum target, GLuint tex, uint32_t layer, bool depth = false)
 	{
 		glGetIntegerv(kReadFramebufferBinding, &previous);
 		g_gl.GenFramebuffers(1, &fbo);
 		g_gl.BindFramebuffer(kReadFramebuffer, fbo);
+		const GLenum attachment = depth ? kDepthAttachment : kColorAttachment0;
 		if (target == kTexture2DArray)
-			g_gl.FramebufferTextureLayer(kReadFramebuffer, kColorAttachment0, tex, 0, (GLint)layer);
+			g_gl.FramebufferTextureLayer(kReadFramebuffer, attachment, tex, 0, (GLint)layer);
 		else if (target == kTextureCubeMap)
-			g_gl.FramebufferTexture2D(kReadFramebuffer, kColorAttachment0, kCubeMapPositiveX + layer % 6, tex, 0);
+			g_gl.FramebufferTexture2D(kReadFramebuffer, attachment, kCubeMapPositiveX + layer % 6, tex, 0);
 		else
-			g_gl.FramebufferTexture2D(kReadFramebuffer, kColorAttachment0, GL_TEXTURE_2D, tex, 0);
+			g_gl.FramebufferTexture2D(kReadFramebuffer, attachment, GL_TEXTURE_2D, tex, 0);
+		if (depth)
+			glReadBuffer(GL_NONE);
 		ok = g_gl.CheckFramebufferStatus(kReadFramebuffer) == kFramebufferComplete;
 	}
 	~ReadFramebuffer()
@@ -277,7 +284,7 @@ private:
 
 // The stored texels, unconverted: 8-bit formats are copied raw (glCopyImageSubData, both in the 32-bit class) into an
 // RGBA8 scratch texture and read from that, so an sRGB texture gives its encoded bytes whatever the driver would make
-// of reading it; RGBA16F and RGB10A2 are read in their own type
+// of reading it; RGBA16F and RGB10A2 are read in their own type, and 32-bit float depth as floats
 bool Read(RtSession* s, RtSwapchain* sc, uint32_t index, uint32_t arrayIndex, const std::vector<XrOffset2Di>& points,
     uint32_t bytes, std::vector<uint8_t>& out, std::string* why)
 {
@@ -329,6 +336,11 @@ bool Read(RtSession* s, RtSwapchain* sc, uint32_t index, uint32_t arrayIndex, co
 			ok = fb.ok;
 		}
 		glDeleteTextures(1, &scratch);
+	} else if (sc->info.format == kDepth32F) {
+		ReadFramebuffer fb(target, tex, arrayIndex, true);
+		ok = fb.ok;
+		for (size_t i = 0; ok && i < points.size(); i++)
+			glReadPixels(clampX(points[i].x), clampY(points[i].y), 1, 1, GL_DEPTH_COMPONENT, GL_FLOAT, &out[i * bytes]);
 	} else {
 		GLenum type = sc->info.format == kRGBA16F ? kHalfFloat : kUnsignedInt2101010Rev;
 		ReadFramebuffer fb(target, tex, arrayIndex);
