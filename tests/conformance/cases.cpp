@@ -34,6 +34,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -54,6 +55,22 @@ Json::Value Err(int e)
 	Json::Value v;
 	v["ret"] = e;
 	return v;
+}
+
+// The stand-in runtime's dump (OC_TEST_RUNTIME_DUMP), written when OpenComposite destroys its instance: read it after
+// Cleanup. Null without one (another runtime, or none written).
+Json::Value ReadStandInDump()
+{
+	const char* path = std::getenv("OC_TEST_RUNTIME_DUMP");
+	if (!path || !*path)
+		return Json::Value();
+	std::ifstream in(path, std::ios::binary);
+	Json::Value root;
+	Json::CharReaderBuilder rb;
+	std::string errors;
+	if (!in || !Json::parseFromStream(rb, in, &root, &errors))
+		return Json::Value();
+	return root;
 }
 
 void InitMatrix(CaseContext& c)
@@ -1149,8 +1166,10 @@ void EventsCase(CaseContext& c)
 // reads the manifest's actions and submits frames (OpenLamina reads the old input after each frame, for its button
 // events), while another thread reads the old input and the same action all the time, as Unity's SteamVR_Controller
 // and a render thread do. With scripts/input_toggle.json and manifest_toggle.json, under either evaluator: nothing may
-// crash, and the toggle still turns on, off and on. The second thread starts after frame 5: the first Submit recreates
-// the session for the game's graphics API, and reading input while that happens is another problem (not this case's).
+// crash, and the toggle still turns on, off and on. The second thread starts after frame start_frame (--case-arg
+// start_frame=<n>, default 0: before the first frame, so it reads while the first Submit recreates the session for the
+// game's graphics API). With the stand-in, the record also has the action calls OpenComposite made on a session that
+// wasn't live (action_calls_without_session).
 void InputThreadsCase(CaseContext& c)
 {
 	using namespace vr::IVRInput_010;
@@ -1171,15 +1190,18 @@ void InputThreadsCase(CaseContext& c)
 	in->GetActionHandle("/actions/main/in/toggle", &toggle);
 	in->GetActionHandle("/actions/main/out/haptic", &haptic);
 	callers::Texture tex(ArgSet::Valid, *c.call);
+	const int startFrame = c.IntArg("start_frame", 0);
 
 	std::atomic<bool> done{ false }, start{ false };
 	std::atomic<int> polls{ 0 };
 	std::thread reader([&] {
 		while (!start && !done)
 			std::this_thread::yield();
-		// As fast as it can (to meet the other thread), but bounded: at most 200000 passes, and haptics (which the
-		// stand-in records) only every 50th. run.py's memory limit is the backstop.
-		for (int pass = 0; !done && pass < 200000; pass++) {
+		// As fast as it can (to meet the other thread, also through a session restart's waits), until the game's
+		// thread is done, but for at most 30 seconds; haptics (which the stand-in counts) only every 50th pass.
+		// run.py's memory limit is the backstop.
+		const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(30);
+		for (int pass = 0; !done && (pass % 256 != 0 || std::chrono::steady_clock::now() < until); pass++) {
 			std::this_thread::yield();
 			for (vr::TrackedDeviceIndex_t dev = 1; dev <= 2; dev++) {
 				vr::VRControllerState_t state{};
@@ -1195,6 +1217,14 @@ void InputThreadsCase(CaseContext& c)
 	int changes = 0;
 	bool last = false;
 	const int frames = 300;
+	// The reader's first pass before the frames that meet it (a busy runner may not schedule it at once)
+	auto startReader = [&] {
+		start = true;
+		for (int wait = 0; polls == 0 && wait < 2000; wait++)
+			std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	};
+	if (startFrame <= 0)
+		startReader();
 	for (int frame = 1; frame <= frames; frame++) {
 		vr::TrackedDevicePose_t poses[16];
 		f.comp->WaitGetPoses(poses, 16, nullptr, 0);
@@ -1209,21 +1239,22 @@ void InputThreadsCase(CaseContext& c)
 		f.sys->GetControllerState(2, &state, sizeof(state));
 		f.comp->Submit(vr::Eye_Left, tex.get(), nullptr, vr::Submit_Default);
 		f.comp->Submit(vr::Eye_Right, tex.get(), nullptr, vr::Submit_Default);
-		if (frame == 5) {
-			start = true;
-			// The reader's first pass before the frames that meet it (a busy runner may not schedule it at once)
-			for (int wait = 0; polls == 0 && wait < 2000; wait++)
-				std::this_thread::sleep_for(std::chrono::milliseconds(1));
-		}
+		if (frame == startFrame)
+			startReader();
 	}
 	done = true;
 	reader.join();
+	c.core->Cleanup();
 	Json::Value r;
 	r["frames"] = frames;
 	r["polled"] = polls > 0;
 	r["toggle_changes"] = changes;
+	r["start_frame"] = startFrame;
+	// Input read on a session that was being replaced: on a real runtime, a use after free
+	Json::Value dump = ReadStandInDump();
+	if (dump.isMember("action_calls_without_session"))
+		r["action_calls_without_session"] = dump["action_calls_without_session"];
 	c.Record("threads", r);
-	c.core->Cleanup();
 }
 
 // The action manifest's actions read frame by frame (expect/input_evaluator.json), on the stand-in with
