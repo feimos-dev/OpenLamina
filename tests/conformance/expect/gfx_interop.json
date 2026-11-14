@@ -1,0 +1,31 @@
+{
+ "#": "OpenGL and Vulkan frames through Direct3D 11 (run.py --cases gfx-gl-interop,gfx-vk-interop --expect expect/gfx_interop.json, with the stand-in's default script: D3D11 alone): the session is D3D11, and the test pattern of gfx-gl-basic and gfx-vk-basic shows as it does on their own APIs. Skipped without an OpenGL or Vulkan driver (and so on CI).",
+ "gfx-gl-interop/frame/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:views[0].invalid": [],
+  "dump:views[1].invalid": [],
+  "dump:views[0].samples.tl": "ff0000ff",
+  "dump:views[0].samples.tr": "00ff00ff",
+  "dump:views[0].samples.bl": "0000ffff",
+  "dump:views[0].samples.br": "ffffffff",
+  "dump:views[1].samples.tl": "0000ffff",
+  "dump:views[1].samples.tr": "ff0000ff",
+  "dump:views[1].samples.bl": "ffffffff",
+  "dump:views[1].samples.br": "00ff00ff"
+ },
+ "gfx-vk-interop/frame/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:views[0].invalid": [],
+  "dump:views[1].invalid": [],
+  "dump:views[0].samples.tl": "ff0000ff",
+  "dump:views[0].samples.tr": "00ff00ff",
+  "dump:views[0].samples.bl": "0000ffff",
+  "dump:views[0].samples.br": "ffffffff",
+  "dump:views[1].samples.tl": "0000ffff",
+  "dump:views[1].samples.tr": "ff0000ff",
+  "dump:views[1].samples.bl": "ffffffff",
+  "dump:views[1].samples.br": "00ff00ff"
+ }
+}

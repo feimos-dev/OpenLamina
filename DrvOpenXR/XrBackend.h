@@ -253,5 +253,7 @@ private:
 
 	// The current graphics binding, used for restarting the session
 	inline static std::unique_ptr<BindingBase> graphicsBinding = nullptr;
+	// OpenGL or Vulkan frames copied through D3D11, whose device graphicsBinding has (GfxInterop.h)
+	std::unique_ptr<class GfxInterop> gfxInterop;
 	static std::unique_ptr<class TemporaryGraphics> temporaryGraphics;
 };
