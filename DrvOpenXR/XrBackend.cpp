@@ -117,6 +117,9 @@ XrBackend::~XrBackend()
 	// This must happen after session destruction (which occurs in FullShutdown), as runtimes (namely Monado)
 	// may try to access these resources while destroying the session.
 	temporaryGraphics.reset();
+#if defined(SUPPORT_DX) && defined(SUPPORT_DX10) && defined(SUPPORT_DX11)
+	DX10Compositor::ReleaseBridgeDevice();
+#endif
 }
 
 XrSessionState XrBackend::GetSessionState()
@@ -393,9 +396,21 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 			XrGraphicsRequirementsD3D11KHR graphicsRequirements{ XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR };
 			OC_XR_LOG(xr_ext->xrGetD3D11GraphicsRequirementsKHR(xr_instance, xr_system, &graphicsRequirements));
 
-			auto* d3dTex = (ID3D11Texture2D*)tex->handle;
 			ID3D11Device* dev = nullptr;
-			d3dTex->GetDevice(&dev);
+#if defined(SUPPORT_DX10)
+			if (ID3D10Texture2D* tex10 = DX10Compositor::AsD3D10Texture(tex)) {
+				// A Direct3D 10 texture: the session is on a D3D11 device of its device's adapter, and each frame is
+				// copied across (DX10Compositor)
+				dev = DX10Compositor::BridgeDevice(tex10);
+				if (!dev)
+					return giveUp("no Direct3D 11 device on the Direct3D 10 device's adapter");
+				dev->AddRef();
+			} else
+#endif
+			{
+				auto* d3dTex = (ID3D11Texture2D*)tex->handle;
+				d3dTex->GetDevice(&dev);
+			}
 			if (!dev)
 				return giveUp("the D3D11 texture has no device");
 
