@@ -240,6 +240,13 @@ add_library(DrvOpenXR STATIC
 	DrvOpenXR/XrGenericTracker.cpp
 	DrvOpenXR/XrGenericTracker.h
 
+	DrvOpenXR/CpuSwapchain.cpp
+	DrvOpenXR/CpuSwapchain.h
+	DrvOpenXR/CpuSwapchain_D3D11.cpp
+	DrvOpenXR/CpuSwapchain_D3D12.cpp
+	DrvOpenXR/CpuSwapchain_Vk.cpp
+	DrvOpenXR/CpuSwapchain_GL.cpp
+
 	DrvOpenXR/tmp_gfx/TemporaryGraphics.cpp
 	DrvOpenXR/tmp_gfx/TemporaryGraphics.h
 	DrvOpenXR/tmp_gfx/TemporaryD3D11.cpp
@@ -321,6 +328,8 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/ChaperoneData.cpp
 	OpenOVR/Misc/ProgramEvents.cpp
 	OpenOVR/Misc/LibMonado.cpp
+	OpenOVR/Misc/Image.cpp
+	OpenOVR/Misc/Image.h
 	OpenOVR/Misc/JsonFile.h
 	OpenOVR/Misc/SteamVRPaths.h
 	OpenOVR/Misc/SteamClient.h

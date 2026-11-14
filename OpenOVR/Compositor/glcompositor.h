@@ -11,6 +11,8 @@ public:
 
 	void InvokeCubemap(const vr::Texture_t* textures) override;
 
+	bool ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTextureBounds_t* bounds, Image& out) override;
+
 protected:
 	/**
 	 * Read the runtime-created swapchain names to [images] using the GL or GLES OpenXR structs.

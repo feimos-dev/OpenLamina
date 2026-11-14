@@ -14,6 +14,8 @@ public:
 	virtual void InvokeCubemap(const vr::Texture_t* textures) override;
 	virtual bool SupportsCubemap() override { return true; }
 
+	bool ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTextureBounds_t* bounds, Image& out) override;
+
 	ID3D11Device* GetDevice() { return device; }
 
 protected:

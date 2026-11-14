@@ -15,6 +15,8 @@ public:
 	void InvokeCubemap(const vr::Texture_t* textures) override;
 	virtual bool SupportsCubemap() override { return false; }
 
+	bool ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTextureBounds_t* bounds, Image& out) override;
+
 	ComPtr<ID3D12Device> GetDevice() { return device; }
 
 private:
@@ -35,6 +37,17 @@ private:
 	UINT64 currentFenceValue;
 
 	std::vector<XrSwapchainImageD3D12KHR> imagesHandles;
+
+	// For work that's waited for at once (ReadbackToCpu): its own allocator, list and fence, made at first use
+	ComPtr<ID3D12CommandAllocator> oneShotAllocator;
+	ComPtr<ID3D12GraphicsCommandList> oneShotList;
+	ComPtr<ID3D12Fence> oneShotFence;
+	HANDLE oneShotEvent = nullptr;
+	UINT64 oneShotValue = 0;
+	// A reset list for one-shot work, or nullptr
+	ID3D12GraphicsCommandList* BeginOneShot();
+	// Closes the list, runs it on queue and waits for it (at most 5 s): false if it couldn't be run or timed out
+	bool EndOneShot(ID3D12CommandQueue* queue);
 
 	struct DxgiFormatInfo {
 		/// The different versions of this format, set to DXGI_FORMAT_UNKNOWN if absent.
