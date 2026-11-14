@@ -89,6 +89,7 @@ add_executable(oc_unit_tests
 	unit/ConversionTests.cpp
 	unit/LegacyBindingsTests.cpp
 	unit/LibMonadoTests.cpp
+	unit/FoveationTests.cpp
 	${OC_TEST_RESOURCES}
 )
 target_include_directories(oc_unit_tests PRIVATE

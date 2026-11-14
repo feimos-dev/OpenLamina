@@ -331,6 +331,8 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/LibMonado.h
 	OpenOVR/Misc/SoftFail.cpp
 	OpenOVR/Misc/SoftFail.h
+	OpenOVR/Misc/Foveation.cpp
+	OpenOVR/Misc/Foveation.h
 	OpenOVR/Misc/EnumNames.h
 	${GENERATED_DIR}/EnumNames.gen.cpp
 	OpenOVR/Misc/debug_helper.cpp
