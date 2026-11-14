@@ -21,7 +21,6 @@ Compositor::~Compositor()
 
 void Compositor::Invoke(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, XrSwapchainSubImage& subImage, std::optional<XruEye> eye, vr::EVRSubmitFlags submitFlags)
 {
-	bool invertInCompositor = oovr_global_configuration.InvertUsingShaders();
 	if (bounds && bounds->vMin == 0.0f && bounds->vMax == 1.0f && bounds->uMin == 0.0f && bounds->uMax == 1.0f)
 		bounds = nullptr;
 	// After a failure the next tries come further apart (1, 3, 7, ... frames, at most 90), so a swapchain that can't be
@@ -34,7 +33,7 @@ void Compositor::Invoke(const vr::Texture_t* texture, const vr::VRTextureBounds_
 	}
 	lastResult = XR_SUCCESS;
 	submitSlice = SubmitArraySlice::Current();
-	CopyToSwapchain(texture, invertInCompositor ? bounds : nullptr, eye, submitFlags);
+	CopyToSwapchain(texture, bounds, eye, submitFlags);
 	if (XR_FAILED(lastResult)) {
 		lastFailure = lastResult;
 		failuresInARow = std::min(failuresInARow + 1, 8);
@@ -45,8 +44,9 @@ void Compositor::Invoke(const vr::Texture_t* texture, const vr::VRTextureBounds_
 	// A failed swapchain call leaves this eye out of the frame (XrBackend checks the swapchain)
 	subImage.swapchain = XR_FAILED(lastResult) ? XR_NULL_HANDLE : GetSwapChain();
 	subImage.imageArrayIndex = 0; // This is *not* the swapchain index
-	XrExtent2Di src = GetSrcSize();
-	CalculateViewport(invertInCompositor ? nullptr : bounds, src.width, src.height, true, subImage.imageRect);
+	// The swapchain is the size of the bounds' area, which the copy put in it whole (flipped bounds flipped back)
+	subImage.imageRect.offset = { 0, 0 };
+	subImage.imageRect.extent = GetSrcSize();
 }
 
 // Each failing call (and result) is logged the first time only
@@ -113,34 +113,6 @@ bool Compositor::AcquireAndWait(uint32_t imageCount, uint32_t& index, int64_t ti
 	}
 	index = pendingIndex;
 	return true;
-}
-
-bool Compositor::CalculateViewport(const vr::VRTextureBounds_t* ptrBounds, int32_t width, int32_t height, bool supportsInvert, XrRect2Di& viewport)
-{
-	bool submitVerticallyFlipped = false;
-
-	if (ptrBounds) {
-		vr::VRTextureBounds_t newBounds = *ptrBounds;
-		if (!supportsInvert && newBounds.vMin > newBounds.vMax) {
-			float newMax = newBounds.vMin;
-			newBounds.vMin = newBounds.vMax;
-			newBounds.vMax = newMax;
-			submitVerticallyFlipped = true;
-		} else {
-			submitVerticallyFlipped = false;
-		}
-
-		viewport.offset.x = (int)(newBounds.uMin * (float)width);
-		viewport.offset.y = (int)(newBounds.vMin * (float)height);
-		viewport.extent.width = (int)((newBounds.uMax - newBounds.uMin) * (float)width);
-		viewport.extent.height = (int)((newBounds.vMax - newBounds.vMin) * (float)height);
-	} else {
-		viewport.offset.x = viewport.offset.y = 0;
-		viewport.extent.width = width;
-		viewport.extent.height = height;
-		submitVerticallyFlipped = false;
-	}
-	return submitVerticallyFlipped;
 }
 
 static thread_local std::optional<uint32_t> currentSubmitSlice;

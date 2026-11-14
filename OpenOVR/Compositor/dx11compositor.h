@@ -19,7 +19,8 @@ public:
 	ID3D11Device* GetDevice() { return device; }
 
 protected:
-	void CheckCreateSwapChain(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, bool cube);
+	// A swapchain for the texture, width x height (0: the texture's size)
+	void CheckCreateSwapChain(const vr::Texture_t* texture, uint32_t width, uint32_t height, bool cube);
 
 
 	bool CheckChainCompatible(D3D11_TEXTURE2D_DESC& inputDesc, vr::EColorSpace colourSpace);
