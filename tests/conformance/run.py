@@ -39,6 +39,10 @@ CASES = ["init-matrix", "init-repeat", "init-other-thread", "lookup-before-init"
          "overlay-lifecycle", "input-manifest", "frame-loop", "submit-edges", "applications"]
 TIMEOUT = 60
 CASE_TIMEOUT = 600  # init-repeat starts OpenLamina 200 times
+# Cases that record every event they poll, expecting none but their own: each gets a store folder of its own. A
+# scene application starting or ending in another child (submit-edges and applications run beside them, --jobs 4)
+# posts SceneApplicationStateChanged to every program that shares the store, and it would land in a frame at random.
+OWN_STORE = {"frame-loop", "old-events"}
 # SteamVR's answers while vrserver was starting or stopping between children (Retry, AnotherAppLaunching,
 # ShuttingDown): a recording keeps them, a comparison skips them
 STEAMVR_TRANSIENT = {115, 117, 119}
@@ -196,7 +200,12 @@ class Runner:
         # The stand-in runtime's dump of what it was asked (frames ended and so on), for xr_failures.py
         dump = self.out / "raw" / f"case-{name}.dump.json"
         dump.unlink(missing_ok=True)
-        code = self.child(extra, raw, CASE_TIMEOUT, {"OC_TEST_RUNTIME_DUMP": str(dump)})
+        env_extra = {"OC_TEST_RUNTIME_DUMP": str(dump)}
+        if name in OWN_STORE:
+            store = self.out / f"store-{name}"
+            shutil.rmtree(store, ignore_errors=True)
+            env_extra["OC_STORE_DIR"] = str(store)
+        code = self.child(extra, raw, CASE_TIMEOUT, env_extra)
         records = read_jsonl(raw)
         dump_data = None
         if any("dump_join" in r for r in records) and dump.exists():
