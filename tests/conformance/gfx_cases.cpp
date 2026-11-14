@@ -488,6 +488,8 @@ const std::map<std::string, CaseFn>& conformance::GfxCases()
 		{ "overlay-texture-readback-d3d12", [](CaseContext& c) { OverlayTextureReadback(c, GfxKind::D3D12, kDxgiRGBA8Srgb); } },
 		{ "overlay-texture-readback-vk", [](CaseContext& c) { OverlayTextureReadback(c, GfxKind::Vulkan, kVkRGBA8Srgb); } },
 		{ "overlay-texture-readback-gl", [](CaseContext& c) { OverlayTextureReadback(c, GfxKind::OpenGL, kGlSRGB8Alpha8); } },
+		{ "gfx-d3d10-basic", [](CaseContext& c) { Basic(c, GfxKind::D3D10, kDxgiRGBA8Srgb); } },
+		{ "gfx-d3d10-bounds", [](CaseContext& c) { Bounds(c, GfxKind::D3D10, kDxgiRGBA8Srgb); } },
 	};
 	return cases;
 }

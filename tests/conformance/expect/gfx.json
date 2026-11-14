@@ -1,5 +1,5 @@
 {
- "#": "The frame and overlay cases (run.py --cases <the gfx-* and overlay-* cases of build.yml's gfx step> --script scripts/gfx_all_apis.json --expect expect/gfx.json): the test pattern of gfx/GfxApi.h as the stand-in runtime read back the last projection layer's views or the last quad layer (dump:). gfx-<api>-basic: 1024 x 1024 RGBA8 sRGB per eye with full bounds; eye 1's quadrants are rotated once clockwise. overlay-raw-<api>: a 64 x 64 RGBA image set with SetOverlayRaw on a scene app of that API, and read back with GetOverlayImageData (short: a buffer a byte too small). overlay-texture-readback-<api>: a 64 x 64 texture overlay read back. gfx-d3d11-odd: a 1 x 1 texture (eye 0 all white, eye 1 all green), 4097 x 2049, 4x MSAA R8G8B8A8_TYPELESS, slice 1 of a two-slice array (SubmitWithArrayIndex; slice 1 has the other eye's pattern) and an sRGB texture under ColorSpace_Linear (into R8G8B8A8_UNORM, 28), each found in the dump by its size. gfx-<api>-bounds: the whole texture (768 x 768 per eye), side-by-side halves of one 2048 x 1024 texture of eye 0's pattern ({0,0,0.5,1} and {0.5,0,1,1}), the whole flipped ({0,1,1,0}, 640 x 640: shown upside down) and flipped halves of one 1200 x 600 texture; each view's rect is the whole of a swapchain the size of its bounds. Known failures are in expect/gfx_known.json.",
+ "#": "The frame and overlay cases (run.py --cases <the gfx-* and overlay-* cases of build.yml's gfx step> --script scripts/gfx_all_apis.json --expect expect/gfx.json): the test pattern of gfx/GfxApi.h as the stand-in runtime read back the last projection layer's views or the last quad layer (dump:). gfx-<api>-basic (D3D10 too, through the D3D11 path): 1024 x 1024 RGBA8 sRGB per eye with full bounds; eye 1's quadrants are rotated once clockwise. overlay-raw-<api>: a 64 x 64 RGBA image set with SetOverlayRaw on a scene app of that API, and read back with GetOverlayImageData (short: a buffer a byte too small). overlay-texture-readback-<api>: a 64 x 64 texture overlay read back. gfx-d3d11-odd: a 1 x 1 texture (eye 0 all white, eye 1 all green), 4097 x 2049, 4x MSAA R8G8B8A8_TYPELESS, slice 1 of a two-slice array (SubmitWithArrayIndex; slice 1 has the other eye's pattern) and an sRGB texture under ColorSpace_Linear (into R8G8B8A8_UNORM, 28), each found in the dump by its size. gfx-<api>-bounds (D3D10 too): the whole texture (768 x 768 per eye), side-by-side halves of one 2048 x 1024 texture of eye 0's pattern ({0,0,0.5,1} and {0.5,0,1,1}), the whole flipped ({0,1,1,0}, 640 x 640: shown upside down) and flipped halves of one 1200 x 600 texture; each view's rect is the whole of a swapchain the size of its bounds. Known failures are in expect/gfx_known.json.",
  "gfx-d3d11-basic/frame/-/-": {
   "left": 0,
   "right": 0,
@@ -43,6 +43,20 @@
   "dump:views[1].samples.br": "00ff00ff"
  },
  "gfx-gl-basic/frame/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:views[0].invalid": [],
+  "dump:views[1].invalid": [],
+  "dump:views[0].samples.tl": "ff0000ff",
+  "dump:views[0].samples.tr": "00ff00ff",
+  "dump:views[0].samples.bl": "0000ffff",
+  "dump:views[0].samples.br": "ffffffff",
+  "dump:views[1].samples.tl": "0000ffff",
+  "dump:views[1].samples.tr": "ff0000ff",
+  "dump:views[1].samples.bl": "ffffffff",
+  "dump:views[1].samples.br": "00ff00ff"
+ },
+ "gfx-d3d10-basic/frame/-/-": {
   "left": 0,
   "right": 0,
   "dump:views[0].invalid": [],
@@ -723,6 +737,116 @@
   "dump:views[1].samples.br": "ff0000ff"
  },
  "gfx-gl-bounds/flipped halves/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   600,
+   600
+  ],
+  "dump:views[0].samples.tl": "0000ffff",
+  "dump:views[0].samples.tr": "0000ffff",
+  "dump:views[0].samples.bl": "ff0000ff",
+  "dump:views[0].samples.br": "ff0000ff",
+  "dump:views[1].invalid": [],
+  "dump:views[1].rect": [
+   0,
+   0,
+   600,
+   600
+  ],
+  "dump:views[1].samples.tl": "ffffffff",
+  "dump:views[1].samples.tr": "ffffffff",
+  "dump:views[1].samples.bl": "00ff00ff",
+  "dump:views[1].samples.br": "00ff00ff"
+ },
+ "gfx-d3d10-bounds/full/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   768,
+   768
+  ],
+  "dump:views[0].samples.tl": "ff0000ff",
+  "dump:views[0].samples.tr": "00ff00ff",
+  "dump:views[0].samples.bl": "0000ffff",
+  "dump:views[0].samples.br": "ffffffff",
+  "dump:views[1].invalid": [],
+  "dump:views[1].rect": [
+   0,
+   0,
+   768,
+   768
+  ],
+  "dump:views[1].samples.tl": "0000ffff",
+  "dump:views[1].samples.tr": "ff0000ff",
+  "dump:views[1].samples.bl": "ffffffff",
+  "dump:views[1].samples.br": "00ff00ff"
+ },
+ "gfx-d3d10-bounds/halves/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   1024,
+   1024
+  ],
+  "dump:views[0].samples.tl": "ff0000ff",
+  "dump:views[0].samples.tr": "ff0000ff",
+  "dump:views[0].samples.bl": "0000ffff",
+  "dump:views[0].samples.br": "0000ffff",
+  "dump:views[0].samples.c": "0000ffff",
+  "dump:views[1].invalid": [],
+  "dump:views[1].rect": [
+   0,
+   0,
+   1024,
+   1024
+  ],
+  "dump:views[1].samples.tl": "00ff00ff",
+  "dump:views[1].samples.tr": "00ff00ff",
+  "dump:views[1].samples.bl": "ffffffff",
+  "dump:views[1].samples.br": "ffffffff",
+  "dump:views[1].samples.c": "ffffffff"
+ },
+ "gfx-d3d10-bounds/flipped/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   640,
+   640
+  ],
+  "dump:views[0].samples.tl": "0000ffff",
+  "dump:views[0].samples.tr": "ffffffff",
+  "dump:views[0].samples.bl": "ff0000ff",
+  "dump:views[0].samples.br": "00ff00ff",
+  "dump:views[1].invalid": [],
+  "dump:views[1].rect": [
+   0,
+   0,
+   640,
+   640
+  ],
+  "dump:views[1].samples.tl": "ffffffff",
+  "dump:views[1].samples.tr": "00ff00ff",
+  "dump:views[1].samples.bl": "0000ffff",
+  "dump:views[1].samples.br": "ff0000ff"
+ },
+ "gfx-d3d10-bounds/flipped halves/-/-": {
   "left": 0,
   "right": 0,
   "dump:invalid": [],
