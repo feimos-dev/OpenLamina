@@ -1,5 +1,5 @@
 // The frame cases, gfx-<api>-<what>: a game on one graphics API (gfx/GfxApi.h) submits the test pattern, and the
-// stand-in runtime's dump shows what OpenComposite made of it. Each records "frame" with "dump_join":
+// stand-in runtime's dump shows what OpenLamina made of it. Each records "frame" with "dump_join":
 // "last_projection", for which run.py joins the dump's last projection layer (per view: samples, rect, format,
 // invalid) as the record's "dump"; a case whose API can't be made here records {"skipped": why}.
 
@@ -42,7 +42,7 @@ constexpr int64_t kDxgiRGBA8Srgb = 29; // DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
 constexpr int64_t kVkRGBA8Srgb = 43; // VK_FORMAT_R8G8B8A8_SRGB
 constexpr int64_t kGlSRGB8Alpha8 = 0x8C43; // GL_SRGB8_ALPHA8
 
-// The frames each case submits: enough for OpenComposite to move its session onto the game's device
+// The frames each case submits: enough for OpenLamina to move its session onto the game's device
 constexpr int kFrames = 10;
 
 Json::Value Skipped(const std::string& why)
@@ -94,7 +94,7 @@ void Basic(CaseContext& c, GfxKind kind, int64_t format)
 	r["frames"] = kFrames;
 	r["dump_join"] = "last_projection";
 	c.Record("frame", r);
-	// OpenComposite first, then the textures and the device (OpenVR's rule for every API)
+	// OpenLamina first, then the textures and the device (OpenVR's rule for every API)
 	c.core->Cleanup();
 	gfx->Flush();
 }

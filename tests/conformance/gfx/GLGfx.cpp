@@ -1,4 +1,4 @@
-// OpenGL for the frame cases: a hidden window's WGL context, current on the case's thread (OpenComposite takes the
+// OpenGL for the frame cases: a hidden window's WGL context, current on the case's thread (OpenLamina takes the
 // game's context from the thread that submits). Textures are filled with glTexImage2D, rows bottom-up as OpenGL
 // has them. Windows' own OpenGL 1.1 isn't enough: a driver's OpenGL 3 or later is needed.
 
