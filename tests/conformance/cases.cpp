@@ -27,6 +27,7 @@
 #include "IVROverlay_001.h"
 #include "IVROverlay_006.h"
 #include "IVROverlay_007.h"
+#include "IVROverlay_025.h"
 #include "IVROverlay_028.h"
 #include "IVRSystem_003.h"
 #include "IVRSystem_007.h"
@@ -340,6 +341,203 @@ bool OpenFrames(CaseContext& c, Frames& f)
 		return false;
 	}
 	return true;
+}
+
+// Rounded to a millimetre (or a thousandth), so a record compares exactly
+double Milli(double v)
+{
+	double r = std::round(v * 1000) / 1000;
+	return r == 0 ? 0.0 : r; // no -0
+}
+
+Json::Value MilliArray(const Json::Value& a)
+{
+	Json::Value out(Json::arrayValue);
+	for (const Json::Value& v : a)
+		out.append(Milli(v.asDouble()));
+	return out;
+}
+
+Json::Value MilliArray(std::initializer_list<float> values)
+{
+	Json::Value out(Json::arrayValue);
+	for (float v : values)
+		out.append(Milli(v));
+	return out;
+}
+
+vr::HmdMatrix34_t Translation(float x, float y, float z)
+{
+	vr::HmdMatrix34_t m{};
+	m.m[0][0] = m.m[1][1] = m.m[2][2] = 1;
+	m.m[0][3] = x;
+	m.m[1][3] = y;
+	m.m[2][3] = z;
+	return m;
+}
+
+// One overlay per kind of transform, drawn for a few frames: the stand-in's dump has each layer's placement
+// (expect/overlay_transforms.json, with scripts/overlay_transforms.json). The head is at (0, 1.7, 0), looking along
+// -Z; every overlay is 1 m wide, with a square texture.
+void OverlayTransformsCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	vr::EVRInitError le;
+	auto* ov = (vr::IVROverlay_028::IVROverlay*)c.core->GetGenericInterface("IVROverlay_028", &le);
+	auto* ov025 = (vr::IVROverlay_025::IVROverlay*)c.core->GetGenericInterface("IVROverlay_025", &le);
+	if (!ov || !ov025) {
+		c.Record("no IVROverlay_028 or 025", Err(le));
+		c.core->Cleanup();
+		return;
+	}
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	std::vector<std::pair<std::string, vr::VROverlayHandle_t>> made;
+	auto make = [&](const char* name) {
+		vr::VROverlayHandle_t h = vr::k_ulOverlayHandleInvalid;
+		ov->CreateOverlay((std::string("oc.transforms.") + name).c_str(), name, &h);
+		ov->SetOverlayWidthInMeters(h, 1);
+		ov->SetOverlaySortOrder(h, (uint32_t)made.size() + 1); // drawn in this order
+		if (tex.get())
+			ov->SetOverlayTexture(h, tex.get());
+		ov->ShowOverlay(h);
+		made.emplace_back(name, h);
+		return h;
+	};
+	Json::Value set;
+	vr::HmdMatrix34_t m = Translation(0, 1.5f, -2);
+	vr::VROverlayHandle_t absolute = make("absolute");
+	set["absolute"] = (int)ov->SetOverlayTransformAbsolute(absolute, vr::TrackingUniverseStanding, &m);
+	m = Translation(0.5f, 1, -2);
+	set["seated"] = (int)ov->SetOverlayTransformAbsolute(make("seated"), vr::TrackingUniverseSeated, &m);
+	m = Translation(0, 0, -1.5f);
+	set["device"] = (int)ov->SetOverlayTransformTrackedDeviceRelative(make("device"), vr::k_unTrackedDeviceIndex_Hmd, &m);
+	set["component"] = (int)ov->SetOverlayTransformTrackedDeviceComponent(make("component"), vr::k_unTrackedDeviceIndex_Hmd, "tip");
+	// Half a metre right of the absolute overlay, turned 90 degrees to its left
+	m = Translation(0.5f, 0, 0);
+	m.m[0][0] = m.m[2][2] = 0;
+	m.m[0][2] = 1;
+	m.m[2][0] = -1;
+	set["relative"] = (int)ov025->SetOverlayTransformOverlayRelative(make("relative"), absolute, &m);
+	// A cursor nothing points at: at its own transform
+	vr::VROverlayHandle_t cursor = make("cursor");
+	m = Translation(-0.5f, 1.5f, -2);
+	ov->SetOverlayTransformAbsolute(cursor, vr::TrackingUniverseStanding, &m);
+	vr::HmdVector2_t hotspot{ { 0.5f, 0.5f } };
+	set["cursor"] = (int)ov->SetOverlayTransformCursor(cursor, &hotspot);
+	// Projections: 90 degrees for the left eye; 1 left, 0.5 right, 1 up and 0.5 down for the right one
+	m = Translation(-0.032f, 1.7f, 0);
+	vr::IVROverlay_028::VROverlayProjection_t left{ -1, 1, -1, 1 };
+	set["projection left"] = (int)ov->SetOverlayTransformProjection(make("projection left"), vr::TrackingUniverseStanding, &m, &left, vr::Eye_Left);
+	m = Translation(0.032f, 1.7f, 0);
+	vr::IVROverlay_028::VROverlayProjection_t right{ -1, 0.5f, -1, 0.5f };
+	set["projection right"] = (int)ov->SetOverlayTransformProjection(make("projection right"), vr::TrackingUniverseStanding, &m, &right, vr::Eye_Right);
+	vr::VROverlayHandle_t curved = make("curved");
+	m = Translation(0, 1, -1);
+	ov->SetOverlayTransformAbsolute(curved, vr::TrackingUniverseStanding, &m);
+	set["curved"] = (int)ov->SetOverlayCurvature(curved, 0.25f);
+	// Relative to each other: neither can be placed
+	vr::VROverlayHandle_t cycleA = make("cycle a"), cycleB = make("cycle b");
+	m = Translation(0, 0, 0);
+	set["cycle a"] = (int)ov025->SetOverlayTransformOverlayRelative(cycleA, cycleB, &m);
+	set["cycle b"] = (int)ov025->SetOverlayTransformOverlayRelative(cycleB, cycleA, &m);
+	c.Record("set", set);
+
+	Json::Value types;
+	for (auto& [name, h] : made) {
+		vr::IVROverlay_028::VROverlayTransformType type = vr::IVROverlay_028::VROverlayTransform_Invalid;
+		ov->GetOverlayTransformType(h, &type);
+		types[name] = (int)type;
+	}
+	c.Record("GetOverlayTransformType", types);
+
+	for (int frame = 1; frame <= 5; frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+		f.comp->Submit(vr::Eye_Left, tex.get(), nullptr, vr::Submit_Default);
+		f.comp->Submit(vr::Eye_Right, tex.get(), nullptr, vr::Submit_Default);
+	}
+
+	auto intersect = [&](const char* label, vr::VROverlayHandle_t h, vr::HmdVector3_t from, vr::HmdVector3_t dir) {
+		vr::IVROverlay_028::VROverlayIntersectionParams_t params{ from, dir, vr::TrackingUniverseStanding };
+		vr::IVROverlay_028::VROverlayIntersectionResults_t res{};
+		Json::Value r;
+		r["ret"] = ov->ComputeOverlayIntersection(h, &params, &res);
+		r["point"] = MilliArray({ res.vPoint.v[0], res.vPoint.v[1], res.vPoint.v[2] });
+		r["normal"] = MilliArray({ res.vNormal.v[0], res.vNormal.v[1], res.vNormal.v[2] });
+		r["uv"] = MilliArray({ res.vUVs.v[0], res.vUVs.v[1] });
+		r["distance"] = Milli(res.fDistance);
+		c.Record(label, r);
+	};
+	// From the absolute overlay's height, a quarter of its width in from its right edge
+	intersect("ComputeOverlayIntersection absolute", absolute, { { 0, 1.5f, 0 } }, { { 0.25f, 0, -2 } });
+	// The curved overlay (a quarter circle) from its cylinder's axis, 0.2 π to the right: u = 0.5 + 0.2 / 0.5
+	{
+		const float pi = 3.14159265f;
+		const float radius = 1 / (2 * pi * 0.25f);
+		const float angle = 0.2f * pi;
+		intersect("ComputeOverlayIntersection curved", curved, { { 0, 1, -1 + radius } }, { { std::sin(angle), 0, -std::cos(angle) } });
+	}
+	// A circle in the middle of the absolute overlay: the ray a quarter in misses it, the one at the centre hits it
+	{
+		vr::IVROverlay_028::VROverlayIntersectionMaskPrimitive_t circle{};
+		circle.m_nPrimitiveType = vr::IVROverlay_028::OverlayIntersectionPrimitiveType_Circle;
+		circle.m_Primitive.m_Circle = { 0.5f, 0.5f, 0.1f };
+		c.Record("SetOverlayIntersectionMask", Err(ov->SetOverlayIntersectionMask(absolute, &circle, 1, sizeof(circle))));
+	}
+	intersect("masked off centre", absolute, { { 0, 1.5f, 0 } }, { { 0.25f, 0, -2 } });
+	intersect("masked centre", absolute, { { 0, 1.5f, 0 } }, { { 0, 0, -1 } });
+	{
+		vr::HmdMatrix34_t point{};
+		Json::Value r;
+		r["ret"] = (int)ov->GetTransformForOverlayCoordinates(absolute, vr::TrackingUniverseStanding, { { 0.75f, 0.25f } }, &point);
+		r["p"] = MilliArray({ point.m[0][3], point.m[1][3], point.m[2][3] });
+		c.Record("GetTransformForOverlayCoordinates", r);
+	}
+	for (auto& [name, h] : made)
+		ov->DestroyOverlay(h);
+	c.core->Cleanup();
+
+	// The last frame's overlay layers (after the scene's projection), one record each, in their sort order
+	Json::Value dump = ReadStandInDump();
+	if (dump.isNull()) {
+		c.Record("no dump");
+		return;
+	}
+	const Json::Value& layers = dump["layers"];
+	Json::Value last(Json::arrayValue);
+	if (layers.size()) {
+		const Json::Value frame = layers[layers.size() - 1]["frame"];
+		for (const Json::Value& layer : layers)
+			if (layer["frame"] == frame && layer["type"].asString() != "projection")
+				last.append(layer);
+	}
+	std::vector<std::string> drawn;
+	for (auto& [name, h] : made)
+		if (name != "cycle a" && name != "cycle b")
+			drawn.push_back(name);
+	Json::Value count;
+	count["layers"] = last.size();
+	count["expected"] = (int)drawn.size();
+	c.Record("overlay layers", count);
+	for (Json::ArrayIndex i = 0; i < last.size() && i < drawn.size(); i++) {
+		const Json::Value& layer = last[i];
+		Json::Value r;
+		r["type"] = layer["type"];
+		r["p"] = MilliArray(layer["pose"]["p"]);
+		r["q"] = MilliArray(layer["pose"]["q"]);
+		r["eye_visibility"] = layer["eye_visibility"];
+		r["invalid"] = layer["invalid"];
+		if (layer.isMember("size"))
+			r["size"] = MilliArray(layer["size"]);
+		if (layer.isMember("radius")) {
+			r["radius"] = Milli(layer["radius"].asDouble());
+			r["angles"] = MilliArray(layer["angles"]);
+			r["aspect_ratio"] = Milli(layer["aspect_ratio"].asDouble());
+		}
+		c.Record("layer " + drawn[i], r);
+	}
 }
 
 void FrameLoop(CaseContext& c)
@@ -2243,6 +2441,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "old-calls", OldCalls },
 		{ "old-submit", OldSubmit },
 		{ "old-overlay", OldOverlay },
+		{ "overlay-transforms", OverlayTransformsCase },
 		{ "old-misc", OldMisc },
 		{ "new-interfaces", NewInterfaces },
 		{ "device-identity", DeviceIdentityCase },
