@@ -1,0 +1,6 @@
+{
+ "#": "A moving controller's velocities on the stand-in (run.py --cases velocities --script scripts/velocities.json --expect expect/velocities.json): w as scripted, v at the grip as scripted (the pose is SteamVR's, away from the grip, so its own v adds the turn's), and the unscripted head still.",
+ "velocities/GetDeviceToAbsoluteTrackingPose/-/-": {
+  "found": true, "valid": true, "w": [0.0, 2.0, 0.0], "v at grip": [1.0, 0.0, 0.0], "hmd v": [0.0, 0.0, 0.0], "hmd w": [0.0, 0.0, 0.0]
+ }
+}

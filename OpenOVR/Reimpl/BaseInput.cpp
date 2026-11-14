@@ -2501,10 +2501,14 @@ EVRInputError BaseInput::GetPoseActionData(VRActionHandle_t action, ETrackingUni
 			pActionData->pose.bDeviceIsConnected = true;
 			pActionData->pose.eTrackingResult = rawPose.eTrackingResult;
 
-			// The velocity stays in the original coordinate system, no translation required
-			pActionData->pose.vVelocity = rawPose.vVelocity;
-
-			// TODO what about angular velocity?
+			// The velocities stay in the tracking space. The angular one is the same everywhere on the device; the
+			// component's point is away from the device's, so its linear one adds the turn's: w x (component - device).
+			glm::vec3 velocity = S2G_v3f(rawPose.vVelocity);
+			if (hasTransform) {
+				const glm::vec3 offset = glm::vec3(handMat[3]) - glm::vec3(S2G_m34(rawPose.mDeviceToAbsoluteTracking)[3]);
+				velocity += glm::cross(S2G_v3f(rawPose.vAngularVelocity), offset);
+			}
+			pActionData->pose.vVelocity = G2S_v3f(velocity);
 			pActionData->pose.vAngularVelocity = rawPose.vAngularVelocity;
 		}
 

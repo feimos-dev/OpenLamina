@@ -1982,6 +1982,51 @@ void SessionEventsCase(CaseContext& c)
 	c.core->Cleanup();
 }
 
+// A controller moving and turning (scripts/velocities.json: the right grip at (0.2, 1, -0.3), 1 m/s along +X, turning
+// 2 rad/s about +Y): GetDeviceToAbsoluteTrackingPose gives both back. The pose is SteamVR's, offset from the grip, so its
+// point moves by the turn as well: v at the grip is v - w x (pose - grip). (expect/velocities.json)
+void VelocitiesCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	for (int frame = 1; frame <= 10; frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+		// Reading the controllers is what starts legacy input
+		for (vr::TrackedDeviceIndex_t i = 1; i < 16; i++) {
+			vr::VRControllerState_t state{};
+			f.sys->GetControllerState(i, &state, sizeof(state));
+		}
+		f.comp->Submit(vr::Eye_Left, tex.get(), nullptr, vr::Submit_Default);
+		f.comp->Submit(vr::Eye_Right, tex.get(), nullptr, vr::Submit_Default);
+	}
+	vr::TrackedDevicePose_t poses[16]{};
+	f.sys->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding, 0, poses, 16);
+	const vr::TrackedDeviceIndex_t right = f.sys->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_RightHand);
+	Json::Value r;
+	r["found"] = right < 16;
+	if (right < 16) {
+		const vr::TrackedDevicePose_t& p = poses[right];
+		r["valid"] = p.bPoseIsValid;
+		r["v"] = ThousandthsOf(p.vVelocity);
+		r["w"] = ThousandthsOf(p.vAngularVelocity);
+		const float grip[3] = { 0.2f, 1.0f, -0.3f };
+		const float d[3] = { p.mDeviceToAbsoluteTracking.m[0][3] - grip[0], p.mDeviceToAbsoluteTracking.m[1][3] - grip[1],
+			p.mDeviceToAbsoluteTracking.m[2][3] - grip[2] };
+		const float* w = p.vAngularVelocity.v;
+		const vr::HmdVector3_t atGrip = { { p.vVelocity.v[0] - (w[1] * d[2] - w[2] * d[1]), p.vVelocity.v[1] - (w[2] * d[0] - w[0] * d[2]),
+			p.vVelocity.v[2] - (w[0] * d[1] - w[1] * d[0]) } };
+		r["v at grip"] = ThousandthsOf(atGrip);
+	}
+	// The head isn't scripted to move
+	r["hmd v"] = ThousandthsOf(poses[vr::k_unTrackedDeviceIndex_Hmd].vVelocity);
+	r["hmd w"] = ThousandthsOf(poses[vr::k_unTrackedDeviceIndex_Hmd].vAngularVelocity);
+	c.Record("GetDeviceToAbsoluteTrackingPose", r);
+	c.core->Cleanup();
+}
+
 void SubmitEdges(CaseContext& c)
 {
 	Frames f;
@@ -2993,6 +3038,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "events-listen", EventsListenCase },
 		{ "events-commit", EventsCommitCase },
 		{ "session-events", SessionEventsCase },
+		{ "velocities", VelocitiesCase },
 		{ "submit-edges", SubmitEdges },
 		{ "observer", ObserverCase },
 		{ "own-frames", OwnFramesCase },
