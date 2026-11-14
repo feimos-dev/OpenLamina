@@ -60,7 +60,7 @@ Json::Value Err(int e)
 	return v;
 }
 
-// The stand-in runtime's dump (OC_TEST_RUNTIME_DUMP), written when OpenComposite destroys its instance: read it after
+// The stand-in runtime's dump (OC_TEST_RUNTIME_DUMP), written when OpenLamina destroys its instance: read it after
 // Cleanup. Null without one (another runtime, or none written).
 Json::Value ReadStandInDump()
 {
@@ -494,7 +494,7 @@ void OldCalls(CaseContext& c)
 	unknown["handle"] = (Json::UInt64)model.ulInternalHandle;
 	c.Record("LoadRenderModel unknown", unknown);
 
-	// IVRTrackedCamera_001 in SDK 0.9.12's slot order, which OpenComposite answers (0.9.11 has fewer slots, 0.9.14 one
+	// IVRTrackedCamera_001 in SDK 0.9.12's slot order, which OpenLamina answers (0.9.11 has fewer slots, 0.9.14 one
 	// gone from the middle), through the last slot: no camera, so false, 0 or null, and the outputs left as they were
 	auto* cam = (vr::IVRTrackedCamera_001::IVRTrackedCamera*)c.core->GetGenericInterface("IVRTrackedCamera_001", &le);
 	Json::Value camera;
@@ -1228,7 +1228,7 @@ void EventsCase(CaseContext& c)
 // and a render thread do. With scripts/input_toggle.json and manifest_toggle.json, under either evaluator: nothing may
 // crash, and the toggle still turns on, off and on. The second thread starts after frame start_frame (--case-arg
 // start_frame=<n>, default 0: before the first frame, so it reads while the first Submit recreates the session for the
-// game's graphics API). With the stand-in, the record also has the action calls OpenComposite made on a session that
+// game's graphics API). With the stand-in, the record also has the action calls OpenLamina made on a session that
 // wasn't live (action_calls_without_session).
 void InputThreadsCase(CaseContext& c)
 {
