@@ -100,6 +100,9 @@ XrSessionState StateFromName(const std::string& n)
 XrPosef SpaceInStage(const RtSpace* sp)
 {
 	XrPosef base = sp->isAction ? sp->actionPose : (sp->type == XR_REFERENCE_SPACE_TYPE_VIEW ? kHead : kIdentity);
+	XrSpaceLocationFlags flags;
+	if (sp->isAction)
+		RtGazeSpace(sp, &base, &flags);
 	return Compose(base, sp->offset);
 }
 
@@ -507,6 +510,15 @@ XrResult XRAPI_CALL LocateSpace(XrSpace space, XrSpace base, XrTime, XrSpaceLoca
 	loc->pose = Compose(Inverse(SpaceInStage(b->second.get())), SpaceInStage(a->second.get()));
 	loc->locationFlags = XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT
 	    | XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT | XR_SPACE_LOCATION_POSITION_TRACKED_BIT;
+	// A gaze space, or a gaze base space, is only as valid as the gaze
+	XrPosef unused;
+	XrSpaceLocationFlags gazeFlags;
+	if (RtGazeSpace(a->second.get(), &unused, &gazeFlags))
+		loc->locationFlags &= gazeFlags;
+	if (RtGazeSpace(b->second.get(), &unused, &gazeFlags))
+		loc->locationFlags &= gazeFlags;
+	if (!(loc->locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
+		loc->pose = kIdentity;
 	return XR_SUCCESS;
 }
 
@@ -534,10 +546,13 @@ XrResult XRAPI_CALL LocateViews(XrSession, const XrViewLocateInfo* info, XrViewS
 		return XR_ERROR_SIZE_INSUFFICIENT;
 	XrPosef headInBase = Compose(Inverse(SpaceInStage(b->second.get())), kHead);
 	float half = GetScript().fovDeg * 3.14159265f / 180.0f;
+	float inner = GetScript().fovInnerDeg >= 0 ? GetScript().fovInnerDeg * 3.14159265f / 180.0f : half;
 	for (int i = 0; i < 2; i++) {
-		XrPosef eye{ { 0, 0, 0, 1 }, { (i == 0 ? -0.5f : 0.5f) * GetScript().ipd, 0, 0 } };
+		// Turned outwards by cant_deg: the left view to the left (positive about +Y), the right one to the right
+		float cant = (i == 0 ? 0.5f : -0.5f) * GetScript().cantDeg * 3.14159265f / 180.0f;
+		XrPosef eye{ { 0, std::sin(cant), 0, std::cos(cant) }, { (i == 0 ? -0.5f : 0.5f) * GetScript().ipd, 0, 0 } };
 		views[i].pose = Compose(headInBase, eye);
-		views[i].fov = { -half, half, half, -half };
+		views[i].fov = { i == 0 ? -half : -inner, i == 0 ? inner : half, half, -half };
 	}
 	state->viewStateFlags = XR_VIEW_STATE_ORIENTATION_VALID_BIT | XR_VIEW_STATE_POSITION_VALID_BIT
 	    | XR_VIEW_STATE_ORIENTATION_TRACKED_BIT | XR_VIEW_STATE_POSITION_TRACKED_BIT;

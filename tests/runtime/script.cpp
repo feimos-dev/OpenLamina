@@ -45,6 +45,10 @@ static Script LoadScript()
 		s.fovDeg = root["fov_deg"].asFloat();
 	if (root.isMember("ipd"))
 		s.ipd = root["ipd"].asFloat();
+	if (root.isMember("cant_deg"))
+		s.cantDeg = root["cant_deg"].asFloat();
+	if (root.isMember("fov_inner_deg"))
+		s.fovInnerDeg = root["fov_inner_deg"].asFloat();
 	if (root.isMember("display_hz"))
 		s.displayHz = root["display_hz"].asFloat();
 	if (root.isMember("stage_bounds")) {
@@ -79,6 +83,16 @@ static Script LoadScript()
 		pr.frame = p["frame"].asUInt64();
 		pr.worn = p["worn"].asBool();
 		s.presence.push_back(pr);
+	}
+	for (const Json::Value& g : root["gaze"]) {
+		ScriptGaze gz;
+		gz.frame = g["frame"].asUInt64();
+		gz.yawDeg = g["yaw_deg"].asFloat();
+		gz.pitchDeg = g["pitch_deg"].asFloat();
+		gz.valid = g.isMember("valid") ? g["valid"].asBool() : true;
+		gz.tracked = g.isMember("tracked") ? g["tracked"].asBool() : true;
+		gz.positionValid = g.isMember("position_valid") ? g["position_valid"].asBool() : true;
+		s.gaze.push_back(gz);
 	}
 	return s;
 }
