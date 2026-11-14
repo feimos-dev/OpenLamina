@@ -246,6 +246,8 @@ add_library(DrvOpenXR STATIC
 	DrvOpenXR/CpuSwapchain_D3D12.cpp
 	DrvOpenXR/CpuSwapchain_Vk.cpp
 	DrvOpenXR/CpuSwapchain_GL.cpp
+	DrvOpenXR/OwnFrameLoop.cpp
+	DrvOpenXR/OwnFrameLoop.h
 
 	DrvOpenXR/tmp_gfx/TemporaryGraphics.cpp
 	DrvOpenXR/tmp_gfx/TemporaryGraphics.h

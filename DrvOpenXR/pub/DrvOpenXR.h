@@ -11,4 +11,6 @@ namespace DrvOpenXR {
 // Internal), with everything it had created destroyed again
 IBackend* CreateOpenXRBackend(const char* startupInfo, vr::EVRInitError* error);
 void GetXRAppName(char (&appName)[128]);
+// Stops OpenComposite's own frames for good, before VR_Shutdown destroys the interfaces their layers come from
+void StopOwnFrames();
 }; // namespace DrvOpenXR
