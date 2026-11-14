@@ -408,6 +408,56 @@ void Bounds(CaseContext& c, GfxKind kind, int64_t format)
 	}
 }
 
+// The pose a frame was rendered with and its depth: each eye's texture (512 x 512) goes with a head pose 0.5 m to the left
+// of the one WaitGetPoses gave, and a depth texture of 0.25 everywhere from a projection with near 0.1 and far 100
+// (Submit_TextureWithPose | Submit_TextureWithDepth). Records the located head's position as "head".
+void PoseDepth(CaseContext& c, GfxKind kind, int64_t format)
+{
+	Scene s(c);
+	if (!s.Start(kind, "pose-depth"))
+		return;
+	GfxTexture left = s.gfx->Pattern(512, 512, format, 0);
+	GfxTexture right = s.gfx->Pattern(512, 512, format, 1);
+	GfxTexture depth = s.gfx->Depth(512, 512, 0.25f);
+	s.gfx->Flush();
+	Json::Value r;
+	if (!left.Made() || !right.Made() || !depth.Made()) {
+		r["error"] = "the pattern or depth textures couldn't be made";
+		c.Record("pose-depth", r);
+		return;
+	}
+	// OpenVR's projection (D3D convention) for near 0.1 and far 100
+	const float n = 0.1f, f = 100.0f;
+	vr::HmdMatrix44_t projection{};
+	projection.m[0][0] = 1;
+	projection.m[1][1] = 1;
+	projection.m[2][2] = f / (n - f);
+	projection.m[2][3] = n * f / (n - f);
+	projection.m[3][2] = -1;
+	for (int frame = 1; frame <= kFrames; frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		s.comp->WaitGetPoses(poses, 16, nullptr, 0);
+		vr::HmdMatrix34_t head = poses[0].mDeviceToAbsoluteTracking;
+		r["head"] = Json::Value(Json::arrayValue);
+		for (int i = 0; i < 3; i++)
+			r["head"].append(head.m[i][3]);
+		head.m[0][3] -= 0.5f;
+		GfxTexture* eyes[2] = { &left, &right };
+		for (int eye = 0; eye < 2; eye++) {
+			vr::VRTextureWithPoseAndDepth_t t{};
+			static_cast<vr::Texture_t&>(t) = *eyes[eye]->Texture();
+			t.mDeviceToAbsoluteTracking = head;
+			t.depth.handle = depth.Texture()->handle;
+			t.depth.mProjection = projection;
+			t.depth.vRange = { 0, 1 };
+			r[eye ? "right" : "left"] = (int)s.comp->Submit(eye ? vr::Eye_Right : vr::Eye_Left, &t, &kFull,
+			    (vr::EVRSubmitFlags)(vr::Submit_TextureWithPose | vr::Submit_TextureWithDepth));
+		}
+	}
+	r["dump_join"] = "last_projection";
+	c.Record("pose-depth", r);
+}
+
 } // namespace
 
 const std::map<std::string, CaseFn>& conformance::GfxCases()
@@ -422,6 +472,10 @@ const std::map<std::string, CaseFn>& conformance::GfxCases()
 		{ "gfx-vk-formats", [](CaseContext& c) { Formats(c, GfxKind::Vulkan, { { "rgba16f", 97 }, { "r11g11b10f", 122 }, { "rgb10a2", 64 }, { "bgra8", 44 } }); } },
 		{ "gfx-gl-formats", [](CaseContext& c) { Formats(c, GfxKind::OpenGL, { { "rgba16f", 0x881A }, { "r11g11b10f", 0x8C3A }, { "rgb10a2", 0x8059 }, { "rgb8", 0x8051 } }); } },
 		{ "gfx-d3d11-odd", D3D11Odd },
+		{ "gfx-d3d11-pose-depth", [](CaseContext& c) { PoseDepth(c, GfxKind::D3D11, kDxgiRGBA8Srgb); } },
+		{ "gfx-d3d12-pose-depth", [](CaseContext& c) { PoseDepth(c, GfxKind::D3D12, kDxgiRGBA8Srgb); } },
+		{ "gfx-vk-pose-depth", [](CaseContext& c) { PoseDepth(c, GfxKind::Vulkan, kVkRGBA8Srgb); } },
+		{ "gfx-gl-pose-depth", [](CaseContext& c) { PoseDepth(c, GfxKind::OpenGL, kGlSRGB8Alpha8); } },
 		{ "gfx-d3d11-bounds", [](CaseContext& c) { Bounds(c, GfxKind::D3D11, kDxgiRGBA8Srgb); } },
 		{ "gfx-d3d12-bounds", [](CaseContext& c) { Bounds(c, GfxKind::D3D12, kDxgiRGBA8Srgb); } },
 		{ "gfx-vk-bounds", [](CaseContext& c) { Bounds(c, GfxKind::Vulkan, kVkRGBA8Srgb); } },

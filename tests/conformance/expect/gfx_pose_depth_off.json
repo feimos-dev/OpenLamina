@@ -1,0 +1,63 @@
+{
+ "#": "The pose and depth cases with both keys off, as by default (run.py --cases <as gfx_pose_depth.json> --script scripts/gfx_depth.json --expect expect/gfx_pose_depth_off.json): the views are the located ones, and no depth goes with them.",
+ "gfx-d3d11-pose-depth/pose-depth/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].pose.p[0]": {
+   "near": -0.0315,
+   "within": 0.001
+  },
+  "dump:views[0].depth": null,
+  "dump:views[1].pose.p[0]": {
+   "near": 0.0315,
+   "within": 0.001
+  },
+  "dump:views[1].depth": null
+ },
+ "gfx-d3d12-pose-depth/pose-depth/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].pose.p[0]": {
+   "near": -0.0315,
+   "within": 0.001
+  },
+  "dump:views[0].depth": null,
+  "dump:views[1].pose.p[0]": {
+   "near": 0.0315,
+   "within": 0.001
+  },
+  "dump:views[1].depth": null
+ },
+ "gfx-vk-pose-depth/pose-depth/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].pose.p[0]": {
+   "near": -0.0315,
+   "within": 0.001
+  },
+  "dump:views[0].depth": null,
+  "dump:views[1].pose.p[0]": {
+   "near": 0.0315,
+   "within": 0.001
+  },
+  "dump:views[1].depth": null
+ },
+ "gfx-gl-pose-depth/pose-depth/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].pose.p[0]": {
+   "near": -0.0315,
+   "within": 0.001
+  },
+  "dump:views[0].depth": null,
+  "dump:views[1].pose.p[0]": {
+   "near": 0.0315,
+   "within": 0.001
+  },
+  "dump:views[1].depth": null
+ }
+}

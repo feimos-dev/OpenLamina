@@ -35,6 +35,7 @@ typedef void(APIENTRY* PFNGLBLITFRAMEBUFFERPROC)(GLint srcX0, GLint srcY0, GLint
 typedef void(APIENTRY* PFNGLFRAMEBUFFERTEXTURE2DEXTPROC)(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level);
 typedef void(APIENTRY* PFNGLFRAMEBUFFERTEXTURELAYERPROC)(GLenum target, GLenum attachment, GLuint texture, GLint level, GLint layer);
 #define GL_FRAMEBUFFER 0x8D40
+#define GL_DRAW_FRAMEBUFFER 0x8CA9
 #define GL_READ_FRAMEBUFFER 0x8CA8
 #define GL_COLOR_ATTACHMENT0 0x8CE0
 #endif
@@ -49,6 +50,15 @@ static PFNGLBLITFRAMEBUFFERPROC glBlitFramebuffer = nullptr;
 static PFNGLFRAMEBUFFERTEXTURE2DEXTPROC glFramebufferTexture2D = nullptr;
 static PFNGLFRAMEBUFFERTEXTURELAYERPROC glFramebufferTextureLayer = nullptr;
 
+#ifndef GL_DEPTH_ATTACHMENT
+#define GL_DEPTH_ATTACHMENT 0x8D00
+#endif
+#ifndef GL_DRAW_FRAMEBUFFER_BINDING
+#define GL_DRAW_FRAMEBUFFER_BINDING 0x8CA6
+#endif
+#ifndef GL_READ_FRAMEBUFFER_BINDING
+#define GL_READ_FRAMEBUFFER_BINDING 0x8CAA
+#endif
 #ifndef GL_TEXTURE_2D_ARRAY
 #define GL_TEXTURE_2D_ARRAY 0x8C1A
 #endif
@@ -228,10 +238,71 @@ void GLBaseCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::V
 	SwapchainCallFailed(xrReleaseSwapchainImage(chain, &releaseInfo), "xrReleaseSwapchainImage");
 }
 
+bool GLBaseCompositor::CopyDepth(const vr::Texture_t* depth)
+{
+	if (glFunctionsMissing)
+		return false;
+	auto src = (GLuint)(intptr_t)depth->handle;
+	for (int i = 0; i < 32 && glGetError() != GL_NO_ERROR; i++) {
+	}
+	GLint previous = 0, width = 0, height = 0, internalFormat = 0;
+	glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous);
+	glBindTexture(GL_TEXTURE_2D, src);
+	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
+	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height);
+	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, &internalFormat);
+	glBindTexture(GL_TEXTURE_2D, (GLuint)previous);
+	if (width <= 0 || height <= 0)
+		return false;
+	if (!chain || (int)createInfo.width != width || (int)createInfo.height != height || createInfoFormat != internalFormat) {
+		std::optional<int64_t> format = ChooseDepthSwapchainFormat(GfxApiKind::OpenGL, internalFormat, RuntimeFormats());
+		if (!format) {
+			OOVR_LOG_ONCEF("No depth swapchain format of the runtime's for an OpenGL depth texture of internal format 0x%x: depth not sent", (unsigned)internalFormat);
+			return false;
+		}
+		if (!MakeDepthChain(*format, (uint32_t)width, (uint32_t)height))
+			return false;
+		createInfoFormat = internalFormat;
+		ReadSwapchainImages();
+		if (!chain || images.empty())
+			return false;
+	}
+	uint32_t index = 0;
+	if (!AcquireAndWait((uint32_t)images.size(), index))
+		return false;
+	// A depth texture is blitted whole (level 0), as its framebuffer's depth: unlike glCopyImageSubData, that doesn't
+	// need the texture to be complete, which a depth texture without filtering set up isn't. The game's framebuffers
+	// are put back.
+	GLint previousDraw = 0, previousRead = 0;
+	glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previousDraw);
+	glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousRead);
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, fboId[0]);
+	glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, src, 0);
+	glReadBuffer(GL_NONE);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fboId[1]);
+	glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, images[index], 0);
+#ifdef SUPPORT_GL
+	glDrawBuffer(GL_NONE);
+#else
+	const GLenum noDrawBuffer = GL_NONE;
+	glDrawBuffers(1, &noDrawBuffer);
+#endif
+	glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)previousDraw);
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)previousRead);
+	if (glGetError() != GL_NO_ERROR)
+		OOVR_LOG_ONCE("WARNING: OpenGL depth texture copy failed!");
+	XrSwapchainImageReleaseInfo releaseInfo{ XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
+	return !SwapchainCallFailed(xrReleaseSwapchainImage(chain, &releaseInfo), "xrReleaseSwapchainImage (depth)");
+}
+
 bool GLBaseCompositor::ReadbackToCpu(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, Image& out)
 {
 	// Read in the game's context, current on this thread: the whole of level 0 as RGBA8 (OpenGL converts), then the
-	// bounds' area of it. Rows run bottom-up, and so do the bounds' v.
+	// bounds' area of it. Rows run bottom-up, and so do the bounds' v. (OpenGL ES has no glGetTexImage.)
+#ifndef SUPPORT_GL
+	return Compositor::ReadbackToCpu(texture, bounds, out);
+#else
 	auto name = (GLuint)(intptr_t)texture->handle;
 	if (!name)
 		return false;
@@ -268,6 +339,7 @@ bool GLBaseCompositor::ReadbackToCpu(const vr::Texture_t* texture, const vr::VRT
 	// Flipped bounds' v counts from the bottom, so a flipped image is upright when read top-down
 	FlipImage(out, region.flipX, region.flipY);
 	return !out.Empty();
+#endif
 }
 
 void GLBaseCompositor::InvokeCubemap(const vr::Texture_t* textures)

@@ -19,6 +19,10 @@ public:
 	inline bool EnableHiddenMeshFix() const { return enableHiddenMeshFix; }
 	inline bool InvertUsingShaders() const { return invertUsingShaders; }
 	inline bool InitUsingVulkan() const { return initUsingVulkan; }
+	/** With Submit_TextureWithPose: each eye's view is the submitted head pose times that eye's pose in the head */
+	inline bool UseSubmittedPose() const { return useSubmittedPose; }
+	/** With Submit_TextureWithDepth, where the runtime has XR_KHR_composition_layer_depth: each view gets the depth */
+	inline bool SubmitDepth() const { return submitDepth; }
 	float HiddenMeshVerticalScale() const { return hiddenMeshVerticalScale; }
 	inline bool LogAllOpenVRCalls() const { return logAllOpenVRCalls; }
 	/** The program OpenBindingUI starts; empty for none */
@@ -45,6 +49,8 @@ private:
 	bool enableHiddenMeshFix = true;
 	bool invertUsingShaders = false;
 	bool initUsingVulkan = false;
+	bool useSubmittedPose = false;
+	bool submitDepth = false;
 	float hiddenMeshVerticalScale = 1.0f;
 	bool logAllOpenVRCalls = false;
 	std::string bindingEditor;

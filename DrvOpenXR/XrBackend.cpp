@@ -29,6 +29,8 @@
 #include "../OpenOVR/Reimpl/BaseInput.h"
 #include "../OpenOVR/Reimpl/BaseOverlay.h"
 #include "../OpenOVR/Reimpl/BaseSystem.h"
+#include "../OpenOVR/Compositor/DepthRange.h"
+#include "../OpenOVR/Misc/Config.h"
 #include "../OpenOVR/convert.h"
 #include "generated/static_bases.gen.h"
 
@@ -661,6 +663,8 @@ void XrBackend::WaitForTrackingData()
 		}
 
 		projectionViews[eye].pose = pose;
+		// No depth until this frame's texture brings some
+		projectionViews[eye].next = nullptr;
 	}
 
 	// If we're not on the game's graphics API yet, don't actually mark us as having started the frame.
@@ -709,6 +713,8 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 	IBackend::openvr_enum_t result = kCompositorNone;
 	if (sessionActive && renderingFrame) {
 		comp.Invoke(texture, bounds, layer.subImage, (XruEye)eye, submitFlags);
+		UseSubmittedPose(eye, texture, submitFlags);
+		SubmitDepth(eye, texture, submitFlags);
 		XrResult res = comp.LastResult();
 		if (res == XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED)
 			result = kCompositorUnsupportedFormat;
@@ -733,6 +739,73 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 		WaitForTrackingData();
 	}
 	return result;
+}
+
+void XrBackend::UseSubmittedPose(vr::EVREye eye, const vr::Texture_t* texture, vr::EVRSubmitFlags submitFlags)
+{
+	if (!oovr_global_configuration.UseSubmittedPose() || !(submitFlags & vr::Submit_TextureWithPose) || !xr_gbl)
+		return;
+	// The head pose the game rendered with, in its tracking space: the projection layer's space
+	const vr::HmdMatrix34_t& m = ((const vr::VRTextureWithPose_t*)texture)->mDeviceToAbsoluteTracking;
+	glm::mat3 rotation(S2G_m34(m));
+	glm::quat q = glm::quat_cast(rotation);
+	const glm::vec3 position(m.m[0][3], m.m[1][3], m.m[2][3]);
+	const float length = glm::length(q);
+	if (!(length > 0.5f && length < 1.5f) || !std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z)) {
+		OOVR_LOG_ONCE("A submitted pose that isn't a pose: the located one is used");
+		return;
+	}
+	q = glm::normalize(q);
+	// The eye's pose in the head, from the frame's views located in the view space
+	const XruCachedViews inHead = xr_gbl->GetCachedViews(xr_gbl->viewSpace);
+	const XrViewStateFlags valid = XR_VIEW_STATE_ORIENTATION_VALID_BIT | XR_VIEW_STATE_POSITION_VALID_BIT;
+	if ((inHead.viewState.viewStateFlags & valid) != valid)
+		return;
+	const XrPosef& eyePose = inHead.views[eye].pose;
+	XrPosef& pose = projectionViews[eye].pose;
+	pose.orientation = G2X_quat(glm::normalize(q * X2G_quat(eyePose.orientation)));
+	pose.position = G2X_v3f(position + q * X2G_v3f(eyePose.position));
+}
+
+void XrBackend::SubmitDepth(vr::EVREye eye, const vr::Texture_t* texture, vr::EVRSubmitFlags submitFlags)
+{
+	if (!oovr_global_configuration.SubmitDepth() || !(submitFlags & vr::Submit_TextureWithDepth))
+		return;
+	if (!xr_ext->DepthKHR_Available()) {
+		OOVR_LOG_ONCE("The game sends depth, but the runtime has no XR_KHR_composition_layer_depth: not sent");
+		return;
+	}
+	// With a pose too, the depth comes after it
+	const vr::VRTextureDepthInfo_t& info = (submitFlags & vr::Submit_TextureWithPose) ? ((const vr::VRTextureWithPoseAndDepth_t*)texture)->depth
+	                                                                                 : ((const vr::VRTextureWithDepth_t*)texture)->depth;
+	if (!info.handle)
+		return;
+	float nearZ = 0, farZ = 0;
+	if (!DepthRangeFromProjection(info.mProjection, nearZ, farZ)) {
+		OOVR_LOG_ONCE("A submitted depth's projection isn't a perspective one: depth not sent");
+		return;
+	}
+	vr::Texture_t depth = { info.handle, texture->eType, vr::ColorSpace_Linear };
+	std::unique_ptr<Compositor>& comp = depthCompositors[eye];
+	if (!comp)
+		comp = BaseCompositor::CreateCompositorAPI(&depth);
+	XrSwapchainSubImage sub{};
+	if (!comp || !comp->InvokeDepth(&depth, sub))
+		return;
+	// The range of depth values used: 0..1 unless the game says otherwise
+	float minDepth = info.vRange.v[0], maxDepth = info.vRange.v[1];
+	if (!(minDepth >= 0 && maxDepth <= 1 && minDepth < maxDepth)) {
+		minDepth = 0;
+		maxDepth = 1;
+	}
+	XrCompositionLayerDepthInfoKHR& d = depthInfos[eye];
+	d = { XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR };
+	d.subImage = sub;
+	d.minDepth = minDepth;
+	d.maxDepth = maxDepth;
+	d.nearZ = nearZ;
+	d.farZ = farZ;
+	projectionViews[eye].next = &d;
 }
 
 void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
@@ -1283,6 +1356,10 @@ void XrBackend::PrepareForSessionShutdown()
 		c.reset();
 	}
 	skybox_compositor.reset();
+	for (std::unique_ptr<Compositor>& c : depthCompositors)
+		c.reset();
+	for (XrCompositionLayerProjectionView& view : projectionViews)
+		view.next = nullptr;
 	overlay_compositors.clear();
 	// Swapchains filled from memory let go of theirs now, while the session and its device are still there
 	CpuSwapchain::ReleaseAll();

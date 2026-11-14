@@ -55,6 +55,12 @@ XrExt::XrExt(XrGraphicsApiSupportedFlags apis, const std::vector<const char*>& e
 			supportsCylinderKHR = true;
 		if (strcmp(ext, XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME) == 0)
 			supportsEyeGaze = true;
+		if (strcmp(ext, XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME) == 0)
+			supportsDepthKHR = true;
+		if (strcmp(ext, XR_KHR_COMPOSITION_LAYER_EQUIRECT2_EXTENSION_NAME) == 0)
+			supportsEquirect2KHR = true;
+		if (strcmp(ext, XR_KHR_COMPOSITION_LAYER_CUBE_EXTENSION_NAME) == 0)
+			supportsCubeKHR = true;
 	}
 
 #define XR_BIND(name, function) OOVR_FAILED_XR_ABORT(xrGetInstanceProcAddr(xr_instance, #name, (PFN_xrVoidFunction*)&this->function))

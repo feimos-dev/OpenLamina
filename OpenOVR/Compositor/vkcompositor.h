@@ -23,6 +23,9 @@ public:
 
 	bool ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTextureBounds_t* bounds, Image& out) override;
 
+protected:
+	bool CopyDepth(const vr::Texture_t* depth) override;
+
 private:
 	// Records into a one-time command buffer of the app's pool, runs it on the app's queue and waits (at most 5 s)
 	bool RunOnce(const std::function<void(VkCommandBuffer)>& record);

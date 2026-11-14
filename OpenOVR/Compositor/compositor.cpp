@@ -139,6 +139,50 @@ const std::vector<int64_t>& Compositor::RuntimeFormats()
 	return xr_gbl ? xr_gbl->SwapchainFormats() : none;
 }
 
+bool Compositor::InvokeDepth(const vr::Texture_t* depth, XrSwapchainSubImage& subImage)
+{
+	lastResult = XR_SUCCESS;
+	subImage = {};
+	if (!depth || !depth->handle || !CopyDepth(depth) || !chain || XR_FAILED(lastResult))
+		return false;
+	subImage.swapchain = chain;
+	subImage.imageRect.offset = { 0, 0 };
+	subImage.imageRect.extent = { (int32_t)createInfo.width, (int32_t)createInfo.height };
+	subImage.imageArrayIndex = 0;
+	return true;
+}
+
+bool Compositor::CopyDepth(const vr::Texture_t* depth)
+{
+	OOVR_LOG_ONCEF("Depth textures of type %d can't be sent to the runtime", depth ? (int)depth->eType : -1);
+	return false;
+}
+
+bool Compositor::MakeDepthChain(int64_t format, uint32_t width, uint32_t height)
+{
+	if (chain) {
+		xrDestroySwapchain(chain);
+		chain = XR_NULL_HANDLE;
+	}
+	ForgetAcquiredImage();
+	createInfo = { XR_TYPE_SWAPCHAIN_CREATE_INFO };
+	createInfo.usageFlags = XR_SWAPCHAIN_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT | XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
+	createInfo.format = format;
+	createInfo.sampleCount = 1;
+	createInfo.width = width;
+	createInfo.height = height;
+	createInfo.faceCount = 1;
+	createInfo.arraySize = 1;
+	createInfo.mipCount = 1;
+	if (SwapchainCallFailed(xrCreateSwapchain(xr_session.get(), &createInfo, &chain), "xrCreateSwapchain (depth)")) {
+		chain = XR_NULL_HANDLE;
+		createInfo = {};
+		return false;
+	}
+	OOVR_LOGF("Depth swapchain: %ux%u in format %d", width, height, (int)format);
+	return true;
+}
+
 bool Compositor::ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTextureBounds_t*, Image&)
 {
 	OOVR_LOG_ONCEF("Textures of type %d can't be read back into memory", tex ? (int)tex->eType : -1);

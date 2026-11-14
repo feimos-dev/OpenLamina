@@ -303,29 +303,7 @@ void DX12Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, uint32_t
 			return;
 		}
 
-		for (auto event : frameFenceEvents) {
-			CloseHandle(event);
-		}
-
-		commandLists.resize(imageCount);
-		commandAllocators.resize(imageCount);
-		frameFenceEvents.resize(imageCount);
-		frameFences.resize(imageCount);
-		fenceValues.resize(imageCount);
-
-		for (uint32_t i = 0; i < imageCount; i++) {
-			frameFenceEvents[i] = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-			fenceValues[i] = 0;
-			device->CreateFence(0, D3D12_FENCE_FLAG_NONE,
-			    IID_PPV_ARGS(&frameFences[i]));
-
-			device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
-			    IID_PPV_ARGS(&commandAllocators[i]));
-			device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
-			    commandAllocators[i].Get(), nullptr,
-			    IID_PPV_ARGS(&commandLists[i]));
-			commandLists[i]->Close();
-		}
+		MakeFrameLists(imageCount);
 
 		// The shader pass's descriptors: one slot per image (it's made here for a format it converts, and at the first
 		// flipped bounds otherwise)
@@ -342,6 +320,106 @@ void DX12Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, uint32_t
 		}
 		// TODO do we need to release the images at some point, or does the swapchain do that for us?
 	}
+}
+
+void DX12Compositor::MakeFrameLists(uint32_t imageCount)
+{
+	for (auto event : frameFenceEvents) {
+		CloseHandle(event);
+	}
+
+	commandLists.resize(imageCount);
+	commandAllocators.resize(imageCount);
+	frameFenceEvents.resize(imageCount);
+	frameFences.resize(imageCount);
+	fenceValues.resize(imageCount);
+
+	for (uint32_t i = 0; i < imageCount; i++) {
+		frameFenceEvents[i] = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+		fenceValues[i] = 0;
+		device->CreateFence(0, D3D12_FENCE_FLAG_NONE,
+		    IID_PPV_ARGS(&frameFences[i]));
+
+		device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
+		    IID_PPV_ARGS(&commandAllocators[i]));
+		device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
+		    commandAllocators[i].Get(), nullptr,
+		    IID_PPV_ARGS(&commandLists[i]));
+		commandLists[i]->Close();
+	}
+}
+
+bool DX12Compositor::CopyDepth(const vr::Texture_t* depth)
+{
+	// The game's depth texture is in PIXEL_SHADER_RESOURCE (as its colour is) and is put back there; the runtime's
+	// depth images are in DEPTH_WRITE whenever it has them
+	auto* input = (D3D12TextureData_t*)depth->handle;
+	if (!input->m_pResource)
+		return false;
+	D3D12_RESOURCE_DESC desc = input->m_pResource->GetDesc();
+	if (desc.SampleDesc.Count > 1) {
+		OOVR_LOG_ONCE("A multisampled D3D12 depth texture: not sent to the runtime");
+		return false;
+	}
+	if (!chain || createInfo.width != desc.Width || createInfo.height != desc.Height || createInfoFormat != (int64_t)desc.Format) {
+		std::optional<int64_t> format = ChooseDepthSwapchainFormat(GfxApiKind::D3D12, desc.Format, RuntimeFormats());
+		if (!format) {
+			OOVR_LOG_ONCEF("No depth swapchain format of the runtime's for a D3D12 depth texture of DXGI format %d: depth not sent", (int)desc.Format);
+			return false;
+		}
+		WaitForAllFrames();
+		if (!MakeDepthChain(*format, (uint32_t)desc.Width, desc.Height))
+			return false;
+		createInfoFormat = desc.Format;
+		uint32_t count = 0;
+		bool listed = !SwapchainCallFailed(xrEnumerateSwapchainImages(chain, 0, &count, nullptr), "xrEnumerateSwapchainImages (depth)");
+		if (listed) {
+			imagesHandles.assign(count, { XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR });
+			listed = !SwapchainCallFailed(xrEnumerateSwapchainImages(chain, count, &count, (XrSwapchainImageBaseHeader*)imagesHandles.data()), "xrEnumerateSwapchainImages (depth)");
+		}
+		if (!listed) {
+			imagesHandles.clear();
+			xrDestroySwapchain(chain);
+			chain = XR_NULL_HANDLE;
+			createInfo = {};
+			return false;
+		}
+		MakeFrameLists(count);
+	}
+	uint32_t index = 0;
+	if (!AcquireAndWait((uint32_t)std::min(imagesHandles.size(), frameFences.size()), index))
+		return false;
+	WaitForFence(frameFences[index].Get(), fenceValues[index], frameFenceEvents[index]);
+	commandAllocators[index]->Reset();
+	ID3D12GraphicsCommandList* list = commandLists[index].Get();
+	list->Reset(commandAllocators[index].Get(), nullptr);
+	ID3D12Resource* image = imagesHandles[index].texture;
+	const D3D12_RESOURCE_STATES given = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+	D3D12_RESOURCE_BARRIER in[2] = { Dx12Transition(input->m_pResource, given, D3D12_RESOURCE_STATE_COPY_SOURCE),
+		Dx12Transition(image, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_COPY_DEST) };
+	list->ResourceBarrier(2, in);
+	// A depth texture is copied whole: mip 0, slice 0
+	D3D12_TEXTURE_COPY_LOCATION dst{};
+	dst.pResource = image;
+	dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+	dst.SubresourceIndex = 0;
+	D3D12_TEXTURE_COPY_LOCATION srcLoc{};
+	srcLoc.pResource = input->m_pResource;
+	srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+	srcLoc.SubresourceIndex = 0;
+	list->CopyTextureRegion(&dst, 0, 0, 0, &srcLoc, nullptr);
+	D3D12_RESOURCE_BARRIER out[2] = { Dx12Transition(input->m_pResource, D3D12_RESOURCE_STATE_COPY_SOURCE, given),
+		Dx12Transition(image, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_DEPTH_WRITE) };
+	list->ResourceBarrier(2, out);
+	list->Close();
+	ID3D12CommandList* lists[] = { list };
+	queue->ExecuteCommandLists(1, lists);
+	XrSwapchainImageReleaseInfo releaseInfo{ XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
+	bool released = !SwapchainCallFailed(xrReleaseSwapchainImage(chain, &releaseInfo), "xrReleaseSwapchainImage (depth)");
+	const auto fenceValue = ++currentFenceValue;
+	queue->Signal(frameFences[index].Get(), fenceValue);
+	fenceValues[index] = fenceValue;
+	return released;
 }
 
 ID3D12Resource* DX12Compositor::Resolved(const D3D12_RESOURCE_DESC& of, DXGI_FORMAT format)

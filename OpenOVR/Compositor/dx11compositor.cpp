@@ -629,6 +629,45 @@ void DX11Compositor::InvokeCubemap(const vr::Texture_t* textures)
 	tex->Release();
 }
 
+bool DX11Compositor::CopyDepth(const vr::Texture_t* depth)
+{
+	auto* src = (ID3D11Texture2D*)depth->handle;
+	D3D11_TEXTURE2D_DESC desc;
+	src->GetDesc(&desc);
+	if (desc.SampleDesc.Count > 1) {
+		OOVR_LOG_ONCE("A multisampled D3D11 depth texture: not sent to the runtime");
+		return false;
+	}
+	if (!chain || createInfo.width != desc.Width || createInfo.height != desc.Height || createInfoFormat != (int64_t)desc.Format) {
+		std::optional<int64_t> format = ChooseDepthSwapchainFormat(GfxApiKind::D3D11, desc.Format, RuntimeFormats());
+		if (!format) {
+			OOVR_LOG_ONCEF("No depth swapchain format of the runtime's for a D3D11 depth texture of DXGI format %d: depth not sent", (int)desc.Format);
+			return false;
+		}
+		if (!MakeDepthChain(*format, desc.Width, desc.Height))
+			return false;
+		createInfoFormat = desc.Format;
+		uint32_t count = 0;
+		if (SwapchainCallFailed(xrEnumerateSwapchainImages(chain, 0, &count, nullptr), "xrEnumerateSwapchainImages (depth)"))
+			return false;
+		imagesHandles.assign(count, { XR_TYPE_SWAPCHAIN_IMAGE_D3D11_KHR });
+		if (SwapchainCallFailed(xrEnumerateSwapchainImages(chain, count, &count, (XrSwapchainImageBaseHeader*)imagesHandles.data()), "xrEnumerateSwapchainImages (depth)")) {
+			imagesHandles.clear();
+			xrDestroySwapchain(chain);
+			chain = XR_NULL_HANDLE;
+			createInfo = {};
+			return false;
+		}
+	}
+	uint32_t index = 0;
+	if (!AcquireAndWait((uint32_t)imagesHandles.size(), index))
+		return false;
+	// A depth texture is copied whole: mip 0, slice 0
+	context->CopySubresourceRegion(imagesHandles[index].texture, 0, 0, 0, 0, src, 0, nullptr);
+	XrSwapchainImageReleaseInfo releaseInfo{ XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
+	return !SwapchainCallFailed(xrReleaseSwapchainImage(chain, &releaseInfo), "xrReleaseSwapchainImage (depth)");
+}
+
 bool DX11Compositor::ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTextureBounds_t* bounds, Image& out)
 {
 	auto* src = tex ? (ID3D11Texture2D*)tex->handle : nullptr;

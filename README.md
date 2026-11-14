@@ -269,11 +269,15 @@ The available options are:
 * `enableHiddenMeshFix` - boolean, default `enabled`. 
 	* Alter the coordinates of the hidden area mesh mask to fit within the view's projection. The hidden area mesh mask defines a region to which the game will not draw and is used to mask off areas of the display that you typically cannot see in the headset. If you see odd black regions around the view then try disabling this fix.
 * `invertUsingShaders` - boolean, default `disabled`. 
-	* Invert the image for display using shaders rather than relying on the XR runtime and inverted FOV values. Some games render the image inverted and rely on the runtime to display correctly. In OpenXR some runtimes don't do the inversion correctly. If so enable this option for OpenLamina to do the inversion when copying the image using shaders. This might have a minor cost in performance.
+	* Copy every frame through the shader pass (D3D11, D3D12) or a blit (Vulkan, OpenGL), even when its bounds don't flip it. Textures whose bounds flip them (games that render upside down and rely on the runtime to turn them over) are flipped in the copy either way, and their swapchain is the size of the bounds' area. This might have a minor cost in performance.
 * `initUsingVulkan` - boolean, default `true`. 
 	* If available the temporary graphics adapter at start up will use Vulkan by default. This may be incompatible with some games. This will mostly affect Oculus headsets. 
 * `hiddenMeshVerticalScale` - float, default `1.0`. 
 	* The scaling factor used for the hidden area mesh if supported by the application. The hidden area mesh is a region that the game doesn't render to. If you set this lower e.g. `0.8` then less will be drawn at the very top and very bottom of the image improving performance. Suggested range is `0.5` to `1.0`.
+* `useSubmittedPose` - boolean, default `false`.
+	* For games that submit the head pose they rendered with (`Submit_TextureWithPose`): each eye's view is placed by that pose, rather than by the one OpenLamina located for the frame.
+* `submitDepth` - boolean, default `false`.
+	* For games that submit depth (`Submit_TextureWithDepth`), on runtimes with `XR_KHR_composition_layer_depth`: the depth goes to the runtime with each view (for reprojection), with the near and far planes of the game's projection.
 * `logAllOpenVRCalls` - boolean, default `false`
 	* Log every OpenVR call a game makes. Similar to `logGetTrackedProperty`, this clutters logs and should not be enabled unless necessary.
 * `inputEvaluator` - `direct` or `steamvr`, default `direct`.
