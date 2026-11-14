@@ -10,6 +10,7 @@
 #include "IVRCompositor_029.h"
 #include "IVROverlay_028.h"
 
+#include <algorithm>
 #include <cstring>
 
 using namespace conformance;
@@ -367,6 +368,46 @@ void D3D11Odd(CaseContext& c)
 	}
 }
 
+// Bounds: the whole texture, side-by-side halves of one texture, the whole flipped (vMin > vMax), and flipped halves.
+// Each has its own size (found by its rect in the dump): 768 x 768 per eye, halves of 2048 x 1024, 640 x 640, halves
+// of 1200 x 600. One texture of eye 0's pattern serves both eyes' halves. --case-arg frames=<n> shows each n frames
+// (4 by default, at most 900), long enough to see on a real runtime.
+void Bounds(CaseContext& c, GfxKind kind, int64_t format)
+{
+	const int each = std::min(std::max(c.IntArg("frames", 4), 1), 900);
+	Scene s(c);
+	if (!s.Start(kind, "full"))
+		return;
+	struct Config {
+		const char* name;
+		uint32_t w, h;
+		bool sideBySide;
+		vr::VRTextureBounds_t left, right;
+		uint32_t rectW, rectH;
+	};
+	const Config configs[] = {
+		{ "full", 768, 768, false, { 0, 0, 1, 1 }, { 0, 0, 1, 1 }, 768, 768 },
+		{ "halves", 2048, 1024, true, { 0, 0, 0.5f, 1 }, { 0.5f, 0, 1, 1 }, 1024, 1024 },
+		{ "flipped", 640, 640, false, { 0, 1, 1, 0 }, { 0, 1, 1, 0 }, 640, 640 },
+		{ "flipped halves", 1200, 600, true, { 0, 1, 0.5f, 0 }, { 0.5f, 1, 1, 0 }, 600, 600 },
+	};
+	bool first = true;
+	for (const Config& cfg : configs) {
+		GfxTexture left = s.gfx->Pattern(cfg.w, cfg.h, format, 0);
+		GfxTexture right = cfg.sideBySide ? left : s.gfx->Pattern(cfg.w, cfg.h, format, 1);
+		s.gfx->Flush();
+		Json::Value r;
+		if (!left.Made() || !right.Made()) {
+			r["error"] = "the pattern textures couldn't be made";
+		} else {
+			s.Frames(first ? std::max(kFrames, each) : each, left, right, cfg.left, cfg.right, r);
+			r["dump_join"] = RectJoin(cfg.rectW, cfg.rectH);
+		}
+		c.Record(cfg.name, r);
+		first = false;
+	}
+}
+
 } // namespace
 
 const std::map<std::string, CaseFn>& conformance::GfxCases()
@@ -381,6 +422,10 @@ const std::map<std::string, CaseFn>& conformance::GfxCases()
 		{ "gfx-vk-formats", [](CaseContext& c) { Formats(c, GfxKind::Vulkan, { { "rgba16f", 97 }, { "r11g11b10f", 122 }, { "rgb10a2", 64 }, { "bgra8", 44 } }); } },
 		{ "gfx-gl-formats", [](CaseContext& c) { Formats(c, GfxKind::OpenGL, { { "rgba16f", 0x881A }, { "r11g11b10f", 0x8C3A }, { "rgb10a2", 0x8059 }, { "rgb8", 0x8051 } }); } },
 		{ "gfx-d3d11-odd", D3D11Odd },
+		{ "gfx-d3d11-bounds", [](CaseContext& c) { Bounds(c, GfxKind::D3D11, kDxgiRGBA8Srgb); } },
+		{ "gfx-d3d12-bounds", [](CaseContext& c) { Bounds(c, GfxKind::D3D12, kDxgiRGBA8Srgb); } },
+		{ "gfx-vk-bounds", [](CaseContext& c) { Bounds(c, GfxKind::Vulkan, kVkRGBA8Srgb); } },
+		{ "gfx-gl-bounds", [](CaseContext& c) { Bounds(c, GfxKind::OpenGL, kGlSRGB8Alpha8); } },
 		{ "overlay-raw-d3d11", [](CaseContext& c) { OverlayRaw(c, GfxKind::D3D11, kDxgiRGBA8Srgb); } },
 		{ "overlay-raw-d3d12", [](CaseContext& c) { OverlayRaw(c, GfxKind::D3D12, kDxgiRGBA8Srgb); } },
 		{ "overlay-raw-vk", [](CaseContext& c) { OverlayRaw(c, GfxKind::Vulkan, kVkRGBA8Srgb); } },

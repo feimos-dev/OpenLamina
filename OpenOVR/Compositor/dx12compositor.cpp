@@ -209,7 +209,7 @@ void DX12Compositor::WaitForAllFrames()
 			WaitForFence(frameFences[i].Get(), fenceValues[i], frameFenceEvents[i]);
 }
 
-void DX12Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, bool cube)
+void DX12Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, uint32_t width, uint32_t height, bool cube)
 {
 	XrSwapchainCreateInfo& desc = createInfo;
 
@@ -218,11 +218,10 @@ void DX12Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, const vr
 	D3D12_RESOURCE_DESC srcDesc;
 	srcDesc = src->m_pResource->GetDesc();
 
-	if (bounds) {
-		if (std::fabs(bounds->uMax - bounds->uMin) > 0.1)
-			srcDesc.Width = uint32_t(float(srcDesc.Width) * std::fabs(bounds->uMax - bounds->uMin));
-		if (std::fabs(bounds->vMax - bounds->vMin) > 0.1)
-			srcDesc.Height = uint32_t(float(srcDesc.Height) * std::fabs(bounds->vMax - bounds->vMin));
+	// The swapchain is the size of the area shown
+	if (width && height) {
+		srcDesc.Width = width;
+		srcDesc.Height = height;
 	}
 
 	if (cube) {
@@ -238,8 +237,6 @@ void DX12Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, const vr
 	if (!usable) {
 		OOVR_LOG("Generating new swap chain");
 
-		if (bounds)
-			OOVR_LOGF("Bounds: uMin %f uMax %f vMin %f vMax %f", bounds->uMin, bounds->uMax, bounds->vMin, bounds->vMax);
 		OOVR_LOGF("Texture desc format: %d", srcDesc.Format);
 		OOVR_LOGF("Texture desc flags:  %d", srcDesc.Flags);
 		OOVR_LOGF("Texture desc width:  %d", srcDesc.Width);
@@ -330,11 +327,14 @@ void DX12Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, const vr
 			commandLists[i]->Close();
 		}
 
-		// The shader pass's descriptors: one slot per image
+		// The shader pass's descriptors: one slot per image (it's made here for a format it converts, and at the first
+		// flipped bounds otherwise)
+		if (convertFormat && !pass)
+			pass = std::make_unique<Dx12Convert>(device.Get());
+		if (pass && pass->Usable() && !pass->EnsureSlots(imageCount))
+			pass.reset();
 		if (convertFormat) {
-			if (!pass)
-				pass = std::make_unique<Dx12Convert>(device.Get());
-			if (!pass->Usable() || !pass->EnsureSlots(imageCount)) {
+			if (!pass || !pass->Usable()) {
 				// Submit answers InvalidTexture; the eye is left out
 				lastResult = XR_ERROR_VALIDATION_FAILURE;
 				OC_UNSUPPORTED_VOID("A D3D12 texture of DXGI format %d needs the shader pass, which couldn't be set up", (int)srcDesc.Format);
@@ -382,9 +382,30 @@ void DX12Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 		OC_UNSUPPORTED_VOID("A D3D12 array texture of %u slices submitted with slice %u", (unsigned)srcDesc.DepthOrArraySize, arrayIndex);
 	}
 
-	CheckCreateSwapChain(texture, bounds, false);
+	// The bounds' area, which the swapchain is the size of
+	TextureRegion region;
+	if (!RegionFromBounds(bounds, (uint32_t)srcDesc.Width, srcDesc.Height, region)) {
+		// Submit answers InvalidTexture; the eye is left out
+		lastResult = XR_ERROR_VALIDATION_FAILURE;
+		OC_UNSUPPORTED_VOID("D3D12 texture whose bounds have no area: u %f to %f, v %f to %f", (double)Bounds(bounds).uMin, (double)Bounds(bounds).uMax, (double)Bounds(bounds).vMin, (double)Bounds(bounds).vMax);
+	}
+
+	CheckCreateSwapChain(texture, region.Width(), region.Height(), false);
 	if (!chain || XR_FAILED(lastResult))
 		return;
+
+	// The shader pass converts and flips (invertUsingShaders: always used); made at its first use
+	const bool flip = region.flipX || region.flipY;
+	bool usePass = convertFormat || flip || oovr_global_configuration.InvertUsingShaders();
+	if (usePass && !pass) {
+		pass = std::make_unique<Dx12Convert>(device.Get());
+		if (pass->Usable() && !pass->EnsureSlots((uint32_t)imagesHandles.size()))
+			pass.reset();
+	}
+	if (usePass && !convertFormat && !(pass && pass->Usable())) {
+		OOVR_LOG_ONCE("A D3D12 texture with flipped bounds couldn't go through the shader pass: shown as it is, not flipped");
+		usePass = false;
+	}
 
 	// Reserve an image from the swapchain and wait until the compositor is done with it
 	uint32_t currentIndex = 0;
@@ -398,19 +419,8 @@ void DX12Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 	auto commandList = commandLists[currentIndex].Get();
 	commandList->Reset(commandAllocators[currentIndex].Get(), nullptr);
 
-	// The source area
-	D3D12_BOX sourceRegion;
-	if (bounds) {
-		sourceRegion.left = bounds->uMin == 0.0f ? 0 : createInfo.width;
-		sourceRegion.right = bounds->uMin == 0.0f ? createInfo.width : createInfo.width * 2;
-	} else {
-		sourceRegion.left = 0;
-		sourceRegion.right = createInfo.width;
-	}
-	sourceRegion.top = 0;
-	sourceRegion.bottom = createInfo.height;
-	sourceRegion.front = 0;
-	sourceRegion.back = 1;
+	// The area copied: no more than the bounds'
+	D3D12_BOX sourceRegion{ region.x0, region.y0, 0, region.x1, region.y1, 1 };
 
 	const D3D12_RESOURCE_STATES given = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
 	const bool typeless = TypedDxgi(srcDesc.Format) != srcDesc.Format;
@@ -440,14 +450,14 @@ void DX12Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 	}
 
 	bool recorded = false;
-	if (convertFormat) {
+	if (usePass) {
+		// The area, backwards where the bounds flip it, in texture coordinates
 		Dx12Convert::Pass p;
-		if (bounds) {
-			p.offsetX = bounds->uMin;
-			p.offsetY = bounds->vMin;
-			p.scaleX = bounds->uMax - bounds->uMin;
-			p.scaleY = bounds->vMax - bounds->vMin;
-		}
+		const float w = (float)srcDesc.Width, h = (float)srcDesc.Height;
+		p.offsetX = (float)(region.flipX ? region.x1 : region.x0) / w;
+		p.offsetY = (float)(region.flipY ? region.y1 : region.y0) / h;
+		p.scaleX = (region.flipX ? -1.0f : 1.0f) * (float)region.Width() / w;
+		p.scaleY = (region.flipY ? -1.0f : 1.0f) * (float)region.Height() / h;
 		const bool viewSrgb = FormatIsSrgb(GfxApiKind::D3D12, typedFormat);
 		const bool targetSrgb = FormatIsSrgb(GfxApiKind::D3D12, createInfo.format);
 		p.decodeSrgb = wantSrgb && !viewSrgb && targetSrgb;
@@ -501,7 +511,7 @@ void DX12Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 
 void DX12Compositor::InvokeCubemap(const vr::Texture_t* textures)
 {
-	CheckCreateSwapChain(&textures[0], nullptr, true);
+	CheckCreateSwapChain(&textures[0], 0, 0, true);
 
 	OOVR_SOFT_ABORT("TODO cubemap");
 }

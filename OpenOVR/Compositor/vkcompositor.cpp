@@ -10,6 +10,7 @@
 #include <vulkan/vulkan.h>
 
 #include "../DrvOpenXR/XrBackend.h"
+#include "../Misc/Config.h"
 #include "../Misc/SoftFail.h"
 #include "FormatTable.h"
 // Required for the close(2) call for the texture shared memory on Linux
@@ -76,7 +77,15 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 		return;
 	}
 
-	bool usable = chain != XR_NULL_HANDLE && tex->m_nWidth == createInfo.width && tex->m_nHeight == createInfo.height
+	// The bounds' area, which the swapchain is the size of
+	TextureRegion area;
+	if (!RegionFromBounds(bounds, tex->m_nWidth, tex->m_nHeight, area)) {
+		// Submit answers InvalidTexture; the eye is left out
+		lastResult = XR_ERROR_VALIDATION_FAILURE;
+		OC_UNSUPPORTED_VOID("Vulkan texture whose bounds have no area: u %f to %f, v %f to %f", (double)Bounds(bounds).uMin, (double)Bounds(bounds).uMax, (double)Bounds(bounds).vMin, (double)Bounds(bounds).vMax);
+	}
+
+	bool usable = chain != XR_NULL_HANDLE && area.Width() == createInfo.width && area.Height() == createInfo.height
 	    && tex->m_nSampleCount == createInfo.sampleCount && (int64_t)tex->m_nFormat == createInfoFormat && texture->eColorSpace == createColourSpace;
 
 	if (!usable) {
@@ -97,8 +106,8 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 		createInfo.createFlags = 0;
 		createInfo.usageFlags = XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
 		createInfo.faceCount = 1;
-		createInfo.width = tex->m_nWidth;
-		createInfo.height = tex->m_nHeight;
+		createInfo.width = area.Width();
+		createInfo.height = area.Height();
 		createInfo.mipCount = 1;
 		createInfo.sampleCount = tex->m_nSampleCount;
 		createInfo.arraySize = 1;
@@ -221,17 +230,20 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 		auto tex = static_cast<vr::VRVulkanTextureArrayData_t*>(texture->handle);
 		arrayLayer = tex->m_unArrayIndex;
 	}
-	if (bounds || convertFormat) {
-		const vr::VRTextureBounds_t full{ 0, 0, 1, 1 };
-		if (!bounds)
-			bounds = &full;
+	// A blit converts, and flips where the bounds run backwards (invertUsingShaders: always used); a multisampled image
+	// can't be blitted, and is resolved as it is
+	const bool flip = area.flipX || area.flipY;
+	if (flip && tex->m_nSampleCount > 1)
+		OOVR_LOG_ONCE("A multisampled Vulkan image with flipped bounds: shown as it is, not flipped");
+	if ((convertFormat || flip || oovr_global_configuration.InvertUsingShaders()) && tex->m_nSampleCount <= 1) {
 		VkImageBlit region = {};
 		region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 		region.srcSubresource.mipLevel = 0;
 		region.srcSubresource.baseArrayLayer = arrayLayer;
 		region.srcSubresource.layerCount = 1;
-		region.srcOffsets[0] = { (int)(bounds->uMin * tex->m_nWidth), (int)(bounds->vMin * tex->m_nHeight), 0 };
-		region.srcOffsets[1] = { (int)(bounds->uMax * tex->m_nWidth), (int)(bounds->vMax * tex->m_nHeight), 1 };
+		// Reversed offsets flip
+		region.srcOffsets[0] = { (int)(area.flipX ? area.x1 : area.x0), (int)(area.flipY ? area.y1 : area.y0), 0 };
+		region.srcOffsets[1] = { (int)(area.flipX ? area.x0 : area.x1), (int)(area.flipY ? area.y0 : area.y1), 1 };
 		region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 		region.dstSubresource.mipLevel = 0;
 		region.dstSubresource.baseArrayLayer = 0;
@@ -246,30 +258,22 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 		    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, // dstImageLayout
 		    1, // regionCount
 		    &region, // pRegions
-		    VK_FILTER_LINEAR);
+		    VK_FILTER_NEAREST);
 	} else {
 		VkImageCopy region = {};
 		region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 		region.srcSubresource.mipLevel = 0;
 		region.srcSubresource.baseArrayLayer = arrayLayer;
 		region.srcSubresource.layerCount = 1;
-		region.srcOffset = { 0, 0, 0 };
+		region.srcOffset = { (int32_t)area.x0, (int32_t)area.y0, 0 };
 		region.dstSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 		region.dstSubresource.mipLevel = 0;
 		region.dstSubresource.baseArrayLayer = 0;
 		region.dstSubresource.layerCount = 1;
 		region.dstOffset = { 0, 0, 0 };
-		region.extent = { tex->m_nWidth, tex->m_nHeight, 1 };
+		region.extent = { area.Width(), area.Height(), 1 };
 
 		bool image_is_multisampled = xr_main_view(XruEyeLeft).maxSwapchainSampleCount < tex->m_nSampleCount;
-		/*
-		    if(bounds)
-		    {
-		        image_is_multisampled = true;
-		        region.srcOffset = { bounds->uMin * tex->m_nWidth, bounds->vMin * tex->m_nHeight, 0 };
-		        region.dstOffset = { bounds->uMin * tex->m_nWidth, bounds->vMin * tex->m_nHeight, 0 };
-		        region.extent = { (bounds->uMax - bounds->uMin)  * tex->m_nWidth, (bounds->vMax - bounds->vMin) * tex->m_nHeight, 1 };
-		    }*/
 
 		if (image_is_multisampled) {
 			// HACK: As of July 2022 Monado does not support multisampling, so we can't just copy the image.

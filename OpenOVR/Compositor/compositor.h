@@ -31,6 +31,11 @@ struct TextureRegion {
 	uint32_t Height() const { return y1 - y0; }
 };
 bool RegionFromBounds(const vr::VRTextureBounds_t* bounds, uint32_t width, uint32_t height, TextureRegion& out);
+// The bounds, or the whole texture's for none
+inline vr::VRTextureBounds_t Bounds(const vr::VRTextureBounds_t* bounds)
+{
+	return bounds ? *bounds : vr::VRTextureBounds_t{ 0, 0, 1, 1 };
+}
 
 // Mirrors an image left to right and/or top to bottom
 void FlipImage(Image& image, bool flipX, bool flipY);
@@ -51,7 +56,6 @@ public:
 	virtual ~Compositor();
 
 	void Invoke(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, XrSwapchainSubImage& subImage, std::optional<XruEye> eye = std::nullopt, vr::EVRSubmitFlags submitFlags = vr::Submit_Default);
-	bool CalculateViewport(const vr::VRTextureBounds_t* bounds, int32_t width, int32_t height, bool supportsInvert, XrRect2Di& viewport);
 
 	virtual void InvokeCubemap(const vr::Texture_t* textures) = 0;
 	virtual bool SupportsCubemap() { return false; }
@@ -80,6 +84,10 @@ public:
 	virtual void ResetSubmitContext() {};
 
 protected:
+	/**
+	 * Copies the bounds' area of the texture (nullptr: all of it) into an image of a swapchain of the area's size,
+	 * flipping it where the bounds run backwards (uMin > uMax, vMin > vMax), so the whole image is shown upright.
+	 */
 	virtual void CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, std::optional<XruEye> eye, vr::EVRSubmitFlags submitFlags) = 0;
 
 	// For the compositors' OpenXR swapchain calls: true (with lastResult set, and the call logged once) if it failed

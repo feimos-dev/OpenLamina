@@ -21,7 +21,8 @@ public:
 	ComPtr<ID3D12Device> GetDevice() { return device; }
 
 private:
-	void CheckCreateSwapChain(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, bool cube);
+	// A swapchain for the texture, width x height (0: the texture's size)
+	void CheckCreateSwapChain(const vr::Texture_t* texture, uint32_t width, uint32_t height, bool cube);
 
 
 	bool CheckChainCompatible(D3D12_RESOURCE_DESC& inputDesc, vr::EColorSpace colourSpace);

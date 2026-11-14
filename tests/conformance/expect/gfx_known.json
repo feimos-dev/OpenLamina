@@ -5,5 +5,9 @@
  "gfx-vk-formats/format rgba16f/-/-": "As gfx-vk-basic: the session on the game's Vulkan device is refused (no xrGetVulkanGraphicsRequirementsKHR first), so the eyes answer 102 and no frame is shown",
  "gfx-vk-formats/format r11g11b10f/-/-": "As gfx-vk-basic: the session on the game's Vulkan device is refused (no xrGetVulkanGraphicsRequirementsKHR first), so the eyes answer 102 and no frame is shown",
  "gfx-vk-formats/format rgb10a2/-/-": "As gfx-vk-basic: the session on the game's Vulkan device is refused (no xrGetVulkanGraphicsRequirementsKHR first), so the eyes answer 102 and no frame is shown",
- "gfx-vk-formats/format bgra8/-/-": "As gfx-vk-basic: the session on the game's Vulkan device is refused (no xrGetVulkanGraphicsRequirementsKHR first), so the eyes answer 102 and no frame is shown"
+ "gfx-vk-formats/format bgra8/-/-": "As gfx-vk-basic: the session on the game's Vulkan device is refused (no xrGetVulkanGraphicsRequirementsKHR first), so the eyes answer 102 and no frame is shown",
+ "gfx-vk-bounds/full/-/-": "As gfx-vk-basic: the session on the game's Vulkan device is refused (no xrGetVulkanGraphicsRequirementsKHR first), so the eyes answer 102 and no frame is shown",
+ "gfx-vk-bounds/halves/-/-": "As gfx-vk-basic: the session on the game's Vulkan device is refused (no xrGetVulkanGraphicsRequirementsKHR first), so the eyes answer 102 and no frame is shown",
+ "gfx-vk-bounds/flipped/-/-": "As gfx-vk-basic: the session on the game's Vulkan device is refused (no xrGetVulkanGraphicsRequirementsKHR first), so the eyes answer 102 and no frame is shown",
+ "gfx-vk-bounds/flipped halves/-/-": "As gfx-vk-basic: the session on the game's Vulkan device is refused (no xrGetVulkanGraphicsRequirementsKHR first), so the eyes answer 102 and no frame is shown"
 }
