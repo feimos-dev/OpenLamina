@@ -33,6 +33,7 @@ struct OcMndPose {
 	float position[3];
 };
 typedef int (*mnd_root_set_reference_space_offset_t)(void* root, int type, const OcMndPose* offset);
+typedef int (*mnd_root_get_reference_space_offset_t)(void* root, int type, OcMndPose* out_offset);
 }
 
 // libmonado's device properties (mnd_property_t)
@@ -48,6 +49,7 @@ struct LibMonado::Api {
 	mnd_root_get_device_from_role_t getDeviceFromRole = nullptr;
 	mnd_root_get_device_battery_status_t getBatteryStatus = nullptr;
 	mnd_root_set_reference_space_offset_t setReferenceSpaceOffset = nullptr;
+	mnd_root_get_reference_space_offset_t getReferenceSpaceOffset = nullptr;
 };
 
 namespace {
@@ -234,6 +236,7 @@ LibMonado::LibMonado(const std::string& runtimeName)
 	api->getDeviceFromRole = (mnd_root_get_device_from_role_t)Symbol(library, "mnd_root_get_device_from_role");
 	api->getBatteryStatus = (mnd_root_get_device_battery_status_t)Symbol(library, "mnd_root_get_device_battery_status");
 	api->setReferenceSpaceOffset = (mnd_root_set_reference_space_offset_t)Symbol(library, "mnd_root_set_reference_space_offset");
+	api->getReferenceSpaceOffset = (mnd_root_get_reference_space_offset_t)Symbol(library, "mnd_root_get_reference_space_offset");
 
 	uint32_t major = 0, minor = 0, patch = 0;
 	if (api->getVersion)
@@ -374,5 +377,35 @@ bool LibMonado::SetReferenceSpaceOffset(int referenceSpaceType, const vr::HmdMat
 	pose.position[1] = m.m[1][3];
 	pose.position[2] = m.m[2][3];
 	std::lock_guard guard(lock);
-	return api->setReferenceSpaceOffset(root, referenceSpaceType, &pose) == 0;
+	int result = api->setReferenceSpaceOffset(root, referenceSpaceType, &pose);
+	if (result != 0 && refusalsLogged.insert(referenceSpaceType).second)
+		OOVR_LOGF("libmonado: moving reference space %d failed: %d (not logged again)", referenceSpaceType, result);
+	return result == 0;
+}
+
+std::optional<vr::HmdMatrix34_t> LibMonado::GetReferenceSpaceOffset(int referenceSpaceType)
+{
+	if (!Available() || !api->getReferenceSpaceOffset)
+		return std::nullopt;
+	OcMndPose pose{};
+	{
+		std::lock_guard guard(lock);
+		if (api->getReferenceSpaceOffset(root, referenceSpaceType, &pose) != 0)
+			return std::nullopt;
+	}
+	// The quaternion as a rotation matrix, with the position
+	const float x = pose.orientation[0], y = pose.orientation[1], z = pose.orientation[2], w = pose.orientation[3];
+	vr::HmdMatrix34_t m{};
+	m.m[0][0] = 1 - 2 * (y * y + z * z);
+	m.m[0][1] = 2 * (x * y - z * w);
+	m.m[0][2] = 2 * (x * z + y * w);
+	m.m[1][0] = 2 * (x * y + z * w);
+	m.m[1][1] = 1 - 2 * (x * x + z * z);
+	m.m[1][2] = 2 * (y * z - x * w);
+	m.m[2][0] = 2 * (x * z - y * w);
+	m.m[2][1] = 2 * (y * z + x * w);
+	m.m[2][2] = 1 - 2 * (x * x + y * y);
+	for (int i = 0; i < 3; i++)
+		m.m[i][3] = pose.position[i];
+	return m;
 }

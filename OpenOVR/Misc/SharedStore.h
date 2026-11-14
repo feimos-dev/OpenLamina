@@ -1,8 +1,9 @@
 #pragma once
 
 // State that every OpenLamina instance of the user shares: JSON documents (settings, applications, the room
-// setup, the scene app, the dashboard, overlays) and a ring of events between processes. Reading never blocks;
-// changes are a locked read-modify-write, so two programs changing one document at once both keep their change.
+// setup, the scene app, the dashboard, overlays, the reference space offsets set in the runtime) and a ring of events
+// between processes. Reading never blocks; changes are a locked read-modify-write, so two programs changing one
+// document at once both keep their change.
 
 #include "json/json.h"
 
@@ -16,7 +17,7 @@
 #include <set>
 #include <vector>
 
-enum class StoreDoc { Settings, Applications, Chaperone, Scene, Dashboard, Overlays };
+enum class StoreDoc { Settings, Applications, Chaperone, Scene, Dashboard, Overlays, Offsets };
 
 struct StoreEvent {
 	uint64_t seq; // 1, 2, ... across every process; 0 is never an event's

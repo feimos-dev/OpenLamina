@@ -32,4 +32,7 @@ struct ChaperoneData {
 	static std::optional<ChaperoneData> FromJson(const Json::Value& value);
 
 	static vr::HmdMatrix34_t Identity();
+	/** A matrix as the JSON keeps it (its rows, one after the other), and back: identity if it isn't one */
+	static Json::Value MatrixToJson(const vr::HmdMatrix34_t& m);
+	static vr::HmdMatrix34_t MatrixFromJson(const Json::Value& value);
 };

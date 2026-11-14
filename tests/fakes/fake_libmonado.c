@@ -5,8 +5,14 @@
  *   FAKE_MND_NO_BATTERY  set: the battery call fails with MND_ERROR_OPERATION_FAILED (-4), as Monado's does for a
  *                        device without battery status
  *   FAKE_MND_SAME_NAMES  set: every device is called "Fake Controller"
+ *   FAKE_MND_LOG         a file each mnd_root_set_reference_space_offset call is added to, as a line
+ *                        "set_reference_space_offset <type> <px> <py> <pz> <qx> <qy> <qz> <qw>"
+ *   FAKE_MND_NO_OFFSETS  set: the reference space offset calls fail with MND_ERROR_INVALID_OPERATION (-2)
+ *   FAKE_MND_NO_GET      set: only the get call of the reference space offsets fails (as without libmonado 1.3)
  * Three devices: 0 "Fake HMD" (head), 1 "Fake Left" (left), 2 "Fake Right" (right); serials SN0, SN1, SN2.
- * fake_mnd_battery_calls() answers how often the battery was asked for. */
+ * fake_mnd_battery_calls() answers how often the battery was asked for. Each reference space's offset is kept
+ * (identity at first) and given back, while the library stays loaded; fake_mnd_restart() puts them back to identity,
+ * as a restart of Monado's service does. */
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -121,5 +127,52 @@ FAKE_API int mnd_root_get_device_battery_status(void* root, uint32_t index, bool
 	*present = p != 0;
 	*charging = c != 0;
 	*charge = level;
+	return 0;
+}
+
+typedef struct {
+	float orientation[4]; /* x, y, z, w */
+	float position[3];
+} fake_pose;
+
+static fake_pose offsets[5] = {
+	{ { 0, 0, 0, 1 }, { 0, 0, 0 } },
+	{ { 0, 0, 0, 1 }, { 0, 0, 0 } },
+	{ { 0, 0, 0, 1 }, { 0, 0, 0 } },
+	{ { 0, 0, 0, 1 }, { 0, 0, 0 } },
+	{ { 0, 0, 0, 1 }, { 0, 0, 0 } },
+};
+
+FAKE_API int mnd_root_set_reference_space_offset(void* root, int type, const fake_pose* offset)
+{
+	(void)root;
+	if (type < 0 || type > 4 || fake_getenv("FAKE_MND_NO_OFFSETS"))
+		return -2; /* MND_ERROR_INVALID_OPERATION */
+	offsets[type] = *offset;
+	const char* log = fake_getenv("FAKE_MND_LOG");
+	FILE* f = log ? fopen(log, "a") : NULL;
+	if (f) {
+		fprintf(f, "set_reference_space_offset %d %g %g %g %g %g %g %g\n", type, offset->position[0], offset->position[1],
+		    offset->position[2], offset->orientation[0], offset->orientation[1], offset->orientation[2], offset->orientation[3]);
+		fclose(f);
+	}
+	return 0;
+}
+
+FAKE_API int mnd_root_get_reference_space_offset(void* root, int type, fake_pose* out_offset)
+{
+	(void)root;
+	if (type < 0 || type > 4 || fake_getenv("FAKE_MND_NO_OFFSETS") || fake_getenv("FAKE_MND_NO_GET"))
+		return -2;
+	*out_offset = offsets[type];
+	return 0;
+}
+
+FAKE_API int fake_mnd_restart(void)
+{
+	for (int i = 0; i < 5; i++) {
+		fake_pose identity = { { 0, 0, 0, 1 }, { 0, 0, 0 } };
+		offsets[i] = identity;
+	}
 	return 0;
 }

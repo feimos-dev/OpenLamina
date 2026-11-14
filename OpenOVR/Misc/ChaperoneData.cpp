@@ -163,3 +163,13 @@ std::optional<ChaperoneData> ChaperoneData::FromJson(const Json::Value& v)
 	}
 	return d;
 }
+
+Json::Value ChaperoneData::MatrixToJson(const vr::HmdMatrix34_t& m)
+{
+	return Matrix(m);
+}
+
+vr::HmdMatrix34_t ChaperoneData::MatrixFromJson(const Json::Value& value)
+{
+	return ReadMatrix(value);
+}

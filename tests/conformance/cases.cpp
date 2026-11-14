@@ -1399,6 +1399,86 @@ Json::Value ThousandthsOf(const vr::HmdVector3_t& v)
 	return out;
 }
 
+// The room setup's standing zero pose moved 1 m forward and committed, then put back (expect/chaperone_offsets.json, on
+// Monado with libmonado and applyZeroPoses: the stage moves, so the head's standing pose moves 1 m back, as does the
+// seated origin in it).
+// A simulated head moves by itself, so the head is measured from its seated pose at the same time (the seated space
+// doesn't move), and its plain move is recorded as well. Each pose after 30 frames; millimetres.
+void ChaperoneOffsetsCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	vr::EVRInitError le;
+	auto* setup = (vr::IVRChaperoneSetup_006::IVRChaperoneSetup*)c.core->GetGenericInterface("IVRChaperoneSetup_006", &le);
+	if (!setup) {
+		c.Record("no IVRChaperoneSetup_006", Err(le));
+		c.core->Cleanup();
+		return;
+	}
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	struct Where {
+		float head[3];
+		float headFromSeated[3]; // the head's standing pose less its seated one
+		float seated[3];
+	};
+	auto settle = [&]() {
+		vr::TrackedDevicePose_t poses[16]{};
+		for (int frame = 1; frame <= 30; frame++) {
+			f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+			f.comp->Submit(vr::Eye_Left, tex.get(), nullptr, vr::Submit_Default);
+			f.comp->Submit(vr::Eye_Right, tex.get(), nullptr, vr::Submit_Default);
+		}
+		vr::TrackedDevicePose_t seatedPoses[16]{};
+		f.sys->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding, 0, poses, 16);
+		f.sys->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseSeated, 0, seatedPoses, 16);
+		const vr::HmdMatrix34_t seated = f.sys->GetSeatedZeroPoseToStandingAbsoluteTrackingPose();
+		Where w;
+		for (int i = 0; i < 3; i++) {
+			w.head[i] = poses[vr::k_unTrackedDeviceIndex_Hmd].mDeviceToAbsoluteTracking.m[i][3];
+			w.headFromSeated[i] = w.head[i] - seatedPoses[vr::k_unTrackedDeviceIndex_Hmd].mDeviceToAbsoluteTracking.m[i][3];
+			w.seated[i] = seated.m[i][3];
+		}
+		return w;
+	};
+	auto moved = [&](const char* label, const Where& from, const Where& to, bool committed) {
+		Json::Value r;
+		r["committed"] = committed;
+		Json::Value head(Json::arrayValue), seated(Json::arrayValue);
+		for (int i = 0; i < 3; i++) {
+			head.append(Thousandths(to.head[i] - from.head[i]));
+			seated.append(Thousandths(to.seated[i] - from.seated[i]));
+		}
+		r["head moved"] = head;
+		r["seated origin moved"] = seated;
+		// 1 m back (+Z) within 5 mm
+		auto back = [&](const float* a, const float* b) {
+			return std::fabs(b[0] - a[0]) < 0.005f && std::fabs(b[1] - a[1]) < 0.005f && std::fabs(b[2] - a[2] - 1) < 0.005f;
+		};
+		r["head 1 m back"] = back(from.headFromSeated, to.headFromSeated);
+		r["seated origin 1 m back"] = back(from.seated, to.seated);
+		c.Record(label, r);
+	};
+
+	const Where before = settle();
+	setup->RevertWorkingCopy();
+	vr::HmdMatrix34_t zero{};
+	zero.m[0][0] = zero.m[1][1] = zero.m[2][2] = 1;
+	zero.m[2][3] = -1;
+	setup->SetWorkingStandingZeroPoseToRawTrackingPose(&zero);
+	const bool committed = setup->CommitWorkingCopy(vr::IVRChaperoneSetup_006::EChaperoneConfigFile_Live);
+	const Where after = settle();
+	moved("standing zero 1 m forward", before, after, committed);
+
+	// Put back: the stage where it was
+	zero.m[2][3] = 0;
+	setup->SetWorkingStandingZeroPoseToRawTrackingPose(&zero);
+	const bool restored = setup->CommitWorkingCopy(vr::IVRChaperoneSetup_006::EChaperoneConfigFile_Live);
+	const Where back = settle();
+	moved("standing zero back", back, after, restored);
+	c.core->Cleanup();
+}
+
 // Events from calls (expect/events.json), on the stand-in with scripts/legacy_click.json: the Index profile's
 // right trigger clicked from frame 10 to 20. The game reads the legacy input (GetControllerState at frame 2), so the
 // legacy button events come; ResetSeatedZeroPose's event is the next one polled after it.
@@ -3029,6 +3109,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "applications", ApplicationsCase },
 		{ "chaperone", ChaperoneCase },
 		{ "chaperone-read", ChaperoneReadCase },
+		{ "chaperone-offsets", ChaperoneOffsetsCase },
 		{ "events", EventsCase },
 		{ "input-frames", InputFramesCase },
 		{ "binding-info", BindingInfoCase },

@@ -1,0 +1,5 @@
+{
+ "#": "The room setup's standing zero pose applied on Monado through libmonado with applyZeroPoses (oc-sim.ps1 -Driver simulated -Null -Libmonado -Conformance chaperone-offsets -RunArgs \"--ini tests/conformance/ini/apply_zero_poses.ini --expect tests/conformance/expect/chaperone_offsets.json\"): committed 1 m forward, the stage moves, so the head's standing pose and the seated origin in the standing space move 1 m back (+Z, within 5 mm); put back, they return. Without applyZeroPoses, and elsewhere (the stand-in, or Monado without libmonado), the zero pose is only kept, and nothing moves.",
+ "chaperone-offsets/standing zero 1 m forward/-/-": { "committed": true, "head 1 m back": true, "seated origin 1 m back": true },
+ "chaperone-offsets/standing zero back/-/-": { "committed": true, "head 1 m back": true, "seated origin 1 m back": true }
+}
