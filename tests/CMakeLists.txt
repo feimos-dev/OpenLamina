@@ -114,6 +114,7 @@ add_executable(oc_unit_tests
 	unit/FormatTableTests.cpp
 	unit/DepthRangeTests.cpp
 	unit/OwnFrameLoopTests.cpp
+	unit/OverlayMathsTests.cpp
 	${OC_TEST_RESOURCES}
 )
 target_include_directories(oc_unit_tests PRIVATE

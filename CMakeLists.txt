@@ -348,6 +348,7 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/GlPixelStore.h
 	OpenOVR/Misc/Image.cpp
 	OpenOVR/Misc/Image.h
+	OpenOVR/Misc/OverlayMaths.cpp
 	OpenOVR/Misc/JsonFile.h
 	OpenOVR/Misc/SteamVRPaths.h
 	OpenOVR/Misc/SteamClient.h
@@ -357,6 +358,7 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/ChaperoneData.h
 	OpenOVR/Misc/ProgramEvents.h
 	OpenOVR/Misc/LibMonado.h
+	OpenOVR/Misc/OverlayMaths.h
 	OpenOVR/Misc/SoftFail.cpp
 	OpenOVR/Misc/SoftFail.h
 	OpenOVR/Misc/Foveation.cpp

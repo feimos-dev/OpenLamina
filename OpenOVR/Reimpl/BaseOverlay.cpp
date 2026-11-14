@@ -14,9 +14,12 @@
 #include "Drivers/Backend.h"
 #include "Misc/Config.h"
 #include "Misc/Image.h"
+#include "Misc/Input/InteractionProfile.h"
+#include "Misc/OverlayMaths.h"
 #include "Misc/ScopeGuard.h"
 #include "convert.h"
 #include "generated/static_bases.gen.h"
+#include <optional>
 #include <string>
 
 using glm::mat4;
@@ -102,27 +105,34 @@ public:
 		memset(&compositionLayer, 0, sizeof(compositionLayer));
 	}
 
-	// The overlay's transform in the tracking space, stored like overlayTransform (rows first: translation in [i][3])
-	bool ComputeOverlayTransform(vr::ETrackingUniverseOrigin trackingSpace, glm::mat4& out)
-	{
-		out = overlayTransform;
-		// A component's overlay is placed at its device, with no offset (the component's own pose isn't known)
-		bool component = transformType == VROverlayTransform_TrackedComponent;
-		if (transformType == VROverlayTransform_TrackedDeviceRelative || component) {
-			std::shared_ptr<ITrackedDevice> dev = BackendManager::Instance().GetDevice(component ? componentDevice : transformData.deviceRelative.device);
-			if (!dev)
-				return false;
+	// The origin SetOverlayTransformAbsolute (or SetOverlayTransformProjection) gave; -1 before one was given, when the
+	// transform is in whatever tracking space the frame uses
+	int absoluteOrigin = -1;
+	// Placed relative to relativeParent (by relativeTransform); the type it reports stays the one it had
+	bool overlayRelative = false;
+	// SetOverlayTransformProjection: the eye's projection, and which eye sees the overlay
+	OOVR_VROverlayProjection_t projection = { -1, 1, -1, 1 };
+	vr::EVREye projectionEye = vr::Eye_Left;
+	// SetOverlayIntersectionMask: empty for the whole overlay
+	std::vector<OOVR_VROverlayIntersectionMaskPrimitive_t> intersectionMask;
 
-			TrackedDevicePose_t pose = {};
-			dev->GetPose(trackingSpace, &pose, ETrackingStateType::TrackingStateType_Rendering);
-			if (!pose.bPoseIsValid)
-				return false;
-			// S2G_m34 makes ordinary glm (column-first) matrices, so transpose the product to overlayTransform's layout
-			glm::mat4 device = S2G_m34(pose.mDeviceToAbsoluteTracking);
-			out = glm::transpose(component ? device : device * S2G_m34(transformData.deviceRelative.offset));
-		}
-		return true;
+	// The overlay's own transform in the tracking space, as an ordinary glm matrix, without any parent overlay's
+	bool OwnTransform(vr::ETrackingUniverseOrigin trackingSpace, glm::mat4& out) const;
+
+	// The overlay's transform in the tracking space, stored like overlayTransform (rows first: translation in [i][3]),
+	// through its parent overlays (valid: the overlays that exist)
+	bool ComputeOverlayTransform(vr::ETrackingUniverseOrigin trackingSpace, const std::set<OverlayData*>& valid, glm::mat4& out) const;
+
+	// The texture's width over its height (a flipped texture is drawn with a negative height), 1 without one
+	float AspectRatio() const
+	{
+		const XrExtent2Di& extent = compositionLayer.quad.subImage.imageRect.extent;
+		const int32_t height = std::abs(extent.height);
+		return height > 0 && extent.width > 0 ? (float)extent.width / (float)height : 1.0f;
 	}
+
+	// Where the overlay is drawn in the tracking space; false if it can't be drawn
+	bool ComputePlacement(vr::ETrackingUniverseOrigin trackingSpace, const std::set<OverlayData*>& valid, overlay_maths::Placement& out) const;
 };
 
 // TODO don't pass around handles, as it will cause
@@ -213,6 +223,133 @@ bool BaseOverlay::_AnyVisible()
 	return false;
 }
 
+// The seated origin in the standing one (none if the runtime can't say)
+static XrPosef SeatedInStanding()
+{
+	const XrPosef none{ { 0, 0, 0, 1 }, { 0, 0, 0 } };
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
+	if (!xr_gbl)
+		return none;
+	XrSpaceLocation location{ XR_TYPE_SPACE_LOCATION };
+	OC_XR_SOFT(xrLocateSpace(xr_gbl->seatedSpace, xr_gbl->floorSpace, xr_gbl->GetBestTime(), &location), none);
+	const XrSpaceLocationFlags valid = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+	return (location.locationFlags & valid) == valid ? location.pose : none;
+}
+
+// A tracked device's component within the device: the interaction profile's transform, where it has one for the
+// component (else the overlay is placed at the device itself)
+static std::optional<glm::mat4> ComponentInDevice(ITrackedDevice& device, const std::string& component)
+{
+	const InteractionProfile* profile = device.GetInteractionProfile();
+	if (!profile || component.empty())
+		return {};
+	return profile->GetComponentTransform(device.GetHand(), component);
+}
+
+// Where a cursor overlay's laser pointer meets the overlay it points at; nothing while nothing points at one
+static std::optional<XrPosef> CursorPoint()
+{
+	return {};
+}
+
+bool BaseOverlay::OverlayData::OwnTransform(vr::ETrackingUniverseOrigin trackingSpace, glm::mat4& out) const
+{
+	if (transformType == VROverlayTransform_TrackedDeviceRelative || transformType == VROverlayTransform_TrackedComponent) {
+		const bool component = transformType == VROverlayTransform_TrackedComponent;
+		std::shared_ptr<ITrackedDevice> dev = BackendManager::Instance().GetDevice(component ? componentDevice : transformData.deviceRelative.device);
+		if (!dev)
+			return false;
+
+		TrackedDevicePose_t pose = {};
+		dev->GetPose(trackingSpace, &pose, ETrackingStateType::TrackingStateType_Rendering);
+		if (!pose.bPoseIsValid)
+			return false;
+		const glm::mat4 device = S2G_m34(pose.mDeviceToAbsoluteTracking);
+		if (component) {
+			std::optional<glm::mat4> within = ComponentInDevice(*dev, componentName);
+			out = within ? device * *within : device;
+		} else {
+			out = device * S2G_m34(transformData.deviceRelative.offset);
+		}
+		return true;
+	}
+
+	// Absolute, a projection's eye, or a cursor's own transform: overlayTransform is stored rows first
+	out = glm::transpose(overlayTransform);
+	if (transformType == VROverlayTransform_Cursor) {
+		if (std::optional<XrPosef> point = CursorPoint()) {
+			const XrPosef centre = overlay_maths::CursorPose(*point, widthMeters, widthMeters / AspectRatio(), cursorHotspot);
+			out = X2G_om34_pose(centre);
+			return true;
+		}
+	}
+	// (raw is standing: only seated to anything else, or back, moves it)
+	if (absoluteOrigin >= 0 && (absoluteOrigin == vr::TrackingUniverseSeated) != (trackingSpace == vr::TrackingUniverseSeated)) {
+		const XrPosef none{ { 0, 0, 0, 1 }, { 0, 0, 0 } };
+		const XrPosef shift = overlay_maths::ChangeOrigin(none, (vr::ETrackingUniverseOrigin)absoluteOrigin, trackingSpace, SeatedInStanding());
+		out = X2G_om34_pose(shift) * out;
+	}
+	return true;
+}
+
+bool BaseOverlay::OverlayData::ComputeOverlayTransform(vr::ETrackingUniverseOrigin trackingSpace, const std::set<OverlayData*>& valid, glm::mat4& out) const
+{
+	using namespace overlay_maths;
+	auto link = [&](const void* node) {
+		ChainLink l;
+		OverlayData* o = (OverlayData*)node;
+		if (!valid.count(o))
+			return l; // a parent that's gone
+		if (o->overlayRelative) {
+			l.relative = true;
+			l.parent = (const void*)o->relativeParent;
+			l.transform = S2G_m34(o->relativeTransform);
+		} else {
+			l.placed = o->OwnTransform(trackingSpace, l.transform);
+		}
+		return l;
+	};
+	glm::mat4 transform;
+	switch (ResolveChain(this, link, transform)) {
+	case Chain::Placed:
+		out = glm::transpose(transform);
+		return true;
+	case Chain::Cycle:
+		OC_UNSUPPORTED(false, "Overlay '%s' is relative to itself through its parents: hidden", key.c_str());
+	case Chain::TooDeep:
+		OC_UNSUPPORTED(false, "Overlay '%s' has more than %d parent overlays: hidden", key.c_str(), kMaxChainDepth);
+	default:
+		return false;
+	}
+}
+
+bool BaseOverlay::OverlayData::ComputePlacement(vr::ETrackingUniverseOrigin trackingSpace, const std::set<OverlayData*>& valid, overlay_maths::Placement& out) const
+{
+	glm::mat4 transform = glm::mat4(0.0f);
+	if (!ComputeOverlayTransform(trackingSpace, valid, transform))
+		return false;
+	float xscale, yscale;
+	glm::quat orientation;
+	const glm::vec3 position = { transform[0][3], transform[1][3], transform[2][3] };
+	if (!QuatAndScaleFromMatrix(&orientation, transform, &xscale, &yscale) || !IsFinite(position))
+		return false;
+	const XrPosef pose{ G2X_quat(orientation), G2X_v3f(position) };
+
+	if (transformType == VROverlayTransform_Projection && !overlayRelative) {
+		out = overlay_maths::ProjectionQuad(pose, projection.fLeft, projection.fRight, projection.fTop, projection.fBottom);
+		return true;
+	}
+
+	// As tall as the texture's aspect ratio makes it. Not worked out when the texture is set: the app may change the
+	// width without changing the texture.
+	const float width = widthMeters * xscale;
+	const float height = widthMeters / AspectRatio() * yscale;
+	const bool curved = curvature >= minOverlayCurvature && xr_ext->CylinderKHR_Available()
+	    && std::isfinite(width) && std::isfinite(height) && width > 0 && height > 0;
+	out = overlay_maths::Placement{ pose, width, height, curved ? curvature : 0.0f };
+	return true;
+}
+
 int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompositionLayerBaseHeader const* const*& layers, bool mayUpload)
 {
 	// Note that at least on MSVC, this shouldn't be doing any memory allocations
@@ -285,47 +422,34 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 				continue;
 			}
 
-			// Skip overlay if we can't compute its transform
-			glm::mat4 transform = glm::mat4(0.0f);
-			if (!overlay.ComputeOverlayTransform(trackingSpace, transform)) {
+			// Skip overlay if we can't compute where it goes
+			overlay_maths::Placement placement;
+			if (!overlay.ComputePlacement(trackingSpace, validOverlays, placement))
 				continue;
-			}
+			const glm::vec3 position = X2G_v3f(placement.pose.position);
+			const glm::quat orientation = X2G_quat(placement.pose.orientation);
 
-			// Calculate the texture's aspect ratio
-			const float aspect = srcHeight > 0 ? (float)srcSize.extent.width / (float)srcHeight : 1.0f;
-			// ... and use that to set the size of the overlay, as it will appear to the user
-			// Note we shouldn't do this when setting the texture, as the user may change the width of
-			//  the overlay without changing the texture.
-			float xscale, yscale;
-			glm::quat orientation;
-			const glm::vec3 position = { transform[0][3], transform[1][3], transform[2][3] };
-			if (!QuatAndScaleFromMatrix(&orientation, transform, &xscale, &yscale) || !IsFinite(position))
-				continue;
-
-			const float width = overlay.widthMeters * xscale;
-			const float height = overlay.widthMeters / aspect * yscale;
 			// The transform is in the current tracking space, which the app may have changed since it set the texture
 			overlay.compositionLayer.base.space = xr_space_from_ref_space_type(BaseSystem::currentSpace);
+			// (eyeVisibility is the same for quad and cylinder layers)
+			overlay.compositionLayer.quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+			if (overlay.transformType == VROverlayTransform_Projection && !overlay.overlayRelative)
+				overlay.compositionLayer.quad.eyeVisibility = overlay.projectionEye == vr::Eye_Right ? XR_EYE_VISIBILITY_RIGHT : XR_EYE_VISIBILITY_LEFT;
 
-			const bool curved = overlay.curvature >= minOverlayCurvature && xr_ext->CylinderKHR_Available()
-			    && std::isfinite(width) && std::isfinite(height) && width > 0 && height > 0;
-			if (curved) {
-				// OpenVR's curvature is the overlay's width over the cylinder's circumference (1 is a closed cylinder).
-				// An OpenXR cylinder's visible arc is centred on its -Z, so its centre is a radius in front of the overlay.
-				const float curvature = std::min(overlay.curvature, 1.0f);
-				const float radius = width / (glm::two_pi<float>() * curvature);
+			if (placement.curvature > 0) {
+				// An OpenXR cylinder's visible arc is centred on its -Z, so its centre is a radius in front of the overlay
+				const float radius = overlay_maths::CylinderRadius(placement.width, placement.curvature);
 				const glm::vec3 centre = position + orientation * glm::vec3(0.0f, 0.0f, radius);
 				overlay.compositionLayer.base.type = XR_TYPE_COMPOSITION_LAYER_CYLINDER_KHR;
 				overlay.compositionLayer.cylinder.radius = radius;
-				// OpenXR wants it below 2π, which a float 2π rounds above
-				overlay.compositionLayer.cylinder.centralAngle = std::min(glm::two_pi<float>() * curvature, std::nextafter(glm::two_pi<float>(), 0.0f));
-				overlay.compositionLayer.cylinder.aspectRatio = width / height;
-				overlay.compositionLayer.cylinder.pose = { G2X_quat(orientation), G2X_v3f(centre) };
+				overlay.compositionLayer.cylinder.centralAngle = overlay_maths::CylinderAngle(placement.curvature);
+				overlay.compositionLayer.cylinder.aspectRatio = placement.width / placement.height;
+				overlay.compositionLayer.cylinder.pose = { placement.pose.orientation, G2X_v3f(centre) };
 			} else {
 				overlay.compositionLayer.base.type = XR_TYPE_COMPOSITION_LAYER_QUAD;
-				overlay.compositionLayer.quad.size.width = width;
-				overlay.compositionLayer.quad.size.height = height;
-				overlay.compositionLayer.quad.pose = { G2X_quat(orientation), G2X_v3f(position) };
+				overlay.compositionLayer.quad.size.width = placement.width;
+				overlay.compositionLayer.quad.size.height = placement.height;
+				overlay.compositionLayer.quad.pose = placement.pose;
 			}
 
 			overlay.distance = glm::distance(position, hmdPosition);
@@ -774,11 +898,10 @@ EVROverlayError BaseOverlay::SetOverlayTransformAbsolute(VROverlayHandle_t ulOve
 {
 	USEH_LOCKED();
 
-	// TODO account for the universe origin, and if it doesn't match that currently in use then add or
-	//  subtract the floor position to match it. This shouldn't usually be an issue though, as I can't
-	//  imagine many apps will use a different origin for their overlays.
-
+	// Drawn in whatever origin the frame uses (ChangeOrigin)
 	overlay->transformType = VROverlayTransform_Absolute;
+	overlay->overlayRelative = false;
+	overlay->absoluteOrigin = (int)eTrackingOrigin;
 	S2O_om44(*pmatTrackingOriginToOverlayTransform, overlay->overlayTransform);
 
 	return VROverlayError_None;
@@ -790,6 +913,8 @@ EVROverlayError BaseOverlay::GetOverlayTransformAbsolute(VROverlayHandle_t ulOve
 	if (overlay->transformType != VROverlayTransform_Absolute)
 		return VROverlayError_WrongTransformType;
 
+	if (peTrackingOrigin && overlay->absoluteOrigin >= 0)
+		*peTrackingOrigin = (ETrackingUniverseOrigin)overlay->absoluteOrigin;
 	O2S_om34(overlay->overlayTransform, *pmatTrackingOriginToOverlayTransform);
 
 	return VROverlayError_None;
@@ -799,6 +924,7 @@ EVROverlayError BaseOverlay::SetOverlayTransformTrackedDeviceRelative(VROverlayH
 	USEH_LOCKED();
 
 	overlay->transformType = VROverlayTransform_TrackedDeviceRelative;
+	overlay->overlayRelative = false;
 	overlay->transformData.deviceRelative.device = unTrackedDevice;
 	overlay->transformData.deviceRelative.offset = *pmatTrackedDeviceToOverlayTransform;
 
@@ -819,9 +945,9 @@ EVROverlayError BaseOverlay::SetOverlayTransformTrackedDeviceComponent(VROverlay
 {
 	USEH_LOCKED();
 	overlay->transformType = VROverlayTransform_TrackedComponent;
+	overlay->overlayRelative = false;
 	overlay->componentDevice = unDeviceIndex;
 	overlay->componentName = pchComponentName ? pchComponentName : "";
-	OOVR_LOG_ONCE("Overlays on a tracked device's component are placed at the device itself");
 	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::GetOverlayTransformTrackedDeviceComponent(VROverlayHandle_t ulOverlayHandle, TrackedDeviceIndex_t* punDeviceIndex, char* pchComponentName, uint32_t unComponentNameSize)
@@ -852,10 +978,11 @@ EVROverlayError BaseOverlay::GetOverlayTransformOverlayRelative(VROverlayHandle_
 EVROverlayError BaseOverlay::SetOverlayTransformOverlayRelative(VROverlayHandle_t ulOverlayHandle, VROverlayHandle_t ulOverlayHandleParent, const HmdMatrix34_t* pmatParentOverlayToOverlayTransform)
 {
 	USEH();
+	// Placed by its parent when drawn: the parent may be made, moved or destroyed afterwards
+	overlay->overlayRelative = true;
 	overlay->relativeParent = ulOverlayHandleParent;
 	if (pmatParentOverlayToOverlayTransform)
 		overlay->relativeTransform = *pmatParentOverlayToOverlayTransform;
-	OOVR_LOG_ONCE("Overlay-relative transforms are kept but not placed yet");
 	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::SetOverlayTransformCursor(VROverlayHandle_t ulCursorOverlayHandle, const HmdVector2_t* pvHotspot)
@@ -863,6 +990,9 @@ EVROverlayError BaseOverlay::SetOverlayTransformCursor(VROverlayHandle_t ulCurso
 	OverlayData* overlay = (OverlayData*)ulCursorOverlayHandle;
 	if (!overlay || !validOverlays.count(overlay) || !overlays.count(overlay->key))
 		return VROverlayError_InvalidHandle;
+	// Drawn where a laser pointer meets the overlay it's the cursor of; until one does, at its own transform
+	overlay->transformType = VROverlayTransform_Cursor;
+	overlay->overlayRelative = false;
 	if (pvHotspot)
 		overlay->cursorHotspot = *pvHotspot;
 	return VROverlayError_None;
@@ -880,11 +1010,15 @@ EVROverlayError BaseOverlay::SetOverlayTransformProjection(VROverlayHandle_t ulO
     const OOVR_VROverlayProjection_t* pProjection, EVREye eEye)
 {
 	USEH_LOCKED();
-	if (pmatTrackingOriginToOverlayTransform) {
-		overlay->transformType = VROverlayTransform_Absolute;
-		S2O_om44(*pmatTrackingOriginToOverlayTransform, overlay->overlayTransform);
-	}
-	OOVR_LOG_ONCE("Projection overlays are drawn as absolute ones");
+	if (!pmatTrackingOriginToOverlayTransform || !pProjection)
+		return VROverlayError_InvalidParameter;
+	// The transform is the eye's: the overlay covers its projection, 1 m ahead, for that eye alone
+	overlay->transformType = VROverlayTransform_Projection;
+	overlay->overlayRelative = false;
+	overlay->absoluteOrigin = (int)eTrackingOrigin;
+	S2O_om44(*pmatTrackingOriginToOverlayTransform, overlay->overlayTransform);
+	overlay->projection = *pProjection;
+	overlay->projectionEye = eEye == vr::Eye_Right ? vr::Eye_Right : vr::Eye_Left;
 	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::ShowOverlay(VROverlayHandle_t ulOverlayHandle)
@@ -909,9 +1043,14 @@ EVROverlayError BaseOverlay::GetTransformForOverlayCoordinates(VROverlayHandle_t
 	USEH();
 	if (!pmatTransform)
 		return VROverlayError_InvalidParameter;
-	// The overlay's own transform: the offset within it isn't added yet
-	O2S_om34(overlay->overlayTransform, *pmatTransform);
-	OC_UNSUPPORTED(VROverlayError_None, "GetTransformForOverlayCoordinates: answered with the overlay's own transform");
+	overlay_maths::Placement placement;
+	if (!overlay->ComputePlacement(eTrackingOrigin, validOverlays, placement)) {
+		O2S_om34(overlay->overlayTransform, *pmatTransform);
+		OC_UNSUPPORTED(VROverlayError_None, "GetTransformForOverlayCoordinates: overlay '%s' can't be placed, answered with its own transform", overlay->key.c_str());
+	}
+	const XrPosef point = overlay_maths::PointOn(placement, coordinatesInOverlay.v[0], coordinatesInOverlay.v[1]);
+	*pmatTransform = G2S_m34(X2G_om34_pose(point));
+	return VROverlayError_None;
 }
 bool BaseOverlay::PollNextOverlayEvent(VROverlayHandle_t ulOverlayHandle, VREvent_t* pEvent, uint32_t eventSize)
 {
@@ -970,60 +1109,27 @@ bool BaseOverlay::ComputeOverlayIntersection(VROverlayHandle_t ulOverlayHandle, 
 {
 	USEHB();
 
-	// first, get transform
-	glm::mat4 transform = glm::mat4(0.0f);
-	if(!overlay->ComputeOverlayTransform(pParams->eOrigin, transform))
+	if (!pParams || !pResults)
 		return false;
-	// The overlay's axes, with Z made from X and Y as for drawing it (see QuatAndScaleFromMatrix)
-	const glm::vec3 xAxis = glm::vec3(transform[0][0], transform[1][0], transform[2][0]);
-	const glm::vec3 yAxis = glm::vec3(transform[0][1], transform[1][1], transform[2][1]);
-	const glm::vec3 position = glm::vec3(transform[0][3], transform[1][3], transform[2][3]);
-	glm::quat orientation;
-	float xscale, yscale;
-	if (!QuatAndScaleFromMatrix(&orientation, transform, &xscale, &yscale) || !IsFinite(position))
+	overlay_maths::Placement placement;
+	if (!overlay->ComputePlacement(pParams->eOrigin, validOverlays, placement))
 		return false; // not drawn either
-	const glm::vec3 zAxis = orientation * glm::vec3(0.0f, 0.0f, 1.0f);
-	// (glm::mat3 takes columns; the maths below multiplies row vectors by the basis, so it wants the transpose)
-	glm::mat3 basis = glm::transpose(glm::mat3(xAxis, yAxis, zAxis));
-	// world space -> overlay space
-	glm::mat3 invertedBasis = glm::inverse(basis);
 
-	// collect the data
-	auto& s = pParams->vSource.v;
-	glm::vec3 src = { s[0], s[1], s[2] };
-	auto& d = pParams->vDirection.v;
-	glm::vec3 dir = { d[0], d[1], d[2] };
-
-	// move src to overlay space
-	glm::vec3 src_proj = (src - position) * invertedBasis;
-	if (src_proj.z < 0)
-		return false;
-	glm::vec3 dir_proj = dir * invertedBasis;
-
-	// only intersect with forward ray, not one nearly parallel to the overlay (its angle measured in the world, as
-	// the overlay's scale would skew it in overlay space; zAxis is a unit normal, so this is also dir_proj.z)
-	if (!(glm::dot(dir, zAxis) < -0.01f * glm::length(dir)))
-		return false;
-
-	// assign z to zero to fing intersection
-	glm::vec3 dst_proj = src_proj - dir_proj * (src_proj.z / dir_proj.z);
-
-	// convert it back
-	glm::vec3 dst = dst_proj * basis + position;
-	glm::vec3 n = glm::normalize(glm::vec3{ 0.0f, 0.0f, 1.0f } * basis);
-
-	// build result
-	pResults->vNormal = { n[0], n[1], n[2] };
-	pResults->vPoint = { dst[0], dst[1], dst[2] };
-	// clang-format off
-	// The overlay is widthMeters wide, and as tall as its texture's aspect ratio makes it
-	const XrExtent2Di& extent = overlay->compositionLayer.quad.subImage.imageRect.extent;
-	const float heightMeters = extent.width > 0 && extent.height != 0 ? overlay->widthMeters * std::abs(extent.height) / extent.width : overlay->widthMeters;
-	pResults->vUVs = { dst_proj.x / (float)overlay->widthMeters + 0.5f,
-	                   dst_proj.y / heightMeters + 0.5f };
-	// clang-format on
-	pResults->fDistance = glm::length(dst - src);
-	return pResults->vUVs.v[0] > 0 && pResults->vUVs.v[0] < 1 && pResults->vUVs.v[1] > 0 && pResults->vUVs.v[1] < 1;
+	const auto& s = pParams->vSource.v;
+	const auto& d = pParams->vDirection.v;
+	overlay_maths::Hit hit{};
+	hit.distance = -1;
+	const bool on = overlay_maths::Intersect(placement, { s[0], s[1], s[2] }, { d[0], d[1], d[2] }, hit);
+	if (hit.distance < 0)
+		return false; // not even the overlay's plane or cylinder
+	pResults->vPoint = { hit.point.x, hit.point.y, hit.point.z };
+	pResults->vNormal = { hit.normal.x, hit.normal.y, hit.normal.z };
+	pResults->vUVs = { hit.u, hit.v };
+	pResults->fDistance = hit.distance;
+	// The mask is in the overlay's mouse coordinates, from its upper left
+	const float x = hit.u * overlay->mouseScale.v[0];
+	const float y = (1 - hit.v) * overlay->mouseScale.v[1];
+	return on && overlay_maths::InMask(overlay->intersectionMask, x, y);
 }
 bool BaseOverlay::HandleControllerOverlayInteractionAsMouse(VROverlayHandle_t ulOverlayHandle, TrackedDeviceIndex_t unControllerDeviceIndex)
 {
@@ -1534,7 +1640,20 @@ void BaseOverlay::SetKeyboardPositionForOverlay(VROverlayHandle_t ulOverlayHandl
 EVROverlayError BaseOverlay::SetOverlayIntersectionMask(VROverlayHandle_t ulOverlayHandle, OOVR_VROverlayIntersectionMaskPrimitive_t* pMaskPrimitives, uint32_t unNumMaskPrimitives, uint32_t unPrimitiveSize)
 {
 	USEH();
-	OC_UNSUPPORTED(VROverlayError_None, "SetOverlayIntersectionMask: kept as the whole overlay");
+	if (!pMaskPrimitives || unNumMaskPrimitives == 0) {
+		overlay->intersectionMask.clear(); // the whole overlay
+		return VROverlayError_None;
+	}
+	if (unPrimitiveSize != sizeof(OOVR_VROverlayIntersectionMaskPrimitive_t))
+		OC_UNSUPPORTED(VROverlayError_None, "SetOverlayIntersectionMask: primitives of %u bytes, not %u: kept as the whole overlay",
+		    unPrimitiveSize, (unsigned)sizeof(OOVR_VROverlayIntersectionMaskPrimitive_t));
+	// Bounded: a mask is a few shapes, not a texture's worth
+	static constexpr uint32_t maxPrimitives = 4096;
+	if (unNumMaskPrimitives > maxPrimitives)
+		OC_UNSUPPORTED(VROverlayError_None, "SetOverlayIntersectionMask: %u primitives, more than %u: kept as the whole overlay",
+		    unNumMaskPrimitives, maxPrimitives);
+	overlay->intersectionMask.assign(pMaskPrimitives, pMaskPrimitives + unNumMaskPrimitives);
+	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::GetOverlayFlags(VROverlayHandle_t ulOverlayHandle, uint32_t* pFlags)
 {

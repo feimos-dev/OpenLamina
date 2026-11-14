@@ -1,6 +1,7 @@
 #pragma once
 #include "../BaseCommon.h" // TODO don't import from OCOVR, and remove the "../"
 #include "../Misc/Keyboard/VRKeyboard.h" // TODO don't import from OCOVR, and remove the "../"
+#include "../Misc/OverlayMaths.h"
 #include <map>
 #include <memory>
 #include <mutex>
@@ -30,6 +31,8 @@ enum OOVR_VROverlayTransformType {
 	VROverlayTransform_TrackedDeviceRelative = 1,
 	VROverlayTransform_SystemOverlay = 2,
 	VROverlayTransform_TrackedComponent = 3,
+	VROverlayTransform_Cursor = 4,
+	VROverlayTransform_Projection = 8,
 };
 
 /** Overlay control settings */
@@ -120,34 +123,6 @@ enum OOVR_EOverlayDirection {
 	OverlayDirection_Right = 3,
 
 	OverlayDirection_Count = 4,
-};
-
-enum OOVR_EVROverlayIntersectionMaskPrimitiveType {
-	OverlayIntersectionPrimitiveType_Rectangle,
-	OverlayIntersectionPrimitiveType_Circle,
-};
-
-struct OOVR_IntersectionMaskRectangle_t {
-	float m_flTopLeftX;
-	float m_flTopLeftY;
-	float m_flWidth;
-	float m_flHeight;
-};
-
-struct OOVR_IntersectionMaskCircle_t {
-	float m_flCenterX;
-	float m_flCenterY;
-	float m_flRadius;
-};
-
-typedef union {
-	OOVR_IntersectionMaskRectangle_t m_Rectangle;
-	OOVR_IntersectionMaskCircle_t m_Circle;
-} OOVR_VROverlayIntersectionMaskPrimitive_Data_t;
-
-struct OOVR_VROverlayIntersectionMaskPrimitive_t {
-	OOVR_EVROverlayIntersectionMaskPrimitiveType m_nPrimitiveType;
-	OOVR_VROverlayIntersectionMaskPrimitive_Data_t m_Primitive;
 };
 
 /** Defines the project used in an overlay that is using SetOverlayTransformProjection */
