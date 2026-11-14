@@ -194,7 +194,7 @@ DX11Compositor::~DX11Compositor()
 	device->Release();
 }
 
-void DX11Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, bool cube)
+void DX11Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, uint32_t width, uint32_t height, bool cube)
 {
 	XrSwapchainCreateInfo& desc = createInfo;
 
@@ -204,11 +204,10 @@ void DX11Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, const vr
 	src->GetDesc(&srcDesc);
 	const D3D11_TEXTURE2D_DESC fullSrcDesc = srcDesc;
 
-	if (bounds) {
-		if (std::fabs(bounds->uMax - bounds->uMin) > 0.1)
-			srcDesc.Width = uint32_t(float(srcDesc.Width) * std::fabs(bounds->uMax - bounds->uMin));
-		if (std::fabs(bounds->vMax - bounds->vMin) > 0.1)
-			srcDesc.Height = uint32_t(float(srcDesc.Height) * std::fabs(bounds->vMax - bounds->vMin));
+	// The swapchain is the size of the area shown
+	if (width && height) {
+		srcDesc.Width = width;
+		srcDesc.Height = height;
 	}
 
 	if (cube) {
@@ -222,8 +221,6 @@ void DX11Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, const vr
 	if (!usable) {
 		OOVR_LOG("Generating new swap chain");
 
-		if (bounds)
-			OOVR_LOGF("Bounds: uMin %f uMax %f vMin %f vMax %f", bounds->uMin, bounds->uMax, bounds->vMin, bounds->vMax);
 		OOVR_LOGF("Texture desc format: %d", srcDesc.Format);
 		OOVR_LOGF("Texture desc bind flags: %d", srcDesc.BindFlags);
 		OOVR_LOGF("Texture desc MiscFlags: %d", srcDesc.MiscFlags);
@@ -272,8 +269,8 @@ void DX11Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, const vr
 		desc.width = srcDesc.Width;
 		desc.height = srcDesc.Height;
 		desc.format = type;
-		// A converted texture is drawn into mip 0 only
-		desc.mipCount = convertFormat ? 1 : srcDesc.MipLevels;
+		// The copy and the shader pass write mip 0 only
+		desc.mipCount = 1;
 		desc.sampleCount = 1;
 		desc.arraySize = 1;
 		desc.usageFlags = XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
@@ -479,14 +476,23 @@ void DX11Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 		OC_UNSUPPORTED_VOID("A D3D11 array texture of %u slices submitted with slice %u", srcDesc.ArraySize, arrayIndex);
 	}
 
-	CheckCreateSwapChain(texture, bounds, false);
+	// The bounds' area, which the swapchain is the size of
+	TextureRegion region;
+	if (!RegionFromBounds(bounds, srcDesc.Width, srcDesc.Height, region)) {
+		// Submit answers InvalidTexture; the eye is left out
+		lastResult = XR_ERROR_VALIDATION_FAILURE;
+		OC_UNSUPPORTED_VOID("D3D11 texture whose bounds have no area: u %f to %f, v %f to %f", (double)Bounds(bounds).uMin, (double)Bounds(bounds).uMax, (double)Bounds(bounds).vMin, (double)Bounds(bounds).vMax);
+	}
+
+	CheckCreateSwapChain(texture, region.Width(), region.Height(), false);
 	if (!chain || XR_FAILED(lastResult))
 		return;
 
-	// The shader pass converts into the swapchain's format, and inverts by the bounds. It needs a texture it can read:
-	// a multisampled one, or one not bound as a shader resource, is resolved or copied into one first.
-	const bool invert = bounds && bounds->vMin > bounds->vMax && oovr_global_configuration.InvertUsingShaders();
-	const bool shaderPass = convertFormat || invert;
+	// The shader pass converts into the swapchain's format, and flips by the bounds (invertUsingShaders: always used).
+	// It needs a texture it can read: a multisampled one, or one not bound as a shader resource, is resolved or copied
+	// into one first.
+	const bool flip = region.flipX || region.flipY;
+	const bool shaderPass = convertFormat || flip || oovr_global_configuration.InvertUsingShaders();
 	if (convertFormat && !shadersUsable) {
 		// Submit answers InvalidTexture; the eye is left out
 		lastResult = XR_ERROR_VALIDATION_FAILURE;
@@ -499,19 +505,8 @@ void DX11Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 		return;
 	XrSwapchainImageReleaseInfo releaseInfo{ XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
 
-	// Copy the source to the destination image
-	D3D11_BOX sourceRegion;
-	if (bounds) {
-		sourceRegion.left = bounds->uMin == 0.0f ? 0 : createInfo.width;
-		sourceRegion.right = bounds->uMin == 0.0f ? createInfo.width : createInfo.width * 2;
-	} else {
-		sourceRegion.left = 0;
-		sourceRegion.right = createInfo.width;
-	}
-	sourceRegion.top = 0;
-	sourceRegion.bottom = createInfo.height;
-	sourceRegion.front = 0;
-	sourceRegion.back = 1;
+	// The area copied: no more than the bounds'
+	D3D11_BOX sourceRegion{ region.x0, region.y0, 0, region.x1, region.y1, 1 };
 
 	const UINT srcSubresource = D3D11CalcSubresource(0, arrayIndex, srcDesc.MipLevels);
 
@@ -557,14 +552,17 @@ void DX11Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 		OC_UNSUPPORTED_VOID("A D3D11 texture of DXGI format %d couldn't be converted into swapchain format %d", (int)srcDesc.Format, (int)createInfo.format);
 	}
 
+	if (flip && !useShader)
+		OOVR_LOG_ONCE("A D3D11 texture with flipped bounds couldn't go through the shader pass: shown as it is, not flipped");
+
 	if (useShader) {
+		// The area, backwards where the bounds flip it, in texture coordinates
 		ShaderPass pass;
-		if (bounds) {
-			pass.offsetX = bounds->uMin;
-			pass.offsetY = bounds->vMin;
-			pass.scaleX = bounds->uMax - bounds->uMin;
-			pass.scaleY = bounds->vMax - bounds->vMin;
-		}
+		const float w = (float)srcDesc.Width, h = (float)srcDesc.Height;
+		pass.offsetX = (float)(region.flipX ? region.x1 : region.x0) / w;
+		pass.offsetY = (float)(region.flipY ? region.y1 : region.y0) / h;
+		pass.scaleX = (region.flipX ? -1.0f : 1.0f) * (float)region.Width() / w;
+		pass.scaleY = (region.flipY ? -1.0f : 1.0f) * (float)region.Height() / h;
 		// Gamma-encoded values: decoded when the view doesn't and the target encodes, encoded the other way round
 		const bool viewSrgb = FormatIsSrgb(GfxApiKind::D3D11, typedFormat);
 		const bool targetSrgb = FormatIsSrgb(GfxApiKind::D3D11, createInfo.format);
@@ -587,7 +585,7 @@ void DX11Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 
 void DX11Compositor::InvokeCubemap(const vr::Texture_t* textures)
 {
-	CheckCreateSwapChain(&textures[0], nullptr, true);
+	CheckCreateSwapChain(&textures[0], 0, 0, true);
 
 #ifdef OC_XR_PORT
 	// Not yet: SetSkyboxOverride answers RequestFailed
@@ -709,7 +707,6 @@ bool DX11Compositor::CheckChainCompatible(D3D11_TEXTURE2D_DESC& inputDesc, vr::E
 
 	CHECK(Width, width)
 	CHECK(Height, height)
-	CHECK(MipLevels, mipCount)
 
 	if (inputDesc.Format != createInfoFormat) {
 		FAIL("Format");
