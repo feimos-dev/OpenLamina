@@ -11,6 +11,7 @@ public:
 	vr::HmdColor_t HandColour() const { return handColour; }
 	float SupersampleRatio() const { return supersampleRatio; }
 	bool Haptics() const { return haptics; }
+	bool EyeTracking() const { return eyeTracking; }
 	bool AdmitUnknownProps() const { return admitUnknownProps; }
 	inline bool LogGetTrackedProperty() const { return logGetTrackedProperty; }
 	inline bool StopOnSoftAbort() const { return stopOnSoftAbort; }
@@ -36,6 +37,7 @@ private:
 	vr::HmdColor_t handColour = vr::HmdColor_t{ 0.3f, 0.3f, 0.3f, 1 };
 	float supersampleRatio = 1.0f;
 	bool haptics = true;
+	bool eyeTracking = true;
 	bool admitUnknownProps = false;
 	bool logGetTrackedProperty = false;
 	bool stopOnSoftAbort = false;

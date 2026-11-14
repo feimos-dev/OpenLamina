@@ -53,6 +53,8 @@ XrExt::XrExt(XrGraphicsApiSupportedFlags apis, const std::vector<const char*>& e
 			xdevSpace = true;
 		if (strcmp(ext, XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME) == 0)
 			supportsCylinderKHR = true;
+		if (strcmp(ext, XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME) == 0)
+			supportsEyeGaze = true;
 	}
 
 #define XR_BIND(name, function) OOVR_FAILED_XR_ABORT(xrGetInstanceProcAddr(xr_instance, #name, (PFN_xrVoidFunction*)&this->function))
@@ -150,7 +152,13 @@ XrSessionGlobals::XrSessionGlobals()
 	// Read the system properties, including those for hand-tracking
 	if (xr_ext->handTrackingExtensionAvailable())
 		systemProperties.next = &handTrackingProperties;
+	if (xr_ext->EyeGaze_Available()) {
+		eyeGazeProperties.next = systemProperties.next;
+		systemProperties.next = &eyeGazeProperties;
+	}
 	OC_XR_LOG(xrGetSystemProperties(xr_instance, xr_system, &systemProperties));
+	if (xr_ext->EyeGaze_Available())
+		OOVR_LOGF("Eye gaze: %s", eyeGazeProperties.supportsEyeGazeInteraction ? "available" : "not available on this system");
 }
 
 XrTime XrSessionGlobals::GetBestTime()

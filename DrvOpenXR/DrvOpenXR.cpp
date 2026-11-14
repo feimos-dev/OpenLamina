@@ -275,6 +275,10 @@ IBackend* DrvOpenXR::CreateOpenXRBackend(const char* startupInfo, vr::EVRInitErr
 	if (availableExtensions.contains(XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME))
 		extensions.push_back(XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME);
 
+	// The gaze for eye-tracked foveation; a runtime may start its eye tracker for it, so only when the user wants it
+	if (oovr_global_configuration.EyeTracking() && availableExtensions.contains(XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME))
+		extensions.push_back(XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME);
+
 	const char* const layers[] = {
 #ifdef XR_VALIDATION_LAYER_PATH
 		"XR_APILAYER_LUNARG_core_validation",

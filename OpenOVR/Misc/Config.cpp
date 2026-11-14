@@ -153,6 +153,7 @@ int Config::ini_handler(void* user, const char* pSection,
 		CFGOPT(HmdColor_t, handColour);
 		CFGOPT(float, supersampleRatio);
 		CFGOPT(bool, haptics);
+		CFGOPT(bool, eyeTracking);
 		CFGOPT(bool, admitUnknownProps);
 		CFGOPT(bool, logGetTrackedProperty);
 		CFGOPT(bool, stopOnSoftAbort);
