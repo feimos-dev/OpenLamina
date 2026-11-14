@@ -66,6 +66,12 @@ inline DXGI_FORMAT TypedDxgi(DXGI_FORMAT format)
 	}
 }
 
+// The shader pass of D3D11 and D3D12 (dx11compositor.cpp): vs_fs draws a quad over the target from the cbuffer's
+// source area (b0: offset, scale, decodeSrgb, encodeSrgb, pad), ps_fs samples t0 (a Texture2DArray's slice 0) with s0
+extern const char fs_shader_code[];
+// The HLSL compiled for target, or nullptr (logged)
+ID3D10Blob* d3d_compile_shader(const char* hlsl, const char* entrypoint, const char* target);
+
 // A transition barrier of a D3D12 resource (dx12compositor.cpp)
 D3D12_RESOURCE_BARRIER Dx12Transition(ID3D12Resource* resource, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after,
     UINT subresource = D3D12_RESOURCE_BARRIER_ALL_SUBRESOURCES);

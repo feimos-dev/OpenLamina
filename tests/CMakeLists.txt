@@ -110,6 +110,7 @@ add_executable(oc_unit_tests
 	unit/NumbersTests.cpp
 	unit/XrHMDTests.cpp
 	unit/ImageTests.cpp
+	unit/FormatTableTests.cpp
 	${OC_TEST_RESOURCES}
 )
 target_include_directories(oc_unit_tests PRIVATE

@@ -4,7 +4,10 @@
 
 #include "dx11compositor.h"
 
+#include "FormatTable.h"
+
 #include "../Misc/Config.h"
+#include "../Misc/SoftFail.h"
 #include "../Misc/xr_ext.h"
 
 #include <d3dcompiler.h> // For compiling shaders! D3DCompile
@@ -14,9 +17,11 @@
 struct ShaderConstData {
 	float offsetX, offsetY;
 	float scaleX, scaleY;
+	float decodeSrgb, encodeSrgb;
+	float pad[2];
 };
 
-constexpr char fs_shader_code[] = R"_(
+extern const char fs_shader_code[] = R"_(
 Texture2DArray shaderTexture : register(t0);
 
 SamplerState SampleType : register(s0);
@@ -24,6 +29,9 @@ SamplerState SampleType : register(s0);
 cbuffer ConstData : register(b0) {
 	float2 offset;
 	float2 scale;
+	float decodeSrgb;
+	float encodeSrgb;
+	float2 pad;
 };
 
 struct psIn {
@@ -44,8 +52,14 @@ psIn vs_fs(uint vI : SV_VERTEXID)
 
 float4 ps_fs(psIn inputPS) : SV_TARGET
 {
-	float4 textureColor = shaderTexture.Sample(SampleType, float3(inputPS.tex, 0));
-	return textureColor;
+	float4 c = shaderTexture.Sample(SampleType, float3(inputPS.tex, 0));
+	// Gamma-encoded values read through a view that doesn't decode them, into an sRGB target that encodes: decoded
+	// here, so the target gets the game's values. And the other way round for a linear target.
+	if (decodeSrgb > 0.5f)
+		c.rgb = c.rgb <= 0.04045f ? c.rgb / 12.92f : pow(abs((c.rgb + 0.055f) / 1.055f), 2.4f);
+	if (encodeSrgb > 0.5f)
+		c.rgb = c.rgb <= 0.0031308f ? c.rgb * 12.92f : 1.055f * pow(abs(c.rgb), 1.0f / 2.4f) - 0.055f;
+	return c;
 })_";
 
 ID3DBlob* d3d_compile_shader(const char* hlsl, const char* entrypoint, const char* target)
@@ -139,6 +153,19 @@ DX11Compositor::DX11Compositor(ID3D11Texture2D* initial)
 		shadersUsable = false;
 	if (!shadersUsable)
 		OOVR_LOG("The D3D11 compositor's shaders couldn't be set up: inverted textures are copied as they are");
+
+	// A pipeline state of its own, swapped in for the shader pass so the game's is left as it was (D3D11.1; without
+	// it the state the pass changes is saved and put back one piece at a time)
+	ID3D11Device1* device1 = nullptr;
+	if (SUCCEEDED(device->QueryInterface(__uuidof(ID3D11Device1), (void**)&device1)) && device1) {
+		D3D_FEATURE_LEVEL level = device->GetFeatureLevel();
+		UINT flags = (device->GetCreationFlags() & D3D11_CREATE_DEVICE_SINGLETHREADED) ? D3D11_1_CREATE_DEVICE_CONTEXT_STATE_SINGLETHREADED : 0;
+		if (FAILED(device1->CreateDeviceContextState(flags, &level, 1, D3D11_SDK_VERSION, __uuidof(ID3D11Device), nullptr, &ownState)))
+			ownState = nullptr;
+		device1->Release();
+	}
+	if (ownState && FAILED(context->QueryInterface(__uuidof(ID3D11DeviceContext1), (void**)&context1)))
+		context1 = nullptr;
 }
 
 DX11Compositor::~DX11Compositor()
@@ -154,8 +181,14 @@ DX11Compositor::~DX11Compositor()
 
 	resolvedMSAATextures.clear();
 
+	if (shaderSource)
+		shaderSource->Release();
 	if (constBuffer)
 		constBuffer->Release();
+	if (context1)
+		context1->Release();
+	if (ownState)
+		ownState->Release();
 
 	context->Release();
 	device->Release();
@@ -215,39 +248,22 @@ void DX11Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, const vr
 
 		resolvedMSAATextures.clear();
 
-		// Figure out what format we need to use
-		DxgiFormatInfo info = {};
-		if (!GetFormatInfo(srcDesc.Format, info)) {
+		// The runtime's format for it: its own, or one it's converted into (by the shader pass)
+		std::optional<FormatChoice> choice = ChooseSwapchainFormat(GfxApiKind::D3D11, srcDesc.Format, texture->eColorSpace, RuntimeFormats());
+		if (!choice) {
 			// Submit answers TextureUsesUnsupportedFormat; the eye is left out
-			OOVR_LOGF("Unknown (by OC) DXGI texture format %d", srcDesc.Format);
+			createInfo = {};
 			lastResult = XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
-			return;
+			OC_UNSUPPORTED_VOID("A D3D11 texture of DXGI format %d: no swapchain format can show it", (int)srcDesc.Format);
 		}
-		bool useLinearFormat;
-		switch (texture->eColorSpace) {
-		case vr::ColorSpace_Gamma:
-			useLinearFormat = false;
-			break;
-		case vr::ColorSpace_Linear:
-			useLinearFormat = true;
-			break;
-		default:
-			// As per the docs for the auto mode, at eight bits per channel or less it assumes gamma
-			// (using such small channels for linear colour would result in significant banding)
-			useLinearFormat = info.bpc > 8;
-			break;
-		}
-
-		DXGI_FORMAT type = useLinearFormat ? info.linear : info.srgb;
-
-		if (type == DXGI_FORMAT_UNKNOWN) {
-			OOVR_LOGF("Invalid DXGI target format found: useLinear=%d type=DXGI_FORMAT_UNKNOWN fmt=%d", useLinearFormat, srcDesc.Format);
-			lastResult = XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
-			return;
-		}
+		const DXGI_FORMAT type = (DXGI_FORMAT)choice->swapchainFormat;
+		convertFormat = choice->convert;
+		if (convertFormat)
+			OOVR_LOGF("DXGI format %d goes into swapchain format %d through the shader pass", (int)srcDesc.Format, (int)type);
 
 		// Set aside the old format for checking later
 		createInfoFormat = srcDesc.Format;
+		createColourSpace = texture->eColorSpace;
 
 		// Make eye render buffer
 		desc = { XR_TYPE_SWAPCHAIN_CREATE_INFO };
@@ -256,7 +272,8 @@ void DX11Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, const vr
 		desc.width = srcDesc.Width;
 		desc.height = srcDesc.Height;
 		desc.format = type;
-		desc.mipCount = srcDesc.MipLevels;
+		// A converted texture is drawn into mip 0 only
+		desc.mipCount = convertFormat ? 1 : srcDesc.MipLevels;
 		desc.sampleCount = 1;
 		desc.arraySize = 1;
 		desc.usageFlags = XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
@@ -296,7 +313,7 @@ void DX11Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, const vr
 	}
 
 	// The resolve textures follow the source's full size and format, which can change while the swapchain fits
-	if (fullSrcDesc.SampleDesc.Count > 1) {
+	if (fullSrcDesc.SampleDesc.Count > 1 && !convertFormat) {
 		bool current = resolvedMSAATextures.size() == imagesHandles.size();
 		if (current) {
 			D3D11_TEXTURE2D_DESC have;
@@ -335,29 +352,152 @@ void DX11Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, const vr
 	}
 }
 
+ID3D11Texture2D* DX11Compositor::ShaderSource(const D3D11_TEXTURE2D_DESC& of, DXGI_FORMAT format)
+{
+	if (shaderSource) {
+		D3D11_TEXTURE2D_DESC have;
+		shaderSource->GetDesc(&have);
+		if (have.Width == of.Width && have.Height == of.Height && have.Format == format)
+			return shaderSource;
+		shaderSource->Release();
+		shaderSource = nullptr;
+	}
+	D3D11_TEXTURE2D_DESC desc = of;
+	desc.Format = format;
+	desc.SampleDesc = { 1, 0 };
+	desc.ArraySize = 1;
+	desc.MipLevels = 1;
+	desc.Usage = D3D11_USAGE_DEFAULT;
+	desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	desc.CPUAccessFlags = 0;
+	desc.MiscFlags = 0;
+	if (FAILED(device->CreateTexture2D(&desc, nullptr, &shaderSource)))
+		shaderSource = nullptr;
+	return shaderSource;
+}
+
+void DX11Compositor::DrawWithShader(ID3D11ShaderResourceView* view, uint32_t index, const ShaderPass& pass)
+{
+	ID3DDeviceContextState* appState = nullptr;
+	if (context1 && ownState)
+		context1->SwapDeviceContextState(ownState, &appState);
+
+	// Without a state of its own: what the pass changes is kept and put back
+	UINT numViewPorts = 0, numScissors = 0;
+	std::vector<D3D11_VIEWPORT> viewports;
+	std::vector<D3D11_RECT> scissors;
+	ID3D11RasterizerState* pRSState = nullptr;
+	ID3D11Buffer* appVsBuffer = nullptr;
+	ID3D11Buffer* appPsBuffer = nullptr;
+	D3D11_PRIMITIVE_TOPOLOGY currTopology = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
+	if (!appState) {
+		context->RSGetViewports(&numViewPorts, nullptr);
+		viewports.resize(numViewPorts);
+		context->RSGetViewports(&numViewPorts, viewports.data());
+		context->RSGetScissorRects(&numScissors, nullptr);
+		scissors.resize(numScissors);
+		context->RSGetScissorRects(&numScissors, scissors.data());
+		context->RSGetState(&pRSState);
+		context->VSGetConstantBuffers(0, 1, &appVsBuffer);
+		context->PSGetConstantBuffers(0, 1, &appPsBuffer);
+		context->IAGetPrimitiveTopology(&currTopology);
+	}
+
+	context->OMSetBlendState(nullptr, nullptr, 0xffffffff);
+	context->RSSetState(nullptr);
+
+	// Draw over the whole swapchain image; the shader picks the source area
+	D3D11_VIEWPORT viewport = CD3D11_VIEWPORT(imagesHandles[index].texture, swapchain_rtvs[index]);
+	context->RSSetViewports(1, &viewport);
+	context->RSSetScissorRects(0, nullptr);
+
+	context->OMSetRenderTargets(1, &swapchain_rtvs[index], nullptr);
+	float clear_colour[4] = { 0.f, 0.f, 0.f, 0.f };
+	context->ClearRenderTargetView(swapchain_rtvs[index], clear_colour);
+
+	// (If it can't be mapped, the last pass's values are used)
+	D3D11_MAPPED_SUBRESOURCE mappedConstData = {};
+	if (SUCCEEDED(context->Map(constBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedConstData))) {
+		ShaderConstData* constData = (ShaderConstData*)mappedConstData.pData;
+		constData->offsetX = pass.offsetX;
+		constData->offsetY = pass.offsetY;
+		constData->scaleX = pass.scaleX;
+		constData->scaleY = pass.scaleY;
+		constData->decodeSrgb = pass.decodeSrgb ? 1.0f : 0.0f;
+		constData->encodeSrgb = pass.encodeSrgb ? 1.0f : 0.0f;
+		context->Unmap(constBuffer, 0);
+	}
+
+	context->IASetInputLayout(nullptr);
+	context->PSSetShaderResources(0, 1, &view);
+	context->VSSetShader(fs_vshader, nullptr, 0);
+	context->PSSetShader(fs_pshader, nullptr, 0);
+	context->PSSetSamplers(0, 1, &quad_sampleState);
+	context->VSSetConstantBuffers(0, 1, &constBuffer);
+	context->PSSetConstantBuffers(0, 1, &constBuffer);
+	context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
+	context->Draw(4, 0);
+
+	if (appState) {
+		// Nothing of ours left bound in our state either
+		ID3D11ShaderResourceView* none = nullptr;
+		context->PSSetShaderResources(0, 1, &none);
+		context->OMSetRenderTargets(0, nullptr, nullptr);
+		context1->SwapDeviceContextState(appState, nullptr);
+		appState->Release();
+		return;
+	}
+
+	context->IASetPrimitiveTopology(currTopology);
+	context->VSSetConstantBuffers(0, 1, &appVsBuffer);
+	context->PSSetConstantBuffers(0, 1, &appPsBuffer);
+	if (appVsBuffer)
+		appVsBuffer->Release();
+	if (appPsBuffer)
+		appPsBuffer->Release();
+	if (numViewPorts)
+		context->RSSetViewports(numViewPorts, viewports.data());
+	if (numScissors)
+		context->RSSetScissorRects(numScissors, scissors.data());
+	context->RSSetState(pRSState);
+	if (pRSState)
+		pRSState->Release();
+}
+
 void DX11Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, std::optional<XruEye> eye, vr::EVRSubmitFlags submitFlags)
 {
 	auto* src = (ID3D11Texture2D*)texture->handle;
 
-	// OpenXR swap chain doesn't support weird formats like DXGI_FORMAT_BC1_TYPELESS
 	D3D11_TEXTURE2D_DESC srcDesc;
 	src->GetDesc(&srcDesc);
-	if (srcDesc.Format == DXGI_FORMAT_BC1_TYPELESS) {
-		if (chain) {
-			xrDestroySwapchain(chain);
-			chain = XR_NULL_HANDLE;
-		}
-		return;
+
+	// The slice shown: SubmitWithArrayIndex's, else (SteamVR takes array textures without saying what's what) the eye's
+	const UINT arrayIndex = submitSlice ? *submitSlice : (srcDesc.ArraySize > 1 && eye.has_value()) ? (UINT) * eye : 0;
+	if (arrayIndex >= srcDesc.ArraySize) {
+		// Submit answers InvalidTexture; the eye is left out
+		lastResult = XR_ERROR_VALIDATION_FAILURE;
+		OC_UNSUPPORTED_VOID("A D3D11 array texture of %u slices submitted with slice %u", srcDesc.ArraySize, arrayIndex);
 	}
 
 	CheckCreateSwapChain(texture, bounds, false);
 	if (!chain || XR_FAILED(lastResult))
 		return;
 
+	// The shader pass converts into the swapchain's format, and inverts by the bounds. It needs a texture it can read:
+	// a multisampled one, or one not bound as a shader resource, is resolved or copied into one first.
+	const bool invert = bounds && bounds->vMin > bounds->vMax && oovr_global_configuration.InvertUsingShaders();
+	const bool shaderPass = convertFormat || invert;
+	if (convertFormat && !shadersUsable) {
+		// Submit answers InvalidTexture; the eye is left out
+		lastResult = XR_ERROR_VALIDATION_FAILURE;
+		OC_UNSUPPORTED_VOID("A D3D11 texture of DXGI format %d needs the shader pass, which couldn't be set up", (int)srcDesc.Format);
+	}
+
 	// Reserve an image from the swapchain and wait until the compositor is done with it
 	uint32_t currentIndex = 0;
 	if (!AcquireAndWait((uint32_t)imagesHandles.size(), currentIndex))
 		return;
+	XrSwapchainImageReleaseInfo releaseInfo{ XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
 
 	// Copy the source to the destination image
 	D3D11_BOX sourceRegion;
@@ -373,105 +513,65 @@ void DX11Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 	sourceRegion.front = 0;
 	sourceRegion.back = 1;
 
-	// Apparently SteamVR supports apps just sending array textures without specifying what's what.
-	const int arrayIndex = (srcDesc.ArraySize > 1 && eye.has_value()) ? static_cast<int>(*eye) : 0;
 	const UINT srcSubresource = D3D11CalcSubresource(0, arrayIndex, srcDesc.MipLevels);
 
-	// Views and resolves need a typed format: for a typeless texture, the swapchain's (its sRGB or linear version)
-	DxgiFormatInfo formatInfo = {};
-	const bool typeless = GetFormatInfo(srcDesc.Format, formatInfo) && srcDesc.Format == formatInfo.typeless;
-	const DXGI_FORMAT typedFormat = typeless ? (DXGI_FORMAT)createInfo.format : srcDesc.Format;
+	// Views and resolves need a typed format: a typeless texture's family member of the colour space's sRGB-ness (the
+	// swapchain's own when it's copied as it is)
+	const bool typeless = TypedDxgi(srcDesc.Format) != srcDesc.Format;
+	const bool wantSrgb = WantsSrgb(GfxApiKind::D3D11, srcDesc.Format, texture->eColorSpace);
+	const DXGI_FORMAT typedFormat = !typeless ? srcDesc.Format
+	    : convertFormat                       ? (DXGI_FORMAT)FormatWithSrgb(GfxApiKind::D3D11, srcDesc.Format, wantSrgb)
+	                                          : (DXGI_FORMAT)createInfo.format;
 
-	// Bounds describe an inverted image so copy texture using pixel shader inverting on copy.
-	// (Not for textures the shader can't read, multisampled or not bound as shader resources: they're copied as they are.)
-	bool useShader = shadersUsable && bounds && bounds->vMin > bounds->vMax && oovr_global_configuration.InvertUsingShaders()
-	    && !swapchain_rtvs.empty() && currentIndex < swapchain_rtvs.size() && swapchain_rtvs[currentIndex]
-	    && srcDesc.SampleDesc.Count == 1 && (srcDesc.BindFlags & D3D11_BIND_SHADER_RESOURCE);
+	bool useShader = shaderPass && shadersUsable && currentIndex < swapchain_rtvs.size() && swapchain_rtvs[currentIndex];
+	ID3D11ShaderResourceView* view = nullptr;
 	if (useShader) {
-		// A one-slice array view reads this eye's slice of an array texture, and a plain texture's only slice
+		// A one-slice array view reads the slice of an array texture, and a plain texture's only slice
+		ID3D11Texture2D* from = src;
+		UINT fromSlice = arrayIndex;
+		if (srcDesc.SampleDesc.Count > 1 || !(srcDesc.BindFlags & D3D11_BIND_SHADER_RESOURCE)) {
+			from = ShaderSource(srcDesc, typedFormat);
+			fromSlice = 0;
+			if (from && srcDesc.SampleDesc.Count > 1)
+				context->ResolveSubresource(from, 0, src, srcSubresource, typedFormat);
+			else if (from)
+				context->CopySubresourceRegion(from, 0, 0, 0, 0, src, srcSubresource, nullptr);
+		}
 		D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
 		srvDesc.Format = typedFormat;
 		srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
 		srvDesc.Texture2DArray.MostDetailedMip = 0;
 		srvDesc.Texture2DArray.MipLevels = 1;
-		srvDesc.Texture2DArray.FirstArraySlice = arrayIndex;
+		srvDesc.Texture2DArray.FirstArraySlice = fromSlice;
 		srvDesc.Texture2DArray.ArraySize = 1;
-		quad_texture_view = nullptr;
-		if (FAILED(device->CreateShaderResourceView(src, &srvDesc, &quad_texture_view)) || !quad_texture_view) {
-			OOVR_LOG_ONCE("CreateShaderResourceView failed: copying the texture as it is");
+		if (!from || FAILED(device->CreateShaderResourceView(from, &srvDesc, &view)) || !view) {
+			OOVR_LOG_ONCE("CreateShaderResourceView failed: the texture can't go through the shader pass");
 			useShader = false;
+			view = nullptr;
 		}
 	}
+	if (convertFormat && !useShader) {
+		// Nothing written: the image goes back as it was, and the eye is left out (Submit answers InvalidTexture)
+		xrReleaseSwapchainImage(chain, &releaseInfo);
+		lastResult = XR_ERROR_VALIDATION_FAILURE;
+		OC_UNSUPPORTED_VOID("A D3D11 texture of DXGI format %d couldn't be converted into swapchain format %d", (int)srcDesc.Format, (int)createInfo.format);
+	}
+
 	if (useShader) {
-
-		float blend_factor[4] = { 1.f, 1.f, 1.f, 1.f };
-		context->OMSetBlendState(nullptr, nullptr, 0xffffffff);
-
-		UINT numViewPorts;
-		context->RSGetViewports(&numViewPorts, nullptr);
-		std::vector<D3D11_VIEWPORT> viewports;
-		viewports.resize(numViewPorts);
-		context->RSGetViewports(&numViewPorts, viewports.data());
-
-		UINT numScissors;
-		context->RSGetScissorRects(&numScissors, nullptr);
-		std::vector<D3D11_RECT> scissors;
-		scissors.resize(numScissors);
-		context->RSGetScissorRects(&numScissors, scissors.data());
-
-		ID3D11RasterizerState* pRSState;
-		context->RSGetState(&pRSState);
-		context->RSSetState(nullptr);
-
-		// Draw over the whole swapchain image; the shader picks the source area from the bounds
-		D3D11_VIEWPORT viewport = CD3D11_VIEWPORT(imagesHandles[currentIndex].texture, swapchain_rtvs[currentIndex]);
-		context->RSSetViewports(1, &viewport);
-		context->RSSetScissorRects(0, nullptr);
-
-		// Set up for rendering
-		context->OMSetRenderTargets(1, &swapchain_rtvs[currentIndex], nullptr);
-		float clear_colour[4] = { 0.f, 0.f, 0.f, 0.f };
-		context->ClearRenderTargetView(swapchain_rtvs[currentIndex], clear_colour);
-
-		// Update the source region in the constant buffer
-		// (If it can't be mapped, the last frame's area is used)
-		D3D11_MAPPED_SUBRESOURCE mappedConstData = {};
-		if (SUCCEEDED(context->Map(constBuffer, 0, D3D11_MAP_WRITE_DISCARD, 0, &mappedConstData))) {
-			ShaderConstData* constData = (ShaderConstData*)mappedConstData.pData;
-			constData->offsetX = bounds->uMin;
-			constData->offsetY = bounds->vMin;
-			constData->scaleX = bounds->uMax - bounds->uMin;
-			constData->scaleY = bounds->vMax - bounds->vMin;
-			context->Unmap(constBuffer, 0);
+		ShaderPass pass;
+		if (bounds) {
+			pass.offsetX = bounds->uMin;
+			pass.offsetY = bounds->vMin;
+			pass.scaleX = bounds->uMax - bounds->uMin;
+			pass.scaleY = bounds->vMax - bounds->vMin;
 		}
-
-		// Set the active shaders and constant buffers, keeping the app's vertex constant buffer to put back
-		ID3D11Buffer* appConstBuffer = nullptr;
-		context->VSGetConstantBuffers(0, 1, &appConstBuffer);
-		context->PSSetShaderResources(0, 1, &quad_texture_view);
-		context->VSSetShader(fs_vshader, nullptr, 0);
-		context->PSSetShader(fs_pshader, nullptr, 0);
-		context->PSSetSamplers(0, 1, &quad_sampleState);
-		context->VSSetConstantBuffers(0, 1, &constBuffer);
-
-		// Set up the mesh's information
-		D3D11_PRIMITIVE_TOPOLOGY currTopology;
-		context->IAGetPrimitiveTopology(&currTopology);
-		context->IASetPrimitiveTopology(D3D11_PRIMITIVE_TOPOLOGY_TRIANGLESTRIP);
-		context->Draw(4, 0);
-		context->IASetPrimitiveTopology(currTopology);
-		quad_texture_view->Release();
-
-		context->VSSetConstantBuffers(0, 1, &appConstBuffer);
-		if (appConstBuffer)
-			appConstBuffer->Release();
-
-		if (numViewPorts)
-			context->RSSetViewports(numViewPorts, viewports.data());
-		if (numScissors)
-			context->RSSetScissorRects(numScissors, scissors.data());
-
-		context->RSSetState(pRSState);
+		// Gamma-encoded values: decoded when the view doesn't and the target encodes, encoded the other way round
+		const bool viewSrgb = FormatIsSrgb(GfxApiKind::D3D11, typedFormat);
+		const bool targetSrgb = FormatIsSrgb(GfxApiKind::D3D11, createInfo.format);
+		pass.decodeSrgb = wantSrgb && !viewSrgb && targetSrgb;
+		pass.encodeSrgb = wantSrgb && viewSrgb && !targetSrgb;
+		DrawWithShader(view, currentIndex, pass);
+		view->Release();
 	} else {
 		if (srcDesc.SampleDesc.Count > 1) {
 			context->ResolveSubresource(resolvedMSAATextures[currentIndex], 0, src, srcSubresource, typedFormat);
@@ -482,7 +582,6 @@ void DX11Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 	}
 
 	// Release the swapchain - OpenXR will use the last-released image in a swapchain
-	XrSwapchainImageReleaseInfo releaseInfo{ XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
 	SwapchainCallFailed(xrReleaseSwapchainImage(chain, &releaseInfo), "xrReleaseSwapchainImage");
 }
 
@@ -615,6 +714,9 @@ bool DX11Compositor::CheckChainCompatible(D3D11_TEXTURE2D_DESC& inputDesc, vr::E
 	if (inputDesc.Format != createInfoFormat) {
 		FAIL("Format");
 	}
+	if (colourSpace != createColourSpace) {
+		FAIL("Colour space");
+	}
 
 	// CHECK_ADV(SampleDesc.Count, SampleCount);
 	// CHECK_ADV(SampleDesc.Quality);
@@ -622,60 +724,6 @@ bool DX11Compositor::CheckChainCompatible(D3D11_TEXTURE2D_DESC& inputDesc, vr::E
 #undef FAIL
 
 	return usable;
-}
-
-bool DX11Compositor::GetFormatInfo(DXGI_FORMAT format, DX11Compositor::DxgiFormatInfo& out)
-{
-#define DEF_FMT_BASE(typeless, linear, srgb, bpp, bpc, channels)            \
-	{                                                                       \
-		out = DxgiFormatInfo{ srgb, linear, typeless, bpp, bpc, channels }; \
-		return true;                                                        \
-	}
-
-#define DEF_FMT_NOSRGB(name, bpp, bpc, channels) \
-	case name##_TYPELESS:                        \
-	case name##_UNORM:                           \
-		DEF_FMT_BASE(name##_TYPELESS, name##_UNORM, DXGI_FORMAT_UNKNOWN, bpp, bpc, channels)
-
-#define DEF_FMT(name, bpp, bpc, channels) \
-	case name##_TYPELESS:                 \
-	case name##_UNORM:                    \
-	case name##_UNORM_SRGB:               \
-		DEF_FMT_BASE(name##_TYPELESS, name##_UNORM, name##_UNORM_SRGB, bpp, bpc, channels)
-
-#define DEF_FMT_UNORM(linear, bpp, bpc, channels) \
-	case linear:                                  \
-		DEF_FMT_BASE(DXGI_FORMAT_UNKNOWN, linear, DXGI_FORMAT_UNKNOWN, bpp, bpc, channels)
-
-	// Note that this *should* have pretty much all the types we'll ever see in games
-	// Filtering out the non-typeless and non-unorm/srgb types, this is all we're left with
-	// (note that types that are only typeless and don't have unorm/srgb variants are dropped too)
-	switch (format) {
-		// The relatively traditional 8bpp 32-bit types
-		DEF_FMT(DXGI_FORMAT_R8G8B8A8, 32, 8, 4)
-		DEF_FMT(DXGI_FORMAT_B8G8R8A8, 32, 8, 4)
-		DEF_FMT(DXGI_FORMAT_B8G8R8X8, 32, 8, 3)
-
-		// Some larger linear-only types
-		DEF_FMT_NOSRGB(DXGI_FORMAT_R16G16B16A16, 64, 16, 4)
-		DEF_FMT_NOSRGB(DXGI_FORMAT_R10G10B10A2, 32, 10, 4)
-
-		// A jumble of other weird types
-		DEF_FMT_UNORM(DXGI_FORMAT_B5G6R5_UNORM, 16, 5, 3)
-		DEF_FMT_UNORM(DXGI_FORMAT_B5G5R5A1_UNORM, 16, 5, 4)
-		DEF_FMT_UNORM(DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM, 32, 10, 4)
-		DEF_FMT_UNORM(DXGI_FORMAT_B4G4R4A4_UNORM, 16, 4, 4)
-		DEF_FMT(DXGI_FORMAT_BC1, 64, 16, 4)
-
-	default:
-		// Unknown type
-		return false;
-	}
-
-#undef DEF_FMT
-#undef DEF_FMT_NOSRGB
-#undef DEF_FMT_BASE
-#undef DEF_FMT_UNORM
 }
 
 #endif

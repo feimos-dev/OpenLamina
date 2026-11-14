@@ -39,18 +39,22 @@ protected:
 	std::vector<ID3D11RenderTargetView*> swapchain_rtvs;
 	std::vector<ID3D11Texture2D*> resolvedMSAATextures;
 
-	struct DxgiFormatInfo {
-		/// The different versions of this format, set to DXGI_FORMAT_UNKNOWN if absent.
-		/// Both the SRGB and linear formats should be UNORM.
-		DXGI_FORMAT srgb, linear, typeless;
+	// The swapchain's format isn't the texture's family: it goes through the shader pass
+	bool convertFormat = false;
+	// The colour space the swapchain was made for
+	vr::EColorSpace createColourSpace = vr::ColorSpace_Auto;
+	// What the shader pass reads when the texture itself can't be (multisampled, or not a shader resource)
+	ID3D11Texture2D* shaderSource = nullptr;
+	ID3D11Texture2D* ShaderSource(const D3D11_TEXTURE2D_DESC& of, DXGI_FORMAT format);
+	// The shader pass's own pipeline state (D3D11.1), swapped in for it
+	ID3DDeviceContextState* ownState = nullptr;
+	ID3D11DeviceContext1* context1 = nullptr;
 
-		/// THe bits per pixel, bits per channel, and the number of channels
-		int bpp, bpc, channels;
+	struct ShaderPass {
+		// The source area: uv = offset + scale * (0..1 across the image)
+		float offsetX = 0, offsetY = 0, scaleX = 1, scaleY = 1;
+		bool decodeSrgb = false, encodeSrgb = false;
 	};
-
-	/**
-	 * Gets information about a given format into the output variable. Returns true if the texture was
-	 * found, if not it returns false and leaves out in an undefined state.
-	 */
-	static bool GetFormatInfo(DXGI_FORMAT format, DxgiFormatInfo& out);
+	// Draws view over the whole of swapchain image index (its render target view)
+	void DrawWithShader(ID3D11ShaderResourceView* view, uint32_t index, const ShaderPass& pass);
 };

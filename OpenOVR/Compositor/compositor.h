@@ -35,6 +35,17 @@ bool RegionFromBounds(const vr::VRTextureBounds_t* bounds, uint32_t width, uint3
 // Mirrors an image left to right and/or top to bottom
 void FlipImage(Image& image, bool flipX, bool flipY);
 
+// SubmitWithArrayIndex's slice, for the Invoke calls made on this thread while it's in scope
+class SubmitArraySlice {
+public:
+	explicit SubmitArraySlice(uint32_t slice);
+	~SubmitArraySlice();
+	static std::optional<uint32_t> Current();
+
+private:
+	std::optional<uint32_t> previous;
+};
+
 class Compositor {
 public:
 	virtual ~Compositor();
@@ -74,6 +85,13 @@ protected:
 	// For the compositors' OpenXR swapchain calls: true (with lastResult set, and the call logged once) if it failed
 	bool SwapchainCallFailed(XrResult res, const char* what);
 	XrResult lastResult = XR_SUCCESS;
+
+	// The slice of an array texture to show (SubmitWithArrayIndex), for CopyToSwapchain; without one, D3D11's arrays
+	// show the eye's slice and others their first
+	std::optional<uint32_t> submitSlice;
+
+	// What xrEnumerateSwapchainFormats listed for this session (asked once a session)
+	static const std::vector<int64_t>& RuntimeFormats();
 
 	/**
 	 * Acquires an image of chain and waits for it: true with its index, else false with lastResult set. After a

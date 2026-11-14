@@ -26,7 +26,12 @@ public:
 private:
 	// Records into a one-time command buffer of the app's pool, runs it on the app's queue and waits (at most 5 s)
 	bool RunOnce(const std::function<void(VkCommandBuffer)>& record);
-	static bool CheckChainCompatible(const vr::VRVulkanTextureData_t& tex, const XrSwapchainCreateInfo& chainDesc, vr::EColorSpace colourSpace);
+	// The swapchain's format isn't the image's family: it's blitted in, which converts
+	bool convertFormat = false;
+	// The colour space the swapchain was made for
+	vr::EColorSpace createColourSpace = vr::ColorSpace_Auto;
+	// The GPU, as the runtime knows it
+	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 
 	// These resources live in the runtime's VkDevice
 	std::vector<XrSwapchainImageVulkanKHR> swapchainImages;

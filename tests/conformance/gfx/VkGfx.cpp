@@ -31,6 +31,8 @@ gfx::Texels TexelsOfVk(int64_t format)
 		return gfx::Texels::RGBA16F;
 	case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
 		return gfx::Texels::RGB10A2;
+	case VK_FORMAT_B10G11R11_UFLOAT_PACK32:
+		return gfx::Texels::RG11B10F;
 	default:
 		return gfx::Texels::Unknown;
 	}
@@ -244,7 +246,13 @@ public:
 		if (!image)
 			return Wrap(VK_NULL_HANDLE, format, w, h, 1);
 		size_t pitch = (size_t)w * gfx::BytesOf(texels);
+		// Layer i: eye (eye + i) % 2's pattern, the two one after the other in the buffer
 		std::vector<uint8_t> data = gfx::PatternTexels(texels, w, h, eye, pitch, false);
+		const VkDeviceSize layerBytes = data.size();
+		if (arraySize > 1) {
+			std::vector<uint8_t> other = gfx::PatternTexels(texels, w, h, 1 - eye, pitch, false);
+			data.insert(data.end(), other.begin(), other.end());
+		}
 
 		VkBufferCreateInfo bci{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
 		bci.size = data.size();
@@ -274,6 +282,7 @@ public:
 				std::vector<VkBufferImageCopy> regions;
 				for (uint32_t layer = 0; layer < arraySize; layer++) {
 					VkBufferImageCopy r{};
+					r.bufferOffset = (layer % 2) * layerBytes;
 					r.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, layer, 1 };
 					r.imageExtent = { w, h, 1 };
 					regions.push_back(r);

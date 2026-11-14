@@ -1,0 +1,5 @@
+{
+ "#": "The frame cases under a runtime that offers one swapchain format, RGBA8 sRGB, in each API's enum: DXGI_FORMAT_R8G8B8A8_UNORM_SRGB (29), VK_FORMAT_R8G8B8A8_SRGB (43), GL_SRGB8_ALPHA8 (0x8C43); each API's session uses its own (the others mean nothing to it, or something it doesn't choose)",
+ "extensions": ["XR_KHR_D3D11_enable", "XR_KHR_D3D12_enable", "XR_KHR_vulkan_enable", "XR_KHR_vulkan_enable2", "XR_KHR_opengl_enable"],
+ "swapchain_formats": [29, 43, 35907]
+}

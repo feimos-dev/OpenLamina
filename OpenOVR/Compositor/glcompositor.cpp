@@ -17,6 +17,8 @@
 
 #include "../DrvOpenXR/XrBackend.h"
 #include "../Misc/Image.h"
+#include "../Misc/SoftFail.h"
+#include "FormatTable.h"
 #include <algorithm>
 #include <cinttypes>
 #include <string>
@@ -30,6 +32,7 @@ typedef void(APIENTRY* PFNGLGENFRAMEBUFFERSPROC)(GLsizei n, GLuint* framebuffers
 typedef void(APIENTRY* PFNGLBINDFRAMEBUFFERPROC)(GLenum target, GLuint framebuffer);
 typedef void(APIENTRY* PFNGLBLITFRAMEBUFFERPROC)(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter);
 typedef void(APIENTRY* PFNGLFRAMEBUFFERTEXTURE2DEXTPROC)(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level);
+typedef void(APIENTRY* PFNGLFRAMEBUFFERTEXTURELAYERPROC)(GLenum target, GLenum attachment, GLuint texture, GLint level, GLint layer);
 #define GL_FRAMEBUFFER 0x8D40
 #define GL_READ_FRAMEBUFFER 0x8CA8
 #define GL_COLOR_ATTACHMENT0 0x8CE0
@@ -43,6 +46,14 @@ static PFNGLBINDFRAMEBUFFERPROC glBindFramebuffer = nullptr;
 static PFNGLGENFRAMEBUFFERSPROC glGenFramebuffers = nullptr;
 static PFNGLBLITFRAMEBUFFERPROC glBlitFramebuffer = nullptr;
 static PFNGLFRAMEBUFFERTEXTURE2DEXTPROC glFramebufferTexture2D = nullptr;
+static PFNGLFRAMEBUFFERTEXTURELAYERPROC glFramebufferTextureLayer = nullptr;
+
+#ifndef GL_TEXTURE_2D_ARRAY
+#define GL_TEXTURE_2D_ARRAY 0x8C1A
+#endif
+#ifndef GL_TEXTURE_DEPTH
+#define GL_TEXTURE_DEPTH 0x8071
+#endif
 
 static void* getGlProcAddr(const char* name)
 {
@@ -67,6 +78,7 @@ GLCompositor::GLCompositor(GLuint initialTexture)
 		LOAD_FUNC(glGenFramebuffers);
 		LOAD_FUNC(glBlitFramebuffer);
 		LOAD_FUNC(glFramebufferTexture2D);
+		LOAD_FUNC(glFramebufferTextureLayer);
 	}
 #undef LOAD_FUNC
 	if (glFunctionsMissing)
@@ -102,27 +114,50 @@ void GLCompositor::ReadSwapchainImages()
 
 #if defined(SUPPORT_GL) || defined(SUPPORT_GLES)
 
-void GLBaseCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, std::optional<XruEye>, vr::EVRSubmitFlags)
+void GLBaseCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, std::optional<XruEye> eye, vr::EVRSubmitFlags submitFlags)
 {
 	if (glFunctionsMissing) {
 		lastResult = XR_ERROR_RUNTIME_FAILURE;
 		return;
 	}
-	// TODO: support array textures
-	// Clear any pre-existing OpenGL errors
-	while (glGetError() != GL_NO_ERROR) {
+	// Clear any pre-existing OpenGL errors (at most 32: the context reports each one once)
+	for (int i = 0; i < 32 && glGetError() != GL_NO_ERROR; i++) {
 	}
 	bool submitVerticallyFlipped = false;
 	// Double-cast to suppress CLion warning
 	auto src = (GLuint)(intptr_t)texture->handle;
 
+	// An array texture (Submit_GlArrayTexture, or SubmitWithArrayIndex) shows a slice: SubmitWithArrayIndex's, else the
+	// eye's. A plain texture given to SubmitWithArrayIndex with slice 0 is taken as it is.
+	bool array = (submitFlags & vr::Submit_GlArrayTexture) || submitSlice.has_value();
+	const GLint layer = array ? (GLint)(submitSlice ? *submitSlice : (uint32_t)eye.value_or(XruEyeLeft)) : 0;
+
 	// Calculate how large the area to copy is
-	GLsizei inputWidth, inputHeight, rawFormat;
-	glBindTexture(GL_TEXTURE_2D, src); // Sadly even GLES3.2 doesn't have glGetTextureLevelParameteriv which takes the image directly
-	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &inputWidth);
-	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &inputHeight);
-	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_INTERNAL_FORMAT, &rawFormat);
-	glBindTexture(GL_TEXTURE_2D, 0);
+	GLsizei inputWidth = 0, inputHeight = 0, rawFormat = 0, layers = 1;
+	GLenum target = array ? GL_TEXTURE_2D_ARRAY : GL_TEXTURE_2D;
+	auto query = [&]() {
+		glBindTexture(target, src); // Sadly even GLES3.2 doesn't have glGetTextureLevelParameteriv which takes the image directly
+		glGetTexLevelParameteriv(target, 0, GL_TEXTURE_WIDTH, &inputWidth);
+		glGetTexLevelParameteriv(target, 0, GL_TEXTURE_HEIGHT, &inputHeight);
+		glGetTexLevelParameteriv(target, 0, GL_TEXTURE_INTERNAL_FORMAT, &rawFormat);
+		if (array)
+			glGetTexLevelParameteriv(target, 0, GL_TEXTURE_DEPTH, &layers);
+		glBindTexture(target, 0);
+	};
+	query();
+	if (array && inputWidth <= 0 && layer == 0) {
+		for (int i = 0; i < 32 && glGetError() != GL_NO_ERROR; i++) {
+		}
+		array = false;
+		target = GL_TEXTURE_2D;
+		layers = 1;
+		query();
+	}
+	if (inputWidth <= 0 || inputHeight <= 0 || layer >= layers) {
+		// Submit answers InvalidTexture; the eye is left out
+		lastResult = XR_ERROR_VALIDATION_FAILURE;
+		OC_UNSUPPORTED_VOID("An OpenGL texture that can't be used: %dx%d, slice %d of %d", inputWidth, inputHeight, layer, layers);
+	}
 
 	XrRect2Di viewport;
 
@@ -135,7 +170,8 @@ void GLBaseCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::V
 			lastResult = XR_ERROR_RUNTIME_FAILURE;
 		return;
 	}
-	useBlit = useBlit || createInfo.format != createInfoFormat;
+	// A swapchain format that isn't of the texture's family is converted by the blit
+	useBlit = useBlit || convertFormat;
 
 	// Reserve an image from the swapchain and wait until the compositor is done with it (a timed-out wait is
 	// picked up again at the next Submit)
@@ -149,7 +185,10 @@ void GLBaseCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::V
 		glBindFramebuffer(GL_FRAMEBUFFER, fboId[1]);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dst, 0);
 		glBindFramebuffer(GL_READ_FRAMEBUFFER, fboId[0]);
-		glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, src, 0);
+		if (array)
+			glFramebufferTextureLayer(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, src, 0, layer);
+		else
+			glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, src, 0);
 		glBlitFramebuffer(
 		    viewport.offset.x, viewport.offset.y, viewport.offset.x + (int)createInfo.width, viewport.offset.y + (int)createInfo.height,
 		    0, submitVerticallyFlipped ? (int)createInfo.height : 0, (int)createInfo.width, submitVerticallyFlipped ? 0 : (int)createInfo.height,
@@ -158,7 +197,7 @@ void GLBaseCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::V
 		glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 	} else {
 		glCopyImageSubData(
-		    src, GL_TEXTURE_2D, 0, viewport.offset.x, viewport.offset.y, 0, // 0 == no mipmapping, next three are xyz
+		    src, target, 0, viewport.offset.x, viewport.offset.y, layer, // 0 == no mipmapping, next three are xyz
 		    dst, GL_TEXTURE_2D, 0, 0, 0, 0, // Same as above but for the destination
 		    (int)createInfo.width, (int)createInfo.height, 1 // Region of the output texture to copy into (in this case, everything)
 		);
@@ -234,52 +273,34 @@ void GLBaseCompositor::InvokeCubemap(const vr::Texture_t* textures)
 
 void GLBaseCompositor::CheckCreateSwapChain(int width, int height, vr::EColorSpace c_space, GLsizei rawformat)
 {
-	// See the comment for NormaliseFormat as to why we're doing this
-	GLuint format = NormaliseFormat(c_space, rawformat);
+	// The same texture as last time: the swapchain is kept
+	if (chain && width == (int)createInfo.width && height == (int)createInfo.height && rawformat == createInfoFormat && c_space == createColourSpace)
+		return;
+
+	// The runtime's format for it: its own, or one it's blitted into (glBlitFramebuffer converts)
+	std::optional<FormatChoice> choice = ChooseSwapchainFormat(GfxApiKind::OpenGL, rawformat, c_space, RuntimeFormats());
+	if (!choice) {
+		// Submit answers TextureUsesUnsupportedFormat; the eye is left out
+		lastResult = XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
+		OC_UNSUPPORTED_VOID("An OpenGL texture of internal format 0x%x: no swapchain format can show it", (unsigned)rawformat);
+	}
 
 	// Build out the info describing the swapchain we need
 	XrSwapchainCreateInfo desc = { XR_TYPE_SWAPCHAIN_CREATE_INFO };
 	desc.faceCount = 1;
 	desc.width = width;
 	desc.height = height;
-	desc.format = format;
+	desc.format = choice->swapchainFormat;
 	desc.mipCount = 1; // TODO srcDesc.MipLevels;
 	desc.sampleCount = 1;
 	desc.arraySize = 1;
 	desc.usageFlags = XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
 
-	// if used fallback, make format match it to skip recreating chains every frame
-	if (createInfo.format != createInfoFormat)
-		desc.format = createInfo.format;
-
-	// If the format has changed (or this is the first call), continue on to create the swapchain
-	if (memcmp(&desc, &createInfo, sizeof(desc)) == 0) {
-		return;
-	}
-
-	desc.format = format;
-	createInfoFormat = format;
-
-	OOVR_LOGF("Creating new OpenGL swapchain: %dx%d with format %d", width, height, format);
-
-	// Make sure our format is supported
-	uint32_t formatCount = 0;
-	if (SwapchainCallFailed(xrEnumerateSwapchainFormats(xr_session.get(), 0, &formatCount, nullptr), "xrEnumerateSwapchainFormats"))
-		return;
-	std::vector<int64_t> formats(formatCount);
-	if (SwapchainCallFailed(xrEnumerateSwapchainFormats(xr_session.get(), formatCount, &formatCount, formats.data()), "xrEnumerateSwapchainFormats"))
-		return;
-
-	if (std::count(formats.begin(), formats.end(), format) == 0) {
-		OOVR_LOG("Missing format for swapchain creation, using fallback. Valid formats:");
-		for (int64_t f : formats) {
-			OOVR_LOGF("Valid format: %" PRIi64, f);
-		}
-		desc.format = NormaliseFormat(c_space, GL_RGBA8);
-		if (!std::count(formats.begin(), formats.end(), desc.format))
-			desc.format = GL_RGBA8;
-		createInfoFormat = format;
-	}
+	OOVR_LOGF("Creating new OpenGL swapchain: %dx%d with format 0x%x for internal format 0x%x%s", width, height, (unsigned)desc.format,
+	    (unsigned)rawformat, choice->convert ? " (blitted, which converts)" : "");
+	convertFormat = choice->convert;
+	createInfoFormat = rawformat;
+	createColourSpace = c_space;
 
 	// Delete the old swapchain, if applicable
 	if (chain) {
@@ -299,28 +320,6 @@ void GLBaseCompositor::CheckCreateSwapChain(int width, int height, vr::EColorSpa
 
 	// Enumerate all the swapchain images
 	ReadSwapchainImages();
-}
-
-GLuint GLBaseCompositor::NormaliseFormat(vr::EColorSpace c_space, GLsizei rawFormat)
-{
-	switch (rawFormat) {
-	case GL_RGBA:
-		return GL_RGBA8;
-	case GL_RGBA8:
-		if (c_space == vr::ColorSpace_Gamma) {
-			// This is a special case where the texture is using a linear color space
-			// format but contains gamma-correction data from the non-linear sRGB color space.
-			// If we dont specify an sRGB color space in the swapchain, the color data will be
-			// handled incorrectly.  The the color output will be distorted out and the
-			// gamma will be too bright.  Returning a compatible sRGB format type sets up the
-			// proper conditions downstream for proper color handling
-			return 35907; // GL_SRGB8_ALPHA8 (0x8C43)
-		} else {
-			return rawFormat; // GL_RGBA8
-		}
-	default:
-		return rawFormat;
-	}
 }
 
 #endif

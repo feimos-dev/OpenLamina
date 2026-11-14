@@ -33,7 +33,8 @@ python tests/conformance/run.py --runtime build/bin/vrclient_x64.dll --conforman
   the swapchain image stores, as RGBA8 (`rrggbbaa`): an sRGB format's sRGB-encoded bytes, a UNORM one's linear
   bytes, with no conversion; the record's `format` says which. A sampled view that couldn't be read says why in
   `samples_error`. The dump keeps whole records for frames 1-64, every 32nd after and the last one
-  (`tests/runtime/script.h`).
+  (`tests/runtime/script.h`). An `--expect` value `{"near": v, "within": d}` takes a number within `d` of `v`, or a
+  sample whose every channel is.
 - Each child gets `OC_NO_MESSAGE_BOX=1` (OpenLamina ending a program exits with code 70, without a box),
   `OC_LOG_DIR` and `OC_STORE_DIR` under `--out`, so a run never touches the user's own logs or state. Each child has a
   store of its own (`store/<its output>`), so one child's settings and events never reach another, except the cases that
