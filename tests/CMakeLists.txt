@@ -106,6 +106,7 @@ add_executable(oc_unit_tests
 	unit/LibMonadoTests.cpp
 	unit/FoveationTests.cpp
 	unit/BaseInputTests.cpp
+	unit/BaseCompositorTests.cpp
 	${OC_TEST_RESOURCES}
 )
 target_include_directories(oc_unit_tests PRIVATE
