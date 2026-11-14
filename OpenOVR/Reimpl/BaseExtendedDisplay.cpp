@@ -1,6 +1,7 @@
 #include "stdafx.h"
 #define BASE_IMPL
 #include "BaseExtendedDisplay.h"
+#include "BaseSystem.h"
 
 #include <string>
 
@@ -34,9 +35,13 @@ void BaseExtendedDisplay::GetEyeOutputViewport(vr::EVREye eEye, uint32_t* pnX, u
 
 void BaseExtendedDisplay::GetDXGIOutputInfo(int32_t* pnAdapterIndex, int32_t* pnAdapterOutputIndex)
 {
-	// The headset isn't a desktop output: the first adapter's first output, as SteamVR answers in direct mode
-	if (pnAdapterIndex)
-		*pnAdapterIndex = 0;
+	// The headset isn't a desktop output: the OpenXR runtime's adapter (else the first), and its first output, as SteamVR
+	// answers in direct mode
+	if (pnAdapterIndex) {
+		uint64_t luid = 0;
+		int32_t index = BaseSystem::_RuntimeAdapterLuid(&luid) ? BaseSystem::_DxgiAdapterIndexOf(luid) : -1;
+		*pnAdapterIndex = index >= 0 ? index : 0;
+	}
 	if (pnAdapterOutputIndex)
 		*pnAdapterOutputIndex = 0;
 }

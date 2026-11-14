@@ -60,6 +60,7 @@ static Script LoadScript()
 		ev.frame = e["frame"].asUInt64();
 		ev.type = e["type"].asString();
 		ev.state = e["state"].asString();
+		ev.rate = e["rate"].asFloat();
 		s.events.push_back(ev);
 	}
 	for (const Json::Value& f : root["fail"]) {

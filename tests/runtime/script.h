@@ -4,7 +4,9 @@
 // The script is JSON (comments allowed); every key is optional:
 //   "system_name": "...", "extensions": ["XR_KHR_D3D11_enable", ...], "view_size": [w, h], "fov_deg": 45,
 //   "ipd": 0.063, "display_hz": 90, "stage_bounds": [width, depth],
-//   "events":   [{ "frame": 60, "type": "session_state", "state": "LOSS_PENDING" }],
+//   "events":   [{ "frame": 60, "type": "session_state", "state": "LOSS_PENDING" }]
+//               (or { "frame": 10, "type": "refresh_rate", "rate": 120 }: the display changes to that rate, announced
+//               with XrEventDataDisplayRefreshRateChangedFB),
 //   "fail":     [{ "function": "xrEndFrame", "result": "XR_ERROR_RUNTIME_FAILURE", "after": 29, "count": 1 }]
 //               (the first `after` calls of the function succeed, then `count` fail with `result`; see FAIL_POINT),
 //   "interaction_profile": "/interaction_profiles/valve/index_controller",
@@ -50,6 +52,7 @@ struct ScriptEvent {
 	uint64_t frame = 0;
 	std::string type; // "session_state"
 	std::string state; // "LOSS_PENDING", "EXITING", "STOPPING", ...
+	float rate = 0; // "refresh_rate"
 };
 
 struct ScriptFailure {

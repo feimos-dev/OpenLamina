@@ -44,6 +44,17 @@
 
 typedef uint32_t XrGraphicsApiSupportedFlags;
 
+// XR_FB_display_refresh_rate, which the bundled OpenXR headers predate (named apart from the newer headers' own)
+#define OC_XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME "XR_FB_display_refresh_rate"
+static const XrStructureType OC_XR_TYPE_EVENT_DATA_DISPLAY_REFRESH_RATE_CHANGED_FB = (XrStructureType)1000101000;
+struct OcXrEventDataDisplayRefreshRateChangedFB {
+	XrStructureType type;
+	const void* next;
+	float fromDisplayRefreshRate;
+	float toDisplayRefreshRate;
+};
+typedef XrResult(XRAPI_PTR* OcPFN_xrGetDisplayRefreshRateFB)(XrSession session, float* displayRefreshRate);
+
 // Flag bits for supported graphics apis
 static const XrGraphicsApiSupportedFlags XR_SUPPORTED_GRAPHICS_API_D3D11 = 0x0001;
 static const XrGraphicsApiSupportedFlags XR_SUPPORTED_GRAPHICS_API_D3D12 = 0x0002;
@@ -88,6 +99,14 @@ public:
 		if (!pfnXrGetVisibilityMaskKHR)
 			return XR_ERROR_FUNCTION_UNSUPPORTED; // the runtime lacks the extension; callers check the result
 		return pfnXrGetVisibilityMaskKHR(session, viewConfigurationType, viewIndex, visibilityMaskType, visibilityMask);
+	}
+
+	bool DisplayRefreshRateFB_Available() { return pfnXrGetDisplayRefreshRateFB != nullptr; }
+	XrResult xrGetDisplayRefreshRateFB(XrSession session, float* displayRefreshRate)
+	{
+		if (!pfnXrGetDisplayRefreshRateFB)
+			return XR_ERROR_FUNCTION_UNSUPPORTED; // the runtime lacks the extension; callers check the result
+		return pfnXrGetDisplayRefreshRateFB(session, displayRefreshRate);
 	}
 
 	bool handTrackingExtensionAvailable() { return pfnXrCreateHandTrackerExt != nullptr; }
@@ -246,6 +265,8 @@ private:
 	PFN_xrGetXDevPropertiesMNDX pfnxrGetXDevPropertiesMNDX = nullptr;
 	PFN_xrDestroyXDevListMNDX pfnxrDestroyXDevListMNDX = nullptr;
 	PFN_xrCreateXDevSpaceMNDX pfnxrCreateXDevSpaceMNDX = nullptr;
+
+	OcPFN_xrGetDisplayRefreshRateFB pfnXrGetDisplayRefreshRateFB = nullptr;
 
 	bool supportsG2Controller = false;
 	bool supportsCylinderKHR = false;

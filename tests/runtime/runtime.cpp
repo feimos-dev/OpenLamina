@@ -792,6 +792,8 @@ XrResult XRAPI_CALL WaitFrame(XrSession, const XrFrameWaitInfo*, XrFrameState* f
 	for (const ScriptEvent& ev : GetScript().events) {
 		if (ev.frame == s->framesWaited && ev.type == "session_state")
 			QueueState(s, StateFromName(ev.state));
+		if (ev.frame == s->framesWaited && ev.type == "refresh_rate" && ev.rate > 0)
+			RtChangeRefreshRate(s, ev.rate);
 	}
 	RtActionsOnFrame(s);
 	St().time += Period();

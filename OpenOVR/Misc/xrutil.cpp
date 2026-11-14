@@ -42,6 +42,7 @@ XrExt::XrExt(XrGraphicsApiSupportedFlags apis, const std::vector<const char*>& e
 	bool hasVisMask = false;
 	bool hasHandTracking = false;
 	bool xdevSpace = false;
+	bool refreshRate = false;
 	for (const char* ext : extensions) {
 		if (strcmp(ext, XR_KHR_VISIBILITY_MASK_EXTENSION_NAME) == 0)
 			hasVisMask = true;
@@ -61,6 +62,8 @@ XrExt::XrExt(XrGraphicsApiSupportedFlags apis, const std::vector<const char*>& e
 			supportsEquirect2KHR = true;
 		if (strcmp(ext, XR_KHR_COMPOSITION_LAYER_CUBE_EXTENSION_NAME) == 0)
 			supportsCubeKHR = true;
+		if (strcmp(ext, OC_XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME) == 0)
+			refreshRate = true;
 	}
 
 #define XR_BIND(name, function) OOVR_FAILED_XR_ABORT(xrGetInstanceProcAddr(xr_instance, #name, (PFN_xrVoidFunction*)&this->function))
@@ -68,6 +71,10 @@ XrExt::XrExt(XrGraphicsApiSupportedFlags apis, const std::vector<const char*>& e
 
 	if (hasVisMask)
 		XR_BIND_OPT(xrGetVisibilityMaskKHR, pfnXrGetVisibilityMaskKHR);
+
+	// Only the current rate is asked for (Prop_DisplayFrequency_Float); without it, the measured display period
+	if (refreshRate)
+		XR_BIND_OPT(xrGetDisplayRefreshRateFB, pfnXrGetDisplayRefreshRateFB);
 
 	if (hasHandTracking) {
 		XR_BIND(xrCreateHandTrackerEXT, pfnXrCreateHandTrackerExt);

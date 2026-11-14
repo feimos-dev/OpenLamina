@@ -21,24 +21,12 @@ XrResult XRAPI_CALL GetD3D12GraphicsRequirements(XrInstance, XrSystemId, XrGraph
 		std::lock_guard<std::recursive_mutex> g(St().lock);
 		St().requirementsQueried.insert(RtApi::D3D12);
 	}
-	IDXGIFactory1* factory = nullptr;
-	if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&factory)))
+	if (!RtRuntimeAdapterLuid(&reqs->adapterLuid))
 		return XR_ERROR_RUNTIME_FAILURE;
-	IDXGIAdapter1* adapter = nullptr;
-	XrResult result = XR_ERROR_RUNTIME_FAILURE;
-	if (factory->EnumAdapters1(0, &adapter) == S_OK) {
-		DXGI_ADAPTER_DESC1 desc;
-		adapter->GetDesc1(&desc);
-		// The first adapter, as Monado names it
-		reqs->adapterLuid = desc.AdapterLuid;
-		reqs->minFeatureLevel = D3D_FEATURE_LEVEL_11_0;
-		adapter->Release();
-		std::lock_guard<std::recursive_mutex> g(St().lock);
-		St().requiredLuid = desc.AdapterLuid;
-		result = XR_SUCCESS;
-	}
-	factory->Release();
-	return result;
+	reqs->minFeatureLevel = D3D_FEATURE_LEVEL_11_0;
+	std::lock_guard<std::recursive_mutex> g(St().lock);
+	St().requiredLuid = reqs->adapterLuid;
+	return XR_SUCCESS;
 }
 
 XrResult Bind(const XrBaseInStructure* binding, RtSession* s)

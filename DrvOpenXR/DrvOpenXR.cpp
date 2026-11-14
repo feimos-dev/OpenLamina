@@ -290,6 +290,9 @@ IBackend* DrvOpenXR::CreateOpenXRBackend(const char* startupInfo, vr::EVRInitErr
 	         XR_KHR_COMPOSITION_LAYER_CUBE_EXTENSION_NAME })
 		if (availableExtensions.contains(layerExtension))
 			extensions.push_back(layerExtension);
+	// The display's refresh rate (Prop_DisplayFrequency_Float) and its changes
+	if (availableExtensions.contains(OC_XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME))
+		extensions.push_back(OC_XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME);
 
 	const char* const layers[] = {
 #ifdef XR_VALIDATION_LAYER_PATH
