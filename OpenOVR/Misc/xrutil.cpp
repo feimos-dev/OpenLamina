@@ -340,6 +340,11 @@ SessionLock SessionWrapper::lock_for_teardown(std::chrono::milliseconds limit)
 	return SessionLock(*this, limit);
 }
 
+SessionLock SessionWrapper::try_lock_shared()
+{
+	return SessionLock(*this, SessionLock::TryShared{});
+}
+
 void SessionWrapper::reset()
 {
 	session = XR_NULL_HANDLE;
@@ -381,6 +386,18 @@ SessionLock::SessionLock(SessionWrapper& p, std::chrono::milliseconds limit)
 	}
 	lock = std::unique_lock(p.mutex, std::adopt_lock);
 	thread_lock = Held::Exclusive;
+	owner = true;
+}
+
+SessionLock::SessionLock(SessionWrapper& p, TryShared)
+    : parent(p)
+{
+	if (thread_lock != Held::Unlocked)
+		return; // this thread holds it already
+	if (!p.mutex.try_lock_shared())
+		return;
+	shared_lock = std::shared_lock(p.mutex, std::adopt_lock);
+	thread_lock = Held::Shared;
 	owner = true;
 }
 

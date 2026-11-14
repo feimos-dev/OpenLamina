@@ -142,6 +142,12 @@ public:
 	[[nodiscard]] SessionLock lock_for_teardown(std::chrono::milliseconds limit);
 
 	/*
+	 * The shared lock if it's free now, without waiting (see SessionLock::IsHeld): for a thread that must not wait while a
+	 * session restart, which holds the lock exclusively, stops it.
+	 */
+	[[nodiscard]] SessionLock try_lock_shared();
+
+	/*
 	 * Resets the underlying XrSession to XR_NULL_HANDLE. Does not actually call xrDestroySession.
 	 */
 	void reset();
@@ -164,10 +170,15 @@ class SessionLock {
 	inline static thread_local Held thread_lock = Held::Unlocked;
 
 public:
+	struct TryShared {};
+
 	SessionLock(SessionWrapper& p, bool exclusive);
 	SessionLock(SessionWrapper& p, std::chrono::milliseconds limit);
+	SessionLock(SessionWrapper& p, TryShared);
 	~SessionLock();
 	operator XrSession&();
+	// Whether this thread holds the lock, through this SessionLock or an outer one
+	bool IsHeld() const { return thread_lock != Held::Unlocked; }
 };
 
 XrSpace xr_space_from_tracking_origin(vr::ETrackingUniverseOrigin origin);

@@ -169,6 +169,9 @@ jobs:
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases input-threads --repeat 5 --script tests/conformance/scripts/input_toggle.json --manifest tests/unit/data/manifest_toggle.json --expect tests/conformance/expect/input_threads.json --out conformance/input-threads-direct
           if ($LASTEXITCODE) { $failed++ }
+          # OpenComposite's own frames while the game stalls, also while another thread reads input
+          python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases own-frames,own-frames-race --repeat 5 --jobs 2 --expect tests/conformance/expect/own_frames.json --out conformance/own-frames
+          if ($LASTEXITCODE) { $failed++ }
           # inputEvaluator=steamvr suggests bindings for the same profiles as direct
           python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases input-manifest --manifest tests/unit/data/manifest_a_only.json --out conformance/profiles-direct
           python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases input-manifest --manifest tests/unit/data/manifest_a_only.json --ini tests/conformance/ini/steamvr_evaluator.ini --out conformance/profiles-steamvr
