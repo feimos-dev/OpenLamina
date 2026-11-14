@@ -33,6 +33,7 @@ void Compositor::Invoke(const vr::Texture_t* texture, const vr::VRTextureBounds_
 		return;
 	}
 	lastResult = XR_SUCCESS;
+	submitSlice = SubmitArraySlice::Current();
 	CopyToSwapchain(texture, invertInCompositor ? bounds : nullptr, eye, submitFlags);
 	if (XR_FAILED(lastResult)) {
 		lastFailure = lastResult;
@@ -140,6 +141,30 @@ bool Compositor::CalculateViewport(const vr::VRTextureBounds_t* ptrBounds, int32
 		submitVerticallyFlipped = false;
 	}
 	return submitVerticallyFlipped;
+}
+
+static thread_local std::optional<uint32_t> currentSubmitSlice;
+
+SubmitArraySlice::SubmitArraySlice(uint32_t slice)
+    : previous(currentSubmitSlice)
+{
+	currentSubmitSlice = slice;
+}
+
+SubmitArraySlice::~SubmitArraySlice()
+{
+	currentSubmitSlice = previous;
+}
+
+std::optional<uint32_t> SubmitArraySlice::Current()
+{
+	return currentSubmitSlice;
+}
+
+const std::vector<int64_t>& Compositor::RuntimeFormats()
+{
+	static const std::vector<int64_t> none;
+	return xr_gbl ? xr_gbl->SwapchainFormats() : none;
 }
 
 bool Compositor::ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTextureBounds_t*, Image&)

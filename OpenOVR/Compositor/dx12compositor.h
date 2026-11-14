@@ -1,6 +1,7 @@
 #pragma once
 
 #include "dxcompositor.h"
+#include "dx12convert.h"
 
 class DX12Compositor : public Compositor {
 public:
@@ -34,7 +35,7 @@ private:
 	std::vector<HANDLE> frameFenceEvents;
 	std::vector<ComPtr<ID3D12Fence>> frameFences;
 	std::vector<UINT64> fenceValues;
-	UINT64 currentFenceValue;
+	UINT64 currentFenceValue = 0;
 
 	std::vector<XrSwapchainImageD3D12KHR> imagesHandles;
 
@@ -49,18 +50,14 @@ private:
 	// Closes the list, runs it on queue and waits for it (at most 5 s): false if it couldn't be run or timed out
 	bool EndOneShot(ID3D12CommandQueue* queue);
 
-	struct DxgiFormatInfo {
-		/// The different versions of this format, set to DXGI_FORMAT_UNKNOWN if absent.
-		/// Both the SRGB and linear formats should be UNORM.
-		DXGI_FORMAT srgb, linear, typeless;
-
-		/// The bits per pixel, bits per channel, and the number of channels
-		int bpp, bpc, channels;
-	};
-
-	/**
-	 * Gets information about a given format into the output variable. Returns true if the texture was
-	 * found, if not it returns false and leaves out in an undefined state.
-	 */
-	static bool GetFormatInfo(DXGI_FORMAT format, DxgiFormatInfo& out);
+	// The swapchain's format isn't the texture's family: it goes through the shader pass
+	bool convertFormat = false;
+	// The colour space the swapchain was made for
+	vr::EColorSpace createColourSpace = vr::ColorSpace_Auto;
+	std::unique_ptr<Dx12Convert> pass;
+	// A multisampled texture resolved (kept in RESOLVE_DEST between frames)
+	ComPtr<ID3D12Resource> resolved;
+	ID3D12Resource* Resolved(const D3D12_RESOURCE_DESC& of, DXGI_FORMAT format);
+	// Waits for every image's last copy
+	void WaitForAllFrames();
 };

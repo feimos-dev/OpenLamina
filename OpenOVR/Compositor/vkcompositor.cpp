@@ -10,81 +10,12 @@
 #include <vulkan/vulkan.h>
 
 #include "../DrvOpenXR/XrBackend.h"
+#include "../Misc/SoftFail.h"
+#include "FormatTable.h"
 // Required for the close(2) call for the texture shared memory on Linux
 #ifndef _WIN32
 #include <unistd.h>
 #endif
-
-static enum VkFormat handle_colorspace_auto(enum VkFormat ovrFormat)
-{
-	switch (ovrFormat) {
-	// convert to SRGB
-	case VK_FORMAT_R8G8B8A8_UNORM:
-	case VK_FORMAT_BC1_RGBA_UNORM_BLOCK:
-	case VK_FORMAT_R8G8B8A8_SRGB:
-		return VK_FORMAT_R8G8B8A8_SRGB;
-		break;
-	case VK_FORMAT_B8G8R8A8_UNORM:
-	case VK_FORMAT_B8G8R8A8_SRGB:
-		return VK_FORMAT_B8G8R8A8_SRGB;
-	case VK_FORMAT_R32G32B32A32_SFLOAT:
-	case VK_FORMAT_R32G32B32_SFLOAT:
-	case VK_FORMAT_R16G16B16A16_SFLOAT:
-	case VK_FORMAT_A2R10G10B10_UINT_PACK32:
-		// Todo what games actually use these? and is color space always linear for these?
-		return ovrFormat;
-	default:
-		// VK_FORMAT_UNDEFINED: Submit answers TextureUsesUnsupportedFormat
-		OOVR_LOGF("Unsupported texture format used: %d", ovrFormat);
-		return VK_FORMAT_UNDEFINED;
-	}
-}
-
-static enum VkFormat handle_colorspace_gamma(enum VkFormat ovrFormat)
-{
-	switch (ovrFormat) {
-	case VK_FORMAT_R8G8B8A8_UNORM:
-	case VK_FORMAT_R8G8B8A8_SRGB:
-		return VK_FORMAT_R8G8B8A8_SRGB;
-		break;
-	case VK_FORMAT_B8G8R8A8_UNORM:
-	case VK_FORMAT_B8G8R8A8_SRGB:
-		return VK_FORMAT_B8G8R8A8_SRGB;
-	case VK_FORMAT_R32G32B32A32_SFLOAT:
-	case VK_FORMAT_R32G32B32_SFLOAT:
-	case VK_FORMAT_R16G16B16A16_SFLOAT:
-	case VK_FORMAT_A2R10G10B10_UINT_PACK32:
-		// Todo what games actually use these? and is color space always linear for these?
-		return ovrFormat;
-	default:
-		// VK_FORMAT_UNDEFINED: Submit answers TextureUsesUnsupportedFormat
-		OOVR_LOGF("Unsupported texture format used: %d", ovrFormat);
-		return VK_FORMAT_UNDEFINED;
-	}
-}
-
-static enum VkFormat handle_colorspace_linear(enum VkFormat ovrFormat)
-{
-	switch (ovrFormat) {
-	case VK_FORMAT_R8G8B8A8_UNORM:
-	case VK_FORMAT_R8G8B8A8_SRGB:
-		return VK_FORMAT_R8G8B8A8_UNORM;
-		break;
-	case VK_FORMAT_B8G8R8A8_UNORM:
-	case VK_FORMAT_B8G8R8A8_SRGB:
-		return VK_FORMAT_B8G8R8A8_UNORM;
-	case VK_FORMAT_R32G32B32A32_SFLOAT:
-	case VK_FORMAT_R32G32B32_SFLOAT:
-	case VK_FORMAT_R16G16B16A16_SFLOAT:
-	case VK_FORMAT_A2R10G10B10_UINT_PACK32:
-		// Todo what games actually use these? and is color space always linear for these?
-		return ovrFormat;
-	default:
-		// VK_FORMAT_UNDEFINED: Submit answers TextureUsesUnsupportedFormat
-		OOVR_LOGF("Unsupported texture format used: %d", ovrFormat);
-		return VK_FORMAT_UNDEFINED;
-	}
-}
 
 VkCompositor::VkCompositor(const vr::Texture_t* initialTexture)
 {
@@ -92,6 +23,7 @@ VkCompositor::VkCompositor(const vr::Texture_t* initialTexture)
 
 	appDevice = tex->m_pDevice;
 	appQueue = tex->m_pQueue;
+	physicalDevice = tex->m_pPhysicalDevice;
 
 	VkCommandPoolCreateInfo poolInfo = { VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
 	poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -103,6 +35,8 @@ VkCompositor::VkCompositor(const vr::Texture_t* initialTexture)
 		vkGetDeviceQueue(binding->device, binding->queueFamilyIndex, binding->queueIndex, &queue);
 		if (queue == tex->m_pQueue)
 			poolInfo.queueFamilyIndex = binding->queueFamilyIndex;
+		// The runtime's handle for the GPU (the game's may be of another of its instances)
+		physicalDevice = binding->physicalDevice;
 	}
 	// Without one nothing can be copied: every Submit then answers RequestFailed
 	if (vkCreateCommandPool(tex->m_pDevice, &poolInfo, nullptr, &appCommandPool) != VK_SUCCESS) {
@@ -142,7 +76,8 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 		return;
 	}
 
-	bool usable = chain != XR_NULL_HANDLE && CheckChainCompatible(*tex, createInfo, texture->eColorSpace);
+	bool usable = chain != XR_NULL_HANDLE && tex->m_nWidth == createInfo.width && tex->m_nHeight == createInfo.height
+	    && tex->m_nSampleCount == createInfo.sampleCount && (int64_t)tex->m_nFormat == createInfoFormat && texture->eColorSpace == createColourSpace;
 
 	if (!usable) {
 		OOVR_LOG("Generating new swap chain");
@@ -168,27 +103,34 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 		createInfo.sampleCount = tex->m_nSampleCount;
 		createInfo.arraySize = 1;
 
-		switch (texture->eColorSpace) {
-		case vr::ColorSpace_Auto: {
-			createInfo.format = handle_colorspace_auto((VkFormat)tex->m_nFormat);
-			break;
-		}
-		case vr::ColorSpace_Gamma: {
-			createInfo.format = handle_colorspace_gamma((VkFormat)tex->m_nFormat);
-			break;
-		}
-		case vr::ColorSpace_Linear: {
-			createInfo.format = handle_colorspace_linear((VkFormat)tex->m_nFormat);
-			break;
-		}
-		default:
-			createInfo.format = VK_FORMAT_UNDEFINED;
-			break;
-		}
-		if (createInfo.format == VK_FORMAT_UNDEFINED) {
+		// The runtime's format for it: its own, or one it's blitted into (vkCmdBlitImage converts)
+		std::optional<FormatChoice> choice = ChooseSwapchainFormat(GfxApiKind::Vulkan, (int64_t)tex->m_nFormat, texture->eColorSpace, RuntimeFormats());
+		if (!choice) {
+			// Submit answers TextureUsesUnsupportedFormat; the eye is left out
 			chain = XR_NULL_HANDLE;
+			createInfo = {};
 			lastResult = XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
-			return;
+			OC_UNSUPPORTED_VOID("A Vulkan image of format %d: no swapchain format can show it", (int)tex->m_nFormat);
+		}
+		createInfo.format = choice->swapchainFormat;
+		convertFormat = choice->convert;
+		createInfoFormat = (int64_t)tex->m_nFormat;
+		createColourSpace = texture->eColorSpace;
+		if (convertFormat) {
+			// A blit converts between formats that have it (and not from a multisampled image)
+			VkFormatProperties from{}, to{};
+			vkGetPhysicalDeviceFormatProperties(physicalDevice, (VkFormat)tex->m_nFormat, &from);
+			vkGetPhysicalDeviceFormatProperties(physicalDevice, (VkFormat)createInfo.format, &to);
+			if (tex->m_nSampleCount > 1 || !(from.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT)
+			    || !(to.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT)) {
+				// Submit answers InvalidTexture; the eye is left out
+				chain = XR_NULL_HANDLE;
+				createInfo = {};
+				lastResult = XR_ERROR_VALIDATION_FAILURE;
+				OC_UNSUPPORTED_VOID("A Vulkan image of format %d can't be blitted into swapchain format %d", (int)tex->m_nFormat, (int)choice->swapchainFormat);
+			}
+			OOVR_LOGF("Vulkan format %d goes into swapchain format %d through a blit", (int)tex->m_nFormat, (int)createInfo.format);
+			createInfo.sampleCount = 1;
 		}
 
 		ForgetAcquiredImage(); // a new swapchain: no image of the old one is pending
@@ -279,7 +221,10 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 		auto tex = static_cast<vr::VRVulkanTextureArrayData_t*>(texture->handle);
 		arrayLayer = tex->m_unArrayIndex;
 	}
-	if (bounds) {
+	if (bounds || convertFormat) {
+		const vr::VRTextureBounds_t full{ 0, 0, 1, 1 };
+		if (!bounds)
+			bounds = &full;
 		VkImageBlit region = {};
 		region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 		region.srcSubresource.mipLevel = 0;
@@ -292,7 +237,7 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 		region.dstSubresource.baseArrayLayer = 0;
 		region.dstSubresource.layerCount = 1;
 		region.dstOffsets[0] = { 0, 0, 0 };
-		region.dstOffsets[1] = { (int)tex->m_nWidth, (int)tex->m_nHeight, 1 };
+		region.dstOffsets[1] = { (int)createInfo.width, (int)createInfo.height, 1 };
 		vkCmdBlitImage( //
 		    currentCommandBuffer, // commandbuffer
 		    (VkImage)tex->m_nImage, // srcImage
@@ -587,46 +532,4 @@ void VkCompositor::InvokeCubemap(const vr::Texture_t* textures)
 	lastResult = XR_ERROR_RUNTIME_FAILURE;
 }
 
-bool VkCompositor::CheckChainCompatible(const vr::VRVulkanTextureData_t& tex, const XrSwapchainCreateInfo& chainDesc, vr::EColorSpace colourSpace)
-{
-	bool usable = true;
-#define FAIL(name)                             \
-	do {                                       \
-		usable = false;                        \
-		OOVR_LOG("Resource mismatch: " #name); \
-	} while (0)
-#define CHECK(name, chainName)           \
-	if (tex.name != chainDesc.chainName) \
-	FAIL(name)
-
-	CHECK(m_nWidth, width);
-	CHECK(m_nHeight, height);
-	CHECK(m_nSampleCount, sampleCount);
-	switch (colourSpace) {
-	case vr::ColorSpace_Auto: {
-		if (handle_colorspace_auto((VkFormat)tex.m_nFormat) != chainDesc.format)
-			FAIL(m_nFormat);
-		break;
-	}
-	case vr::ColorSpace_Gamma: {
-		if (handle_colorspace_gamma((VkFormat)tex.m_nFormat) != chainDesc.format)
-			FAIL(m_nFormat);
-		break;
-	}
-	case vr::ColorSpace_Linear: {
-		if (handle_colorspace_linear((VkFormat)tex.m_nFormat) != chainDesc.format)
-			FAIL(m_nFormat);
-		break;
-	}
-	default:
-		OOVR_LOGF("Invalid colorspace given: %d", colourSpace);
-		usable = false;
-		break;
-	}
-
-#undef CHECK
-#undef FAIL
-
-	return usable;
-}
 #endif

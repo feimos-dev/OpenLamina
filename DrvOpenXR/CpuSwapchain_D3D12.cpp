@@ -81,7 +81,7 @@ public:
 		if (FAILED(buffer->Map(0, &none, (void**)&mapped)))
 			return false;
 		for (uint32_t y = 0; y < height; y++)
-			std::memcpy(mapped + footprint.Offset + (size_t)y * footprint.Footprint.RowPitch, &texels[(size_t)y * width * 4], (size_t)width * 4);
+			std::memcpy(mapped + (size_t)footprint.Offset + (size_t)y * footprint.Footprint.RowPitch, &texels[(size_t)y * width * 4], (size_t)width * 4);
 		buffer->Unmap(0, nullptr);
 
 		if (FAILED(allocator->Reset()) || FAILED(list12->Reset(allocator.Get(), nullptr)))

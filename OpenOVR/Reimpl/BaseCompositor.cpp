@@ -305,12 +305,11 @@ ovr_enum_t BaseCompositor::Submit(EVREye eye, const Texture_t* texture, const VR
 
 ovr_enum_t BaseCompositor::SubmitWithArrayIndex(vr::EVREye eye, const vr::Texture_t* texture, uint32_t idx, const vr::VRTextureBounds_t* bounds, vr::EVRSubmitFlags submitFlags)
 {
-	// The texture is one array texture, and idx its slice (not an index into an array of Texture_t); slices beyond
-	// the first aren't supported yet, so the texture is submitted whole
+	// The texture is one array texture, and idx its slice (not an index into an array of Texture_t): the compositors
+	// show that slice (D3D11, D3D12 and OpenGL arrays; Vulkan's say theirs in VRVulkanTextureArrayData_t)
 	if (!texture)
 		return VRCompositorError_InvalidTexture;
-	if (idx != 0)
-		OOVR_LOG_ONCE("SubmitWithArrayIndex: only slice 0 of array textures is used");
+	SubmitArraySlice slice(idx);
 	return Submit(eye, texture, bounds, submitFlags);
 }
 

@@ -313,6 +313,10 @@ add_library(OCCore STATIC
 	OpenOVR/Compositor/glcompositor.cpp
 	OpenOVR/Compositor/glescompositor.cpp
 	OpenOVR/Compositor/vkcompositor.cpp
+	OpenOVR/Compositor/FormatTable.cpp
+	OpenOVR/Compositor/dx12convert.cpp
+	OpenOVR/Compositor/dx12convert.h
+	OpenOVR/Compositor/FormatTable.h
 	OpenOVR/convert.cpp
 	OpenOVR/logging.cpp
 	OpenOVR/linux_funcs.cpp

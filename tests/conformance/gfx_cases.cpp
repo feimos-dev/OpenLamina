@@ -229,6 +229,144 @@ void OverlayTextureReadback(CaseContext& c, GfxKind kind, int64_t format)
 	gfx->Flush();
 }
 
+// A scene app on one graphics API: its device, OpenComposite's compositor, and frames of its textures
+struct Scene {
+	CaseContext& c;
+	std::unique_ptr<GfxApi> gfx;
+	vr::IVRCompositor_029::IVRCompositor* comp = nullptr;
+	bool started = false;
+
+	explicit Scene(CaseContext& ctx)
+	    : c(ctx)
+	{
+	}
+
+	// False, with label recorded as skipped (no such device here) or failed, if it can't start
+	bool Start(GfxKind kind, const std::string& label)
+	{
+		std::string why;
+		gfx = GfxApi::Create(kind, &why);
+		if (!gfx) {
+			c.Record(label, Skipped(why));
+			return false;
+		}
+		if (c.core->Init(vr::VRApplication_Scene, nullptr) != vr::VRInitError_None) {
+			c.Record("Init failed");
+			gfx.reset();
+			return false;
+		}
+		started = true;
+		vr::EVRInitError le = vr::VRInitError_None;
+		comp = (vr::IVRCompositor_029::IVRCompositor*)c.core->GetGenericInterface("IVRCompositor_029", &le);
+		if (!comp) {
+			Json::Value r;
+			r["lookup_error"] = (int)le;
+			c.Record("no compositor", r);
+			return false;
+		}
+		return true;
+	}
+
+	// n frames of left and right with their bounds, through SubmitWithArrayIndex when slice >= 0; the last frame's
+	// answers in r["left"] and r["right"]
+	void Frames(int n, GfxTexture& left, GfxTexture& right, const vr::VRTextureBounds_t& lb, const vr::VRTextureBounds_t& rb, Json::Value& r,
+	    vr::EVRSubmitFlags flags = vr::Submit_Default, int slice = -1)
+	{
+		for (int frame = 1; frame <= n; frame++) {
+			vr::TrackedDevicePose_t poses[16];
+			comp->WaitGetPoses(poses, 16, nullptr, 0);
+			if (slice >= 0) {
+				r["left"] = (int)comp->SubmitWithArrayIndex(vr::Eye_Left, left.Texture(), (uint32_t)slice, &lb, flags);
+				r["right"] = (int)comp->SubmitWithArrayIndex(vr::Eye_Right, right.Texture(), (uint32_t)slice, &rb, flags);
+			} else {
+				r["left"] = (int)comp->Submit(vr::Eye_Left, left.Texture(), &lb, flags);
+				r["right"] = (int)comp->Submit(vr::Eye_Right, right.Texture(), &rb, flags);
+			}
+		}
+	}
+
+	~Scene()
+	{
+		// OpenComposite first, then the textures and the device (OpenVR's rule for every API)
+		if (started)
+			c.core->Cleanup();
+		if (gfx)
+			gfx->Flush();
+	}
+};
+
+constexpr vr::VRTextureBounds_t kFull{ 0, 0, 1, 1 };
+
+std::string RectJoin(uint32_t w, uint32_t h)
+{
+	return "projection_rect:" + std::to_string(w) + "x" + std::to_string(h);
+}
+
+// One texture per eye of each format, a size of its own each (the dump's projection layer is found by its rect), under
+// a script whose runtime offers RGBA8 sRGB only: each is converted into it
+void Formats(CaseContext& c, GfxKind kind, const std::vector<std::pair<std::string, int64_t>>& formats)
+{
+	Scene s(c);
+	if (!s.Start(kind, "format " + formats[0].first))
+		return;
+	uint32_t size = 512;
+	bool first = true;
+	for (const auto& [name, format] : formats) {
+		GfxTexture left = s.gfx->Pattern(size, size, format, 0);
+		GfxTexture right = s.gfx->Pattern(size, size, format, 1);
+		s.gfx->Flush();
+		Json::Value r;
+		if (!left.Made() || !right.Made()) {
+			r["error"] = "the pattern textures couldn't be made";
+		} else {
+			s.Frames(first ? kFrames : 4, left, right, kFull, kFull, r);
+			r["dump_join"] = RectJoin(size, size);
+		}
+		c.Record("format " + name, r);
+		first = false;
+		size -= 64;
+	}
+}
+
+// Textures games send that are out of the ordinary, D3D11: each its own size (found by its rect in the dump)
+void D3D11Odd(CaseContext& c)
+{
+	Scene s(c);
+	if (!s.Start(GfxKind::D3D11, "1x1"))
+		return;
+	struct Odd {
+		const char* name;
+		uint32_t w, h;
+		int64_t format;
+		uint32_t samples, layers;
+		int slice;
+		vr::EColorSpace colourSpace;
+	};
+	const Odd odds[] = {
+		{ "1x1", 1, 1, kDxgiRGBA8Srgb, 1, 1, -1, vr::ColorSpace_Auto },
+		{ "4097x2049", 4097, 2049, kDxgiRGBA8Srgb, 1, 1, -1, vr::ColorSpace_Auto },
+		{ "msaa typeless", 600, 600, 27 /* DXGI_FORMAT_R8G8B8A8_TYPELESS */, 4, 1, -1, vr::ColorSpace_Auto },
+		{ "array slice 1", 320, 320, kDxgiRGBA8Srgb, 1, 2, 1, vr::ColorSpace_Auto },
+		{ "srgb under linear", 200, 200, kDxgiRGBA8Srgb, 1, 1, -1, vr::ColorSpace_Linear },
+	};
+	bool first = true;
+	for (const Odd& o : odds) {
+		GfxTexture left = s.gfx->Pattern(o.w, o.h, o.format, 0, o.samples, o.layers);
+		GfxTexture right = s.gfx->Pattern(o.w, o.h, o.format, 1, o.samples, o.layers);
+		s.gfx->Flush();
+		left.tex.eColorSpace = right.tex.eColorSpace = o.colourSpace;
+		Json::Value r;
+		if (!left.Made() || !right.Made()) {
+			r["error"] = "the pattern textures couldn't be made";
+		} else {
+			s.Frames(first ? kFrames : 4, left, right, kFull, kFull, r, vr::Submit_Default, o.slice);
+			r["dump_join"] = RectJoin(o.w, o.h);
+		}
+		c.Record(o.name, r);
+		first = false;
+	}
+}
+
 } // namespace
 
 const std::map<std::string, CaseFn>& conformance::GfxCases()
@@ -238,6 +376,11 @@ const std::map<std::string, CaseFn>& conformance::GfxCases()
 		{ "gfx-d3d12-basic", [](CaseContext& c) { Basic(c, GfxKind::D3D12, kDxgiRGBA8Srgb); } },
 		{ "gfx-vk-basic", [](CaseContext& c) { Basic(c, GfxKind::Vulkan, kVkRGBA8Srgb); } },
 		{ "gfx-gl-basic", [](CaseContext& c) { Basic(c, GfxKind::OpenGL, kGlSRGB8Alpha8); } },
+		{ "gfx-d3d11-formats", [](CaseContext& c) { Formats(c, GfxKind::D3D11, { { "rgba16f", 10 }, { "r11g11b10f", 26 }, { "rgb10a2", 24 }, { "bgrx8", 88 } }); } },
+		{ "gfx-d3d12-formats", [](CaseContext& c) { Formats(c, GfxKind::D3D12, { { "rgba16f", 10 }, { "r11g11b10f", 26 }, { "rgb10a2", 24 }, { "bgrx8", 88 } }); } },
+		{ "gfx-vk-formats", [](CaseContext& c) { Formats(c, GfxKind::Vulkan, { { "rgba16f", 97 }, { "r11g11b10f", 122 }, { "rgb10a2", 64 }, { "bgra8", 44 } }); } },
+		{ "gfx-gl-formats", [](CaseContext& c) { Formats(c, GfxKind::OpenGL, { { "rgba16f", 0x881A }, { "r11g11b10f", 0x8C3A }, { "rgb10a2", 0x8059 }, { "rgb8", 0x8051 } }); } },
+		{ "gfx-d3d11-odd", D3D11Odd },
 		{ "overlay-raw-d3d11", [](CaseContext& c) { OverlayRaw(c, GfxKind::D3D11, kDxgiRGBA8Srgb); } },
 		{ "overlay-raw-d3d12", [](CaseContext& c) { OverlayRaw(c, GfxKind::D3D12, kDxgiRGBA8Srgb); } },
 		{ "overlay-raw-vk", [](CaseContext& c) { OverlayRaw(c, GfxKind::Vulkan, kVkRGBA8Srgb); } },
