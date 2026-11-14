@@ -40,6 +40,7 @@
 
 #include "generated/interfaces/IVRCompositor_018.h"
 
+#include "GfxInterop.h"
 #include "tmp_gfx/TemporaryGraphics.h"
 
 #if defined(SUPPORT_VK)
@@ -123,6 +124,7 @@ XrBackend::~XrBackend()
 	// This must happen after session destruction (which occurs in FullShutdown), as runtimes (namely Monado)
 	// may try to access these resources while destroying the session.
 	temporaryGraphics.reset();
+	gfxInterop.reset();
 #if defined(SUPPORT_DX) && defined(SUPPORT_DX10) && defined(SUPPORT_DX11)
 	DX10Compositor::ReleaseBridgeDevice();
 #endif
@@ -337,6 +339,13 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 
 		// What can be checked before the session goes down is checked here, so a texture that can't be used
 		// leaves the running session alone
+		// An OpenGL or Vulkan texture where the runtime lacks that API but has D3D11: copied through D3D11 (GfxInterop)
+		std::unique_ptr<GfxInterop> interop;
+#if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+		const bool runtimeHasD3D11 = xr_ext->xrGetD3D11GraphicsRequirementsKHR_Available();
+#else
+		const bool runtimeHasD3D11 = false;
+#endif
 		switch (tex->eType) {
 		case vr::TextureType_DirectX:
 #if !(defined(SUPPORT_DX) && defined(SUPPORT_DX11))
@@ -411,6 +420,14 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 				OOVR_LOG_ONCE("The OpenVR app's Vulkan texture data has no instance, device or queue");
 				return false;
 			}
+			if (!xr_ext->xrGetVulkanGraphicsDeviceKHR_Available() && runtimeHasD3D11) {
+				interop = GfxInterop::ForVulkan(vktex->m_pInstance, vktex->m_pPhysicalDevice, vktex->m_pDevice, vktex->m_pQueue);
+				if (!interop) {
+					OOVR_LOG("The OpenXR runtime has no Vulkan, and the game's Vulkan frames can't go through D3D11");
+					appGraphicsUnusable = true;
+					return false;
+				}
+			}
 #endif
 			break;
 		}
@@ -419,6 +436,14 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 			if (!wglGetCurrentContext() || !wglGetCurrentDC()) {
 				OOVR_LOG_ONCEF("Null OpenGL GLRC or DC: %p,%p", (void*)wglGetCurrentContext(), (void*)wglGetCurrentDC());
 				return false;
+			}
+			if (!xr_ext->xrGetOpenGLGraphicsRequirementsKHR_Available() && runtimeHasD3D11) {
+				interop = GfxInterop::ForGL();
+				if (!interop) {
+					OOVR_LOG("The OpenXR runtime has no OpenGL, and the game's OpenGL frames can't go through D3D11");
+					appGraphicsUnusable = true;
+					return false;
+				}
 			}
 #elif defined(SUPPORT_GL)
 			if (!glXGetCurrentDisplay() || !glXGetCurrentContext()) {
@@ -477,7 +502,22 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 			return false;
 		};
 
-		switch (tex->eType) {
+#if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+		if (interop) {
+			// The session is D3D11, on the interop's device on the runtime's adapter
+			XrGraphicsRequirementsD3D11KHR graphicsRequirements{ XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR };
+			OC_XR_LOG(xr_ext->xrGetD3D11GraphicsRequirementsKHR(xr_instance, xr_system, &graphicsRequirements));
+			XrGraphicsBindingD3D11KHR d3dInfo{ XR_TYPE_GRAPHICS_BINDING_D3D11_KHR };
+			d3dInfo.device = interop->Device();
+			graphicsBinding = std::make_unique<BindingWrapper<XrGraphicsBindingD3D11KHR>>(d3dInfo);
+			// Kept with the binding, for each later session too
+			gfxInterop = std::move(interop);
+			if (XR_FAILED(DrvOpenXR::SetupSession()))
+				return giveUp("the OpenXR runtime refused a D3D11 session for the game's copied frames");
+		}
+#endif
+		// The game's own API's session (none here for frames copied through D3D11, bound above)
+		switch (gfxInterop ? vr::TextureType_Invalid : tex->eType) {
 #if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
 		case vr::TextureType_DirectX: {
 			// The spec requires that we call this before starting a session using D3D. Unfortunately we
@@ -688,6 +728,10 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 		temporaryGraphics.reset();
 	}
 
+	// Copied textures' compositors are made from their D3D11 copies (StoreEyeTexture)
+	if (gfxInterop && tex->eType == gfxInterop->Type())
+		return true;
+
 	bool ready = true;
 	for (std::unique_ptr<Compositor>& compositor : compositors) {
 		// Skip a compositor if it's already set up
@@ -818,6 +862,22 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 
 	XrCompositionLayerProjectionView& layer = projectionViews[eye];
 	layer.type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
+
+	// An OpenGL or Vulkan texture copied through D3D11: from here on, its D3D11 copy
+	vr::Texture_t copied;
+	if (gfxInterop && texture->eType == gfxInterop->Type()) {
+		ID3D11Texture2D* copy = gfxInterop->CopyIn(texture, bounds);
+		if (!copy) {
+			layer.subImage.swapchain = XR_NULL_HANDLE;
+			return kCompositorRequestFailed;
+		}
+		copied = { copy, vr::TextureType_DirectX, texture->eColorSpace };
+		texture = &copied;
+		// A D3D11 compositor, which CreateCompositorAPI could take the interop's texture for a D3D10 one (an interop
+		// device answers D3D10's interfaces too)
+		if (!compositors[eye])
+			compositors[eye] = std::make_unique<DX11Compositor>(copy);
+	}
 
 	std::unique_ptr<Compositor>& compPtr = compositors[eye];
 	if (!compPtr) {

@@ -249,6 +249,9 @@ add_library(DrvOpenXR STATIC
 	DrvOpenXR/OwnFrameLoop.cpp
 	DrvOpenXR/OwnFrameLoop.h
 
+	DrvOpenXR/GfxInterop.cpp
+	DrvOpenXR/GfxInterop.h
+
 	DrvOpenXR/tmp_gfx/TemporaryGraphics.cpp
 	DrvOpenXR/tmp_gfx/TemporaryGraphics.h
 	DrvOpenXR/tmp_gfx/TemporaryD3D11.cpp
