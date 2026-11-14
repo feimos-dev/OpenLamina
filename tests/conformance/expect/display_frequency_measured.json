@@ -1,0 +1,9 @@
+{
+ "#": "Prop_DisplayFrequency_Float without XR_FB_display_refresh_rate (run.py --cases display-frequency --script scripts/display_120.json --expect expect/display_frequency_measured.json): 90 Hz until a frame has been waited for, then the runtime's display period's 120 Hz, with no change event.",
+ "display-frequency/frequency/-/-": {
+  "before_frames": 90,
+  "at_frame_5": 120,
+  "at_frame_20": 120,
+  "changed_at_frame": -1
+ }
+}

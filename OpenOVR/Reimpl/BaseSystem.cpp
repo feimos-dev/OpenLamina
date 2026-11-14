@@ -158,14 +158,64 @@ bool BaseSystem::GetTimeSinceLastVsync(float* pfSecondsSinceLastVsync, uint64_t*
 	return BackendManager::Instance().GetPrimaryHMD()->GetTimeSinceLastVsync(pfSecondsSinceLastVsync, pulFrameCounter);
 }
 
-int32_t BaseSystem::GetD3D9AdapterIndex()
+bool BaseSystem::_RuntimeAdapterLuid(uint64_t* luid)
 {
-	// The D3D9Ex adapter with the OpenXR runtime's D3D11 adapter's LUID, else the first
 #ifdef SUPPORT_DX
 	if (!xr_ext || xr_instance == XR_NULL_HANDLE)
-		return 0;
-	XrGraphicsRequirementsD3D11KHR graphicsRequirements = { XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR };
-	if (XR_FAILED(xr_ext->xrGetD3D11GraphicsRequirementsKHR(xr_instance, xr_system, &graphicsRequirements)))
+		return false;
+	auto pack = [luid](const LUID& l) {
+		*luid = (uint64_t)l.LowPart | ((uint64_t)(uint32_t)l.HighPart << 32);
+		return true;
+	};
+#if defined(SUPPORT_DX11)
+	if (xr_ext->xrGetD3D11GraphicsRequirementsKHR_Available()) {
+		XrGraphicsRequirementsD3D11KHR requirements = { XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR };
+		if (XR_SUCCEEDED(xr_ext->xrGetD3D11GraphicsRequirementsKHR(xr_instance, xr_system, &requirements)))
+			return pack(requirements.adapterLuid);
+	}
+#endif
+#if defined(SUPPORT_DX12)
+	if (xr_ext->xrGetD3D12GraphicsRequirementsKHR_Available()) {
+		XrGraphicsRequirementsD3D12KHR requirements = { XR_TYPE_GRAPHICS_REQUIREMENTS_D3D12_KHR };
+		if (XR_SUCCEEDED(xr_ext->xrGetD3D12GraphicsRequirementsKHR(xr_instance, xr_system, &requirements)))
+			return pack(requirements.adapterLuid);
+	}
+#endif
+#endif
+	(void)luid;
+	return false;
+}
+
+int32_t BaseSystem::_DxgiAdapterIndexOf(uint64_t luid)
+{
+#ifdef SUPPORT_DX
+	IDXGIFactory* factory = nullptr;
+	if (FAILED(CreateDXGIFactory(IID_PPV_ARGS(&factory))) || !factory)
+		return -1;
+	int32_t index = -1;
+	IDXGIAdapter* adapter = nullptr;
+	// Bounded by the adapter count (EnumAdapters ends with DXGI_ERROR_NOT_FOUND)
+	for (UINT i = 0; index < 0 && factory->EnumAdapters(i, &adapter) != DXGI_ERROR_NOT_FOUND; ++i) {
+		DXGI_ADAPTER_DESC desc;
+		if (SUCCEEDED(adapter->GetDesc(&desc))
+		    && ((uint64_t)desc.AdapterLuid.LowPart | ((uint64_t)(uint32_t)desc.AdapterLuid.HighPart << 32)) == luid)
+			index = (int32_t)i;
+		adapter->Release();
+	}
+	factory->Release();
+	return index;
+#else
+	(void)luid;
+	return -1;
+#endif
+}
+
+int32_t BaseSystem::GetD3D9AdapterIndex()
+{
+	// The D3D9Ex adapter with the OpenXR runtime's adapter's LUID, else the first
+#ifdef SUPPORT_DX
+	uint64_t runtimeLuid = 0;
+	if (!_RuntimeAdapterLuid(&runtimeLuid))
 		return 0;
 
 	HMODULE d3d9 = LoadLibraryW(L"d3d9.dll");
@@ -178,7 +228,8 @@ int32_t BaseSystem::GetD3D9AdapterIndex()
 	if (create && SUCCEEDED(create(D3D_SDK_VERSION, &d3d)) && d3d) {
 		for (UINT i = 0; i < d3d->GetAdapterCount(); i++) {
 			LUID luid = {};
-			if (SUCCEEDED(d3d->GetAdapterLUID(i, &luid)) && memcmp(&luid, &graphicsRequirements.adapterLuid, sizeof(LUID)) == 0) {
+			if (SUCCEEDED(d3d->GetAdapterLUID(i, &luid))
+			    && ((uint64_t)luid.LowPart | ((uint64_t)(uint32_t)luid.HighPart << 32)) == runtimeLuid) {
 				index = (int32_t)i;
 				break;
 			}
@@ -206,36 +257,11 @@ void BaseSystem::GetDXGIOutputInfo(int32_t* adapterIndex)
 	// The first adapter unless the OpenXR runtime names another
 	*adapterIndex = 0;
 #ifdef SUPPORT_DX
-	// See the comment on XrExt for why we have to use it
-	// FIXME dx12 support?
-	XrGraphicsRequirementsD3D11KHR graphicsRequirements = { XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR };
-	OC_XR_SOFT_VOID(xr_ext->xrGetD3D11GraphicsRequirementsKHR(xr_instance, xr_system, &graphicsRequirements));
-
-	IDXGIFactory* DXGIFactory = nullptr;
-	HRESULT hr = CreateDXGIFactory(IID_PPV_ARGS(&DXGIFactory));
-	OC_SOFT_CHECK_VOID(SUCCEEDED(hr) && DXGIFactory, "GetDXGIOutputInfo: CreateDXGIFactory failed (0x%08lx), answering adapter 0", (unsigned long)hr);
-
-	bool match = false;
-	IDXGIAdapter* Adapter = nullptr;
-	for (UINT i = 0; DXGIFactory->EnumAdapters(i, &Adapter) != DXGI_ERROR_NOT_FOUND; ++i) {
-		DXGI_ADAPTER_DESC adapterDesc;
-		Adapter->GetDesc(&adapterDesc);
-
-		match = memcmp(&adapterDesc.AdapterLuid, &graphicsRequirements.adapterLuid, sizeof(LUID)) == 0;
-
-		Adapter->Release();
-
-		if (match) {
-			*adapterIndex = i;
-			break;
-		}
-	}
-
-	// TODO do something with graphicsRequirements.minFeatureLevel
-
-	DXGIFactory->Release();
-
-	OC_SOFT_CHECK_VOID(match, "GetDXGIOutputInfo: no adapter has the OpenXR runtime's LUID, answering adapter 0");
+	uint64_t luid = 0;
+	OC_SOFT_CHECK_VOID(_RuntimeAdapterLuid(&luid), "GetDXGIOutputInfo: the OpenXR runtime names no D3D adapter, answering adapter 0");
+	int32_t index = _DxgiAdapterIndexOf(luid);
+	OC_SOFT_CHECK_VOID(index >= 0, "GetDXGIOutputInfo: no adapter has the OpenXR runtime's LUID, answering adapter 0");
+	*adapterIndex = index;
 #else
 	OC_UNSUPPORTED_VOID("GetDXGIOutputInfo: this build has no D3D support, answering adapter 0");
 #endif
@@ -248,6 +274,16 @@ void BaseSystem::GetOutputDevice(uint64_t* pnDevice, ETextureType textureType, V
 	*pnDevice = 0;
 
 	switch (textureType) {
+	case TextureType_DirectX:
+	case TextureType_DirectX12: {
+		// The runtime's adapter's LUID
+		uint64_t luid = 0;
+		if (_RuntimeAdapterLuid(&luid))
+			*pnDevice = luid;
+		else
+			OOVR_LOG_ONCE("GetOutputDevice: the OpenXR runtime names no D3D adapter, answering 0");
+		break;
+	}
 	case TextureType_Vulkan: {
 #if defined(SUPPORT_VK)
 		VkPhysicalDevice physDev;

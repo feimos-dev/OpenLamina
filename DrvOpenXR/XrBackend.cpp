@@ -12,6 +12,10 @@
 #include <Windows.h>
 #endif
 
+#if defined(SUPPORT_DX)
+#include <dxgi.h>
+#endif
+
 #if defined(SUPPORT_GL) && !defined(_WIN32)
 #include <GL/glx.h>
 #endif
@@ -50,6 +54,8 @@
 #include <chrono>
 #include <cinttypes>
 #include <mutex>
+#include <optional>
+#include <string>
 #include <thread>
 
 using namespace vr;
@@ -260,6 +266,54 @@ static bool is_same_gpu(VkInstance instance, VkPhysicalDevice runtimeDevice, VkP
 }
 #endif
 
+#if defined(SUPPORT_DX)
+// The name of the DXGI adapter with luid (LowPart | HighPart << 32), for logs
+static std::string AdapterName(uint64_t luid)
+{
+	std::string name = "an unknown adapter";
+	IDXGIFactory1* factory = nullptr;
+	if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))) || !factory)
+		return name;
+	IDXGIAdapter1* adapter = nullptr;
+	// Bounded by the adapter count (EnumAdapters1 ends with DXGI_ERROR_NOT_FOUND)
+	for (UINT i = 0; factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; i++) {
+		DXGI_ADAPTER_DESC1 desc{};
+		bool match = SUCCEEDED(adapter->GetDesc1(&desc))
+		    && ((uint64_t)desc.AdapterLuid.LowPart | ((uint64_t)(uint32_t)desc.AdapterLuid.HighPart << 32)) == luid;
+		adapter->Release();
+		if (match) {
+			char buffer[256] = {};
+			WideCharToMultiByte(CP_UTF8, 0, desc.Description, -1, buffer, sizeof(buffer) - 1, nullptr, nullptr);
+			name = buffer;
+			break;
+		}
+	}
+	factory->Release();
+	char ids[40];
+	snprintf(ids, sizeof(ids), " (LUID %08x:%08x)", (uint32_t)(luid >> 32), (uint32_t)luid);
+	return name + ids;
+}
+
+// Whether the game's device, on the adapter gameLuid, is on the OpenXR runtime's adapter (or the runtime names
+// none): a session on another adapter's device can't share its images with the runtime. One soft failure if not.
+static bool OnRuntimeAdapter(uint64_t gameLuid)
+{
+	uint64_t runtimeLuid = 0;
+	if (!BaseSystem::_RuntimeAdapterLuid(&runtimeLuid) || runtimeLuid == gameLuid)
+		return true;
+	std::string game = AdapterName(gameLuid), runtime = AdapterName(runtimeLuid);
+	OC_SOFT_CHECK(false, false, "The game renders on %s, but the OpenXR runtime on %s: its frames can't be shown "
+	                            "(Submit answers SharedTexturesNotSupported)",
+	    game.c_str(), runtime.c_str());
+	return false;
+}
+
+static uint64_t PackLuid(const LUID& luid)
+{
+	return (uint64_t)luid.LowPart | ((uint64_t)(uint32_t)luid.HighPart << 32);
+}
+#endif
+
 // VREvent_Quit for the game, as SteamVR sends when its compositor can't go on
 static void EnqueueQuit()
 {
@@ -293,6 +347,32 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 #endif
 			appGraphicsUnusable = true;
 			return false;
+#else
+		{
+			// The game's device's adapter, D3D10's (DX10Compositor) or D3D11's
+			ComPtr<IDXGIDevice> dxgi;
+#if defined(SUPPORT_DX10)
+			if (ID3D10Texture2D* tex10 = DX10Compositor::AsD3D10Texture(tex)) {
+				ComPtr<ID3D10Device> device10;
+				tex10->GetDevice(&device10);
+				if (device10)
+					device10.As(&dxgi);
+			} else
+#endif
+			{
+				ComPtr<ID3D11Device> device11;
+				((ID3D11Texture2D*)tex->handle)->GetDevice(&device11);
+				if (device11)
+					device11.As(&dxgi);
+			}
+			ComPtr<IDXGIAdapter> adapter;
+			DXGI_ADAPTER_DESC desc{};
+			if (dxgi && SUCCEEDED(dxgi->GetAdapter(&adapter)) && SUCCEEDED(adapter->GetDesc(&desc)) && !OnRuntimeAdapter(PackLuid(desc.AdapterLuid))) {
+				appOnOtherAdapter = true;
+				appGraphicsUnusable = true;
+				return false;
+			}
+		}
 #endif
 			break;
 		case vr::TextureType_DirectX12:
@@ -308,6 +388,15 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 			if (!((D3D12TextureData_t*)tex->handle)->m_pResource) {
 				OOVR_LOG_ONCE("D3D12 texture data without a resource");
 				return false;
+			}
+			{
+				ComPtr<ID3D12Device> device12;
+				((D3D12TextureData_t*)tex->handle)->m_pResource->GetDevice(IID_PPV_ARGS(&device12));
+				if (device12 && !OnRuntimeAdapter(PackLuid(device12->GetAdapterLuid()))) {
+					appOnOtherAdapter = true;
+					appGraphicsUnusable = true;
+					return false;
+				}
 			}
 #endif
 			break;
@@ -459,6 +548,12 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 #if defined(SUPPORT_VK)
 		case vr::TextureType_Vulkan: {
 			const vr::VRVulkanTextureData_t* vktex = (vr::VRVulkanTextureData_t*)tex->handle;
+
+			// The spec requires that we call this before starting a session using Vulkan (a runtime may refuse the
+			// session without it). Unfortunately we can't actually do anything with this information, since the game has
+			// already created the device.
+			XrGraphicsRequirementsVulkanKHR graphicsRequirements{ XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN_KHR };
+			OC_XR_LOG(xr_ext->xrGetVulkanGraphicsRequirementsKHR(xr_instance, xr_system, &graphicsRequirements));
 
 			VkPhysicalDevice xr_desire = VK_NULL_HANDLE;
 			// We have to call this, or we get crazy validation errors
@@ -703,6 +798,7 @@ static constexpr IBackend::openvr_enum_t kCompositorNone = 0;
 static constexpr IBackend::openvr_enum_t kCompositorRequestFailed = 1;
 static constexpr IBackend::openvr_enum_t kCompositorInvalidTexture = 102;
 static constexpr IBackend::openvr_enum_t kCompositorUnsupportedFormat = 105;
+static constexpr IBackend::openvr_enum_t kCompositorSharedTexturesNotSupported = 106;
 
 IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
     vr::EVREye eye,
@@ -717,7 +813,7 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 	if (!CheckOrInitCompositors(texture)) {
 		// A texture OpenComposite can't use (logged): this eye is left out of the frame
 		projectionViews[eye].subImage.swapchain = XR_NULL_HANDLE;
-		return kCompositorInvalidTexture;
+		return appOnOtherAdapter ? kCompositorSharedTexturesNotSupported : kCompositorInvalidTexture;
 	}
 
 	XrCompositionLayerProjectionView& layer = projectionViews[eye];
@@ -1312,6 +1408,17 @@ void XrBackend::PumpEvents()
 			}
 		} else if (ev.type == XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED) {
 			UpdateInteractionProfile();
+		} else if (ev.type == OC_XR_TYPE_EVENT_DATA_DISPLAY_REFRESH_RATE_CHANGED_FB) {
+			// Prop_DisplayFrequency_Float asks the runtime again
+			auto* changed = (const OcXrEventDataDisplayRefreshRateChangedFB*)&ev;
+			OOVR_LOGF("The display's refresh rate changed from %.2f to %.2f Hz", changed->fromDisplayRefreshRate, changed->toDisplayRefreshRate);
+			BaseSystem* system = GetUnsafeBaseSystem();
+			if (system) {
+				VREvent_t event = { .eventType = VREvent_PropertyChanged, .trackedDeviceIndex = vr::k_unTrackedDeviceIndex_Hmd };
+				event.data.property.container = vr::k_ulInvalidPropertyContainer;
+				event.data.property.prop = vr::Prop_DisplayFrequency_Float;
+				system->_EnqueueEvent(event);
+			}
 		}
 
 	} // while loop
@@ -1916,11 +2023,52 @@ const void* XrBackend::GetCurrentGraphicsBinding()
 void XrBackend::VkGetPhysicalDevice(VkInstance instance, VkPhysicalDevice* out)
 {
 	*out = VK_NULL_HANDLE;
+	if (instance == VK_NULL_HANDLE) {
+		OOVR_LOG("VkGetPhysicalDevice: no app instance");
+		return;
+	}
+
+	// The runtime's own answer for the game's instance, whatever the temporary device's API is
+	if (xr_ext && xr_ext->xrGetVulkanGraphicsDeviceKHR_Available()) {
+		// Asked first, as the extension wants (its answer isn't needed)
+		XrGraphicsRequirementsVulkanKHR requirements{ XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN_KHR };
+		OC_XR_LOG(xr_ext->xrGetVulkanGraphicsRequirementsKHR(xr_instance, xr_system, &requirements));
+		VkPhysicalDevice device = VK_NULL_HANDLE;
+		if (XR_SUCCEEDED(xr_ext->xrGetVulkanGraphicsDeviceKHR(xr_instance, xr_system, instance, &device)) && device) {
+			*out = device;
+			return;
+		}
+		OOVR_LOG_ONCE("VkGetPhysicalDevice: xrGetVulkanGraphicsDeviceKHR failed for the game's instance");
+	}
+
+	// Without Vulkan in the runtime: the physical device on the runtime's D3D adapter (frames then go through D3D11)
+	uint64_t luid = 0;
+	if (BaseSystem::_RuntimeAdapterLuid(&luid)) {
+		uint32_t count = 0;
+		if (vkEnumeratePhysicalDevices(instance, &count, nullptr) == VK_SUCCESS) {
+			std::vector<VkPhysicalDevice> devices(count);
+			if (vkEnumeratePhysicalDevices(instance, &count, devices.data()) >= 0) {
+				devices.resize(count);
+				for (VkPhysicalDevice phy : devices) {
+					VkPhysicalDeviceIDProperties id = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES };
+					VkPhysicalDeviceProperties2 props = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &id };
+					vkGetPhysicalDeviceProperties2(phy, &props);
+					uint64_t deviceLuid = 0;
+					static_assert(sizeof(deviceLuid) == VK_LUID_SIZE);
+					memcpy(&deviceLuid, id.deviceLUID, VK_LUID_SIZE);
+					if (id.deviceLUIDValid && deviceLuid == luid) {
+						*out = phy;
+						return;
+					}
+				}
+			}
+		}
+	}
 
 	// VK_NULL_HANDLE (logged) if it can't be found: GetOutputDevice then answers 0, which a game takes as "any"
 	TemporaryVk* vk = temporaryGraphics ? temporaryGraphics->GetAsVk() : nullptr;
-	if (vk == nullptr || instance == VK_NULL_HANDLE) {
-		OOVR_LOG("VkGetPhysicalDevice: not using a temporary Vulkan instance (or no app instance)");
+	if (vk == nullptr) {
+		OOVR_LOG("VkGetPhysicalDevice: no runtime answer, and not using a temporary Vulkan instance");
 		return;
 	}
 

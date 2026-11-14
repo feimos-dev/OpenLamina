@@ -1,0 +1,9 @@
+{
+ "#": "Prop_DisplayFrequency_Float with XR_FB_display_refresh_rate (run.py --cases display-frequency --script scripts/refresh_72_120.json --expect expect/display_frequency_fb.json): the runtime's 72 Hz from the start, then, once it says it changed (at its 10th frame of the game's session, which starts at the game's first Submit), a VREvent_PropertyChanged for the headset and 120 Hz.",
+ "display-frequency/frequency/-/-": {
+  "before_frames": 72,
+  "at_frame_5": 72,
+  "at_frame_20": 120,
+  "changed_at_frame_10_or_11": true
+ }
+}

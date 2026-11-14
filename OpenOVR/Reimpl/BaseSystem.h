@@ -57,6 +57,11 @@ public:
 
 	static float SGetIpd();
 
+	// The OpenXR runtime's adapter, from the D3D11 requirements or else the D3D12 ones (whichever extension is
+	// enabled), as LowPart | HighPart << 32: false without either. And its index among DXGI's adapters, -1 for none.
+	static bool _RuntimeAdapterLuid(uint64_t* luid);
+	static int32_t _DxgiAdapterIndexOf(uint64_t luid);
+
 public:
 	BaseSystem();
 	~BaseSystem();

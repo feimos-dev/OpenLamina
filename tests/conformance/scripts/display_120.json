@@ -1,0 +1,5 @@
+{
+ "#": "A 120 Hz display without XR_FB_display_refresh_rate (case display-frequency)",
+ "extensions": ["XR_KHR_D3D11_enable"],
+ "display_hz": 120
+}
