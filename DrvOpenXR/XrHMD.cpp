@@ -16,6 +16,8 @@
 #include "../OpenOVR/Misc/SharedStore.h"
 #include "../OpenOVR/convert.h"
 #include "generated/static_bases.gen.h"
+
+#include <atomic>
 #include <chrono>
 #include <thread>
 #include <mutex>
@@ -317,21 +319,52 @@ void XrHMD::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDevicePose_t*
 	xr_utils::PoseFromSpace(pose, xr_gbl->viewSpace, origin);
 }
 
+std::optional<float> XrHMD::ViewsIpd()
+{
+	auto lock = xr_session.lock_shared(); // held while reading: a session restart waits for it
+	if (!xr_gbl)
+		return {};
+	const XruCachedViews cachedViews = xr_gbl->GetCachedViews(xr_gbl->viewSpace);
+	const XrViewState& state = cachedViews.viewState;
+	if (cachedViews.viewCount != XruEyeCount || !(state.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT) || !(state.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT))
+		return {};
+	return cachedViews.views[vr::Eye_Right].pose.position.x - cachedViews.views[vr::Eye_Left].pose.position.x;
+}
+
 float XrHMD::GetIPD()
 {
 	if (!xr_gbl)
 		return 0.0064f;
-	const XruCachedViews& cachedViews = xr_gbl->GetCachedViews(xr_gbl->viewSpace);
-	const XrViewState& state = cachedViews.viewState;
-	const std::array<XrView, XruEyeCount>& views = cachedViews.views;
 
 	static float ipd = 0.0064;
 
 	// Without both views the last IPD stays
-	if (cachedViews.viewCount == XruEyeCount && state.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT && state.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT)
-		ipd = views[vr::Eye_Right].pose.position.x - views[vr::Eye_Left].pose.position.x;
+	if (std::optional<float> views = ViewsIpd())
+		ipd = *views;
 
 	return ipd;
+}
+
+static std::atomic<bool> userPresent{ true };
+
+bool XrHMD::SetUserPresent(bool present)
+{
+	return userPresent.exchange(present) != present;
+}
+
+bool XrHMD::HasProximitySensor()
+{
+	return xr_gbl && xr_gbl->supportsUserPresence;
+}
+
+bool XrHMD::GetControllerState(vr::VRControllerState_t* state)
+{
+	*state = {};
+	if (!HasProximitySensor())
+		return false;
+	if (userPresent)
+		state->ulButtonPressed = 1ull << vr::k_EButton_ProximitySensor;
+	return true;
 }
 
 #define TRY_PROFILE_PROP(type)                                                     \
@@ -366,7 +399,8 @@ bool XrHMD::GetBoolTrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::ET
 	case vr::Prop_HasDriverDirectModeComponent_Bool:
 		return true; // Who knows what this is used for? It's in HL:A anyway.
 	case vr::Prop_ContainsProximitySensor_Bool:
-		return true;
+		// The runtime says whether the user wears the headset
+		return HasProximitySensor();
 	case vr::Prop_HasCameraComponent_Bool:
 		return false;
 	case vr::Prop_HasDisplayComponent_Bool:

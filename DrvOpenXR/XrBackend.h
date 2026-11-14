@@ -15,6 +15,7 @@
 #include "XrHMD.h"
 
 #include <atomic>
+#include <cmath>
 #include <functional>
 #include <memory>
 #include <set>
@@ -48,6 +49,10 @@ public:
 	std::atomic<bool> sessionActive{ false };
 	std::atomic<bool> sessionLost{ false };
 	std::atomic<bool> exitExpected{ false };
+	// What the game has been told of the session, as SteamVR tells it: whether it lost input focus (sessionEvents), and
+	// the IPD (NaN until the session's first)
+	std::atomic<bool> inputFocusLost{ false };
+	float toldIpd = NAN;
 	// The app's graphics device couldn't be bound: the session stays on the temporary device
 	std::atomic<bool> appGraphicsUnusable{ false };
 	// It's on another adapter than the runtime's: if its session or swapchains fail, Submit answers SharedTexturesNotSupported

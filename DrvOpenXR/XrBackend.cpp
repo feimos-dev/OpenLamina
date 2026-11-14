@@ -33,6 +33,7 @@
 #endif
 
 // FIXME find a better way to send the OnPostFrame call?
+#include "../OpenOVR/Misc/ProgramEvents.h"
 #include "../OpenOVR/Reimpl/BaseApplications.h"
 #include "../OpenOVR/Reimpl/BaseClientCore.h"
 #include "../OpenOVR/Reimpl/BaseInput.h"
@@ -67,6 +68,7 @@
 #include <array>
 #include <chrono>
 #include <cinttypes>
+#include <cmath>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -1605,6 +1607,22 @@ bool XrBackend::IsInputAvailable()
 	return sessionState == XR_SESSION_STATE_FOCUSED;
 }
 
+// VREvent_InputFocusCaptured or _Released
+static void PostFocusChange(bool captured)
+{
+	OcPostEvent(captured ? VREvent_InputFocusCaptured : VREvent_InputFocusReleased, k_unTrackedDeviceIndexInvalid, VREvent_Data_t{}, false);
+}
+
+// The headset put on or taken off: its proximity sensor pressed or not, and the user's interaction
+static void PostPresenceChange(bool present)
+{
+	VREvent_Data_t button{};
+	button.controller.button = k_EButton_ProximitySensor;
+	OcPostEvent(present ? VREvent_ButtonPress : VREvent_ButtonUnpress, k_unTrackedDeviceIndex_Hmd, button, false);
+	OcPostEvent(present ? VREvent_TrackedDeviceUserInteractionStarted : VREvent_TrackedDeviceUserInteractionEnded, k_unTrackedDeviceIndex_Hmd,
+	    VREvent_Data_t{}, false);
+}
+
 void XrBackend::PumpEvents()
 {
 	// Poll for OpenXR events
@@ -1623,12 +1641,37 @@ void XrBackend::PumpEvents()
 			break;
 		}
 
+		// XR_EXT_user_presence: the headset put on or taken off, on a system with a sensor. The events only with
+		// sessionEvents; the proximity sensor's state either way.
+		if (ev.type == OC_XR_TYPE_EVENT_DATA_USER_PRESENCE_CHANGED_EXT) {
+			auto* presence = (OcXrEventDataUserPresenceChangedEXT*)&ev;
+			const bool present = presence->isUserPresent != XR_FALSE;
+			if (presence->session == xr_session.get() && XrHMD::HasProximitySensor() && XrHMD::SetUserPresent(present)
+			    && oovr_global_configuration.SessionEvents())
+				PostPresenceChange(present);
+			continue;
+		}
+
 		if (ev.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
 			auto* changed = (XrEventDataSessionStateChanged*)&ev;
 			// A state change for a session already destroyed (around a restart) is old news
 			if (changed->session != xr_session.get())
 				continue;
+			const XrSessionState previous = sessionState;
 			sessionState = changed->state;
+
+			// Input focus (sessionEvents): lost from FOCUSED to VISIBLE (the runtime's menu over the game, say), back
+			// at FOCUSED. Not while OpenLamina ends the session itself (a restart). Each change is told once, whichever
+			// thread pumps the events.
+			if (oovr_global_configuration.SessionEvents()) {
+				if (previous == XR_SESSION_STATE_FOCUSED && sessionState == XR_SESSION_STATE_VISIBLE && !exitExpected) {
+					if (!inputFocusLost.exchange(true))
+						PostFocusChange(true);
+				} else if (sessionState == XR_SESSION_STATE_FOCUSED) {
+					if (inputFocusLost.exchange(false))
+						PostFocusChange(false);
+				}
+			}
 
 			// Monado bug: it returns 0 for this value (at least for the first two states)
 			// Make sure this is actually greater than 0, otherwise this will mess up xr_gbl->GetBestTime()
@@ -1705,6 +1748,20 @@ void XrBackend::PumpEvents()
 		}
 
 	} // while loop
+
+	// The IPD, once it has moved more than 0.1 mm from what the game was told
+	if (sessionActive && !exitExpected) {
+		if (std::optional<float> ipd = XrHMD::ViewsIpd()) {
+			if (std::isnan(toldIpd)) {
+				toldIpd = *ipd;
+			} else if (std::fabs(*ipd - toldIpd) > 0.0001f) {
+				toldIpd = *ipd;
+				VREvent_Data_t data{};
+				data.ipd.ipdMeters = *ipd;
+				OcPostEvent(VREvent_IpdChanged, k_unTrackedDeviceIndex_Hmd, data, false);
+			}
+		}
+	}
 
 	/*
 	   We check for AreActionsLoaded here because:
@@ -1795,6 +1852,7 @@ void XrBackend::OnSessionCreated()
 {
 	sessionLost = false;
 	exitExpected = false;
+	toldIpd = NAN; // the new session's first IPD is the one the game has
 	// The gap from the old session's last frame isn't dropped frames
 	RestartFrameTiming();
 

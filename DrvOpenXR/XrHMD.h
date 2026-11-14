@@ -11,6 +11,7 @@
 
 #include <cstring>
 #include <mutex>
+#include <optional>
 
 // This warning tells us that a method (GetPose) was overridden by one of our parent classes
 // Totally fine, that's the reason why we include XrTrackedDevice in the first place
@@ -67,6 +68,20 @@ public:
 	vr::HmdMatrix34_t GetEyeToHeadTransform(vr::EVREye eEye) override;
 
 	float GetIPD() override;
+
+	/** The IPD from the runtime's views of the head; nothing while it has none */
+	static std::optional<float> ViewsIpd();
+
+	/** Whether the user wears the headset, from XR_EXT_user_presence (worn until the runtime says otherwise). Setting it
+	 * returns whether it changed. */
+	static bool SetUserPresent(bool present);
+
+	/** Whether the runtime tells when the headset is put on or taken off: XR_EXT_user_presence, on a system that says
+	 * it can (supportsUserPresence) */
+	static bool HasProximitySensor();
+
+	/** The proximity sensor, where the runtime has one (HasProximitySensor); false (no state) without it */
+	bool GetControllerState(vr::VRControllerState_t* state) override;
 
 	/** Returns the number of elapsed seconds since the last recorded vsync event. This
 	 *	will come from a vsync timer event in the timer if possible or from the application-reported

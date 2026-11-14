@@ -54,6 +54,21 @@ struct OcXrEventDataDisplayRefreshRateChangedFB {
 	float toDisplayRefreshRate;
 };
 typedef XrResult(XRAPI_PTR* OcPFN_xrGetDisplayRefreshRateFB)(XrSession session, float* displayRefreshRate);
+// XR_EXT_user_presence, newer than the bundled OpenXR headers: whether the user wears the headset
+#define OC_XR_EXT_USER_PRESENCE_EXTENSION_NAME "XR_EXT_user_presence"
+static const XrStructureType OC_XR_TYPE_EVENT_DATA_USER_PRESENCE_CHANGED_EXT = (XrStructureType)1000470000;
+struct OcXrEventDataUserPresenceChangedEXT {
+	XrStructureType type;
+	const void* next;
+	XrSession session;
+	XrBool32 isUserPresent;
+};
+static const XrStructureType OC_XR_TYPE_SYSTEM_USER_PRESENCE_PROPERTIES_EXT = (XrStructureType)1000470001;
+struct OcXrSystemUserPresencePropertiesEXT {
+	XrStructureType type;
+	void* next;
+	XrBool32 supportsUserPresence;
+};
 
 // Flag bits for supported graphics apis
 static const XrGraphicsApiSupportedFlags XR_SUPPORTED_GRAPHICS_API_D3D11 = 0x0001;
@@ -81,6 +96,7 @@ public:
 	bool EyeGaze_Available() { return supportsEyeGaze; }
 	bool DepthKHR_Available() { return supportsDepthKHR; }
 	bool Equirect2KHR_Available() { return supportsEquirect2KHR; }
+	bool UserPresence_Available() { return supportsUserPresence; }
 	bool xrGetVisibilityMaskKHR_Available() { return pfnXrGetVisibilityMaskKHR != nullptr; }
 	bool xrMndxXdevSpace_Available()
 	{
@@ -272,6 +288,7 @@ private:
 	bool supportsEyeGaze = false;
 	bool supportsDepthKHR = false;
 	bool supportsEquirect2KHR = false;
+	bool supportsUserPresence = false;
 
 #if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
 	PFN_xrGetD3D11GraphicsRequirementsKHR pfnXrGetD3D11GraphicsRequirementsKHR = nullptr;

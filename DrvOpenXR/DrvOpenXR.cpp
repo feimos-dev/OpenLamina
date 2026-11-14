@@ -339,6 +339,9 @@ IBackend* DrvOpenXR::CreateOpenXRBackend(const char* startupInfo, vr::EVRInitErr
 		else
 			OOVR_LOGF("The OpenXR runtime has no %s: a background application's poses are located at its session's last state change", clock);
 	}
+	// The headset's proximity sensor
+	if (availableExtensions.contains(OC_XR_EXT_USER_PRESENCE_EXTENSION_NAME))
+		extensions.push_back(OC_XR_EXT_USER_PRESENCE_EXTENSION_NAME);
 
 	const char* const layers[] = {
 #ifdef XR_VALIDATION_LAYER_PATH

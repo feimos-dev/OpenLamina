@@ -64,6 +64,8 @@ XrExt::XrExt(XrGraphicsApiSupportedFlags apis, const std::vector<const char*>& e
 			supportsEquirect2KHR = true;
 		if (strcmp(ext, OC_XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME) == 0)
 			refreshRate = true;
+		if (strcmp(ext, OC_XR_EXT_USER_PRESENCE_EXTENSION_NAME) == 0)
+			supportsUserPresence = true;
 	}
 
 #define XR_BIND(name, function) OOVR_FAILED_XR_ABORT(xrGetInstanceProcAddr(xr_instance, #name, (PFN_xrVoidFunction*)&this->function))
@@ -169,7 +171,17 @@ XrSessionGlobals::XrSessionGlobals()
 		eyeGazeProperties.next = systemProperties.next;
 		systemProperties.next = &eyeGazeProperties;
 	}
+	OcXrSystemUserPresencePropertiesEXT userPresenceProperties = { OC_XR_TYPE_SYSTEM_USER_PRESENCE_PROPERTIES_EXT };
+	if (xr_ext->UserPresence_Available()) {
+		userPresenceProperties.next = systemProperties.next;
+		systemProperties.next = &userPresenceProperties;
+	}
 	OC_XR_LOG(xrGetSystemProperties(xr_instance, xr_system, &systemProperties));
+	// The struct is this call's: unchained again
+	if (xr_ext->UserPresence_Available()) {
+		supportsUserPresence = userPresenceProperties.supportsUserPresence != XR_FALSE;
+		systemProperties.next = userPresenceProperties.next;
+	}
 	if (xr_ext->EyeGaze_Available())
 		OOVR_LOGF("Eye gaze: %s", eyeGazeProperties.supportsEyeGazeInteraction ? "available" : "not available on this system");
 }

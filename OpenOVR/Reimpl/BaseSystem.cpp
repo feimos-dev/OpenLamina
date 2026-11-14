@@ -782,6 +782,12 @@ bool BaseSystem::GetControllerState(vr::TrackedDeviceIndex_t controllerDeviceInd
 
 	memset(controllerState, 0, controllerStateSize);
 
+	// The headset's proximity sensor, while the runtime says whether the user wears it
+	if (controllerDeviceIndex == k_unTrackedDeviceIndex_Hmd && xr_gbl && xr_gbl->supportsUserPresence) {
+		std::shared_ptr<ITrackedDevice> hmd = BackendManager::Instance().GetDevice(k_unTrackedDeviceIndex_Hmd);
+		return hmd && hmd->GetControllerState(controllerState);
+	}
+
 	if (!inputSystem) {
 		inputSystem = GetBaseInput();
 	}

@@ -1384,6 +1384,21 @@ void ChaperoneReadCase(CaseContext& c)
 	c.core->Cleanup();
 }
 
+// To a thousandth, so a record compares exactly
+double Thousandths(double v)
+{
+	double r = std::round(v * 1000) / 1000;
+	return r == 0 ? 0.0 : r; // no -0
+}
+
+Json::Value ThousandthsOf(const vr::HmdVector3_t& v)
+{
+	Json::Value out(Json::arrayValue);
+	for (float x : v.v)
+		out.append(Thousandths(x));
+	return out;
+}
+
 // Events from calls (expect/events.json), on the stand-in with scripts/legacy_click.json: the Index profile's
 // right trigger clicked from frame 10 to 20. The game reads the legacy input (GetControllerState at frame 2), so the
 // legacy button events come; ResetSeatedZeroPose's event is the next one polled after it.
@@ -1904,6 +1919,66 @@ void EventsCommitCase(CaseContext& c)
 	commit["ret"] = setup ? setup->CommitWorkingCopy(vr::IVRChaperoneSetup_006::EChaperoneConfigFile_Live) : false;
 	c.Record("CommitWorkingCopy", commit);
 	c.Record("own events", CountChaperoneEvents(sys, 1000));
+	c.core->Cleanup();
+}
+
+// The session's changes as events (scripts/session_events.json): focus lost at frame 10 and back at 20, the IPD changed
+// at 30, the headset taken off at 40, the session exiting at 50 (the session's frames). Each event of those kinds from
+// frame 5 on, in order, and each kind's first one in full. With sessionEvents (expect/session_events.json) all of them;
+// without (expect/session_events_off.json) the IPD's and the quit.
+void SessionEventsCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	const std::set<uint32_t> kinds = { vr::VREvent_InputFocusCaptured, vr::VREvent_InputFocusReleased, vr::VREvent_IpdChanged,
+		vr::VREvent_TrackedDeviceUserInteractionStarted, vr::VREvent_TrackedDeviceUserInteractionEnded, vr::VREvent_ButtonPress,
+		vr::VREvent_ButtonUnpress, vr::VREvent_Quit };
+	Json::Value sequence(Json::arrayValue);
+	std::map<uint32_t, Json::Value> first;
+	Json::Value proximity;
+	auto worn = [&]() {
+		vr::VRControllerState_t state{};
+		bool ok = f.sys->GetControllerState(vr::k_unTrackedDeviceIndex_Hmd, &state, sizeof(state));
+		return ok && (state.ulButtonPressed & vr::ButtonMaskFromId(vr::k_EButton_ProximitySensor)) != 0;
+	};
+	// The headset's state, read every frame: with XR_EXT_user_presence it comes from the runtime's presence events, not
+	// from input, so the session isn't restarted for input and the script's frames are these
+	for (int frame = 1; frame <= 70; frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+		const bool wornNow = worn();
+		f.comp->Submit(vr::Eye_Left, tex.get(), nullptr, vr::Submit_Default);
+		f.comp->Submit(vr::Eye_Right, tex.get(), nullptr, vr::Submit_Default);
+		vr::VREvent_t ev{};
+		for (int n = 0; n < 64 && f.sys->PollNextEvent(&ev, sizeof(ev)); n++) {
+			if (frame < 5 || !kinds.count(ev.eventType))
+				continue;
+			sequence.append(ev.eventType);
+			if (first.count(ev.eventType))
+				continue;
+			Json::Value e;
+			e["frame"] = frame;
+			e["device"] = ev.trackedDeviceIndex;
+			if (ev.eventType == vr::VREvent_IpdChanged)
+				e["ipd"] = Thousandths(ev.data.ipd.ipdMeters);
+			if (ev.eventType == vr::VREvent_ButtonPress || ev.eventType == vr::VREvent_ButtonUnpress)
+				e["button"] = ev.data.controller.button;
+			first[ev.eventType] = e;
+		}
+		if (frame == 35)
+			proximity["worn at 35"] = wornNow;
+		if (frame == 47)
+			proximity["worn at 47"] = wornNow;
+	}
+	proximity["sensor"] = f.sys->GetBoolTrackedDeviceProperty(vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_ContainsProximitySensor_Bool);
+	Json::Value r;
+	r["sequence"] = sequence;
+	c.Record("events", r);
+	for (auto& [type, e] : first)
+		c.Record("event " + std::to_string(type), e);
+	c.Record("proximity", proximity);
 	c.core->Cleanup();
 }
 
@@ -2917,6 +2992,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "input-threads", InputThreadsCase },
 		{ "events-listen", EventsListenCase },
 		{ "events-commit", EventsCommitCase },
+		{ "session-events", SessionEventsCase },
 		{ "submit-edges", SubmitEdges },
 		{ "observer", ObserverCase },
 		{ "own-frames", OwnFramesCase },
