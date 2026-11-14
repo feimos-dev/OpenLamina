@@ -3,6 +3,7 @@
 //
 
 #include "XrBackend.h"
+#include "CpuSwapchain.h"
 #include "XrGenericTracker.h"
 #include "generated/interfaces/vrtypes.h"
 
@@ -1283,6 +1284,8 @@ void XrBackend::PrepareForSessionShutdown()
 	}
 	skybox_compositor.reset();
 	overlay_compositors.clear();
+	// Swapchains filled from memory let go of theirs now, while the session and its device are still there
+	CpuSwapchain::ReleaseAll();
 	if (infoSet != XR_NULL_HANDLE) {
 		OC_XR_LOG(xrDestroyActionSet(infoSet));
 		infoSet = XR_NULL_HANDLE;

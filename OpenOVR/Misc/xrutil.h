@@ -8,6 +8,7 @@
 #include <openxr/openxr.h>
 #include <shared_mutex>
 #include <unordered_map>
+#include <vector>
 // Note: Xru stands for openXR Utilities
 
 /**
@@ -90,7 +91,17 @@ public:
 	 */
 	void ClearCachedViews();
 
+	/**
+	 * What xrEnumerateSwapchainFormats lists for this session, in the runtime's order of preference: asked once, at
+	 * the first call (empty if the runtime can't say).
+	 */
+	const std::vector<int64_t>& SwapchainFormats();
+
 private:
+	std::mutex swapchainFormatsMtx;
+	bool swapchainFormatsKnown = false;
+	std::vector<int64_t> swapchainFormats;
+
 	/**
 	 * Makes sure calls involving the cached views map are guarded, since maps are not thread-safe.
 	 */

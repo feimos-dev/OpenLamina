@@ -20,6 +20,21 @@ using Microsoft::WRL::ComPtr;
 
 typedef unsigned int GLuint;
 
+struct Image;
+
+// A texture's area from submitted bounds, in its own texel rows and columns (x0 < x1, y0 < y1), and whether the bounds
+// flip it (uMin > uMax, vMin > vMax). False for an empty area.
+struct TextureRegion {
+	uint32_t x0 = 0, y0 = 0, x1 = 0, y1 = 0;
+	bool flipX = false, flipY = false;
+	uint32_t Width() const { return x1 - x0; }
+	uint32_t Height() const { return y1 - y0; }
+};
+bool RegionFromBounds(const vr::VRTextureBounds_t* bounds, uint32_t width, uint32_t height, TextureRegion& out);
+
+// Mirrors an image left to right and/or top to bottom
+void FlipImage(Image& image, bool flipX, bool flipY);
+
 class Compositor {
 public:
 	virtual ~Compositor();
@@ -31,6 +46,12 @@ public:
 	virtual bool SupportsCubemap() { return false; }
 
 	virtual XrSwapchain GetSwapChain() { return chain; };
+
+	/**
+	 * Reads the bounds' area of a texture of this compositor's API back into memory (MSAA resolved first, flipped
+	 * bounds flipped), as RGBA8. False, logged once, where that isn't possible (an API or format without a readback).
+	 */
+	virtual bool ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTextureBounds_t* bounds, Image& out);
 
 	/**
 	 * What the last Invoke ran into: XR_SUCCESS, or the OpenXR swapchain call that failed (that eye's image is then

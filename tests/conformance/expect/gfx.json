@@ -1,5 +1,5 @@
 {
- "#": "The frame cases (run.py --cases gfx-d3d11-basic,gfx-d3d12-basic,gfx-vk-basic,gfx-gl-basic --script scripts/gfx_all_apis.json --expect expect/gfx.json): the test pattern of gfx/GfxApi.h, 1024 x 1024 RGBA8 sRGB per eye with full bounds, as the stand-in runtime read back the last projection layer's views (dump:). Eye 1's quadrants are rotated once clockwise. Known failures are in expect/gfx_known.json.",
+ "#": "The frame and overlay cases (run.py --cases <the gfx-* and overlay-* cases of build.yml's gfx step> --script scripts/gfx_all_apis.json --expect expect/gfx.json): the test pattern of gfx/GfxApi.h as the stand-in runtime read back the last projection layer's views or the last quad layer (dump:). gfx-<api>-basic: 1024 x 1024 RGBA8 sRGB per eye with full bounds; eye 1's quadrants are rotated once clockwise. overlay-raw-<api>: a 64 x 64 RGBA image set with SetOverlayRaw on a scene app of that API, and read back with GetOverlayImageData (short: a buffer a byte too small). overlay-texture-readback-<api>: a 64 x 64 texture overlay read back. Known failures are in expect/gfx_known.json.",
  "gfx-d3d11-basic/frame/-/-": {
   "left": 0,
   "right": 0,
@@ -55,5 +55,181 @@
   "dump:views[1].samples.tr": "ff0000ff",
   "dump:views[1].samples.bl": "ffffffff",
   "dump:views[1].samples.br": "00ff00ff"
+ },
+ "overlay-raw-d3d11/overlay/-/-": {
+  "create": 0,
+  "set": 0,
+  "show": 0,
+  "left": 0,
+  "right": 0,
+  "short": 22,
+  "short_size": [
+   64,
+   64
+  ],
+  "get": 0,
+  "size": [
+   64,
+   64
+  ],
+  "same": true,
+  "dump:invalid": [],
+  "dump:rect": [
+   0,
+   0,
+   64,
+   64
+  ],
+  "dump:samples.tl": "ff0000ff",
+  "dump:samples.tr": "00ff00ff",
+  "dump:samples.bl": "0000ffff",
+  "dump:samples.br": "ffffffff"
+ },
+ "overlay-raw-d3d12/overlay/-/-": {
+  "create": 0,
+  "set": 0,
+  "show": 0,
+  "left": 0,
+  "right": 0,
+  "short": 22,
+  "short_size": [
+   64,
+   64
+  ],
+  "get": 0,
+  "size": [
+   64,
+   64
+  ],
+  "same": true,
+  "dump:invalid": [],
+  "dump:rect": [
+   0,
+   0,
+   64,
+   64
+  ],
+  "dump:samples.tl": "ff0000ff",
+  "dump:samples.tr": "00ff00ff",
+  "dump:samples.bl": "0000ffff",
+  "dump:samples.br": "ffffffff"
+ },
+ "overlay-raw-vk/overlay/-/-": {
+  "create": 0,
+  "set": 0,
+  "show": 0,
+  "left": 0,
+  "right": 0,
+  "short": 22,
+  "short_size": [
+   64,
+   64
+  ],
+  "get": 0,
+  "size": [
+   64,
+   64
+  ],
+  "same": true,
+  "dump:invalid": [],
+  "dump:rect": [
+   0,
+   0,
+   64,
+   64
+  ],
+  "dump:samples.tl": "ff0000ff",
+  "dump:samples.tr": "00ff00ff",
+  "dump:samples.bl": "0000ffff",
+  "dump:samples.br": "ffffffff"
+ },
+ "overlay-raw-gl/overlay/-/-": {
+  "create": 0,
+  "set": 0,
+  "show": 0,
+  "left": 0,
+  "right": 0,
+  "short": 22,
+  "short_size": [
+   64,
+   64
+  ],
+  "get": 0,
+  "size": [
+   64,
+   64
+  ],
+  "same": true,
+  "dump:invalid": [],
+  "dump:rect": [
+   0,
+   0,
+   64,
+   64
+  ],
+  "dump:samples.tl": "ff0000ff",
+  "dump:samples.tr": "00ff00ff",
+  "dump:samples.bl": "0000ffff",
+  "dump:samples.br": "ffffffff"
+ },
+ "overlay-texture-readback-d3d11/readback/-/-": {
+  "create": 0,
+  "set": 0,
+  "short": 22,
+  "short_size": [
+   64,
+   64
+  ],
+  "get": 0,
+  "size": [
+   64,
+   64
+  ],
+  "same": true
+ },
+ "overlay-texture-readback-d3d12/readback/-/-": {
+  "create": 0,
+  "set": 0,
+  "short": 22,
+  "short_size": [
+   64,
+   64
+  ],
+  "get": 0,
+  "size": [
+   64,
+   64
+  ],
+  "same": true
+ },
+ "overlay-texture-readback-vk/readback/-/-": {
+  "create": 0,
+  "set": 0,
+  "short": 22,
+  "short_size": [
+   64,
+   64
+  ],
+  "get": 0,
+  "size": [
+   64,
+   64
+  ],
+  "same": true
+ },
+ "overlay-texture-readback-gl/readback/-/-": {
+  "create": 0,
+  "set": 0,
+  "short": 22,
+  "short_size": [
+   64,
+   64
+  ],
+  "get": 0,
+  "size": [
+   64,
+   64
+  ],
+  "same": true
  }
 }

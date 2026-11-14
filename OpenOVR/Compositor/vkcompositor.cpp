@@ -379,6 +379,207 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 	SwapchainCallFailed(xrReleaseSwapchainImage(chain, &releaseInfo), "xrReleaseSwapchainImage");
 }
 
+uint32_t VkFindMemoryType(VkPhysicalDevice physicalDevice, uint32_t typeBits, VkMemoryPropertyFlags properties)
+{
+	VkPhysicalDeviceMemoryProperties mem{};
+	vkGetPhysicalDeviceMemoryProperties(physicalDevice, &mem);
+	for (uint32_t i = 0; i < mem.memoryTypeCount; i++)
+		if ((typeBits & (1u << i)) && (mem.memoryTypes[i].propertyFlags & properties) == properties)
+			return i;
+	return UINT32_MAX;
+}
+
+TexelLayout TexelLayoutOfVk(int64_t format)
+{
+	switch (format) {
+	case VK_FORMAT_R8G8B8A8_UNORM:
+	case VK_FORMAT_R8G8B8A8_SRGB:
+		return TexelLayout::RGBA8;
+	case VK_FORMAT_B8G8R8A8_UNORM:
+	case VK_FORMAT_B8G8R8A8_SRGB:
+		return TexelLayout::BGRA8;
+	case VK_FORMAT_R16G16B16A16_SFLOAT:
+		return TexelLayout::RGBA16F;
+	case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
+		return TexelLayout::RGB10A2;
+	case VK_FORMAT_B10G11R11_UFLOAT_PACK32:
+		return TexelLayout::RG11B10F;
+	case VK_FORMAT_D32_SFLOAT:
+		return TexelLayout::R32F;
+	default:
+		return TexelLayout::Unknown;
+	}
+}
+
+bool VkCompositor::RunOnce(const std::function<void(VkCommandBuffer)>& record)
+{
+	if (!appCommandPool)
+		return false;
+	VkCommandBufferAllocateInfo bufInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+	bufInfo.commandPool = appCommandPool;
+	bufInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+	bufInfo.commandBufferCount = 1;
+	VkCommandBuffer cmd = VK_NULL_HANDLE;
+	if (vkAllocateCommandBuffers(appDevice, &bufInfo, &cmd) != VK_SUCCESS)
+		return false;
+	VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+	beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+	bool ok = vkBeginCommandBuffer(cmd, &beginInfo) == VK_SUCCESS;
+	if (ok) {
+		record(cmd);
+		ok = vkEndCommandBuffer(cmd) == VK_SUCCESS;
+	}
+	VkFence fence = VK_NULL_HANDLE;
+	VkFenceCreateInfo fenceInfo = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+	ok = ok && vkCreateFence(appDevice, &fenceInfo, nullptr, &fence) == VK_SUCCESS;
+	if (ok) {
+		VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+		submitInfo.commandBufferCount = 1;
+		submitInfo.pCommandBuffers = &cmd;
+		ok = vkQueueSubmit(appQueue, 1, &submitInfo, fence) == VK_SUCCESS;
+		if (ok && vkWaitForFences(appDevice, 1, &fence, VK_TRUE, 5000000000ull) != VK_SUCCESS) {
+			// Still running: its command buffer and fence are left to the pool's end, not freed under it
+			OOVR_LOG_ONCE("A one-time Vulkan command buffer didn't finish within 5 s");
+			return false;
+		}
+	}
+	if (fence)
+		vkDestroyFence(appDevice, fence, nullptr);
+	vkFreeCommandBuffers(appDevice, appCommandPool, 1, &cmd);
+	return ok;
+}
+
+bool VkCompositor::ReadbackToCpu(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, Image& out)
+{
+	// The game's image is in TRANSFER_SRC_OPTIMAL, as OpenVR's Vulkan textures are given, and stays in it
+	const auto* tex = texture ? (const vr::VRVulkanTextureData_t*)texture->handle : nullptr;
+	if (!tex || !tex->m_nImage || tex->m_pDevice != appDevice || !tex->m_pPhysicalDevice)
+		return false;
+	const TexelLayout layout = TexelLayoutOfVk(tex->m_nFormat);
+	const uint32_t bytes = BytesOfTexelLayout(layout);
+	if (!bytes) {
+		OOVR_LOG_ONCEF("A Vulkan image of format %d can't be read back into memory", (int)tex->m_nFormat);
+		return false;
+	}
+	TextureRegion region;
+	if (!RegionFromBounds(bounds, tex->m_nWidth, tex->m_nHeight, region))
+		return false;
+
+	struct Owned {
+		VkDevice dev;
+		VkBuffer buffer = VK_NULL_HANDLE;
+		VkDeviceMemory bufferMemory = VK_NULL_HANDLE;
+		VkImage resolved = VK_NULL_HANDLE;
+		VkDeviceMemory resolvedMemory = VK_NULL_HANDLE;
+		bool keep = false; // a timed-out copy may still use them
+		~Owned()
+		{
+			if (keep)
+				return;
+			if (buffer)
+				vkDestroyBuffer(dev, buffer, nullptr);
+			if (bufferMemory)
+				vkFreeMemory(dev, bufferMemory, nullptr);
+			if (resolved)
+				vkDestroyImage(dev, resolved, nullptr);
+			if (resolvedMemory)
+				vkFreeMemory(dev, resolvedMemory, nullptr);
+		}
+	} owned{ appDevice };
+
+	auto allocate = [&](VkMemoryRequirements req, VkMemoryPropertyFlags props, VkDeviceMemory& memory) {
+		VkMemoryAllocateInfo ai = { VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+		ai.allocationSize = req.size;
+		ai.memoryTypeIndex = VkFindMemoryType(tex->m_pPhysicalDevice, req.memoryTypeBits, props);
+		return ai.memoryTypeIndex != UINT32_MAX && vkAllocateMemory(appDevice, &ai, nullptr, &memory) == VK_SUCCESS;
+	};
+
+	const VkDeviceSize size = (VkDeviceSize)region.Width() * region.Height() * bytes;
+	VkBufferCreateInfo bi = { VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
+	bi.size = size;
+	bi.usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT;
+	bi.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	if (vkCreateBuffer(appDevice, &bi, nullptr, &owned.buffer) != VK_SUCCESS)
+		return false;
+	VkMemoryRequirements req{};
+	vkGetBufferMemoryRequirements(appDevice, owned.buffer, &req);
+	if (!allocate(req, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, owned.bufferMemory)
+	    || vkBindBufferMemory(appDevice, owned.buffer, owned.bufferMemory, 0) != VK_SUCCESS)
+		return false;
+
+	const bool depth = layout == TexelLayout::R32F;
+	const VkImageAspectFlags aspect = depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+	VkImage from = (VkImage)tex->m_nImage;
+	// A multisampled image is resolved first, into an image of its own
+	if (tex->m_nSampleCount > 1) {
+		VkImageCreateInfo ici = { VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+		ici.imageType = VK_IMAGE_TYPE_2D;
+		ici.format = (VkFormat)tex->m_nFormat;
+		ici.extent = { tex->m_nWidth, tex->m_nHeight, 1 };
+		ici.mipLevels = 1;
+		ici.arrayLayers = 1;
+		ici.samples = VK_SAMPLE_COUNT_1_BIT;
+		ici.tiling = VK_IMAGE_TILING_OPTIMAL;
+		ici.usage = VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_TRANSFER_SRC_BIT;
+		ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		if (depth || vkCreateImage(appDevice, &ici, nullptr, &owned.resolved) != VK_SUCCESS)
+			return false;
+		vkGetImageMemoryRequirements(appDevice, owned.resolved, &req);
+		if (!allocate(req, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, owned.resolvedMemory)
+		    || vkBindImageMemory(appDevice, owned.resolved, owned.resolvedMemory, 0) != VK_SUCCESS)
+			return false;
+	}
+
+	bool ran = RunOnce([&](VkCommandBuffer cmd) {
+		VkImage src = from;
+		if (owned.resolved) {
+			VkImageMemoryBarrier b = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+			b.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+			b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+			b.srcQueueFamilyIndex = b.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+			b.image = owned.resolved;
+			b.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+			b.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+			VkImageResolve r{};
+			r.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+			r.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+			r.extent = { tex->m_nWidth, tex->m_nHeight, 1 };
+			vkCmdResolveImage(cmd, from, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, owned.resolved, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &r);
+			b.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+			b.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+			b.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			b.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+			vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &b);
+			src = owned.resolved;
+		}
+		VkBufferImageCopy copy{};
+		copy.imageSubresource = { aspect, 0, 0, 1 };
+		copy.imageOffset = { (int32_t)region.x0, (int32_t)region.y0, 0 };
+		copy.imageExtent = { region.Width(), region.Height(), 1 };
+		vkCmdCopyImageToBuffer(cmd, src, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, owned.buffer, 1, &copy);
+		VkBufferMemoryBarrier hb = { VK_STRUCTURE_TYPE_BUFFER_MEMORY_BARRIER };
+		hb.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		hb.dstAccessMask = VK_ACCESS_HOST_READ_BIT;
+		hb.srcQueueFamilyIndex = hb.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		hb.buffer = owned.buffer;
+		hb.size = VK_WHOLE_SIZE;
+		vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_HOST_BIT, 0, 0, nullptr, 1, &hb, 0, nullptr);
+	});
+	if (!ran) {
+		owned.keep = true;
+		return false;
+	}
+	void* mapped = nullptr;
+	if (vkMapMemory(appDevice, owned.bufferMemory, 0, size, 0, &mapped) != VK_SUCCESS)
+		return false;
+	out = DecodeTexels(layout, mapped, region.Width(), region.Height(), (size_t)region.Width() * bytes, false,
+	    TexelsAreLinear(layout, texture->eColorSpace == vr::ColorSpace_Gamma));
+	vkUnmapMemory(appDevice, owned.bufferMemory);
+	FlipImage(out, region.flipX, region.flipY);
+	return !out.Empty();
+}
+
 void VkCompositor::InvokeCubemap(const vr::Texture_t* textures)
 {
 	// Not yet: SetSkyboxOverride answers RequestFailed
