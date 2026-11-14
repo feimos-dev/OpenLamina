@@ -328,6 +328,91 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 	SwapchainCallFailed(xrReleaseSwapchainImage(chain, &releaseInfo), "xrReleaseSwapchainImage");
 }
 
+bool VkCompositor::CopyDepth(const vr::Texture_t* depth)
+{
+	// The game's depth image is in TRANSFER_SRC_OPTIMAL (as its colour is); the runtime's go back in
+	// DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+	const auto* tex = (const vr::VRVulkanTextureData_t*)depth->handle;
+	if (!tex->m_nImage || tex->m_pDevice != appDevice || tex->m_pQueue != appQueue || !appCommandPool)
+		return false;
+	if (tex->m_nSampleCount > 1) {
+		OOVR_LOG_ONCE("A multisampled Vulkan depth image: not sent to the runtime");
+		return false;
+	}
+	if (!chain || createInfo.width != tex->m_nWidth || createInfo.height != tex->m_nHeight || createInfoFormat != (int64_t)tex->m_nFormat) {
+		std::optional<int64_t> format = ChooseDepthSwapchainFormat(GfxApiKind::Vulkan, (int64_t)tex->m_nFormat, RuntimeFormats());
+		if (!format) {
+			OOVR_LOG_ONCEF("No depth swapchain format of the runtime's for a Vulkan depth image of format %d: depth not sent", (int)tex->m_nFormat);
+			return false;
+		}
+		if (!appCommandBuffers.empty()) {
+			vkQueueWaitIdle(appQueue);
+			vkFreeCommandBuffers(appDevice, appCommandPool, (uint32_t)appCommandBuffers.size(), appCommandBuffers.data());
+			appCommandBuffers.clear();
+		}
+		if (!MakeDepthChain(*format, tex->m_nWidth, tex->m_nHeight))
+			return false;
+		createInfoFormat = (int64_t)tex->m_nFormat;
+		uint32_t count = 0;
+		bool listed = !SwapchainCallFailed(xrEnumerateSwapchainImages(chain, 0, &count, nullptr), "xrEnumerateSwapchainImages (depth)");
+		if (listed) {
+			swapchainImages.assign(count, { XR_TYPE_SWAPCHAIN_IMAGE_VULKAN_KHR });
+			listed = !SwapchainCallFailed(xrEnumerateSwapchainImages(chain, count, &count, (XrSwapchainImageBaseHeader*)swapchainImages.data()), "xrEnumerateSwapchainImages (depth)");
+		}
+		VkCommandBufferAllocateInfo bufInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+		bufInfo.commandPool = appCommandPool;
+		bufInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		bufInfo.commandBufferCount = count;
+		appCommandBuffers.resize(count);
+		if (!listed || vkAllocateCommandBuffers(appDevice, &bufInfo, appCommandBuffers.data()) != VK_SUCCESS) {
+			appCommandBuffers.clear();
+			swapchainImages.clear();
+			xrDestroySwapchain(chain);
+			chain = XR_NULL_HANDLE;
+			createInfo = {};
+			return false;
+		}
+	}
+	uint32_t index = 0;
+	if (!AcquireAndWait((uint32_t)std::min(appCommandBuffers.size(), swapchainImages.size()), index))
+		return false;
+	XrSwapchainImageReleaseInfo releaseInfo{ XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
+	VkCommandBuffer cmd = appCommandBuffers[index];
+	VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+	beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+	if (vkBeginCommandBuffer(cmd, &beginInfo) != VK_SUCCESS) {
+		xrReleaseSwapchainImage(chain, &releaseInfo);
+		return false;
+	}
+	VkImageMemoryBarrier barrier = { VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER };
+	barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+	barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.image = swapchainImages[index].image;
+	barrier.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 };
+	barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+	// A depth image is copied whole: mip 0, layer 0
+	VkImageCopy region = {};
+	region.srcSubresource = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1 };
+	region.dstSubresource = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 0, 1 };
+	region.extent = { tex->m_nWidth, tex->m_nHeight, 1 };
+	vkCmdCopyImage(cmd, (VkImage)tex->m_nImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, swapchainImages[index].image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+	barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+	barrier.newLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL;
+	barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	barrier.dstAccessMask = 0;
+	vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
+	VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+	submitInfo.commandBufferCount = 1;
+	submitInfo.pCommandBuffers = &cmd;
+	if (vkEndCommandBuffer(cmd) != VK_SUCCESS || vkQueueSubmit(appQueue, 1, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS) {
+		xrReleaseSwapchainImage(chain, &releaseInfo);
+		return false;
+	}
+	return !SwapchainCallFailed(xrReleaseSwapchainImage(chain, &releaseInfo), "xrReleaseSwapchainImage (depth)");
+}
+
 uint32_t VkFindMemoryType(VkPhysicalDevice physicalDevice, uint32_t typeBits, VkMemoryPropertyFlags properties)
 {
 	VkPhysicalDeviceMemoryProperties mem{};

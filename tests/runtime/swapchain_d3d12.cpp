@@ -90,7 +90,7 @@ const std::vector<int64_t>& DefaultFormats()
 
 bool IsDepth(int64_t format)
 {
-	return LayoutOfDxgi(format) == PixelLayout::Depth;
+	return IsDepthLayout(LayoutOfDxgi(format));
 }
 
 void Destroy(RtSession*, RtSwapchain* sc)
@@ -190,16 +190,41 @@ bool Read(RtSession* s, RtSwapchain* sc, uint32_t index, uint32_t arrayIndex, co
 	    && SUCCEEDED(dev->CreateCommandAllocator(type, IID_PPV_ARGS(&alloc)))
 	    && SUCCEEDED(dev->CreateCommandList(0, type, alloc, nullptr, IID_PPV_ARGS(&list)))
 	    && SUCCEEDED(dev->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&fence)));
+	// A depth image is copied whole (D3D12 copies no part of one) into a footprint of its own, after the points' slots
+	const bool depth = IsDepth(desc.Format);
+	D3D12_PLACED_SUBRESOURCE_FOOTPRINT whole{};
+	if (ok && depth) {
+		D3D12_RESOURCE_DESC one = desc;
+		one.DepthOrArraySize = 1;
+		one.MipLevels = 1;
+		UINT64 total = 0;
+		dev->GetCopyableFootprints(&one, 0, 1, 0, &whole, nullptr, nullptr, &total);
+		bd.Width = total;
+		buffer->Release();
+		buffer = nullptr;
+		ok = SUCCEEDED(dev->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&buffer)));
+	}
 	if (ok) {
 		UINT sub = arrayIndex * desc.MipLevels;
 		D3D12_RESOURCE_BARRIER barrier{};
 		barrier.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
 		barrier.Transition.pResource = res;
 		barrier.Transition.Subresource = sub;
-		barrier.Transition.StateBefore = D3D12_RESOURCE_STATE_RENDER_TARGET;
+		barrier.Transition.StateBefore = depth ? D3D12_RESOURCE_STATE_DEPTH_WRITE : D3D12_RESOURCE_STATE_RENDER_TARGET;
 		barrier.Transition.StateAfter = D3D12_RESOURCE_STATE_COPY_SOURCE;
 		list->ResourceBarrier(1, &barrier);
-		for (size_t i = 0; i < points.size(); i++) {
+		if (depth) {
+			D3D12_TEXTURE_COPY_LOCATION dst{};
+			dst.pResource = buffer;
+			dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+			dst.PlacedFootprint = whole;
+			D3D12_TEXTURE_COPY_LOCATION src{};
+			src.pResource = res;
+			src.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+			src.SubresourceIndex = sub;
+			list->CopyTextureRegion(&dst, 0, 0, 0, &src, nullptr);
+		}
+		for (size_t i = 0; i < points.size() && !depth; i++) {
 			UINT x = (UINT)std::min<int64_t>(std::max<int32_t>(points[i].x, 0), (int64_t)desc.Width - 1);
 			UINT y = (UINT)std::min<int64_t>(std::max<int32_t>(points[i].y, 0), (int64_t)desc.Height - 1);
 			D3D12_TEXTURE_COPY_LOCATION dst{};
@@ -239,8 +264,15 @@ bool Read(RtSession* s, RtSwapchain* sc, uint32_t index, uint32_t arrayIndex, co
 		ok = SUCCEEDED(buffer->Map(0, &range, &data));
 		if (ok) {
 			out.clear();
-			for (size_t i = 0; i < points.size(); i++)
-				out.insert(out.end(), (const uint8_t*)data + slot * i, (const uint8_t*)data + slot * i + bytes);
+			for (size_t i = 0; i < points.size(); i++) {
+				size_t at = (size_t)slot * i;
+				if (depth) {
+					UINT x = (UINT)std::min<int64_t>(std::max<int32_t>(points[i].x, 0), (int64_t)desc.Width - 1);
+					UINT y = (UINT)std::min<int64_t>(std::max<int32_t>(points[i].y, 0), (int64_t)desc.Height - 1);
+					at = (size_t)whole.Offset + (size_t)y * whole.Footprint.RowPitch + (size_t)x * bytes;
+				}
+				out.insert(out.end(), (const uint8_t*)data + at, (const uint8_t*)data + at + bytes);
+			}
 			D3D12_RANGE none{ 0, 0 };
 			buffer->Unmap(0, &none);
 		}

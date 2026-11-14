@@ -14,6 +14,8 @@ public:
 	bool ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTextureBounds_t* bounds, Image& out) override;
 
 protected:
+	bool CopyDepth(const vr::Texture_t* depth) override;
+
 	/**
 	 * Read the runtime-created swapchain names to [images] using the GL or GLES OpenXR structs.
 	 */

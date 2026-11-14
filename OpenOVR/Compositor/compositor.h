@@ -69,6 +69,13 @@ public:
 	virtual bool ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTextureBounds_t* bounds, Image& out);
 
 	/**
+	 * For a compositor that carries depth: copies a depth texture of its API into an image of a depth swapchain of the
+	 * texture's size, in the runtime's depth format of the same bits. True with subImage set; false (logged once)
+	 * where that can't be done. A compositor used for this is used for nothing else.
+	 */
+	bool InvokeDepth(const vr::Texture_t* depth, XrSwapchainSubImage& subImage);
+
+	/**
 	 * What the last Invoke ran into: XR_SUCCESS, or the OpenXR swapchain call that failed (that eye's image is then
 	 * left out of the frame, and Submit answers an error). The next Invoke tries again.
 	 */
@@ -100,6 +107,11 @@ protected:
 
 	// What xrEnumerateSwapchainFormats listed for this session (asked once a session)
 	static const std::vector<int64_t>& RuntimeFormats();
+
+	// InvokeDepth's copy, in each API's compositor: true once the texture is in the swapchain image and released
+	virtual bool CopyDepth(const vr::Texture_t* depth);
+	// A new depth swapchain (chain, createInfo) of format, width x height: false, logged once, if it can't be made
+	bool MakeDepthChain(int64_t format, uint32_t width, uint32_t height);
 
 	/**
 	 * Acquires an image of chain and waits for it: true with its index, else false with lastResult set. After a

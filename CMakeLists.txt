@@ -314,6 +314,8 @@ add_library(OCCore STATIC
 	OpenOVR/Compositor/glescompositor.cpp
 	OpenOVR/Compositor/vkcompositor.cpp
 	OpenOVR/Compositor/FormatTable.cpp
+	OpenOVR/Compositor/DepthRange.cpp
+	OpenOVR/Compositor/DepthRange.h
 	OpenOVR/Compositor/dx12convert.cpp
 	OpenOVR/Compositor/dx12convert.h
 	OpenOVR/Compositor/FormatTable.h

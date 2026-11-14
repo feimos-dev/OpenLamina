@@ -23,6 +23,7 @@ PixelLayout LayoutOfDxgi(int64_t format)
 	case DXGI_FORMAT_R10G10B10A2_UNORM:
 		return PixelLayout::RGB10A2;
 	case DXGI_FORMAT_D32_FLOAT:
+		return PixelLayout::DepthF32;
 	case DXGI_FORMAT_D16_UNORM:
 	case DXGI_FORMAT_D24_UNORM_S8_UINT:
 	case DXGI_FORMAT_D32_FLOAT_S8X24_UINT:
@@ -38,6 +39,7 @@ uint32_t RtBytesOf(PixelLayout layout)
 	case PixelLayout::RGBA8:
 	case PixelLayout::BGRA8:
 	case PixelLayout::RGB10A2:
+	case PixelLayout::DepthF32:
 		return 4;
 	case PixelLayout::RGBA16F:
 		return 8;
@@ -91,6 +93,12 @@ uint32_t ToRgba8(PixelLayout layout, const uint8_t* t)
 		std::memcpy(&v, t, 4);
 		r = (uint32_t)std::lround((v & 1023) * 255.0 / 1023), g = (uint32_t)std::lround(((v >> 10) & 1023) * 255.0 / 1023);
 		b = (uint32_t)std::lround(((v >> 20) & 1023) * 255.0 / 1023), a = ((v >> 30) & 3) * 85;
+		break;
+	}
+	case PixelLayout::DepthF32: {
+		float d;
+		std::memcpy(&d, t, 4);
+		r = g = b = a = Unorm8(d);
 		break;
 	}
 	default:

@@ -134,6 +134,13 @@ private:
 	// The views for the two main eye layers
 	XrCompositionLayerProjectionView projectionViews[XruEyeCount];
 
+	// The pose a frame was rendered with (useSubmittedPose): the submitted head pose times the eye's pose in the head
+	void UseSubmittedPose(vr::EVREye eye, const vr::Texture_t* texture, vr::EVRSubmitFlags submitFlags);
+	// The depth that goes with a view (submitDepth), chained to it for this frame
+	void SubmitDepth(vr::EVREye eye, const vr::Texture_t* texture, vr::EVRSubmitFlags submitFlags);
+	XrCompositionLayerDepthInfoKHR depthInfos[XruEyeCount] = {};
+	std::unique_ptr<Compositor> depthCompositors[XruEyeCount];
+
 	// Have we started rendering a frame yet? If not, calling xrEndFrame would result in an error
 	bool renderingFrame = false;
 

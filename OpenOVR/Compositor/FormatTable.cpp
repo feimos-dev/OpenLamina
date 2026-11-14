@@ -235,6 +235,43 @@ std::optional<FormatChoice> ChooseSwapchainFormat(GfxApiKind api, int64_t gameFo
 	return FormatChoice{ wanted->format, false };
 }
 
+std::optional<int64_t> ChooseDepthSwapchainFormat(GfxApiKind api, int64_t gameFormat, const std::vector<int64_t>& runtimeFormats)
+{
+	// Each family: the depth format a swapchain is made in, and the game's formats of the same bits
+	struct DepthFamily {
+		int64_t swapchain;
+		std::vector<int64_t> members;
+	};
+	static const std::vector<DepthFamily> dxgi = {
+		{ 40, { 39, 40, 41 } }, // D32_FLOAT: R32_TYPELESS, D32_FLOAT, R32_FLOAT
+		{ 45, { 44, 45, 46 } }, // D24_UNORM_S8_UINT: R24G8_TYPELESS, D24_UNORM_S8_UINT, R24_UNORM_X8_TYPELESS
+		{ 55, { 53, 55, 56 } }, // D16_UNORM: R16_TYPELESS, D16_UNORM, R16_UNORM
+		{ 20, { 19, 20, 21 } }, // D32_FLOAT_S8X24_UINT: R32G8X24_TYPELESS, D32_FLOAT_S8X24_UINT, R32_FLOAT_X8X24_TYPELESS
+	};
+	static const std::vector<DepthFamily> vk = {
+		{ 126, { 126 } }, // D32_SFLOAT
+		{ 129, { 129 } }, // D24_UNORM_S8_UINT
+		{ 124, { 124 } }, // D16_UNORM
+		{ 130, { 130 } }, // D32_SFLOAT_S8_UINT
+	};
+	static const std::vector<DepthFamily> gl = {
+		{ 0x8CAC, { 0x8CAC } }, // GL_DEPTH_COMPONENT32F
+		{ 0x88F0, { 0x88F0 } }, // GL_DEPTH24_STENCIL8
+		{ 0x81A6, { 0x81A6 } }, // GL_DEPTH_COMPONENT24
+		{ 0x81A5, { 0x81A5 } }, // GL_DEPTH_COMPONENT16
+		{ 0x8CAD, { 0x8CAD } }, // GL_DEPTH32F_STENCIL8
+	};
+	const std::vector<DepthFamily>& families = api == GfxApiKind::Vulkan ? vk : api == GfxApiKind::OpenGL ? gl : dxgi;
+	for (const DepthFamily& family : families) {
+		if (std::find(family.members.begin(), family.members.end(), gameFormat) == family.members.end())
+			continue;
+		if (Offered(runtimeFormats, family.swapchain))
+			return family.swapchain;
+		return std::nullopt;
+	}
+	return std::nullopt;
+}
+
 bool FormatKnown(GfxApiKind api, int64_t format)
 {
 	return Find(api, format) != nullptr;

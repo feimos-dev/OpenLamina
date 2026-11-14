@@ -972,9 +972,12 @@ Json::Value RecordProjectionView(RtSession* s, const XrCompositionLayerProjectio
 		depth["near"] = di->nearZ;
 		depth["far"] = di->farZ;
 		Json::Value sub;
-		RecordSubImage(s, sub, di->subImage, false, invalid, "depth ");
+		RecordSubImage(s, sub, di->subImage, sample, invalid, "depth ");
 		depth["format"] = sub["format"];
 		depth["rect"] = sub["rect"];
+		depth["range"] = Vec({ di->minDepth, di->maxDepth });
+		if (sub.isMember("samples"))
+			depth["samples"] = sub["samples"];
 		if (!(di->minDepth >= 0 && di->maxDepth <= 1 && di->minDepth <= di->maxDepth))
 			Invalid(invalid, "depth range");
 		if (di->nearZ == di->farZ)

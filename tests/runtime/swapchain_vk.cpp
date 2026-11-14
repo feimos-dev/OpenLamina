@@ -248,6 +248,7 @@ PixelLayout Layout(int64_t format)
 	case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
 		return PixelLayout::RGB10A2; // R in the low bits, as DXGI's R10G10B10A2
 	case VK_FORMAT_D32_SFLOAT:
+		return PixelLayout::DepthF32;
 	case VK_FORMAT_D16_UNORM:
 	case VK_FORMAT_D24_UNORM_S8_UINT:
 	case VK_FORMAT_D32_SFLOAT_S8_UINT:
@@ -355,7 +356,7 @@ XrResult Create(RtSession* s, const XrSwapchainCreateInfo* info, RtSwapchain* sc
 		return XR_ERROR_VALIDATION_FAILURE;
 	if (std::find(Formats().begin(), Formats().end(), info->format) == Formats().end())
 		return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
-	bool depth = Layout(info->format) == PixelLayout::Depth;
+	bool depth = IsDepthLayout(Layout(info->format));
 	uint32_t layers = (info->arraySize ? info->arraySize : 1) * (info->faceCount ? info->faceCount : 1);
 	VkImageCreateInfo ici{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
 	ici.imageType = VK_IMAGE_TYPE_2D;
@@ -449,11 +450,15 @@ bool Read(RtSession* s, RtSwapchain* sc, uint32_t index, uint32_t arrayIndex, co
 	}
 	if (ok) {
 		auto image = (VkImage)sc->images[index];
+		// A depth image: its depth aspect, from the layout a depth image is in
+		const bool depth = IsDepthLayout(Layout(sc->info.format));
+		const VkImageAspectFlags aspect = depth ? VK_IMAGE_ASPECT_DEPTH_BIT : VK_IMAGE_ASPECT_COLOR_BIT;
+		const VkImageLayout held = depth ? VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL : VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
 		std::vector<VkBufferImageCopy> regions;
 		for (size_t i = 0; i < points.size(); i++) {
 			VkBufferImageCopy r{};
 			r.bufferOffset = (VkDeviceSize)bytes * i;
-			r.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, arrayIndex, 1 };
+			r.imageSubresource = { aspect, 0, arrayIndex, 1 };
 			r.imageOffset = { std::min<int32_t>(std::max<int32_t>(points[i].x, 0), (int32_t)sc->info.width - 1),
 				std::min<int32_t>(std::max<int32_t>(points[i].y, 0), (int32_t)sc->info.height - 1), 0 };
 			r.imageExtent = { 1, 1, 1 };
@@ -461,9 +466,9 @@ bool Read(RtSession* s, RtSwapchain* sc, uint32_t index, uint32_t arrayIndex, co
 		}
 		bool timedOut = false;
 		ok = RunOnce(s, [&](VkCommandBuffer cb) {
-			Barrier(cb, image, VK_IMAGE_ASPECT_COLOR_BIT, arrayIndex, 1, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+			Barrier(cb, image, aspect, arrayIndex, 1, held, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 			g_vk.CmdCopyImageToBuffer(cb, image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer, (uint32_t)regions.size(), regions.data());
-			Barrier(cb, image, VK_IMAGE_ASPECT_COLOR_BIT, arrayIndex, 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+			Barrier(cb, image, aspect, arrayIndex, 1, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, held);
 		}, &timedOut);
 		if (timedOut) {
 			*why = "the Vulkan readback timed out"; // the buffer stays alive with the copy into it

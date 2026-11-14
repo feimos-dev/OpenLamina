@@ -18,6 +18,11 @@ public:
 
 	bool ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTextureBounds_t* bounds, Image& out) override;
 
+protected:
+	bool CopyDepth(const vr::Texture_t* depth) override;
+
+public:
+
 	ComPtr<ID3D12Device> GetDevice() { return device; }
 
 private:
@@ -61,4 +66,6 @@ private:
 	ID3D12Resource* Resolved(const D3D12_RESOURCE_DESC& of, DXGI_FORMAT format);
 	// Waits for every image's last copy
 	void WaitForAllFrames();
+	// A command allocator, list and fence for each of count swapchain images
+	void MakeFrameLists(uint32_t count);
 };
