@@ -43,7 +43,8 @@ public:
 	// nullptr, with why in *whyNot, when no device of the kind can be made here
 	static std::unique_ptr<GfxApi> Create(GfxKind kind, std::string* whyNot); // WARP for the D3D kinds when no adapter
 	// The test pattern (above), w x h, in nativeFormat (the API's own enum value), with samples samples and arraySize
-	// layers (each the same)
+	// layers: layer i has the pattern of eye (eye + i) % 2, so a layer shown is told from another (multisampled
+	// arrays: each layer the same)
 	virtual GfxTexture Pattern(uint32_t w, uint32_t h, int64_t nativeFormat, int eye, uint32_t samples = 1, uint32_t arraySize = 1) = 0;
 	// A depth texture (32-bit float) filled with value
 	virtual GfxTexture Depth(uint32_t w, uint32_t h, float value) = 0;
@@ -68,7 +69,7 @@ inline uint32_t PatternColour(uint32_t x, uint32_t y, uint32_t w, uint32_t h, in
 }
 
 // How a format's texels are laid out in memory
-enum class Texels { Unknown, RGBA8, BGRA8, RGBA16F, RGB10A2 };
+enum class Texels { Unknown, RGBA8, BGRA8, BGRX8, RGBA16F, RGB10A2, RG11B10F };
 
 inline uint16_t FloatToHalf(float f)
 {
@@ -91,6 +92,9 @@ inline void WriteTexel(Texels t, uint32_t rgba, uint8_t* out)
 	case Texels::BGRA8:
 		out[0] = b, out[1] = g, out[2] = r, out[3] = a;
 		break;
+	case Texels::BGRX8:
+		out[0] = b, out[1] = g, out[2] = r, out[3] = 0; // the X byte: unused
+		break;
 	case Texels::RGBA16F: {
 		uint16_t h[4] = { FloatToHalf(r / 255.0f), FloatToHalf(g / 255.0f), FloatToHalf(b / 255.0f), FloatToHalf(a / 255.0f) };
 		std::memcpy(out, h, 8);
@@ -98,6 +102,12 @@ inline void WriteTexel(Texels t, uint32_t rgba, uint8_t* out)
 	}
 	case Texels::RGB10A2: {
 		uint32_t v = (uint32_t)(r * 1023 / 255) | ((uint32_t)(g * 1023 / 255) << 10) | ((uint32_t)(b * 1023 / 255) << 20) | ((uint32_t)(a * 3 / 255) << 30);
+		std::memcpy(out, &v, 4);
+		break;
+	}
+	case Texels::RG11B10F: {
+		// Unsigned small floats: 1.0 is exponent 15, mantissa 0 (0x3C0 in 11 bits, 0x1E0 in 10); only 0 and 1 are needed
+		uint32_t v = (r ? 0x3C0u : 0) | ((g ? 0x3C0u : 0) << 11) | ((b ? 0x1E0u : 0) << 22);
 		std::memcpy(out, &v, 4);
 		break;
 	}

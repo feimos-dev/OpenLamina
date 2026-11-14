@@ -26,6 +26,12 @@ gfx::Texels TexelsOfDxgi(int64_t format)
 	case DXGI_FORMAT_R10G10B10A2_TYPELESS:
 	case DXGI_FORMAT_R10G10B10A2_UNORM:
 		return gfx::Texels::RGB10A2;
+	case DXGI_FORMAT_R11G11B10_FLOAT:
+		return gfx::Texels::RG11B10F;
+	case DXGI_FORMAT_B8G8R8X8_TYPELESS:
+	case DXGI_FORMAT_B8G8R8X8_UNORM:
+	case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
+		return gfx::Texels::BGRX8;
 	default:
 		return gfx::Texels::Unknown;
 	}
@@ -45,6 +51,8 @@ DXGI_FORMAT ViewFormat(DXGI_FORMAT f)
 		return DXGI_FORMAT_R16G16B16A16_FLOAT;
 	case DXGI_FORMAT_R10G10B10A2_TYPELESS:
 		return DXGI_FORMAT_R10G10B10A2_UNORM;
+	case DXGI_FORMAT_B8G8R8X8_TYPELESS:
+		return DXGI_FORMAT_B8G8R8X8_UNORM;
 	default:
 		return f;
 	}
@@ -95,8 +103,11 @@ public:
 		ID3D11Texture2D* t = nullptr;
 		if (desc.SampleDesc.Count == 1) {
 			size_t pitch = (size_t)w * gfx::BytesOf(texels);
-			std::vector<uint8_t> data = gfx::PatternTexels(texels, w, h, eye, pitch, false);
-			std::vector<D3D11_SUBRESOURCE_DATA> init(desc.ArraySize, { data.data(), (UINT)pitch, 0 });
+			// Layer i: eye (eye + i) % 2's pattern
+			std::vector<uint8_t> data[2] = { gfx::PatternTexels(texels, w, h, eye, pitch, false), gfx::PatternTexels(texels, w, h, 1 - eye, pitch, false) };
+			std::vector<D3D11_SUBRESOURCE_DATA> init(desc.ArraySize);
+			for (UINT i = 0; i < desc.ArraySize; i++)
+				init[i] = { data[i % 2].data(), (UINT)pitch, 0 };
 			if (FAILED(device->CreateTexture2D(&desc, init.data(), &t)))
 				return Wrap(nullptr);
 			return Wrap(t);

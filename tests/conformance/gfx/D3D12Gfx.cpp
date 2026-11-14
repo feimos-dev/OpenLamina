@@ -116,7 +116,13 @@ public:
 		if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &desc, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&tex))))
 			return Wrap(nullptr);
 		size_t pitch = ((size_t)w * gfx::BytesOf(texels) + D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1) & ~(size_t)(D3D12_TEXTURE_DATA_PITCH_ALIGNMENT - 1);
+		// Layer i: eye (eye + i) % 2's pattern, the two one after the other in the upload buffer
 		std::vector<uint8_t> data = gfx::PatternTexels(texels, w, h, eye, pitch, false);
+		const size_t layerBytes = data.size();
+		if (arraySize > 1) {
+			std::vector<uint8_t> other = gfx::PatternTexels(texels, w, h, 1 - eye, pitch, false);
+			data.insert(data.end(), other.begin(), other.end());
+		}
 		ID3D12Resource* upload = Upload(data.size());
 		void* mapped = nullptr;
 		if (!upload || FAILED(upload->Map(0, nullptr, &mapped))) {
@@ -132,6 +138,7 @@ public:
 				D3D12_TEXTURE_COPY_LOCATION src{};
 				src.pResource = upload;
 				src.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+				src.PlacedFootprint.Offset = (layer % 2) * layerBytes;
 				src.PlacedFootprint.Footprint = { desc.Format, w, h, 1, (UINT)pitch };
 				D3D12_TEXTURE_COPY_LOCATION dst{};
 				dst.pResource = tex;

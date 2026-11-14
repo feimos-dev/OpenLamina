@@ -1,5 +1,5 @@
 {
- "#": "The frame and overlay cases (run.py --cases <the gfx-* and overlay-* cases of build.yml's gfx step> --script scripts/gfx_all_apis.json --expect expect/gfx.json): the test pattern of gfx/GfxApi.h as the stand-in runtime read back the last projection layer's views or the last quad layer (dump:). gfx-<api>-basic: 1024 x 1024 RGBA8 sRGB per eye with full bounds; eye 1's quadrants are rotated once clockwise. overlay-raw-<api>: a 64 x 64 RGBA image set with SetOverlayRaw on a scene app of that API, and read back with GetOverlayImageData (short: a buffer a byte too small). overlay-texture-readback-<api>: a 64 x 64 texture overlay read back. Known failures are in expect/gfx_known.json.",
+ "#": "The frame and overlay cases (run.py --cases <the gfx-* and overlay-* cases of build.yml's gfx step> --script scripts/gfx_all_apis.json --expect expect/gfx.json): the test pattern of gfx/GfxApi.h as the stand-in runtime read back the last projection layer's views or the last quad layer (dump:). gfx-<api>-basic: 1024 x 1024 RGBA8 sRGB per eye with full bounds; eye 1's quadrants are rotated once clockwise. overlay-raw-<api>: a 64 x 64 RGBA image set with SetOverlayRaw on a scene app of that API, and read back with GetOverlayImageData (short: a buffer a byte too small). overlay-texture-readback-<api>: a 64 x 64 texture overlay read back. gfx-d3d11-odd: a 1 x 1 texture (eye 0 all white, eye 1 all green), 4097 x 2049, 4x MSAA R8G8B8A8_TYPELESS, slice 1 of a two-slice array (SubmitWithArrayIndex; slice 1 has the other eye's pattern) and an sRGB texture under ColorSpace_Linear (into R8G8B8A8_UNORM, 28), each found in the dump by its size. Known failures are in expect/gfx_known.json.",
  "gfx-d3d11-basic/frame/-/-": {
   "left": 0,
   "right": 0,
@@ -231,5 +231,82 @@
    64
   ],
   "same": true
+ },
+ "gfx-d3d11-odd/1x1/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].samples.tl": "ffffffff",
+  "dump:views[0].samples.tr": "ffffffff",
+  "dump:views[0].samples.bl": "ffffffff",
+  "dump:views[0].samples.br": "ffffffff",
+  "dump:views[0].samples.c": "ffffffff",
+  "dump:views[1].samples.tl": "00ff00ff",
+  "dump:views[1].samples.tr": "00ff00ff",
+  "dump:views[1].samples.bl": "00ff00ff",
+  "dump:views[1].samples.br": "00ff00ff",
+  "dump:views[1].samples.c": "00ff00ff"
+ },
+ "gfx-d3d11-odd/4097x2049/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": "ff0000ff",
+  "dump:views[0].samples.tr": "00ff00ff",
+  "dump:views[0].samples.bl": "0000ffff",
+  "dump:views[0].samples.br": "ffffffff",
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": "0000ffff",
+  "dump:views[1].samples.tr": "ff0000ff",
+  "dump:views[1].samples.bl": "ffffffff",
+  "dump:views[1].samples.br": "00ff00ff"
+ },
+ "gfx-d3d11-odd/msaa typeless/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": "ff0000ff",
+  "dump:views[0].samples.tr": "00ff00ff",
+  "dump:views[0].samples.bl": "0000ffff",
+  "dump:views[0].samples.br": "ffffffff",
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": "0000ffff",
+  "dump:views[1].samples.tr": "ff0000ff",
+  "dump:views[1].samples.bl": "ffffffff",
+  "dump:views[1].samples.br": "00ff00ff"
+ },
+ "gfx-d3d11-odd/array slice 1/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": "0000ffff",
+  "dump:views[0].samples.tr": "ff0000ff",
+  "dump:views[0].samples.bl": "ffffffff",
+  "dump:views[0].samples.br": "00ff00ff",
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": "ff0000ff",
+  "dump:views[1].samples.tr": "00ff00ff",
+  "dump:views[1].samples.bl": "0000ffff",
+  "dump:views[1].samples.br": "ffffffff"
+ },
+ "gfx-d3d11-odd/srgb under linear/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": "ff0000ff",
+  "dump:views[0].samples.tr": "00ff00ff",
+  "dump:views[0].samples.bl": "0000ffff",
+  "dump:views[0].samples.br": "ffffffff",
+  "dump:views[0].format": 28,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": "0000ffff",
+  "dump:views[1].samples.tr": "ff0000ff",
+  "dump:views[1].samples.bl": "ffffffff",
+  "dump:views[1].samples.br": "00ff00ff",
+  "dump:views[1].format": 28
  }
 }

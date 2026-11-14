@@ -21,14 +21,13 @@ protected:
 
 	void CheckCreateSwapChain(int width, int height, vr::EColorSpace c_space, GLsizei format);
 
-	/**
-	 * 'Normalise' an OpenGL internalFormat. glCopyImageSubData doesn't need exactly the same
-	 * types, so if the game uses a format the runtime doesn't perfectly support we can cover
-	 * up using this.
-	 */
-	static GLuint NormaliseFormat(vr::EColorSpace c_space, GLsizei rawFormat);
 
 	GLuint fboId[2] = { 0 };
+
+	// The swapchain's format isn't the texture's family: it's blitted in, which converts
+	bool convertFormat = false;
+	// The colour space the swapchain was made for
+	vr::EColorSpace createColourSpace = vr::ColorSpace_Auto;
 
 	std::vector<GLuint> images;
 };
