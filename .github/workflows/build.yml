@@ -130,6 +130,9 @@ jobs:
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases gfx-d3d11-pose-depth,gfx-d3d12-pose-depth,gfx-vk-pose-depth,gfx-gl-pose-depth --script tests/conformance/scripts/gfx_depth.json --expect tests/conformance/expect/gfx_pose_depth_off.json --known-failures tests/conformance/expect/gfx_known.json --allow-skip ".*-(vk|gl)(-.*)?" --out conformance/gfx-pose-depth-off
           if ($LASTEXITCODE) { $failed++ }
+          # OpenGL and Vulkan frames through D3D11 where the runtime has D3D11 alone (they skip without those drivers)
+          python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases gfx-gl-interop,gfx-vk-interop --expect tests/conformance/expect/gfx_interop.json --allow-skip "gfx-(vk|gl)-.*" --out conformance/gfx-interop
+          if ($LASTEXITCODE) { $failed++ }
           # The old input as SteamVR's legacy binding files map it, under inputEvaluator=steamvr
           python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases events --script tests/conformance/scripts/legacy_click.json --ini tests/conformance/ini/steamvr_evaluator.ini --expect tests/conformance/expect/events_steamvr.json --out conformance/events-steamvr
           if ($LASTEXITCODE) { $failed++ }
