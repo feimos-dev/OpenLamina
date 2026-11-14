@@ -409,12 +409,14 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 			return vr::VRInputError_None;
 
 		OOVR_LOG("Received another manifest! Restarting session to reattach inputs...");
+		std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
 		for (std::unique_ptr<ActionSet>& as : actionSets.GetItems()) {
 			OC_XR_LOG(xrDestroyActionSet(as->xr));
 		}
 		OC_XR_LOG(xrDestroyActionSet(legacyInputsSet));
 		legacyInputsSet = XR_NULL_HANDLE;
-		std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
+		eyeGazeAction = XR_NULL_HANDLE;
+		eyeGazeSpace = XR_NULL_HANDLE;
 		if (rawInputsSet != XR_NULL_HANDLE)
 			OC_XR_LOG(xrDestroyActionSet(rawInputsSet));
 		rawInputsSet = XR_NULL_HANDLE;
@@ -874,6 +876,14 @@ void BaseInput::BindInputsForSession()
 		OC_XR_LOG(xrCreateActionSpace(xr_session.get(), &info, &lca.gripPoseSpace));
 		info.action = lca.aimPoseAction;
 		OC_XR_LOG(xrCreateActionSpace(xr_session.get(), &info, &lca.aimPoseSpace));
+	}
+
+	eyeGazeSpace = XR_NULL_HANDLE;
+	if (eyeGazeAction != XR_NULL_HANDLE) {
+		XrActionSpaceCreateInfo info = { XR_TYPE_ACTION_SPACE_CREATE_INFO };
+		info.poseInActionSpace = S2O_om34_pose(G2S_m34(glm::identity<glm::mat4>()));
+		info.action = eyeGazeAction;
+		OC_XR_LOG(xrCreateActionSpace(xr_session.get(), &info, &eyeGazeSpace));
 	}
 
 	// Note: even if actionSets is empty, we always still want to load the legacy set.
@@ -1442,6 +1452,26 @@ void BaseInput::CreateLegacyActions()
 
 		create(&ctrl.gripPoseAction, "grip-pose", "Grip Pose", XR_ACTION_TYPE_POSE_INPUT);
 		create(&ctrl.aimPoseAction, "aim-pose", "Aim Pose", XR_ACTION_TYPE_POSE_INPUT);
+	}
+
+	// The eye gaze, in the same always-active set; its profile is the eyes' own, so its binding is suggested here
+	eyeGazeAction = XR_NULL_HANDLE;
+	if (xr_ext->EyeGaze_Available() && xr_gbl && xr_gbl->eyeGazeProperties.supportsEyeGazeInteraction) {
+		XrActionCreateInfo info = { XR_TYPE_ACTION_CREATE_INFO };
+		info.actionType = XR_ACTION_TYPE_POSE_INPUT;
+		strcpy_arr(info.actionName, "eye-gaze");
+		strcpy_arr(info.localizedActionName, "Eye Gaze");
+		OC_XR_LOG(xrCreateAction(legacyInputsSet, &info, &eyeGazeAction));
+
+		XrPath profile = XR_NULL_PATH, pose = XR_NULL_PATH;
+		OC_XR_LOG(xrStringToPath(xr_instance, "/interaction_profiles/ext/eye_gaze_interaction", &profile));
+		OC_XR_LOG(xrStringToPath(xr_instance, "/user/eyes_ext/input/gaze_ext/pose", &pose));
+		XrActionSuggestedBinding binding = { eyeGazeAction, pose };
+		XrInteractionProfileSuggestedBinding suggested = { XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
+		suggested.interactionProfile = profile;
+		suggested.suggestedBindings = &binding;
+		suggested.countSuggestedBindings = 1;
+		OC_XR_LOG(xrSuggestInteractionProfileBindings(xr_instance, &suggested));
 	}
 }
 
@@ -3532,6 +3562,23 @@ void BaseInput::GetHandSpace(ITrackedDevice::TrackedDeviceType hand, XrSpace& sp
 bool BaseInput::AreActionsLoaded()
 {
 	return hasLoadedActions;
+}
+
+bool BaseInput::GetEyeGaze(XrSpace base, XrTime time, XrPosef* gaze)
+{
+	// A manifest being loaded replaces the space under this lock
+	std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
+	if (!hasLoadedActions || eyeGazeSpace == XR_NULL_HANDLE || base == XR_NULL_HANDLE)
+		return false;
+
+	XrSpaceLocation location = { XR_TYPE_SPACE_LOCATION };
+	if (XR_FAILED(xrLocateSpace(eyeGazeSpace, base, time, &location)))
+		return false;
+	// Not requiring tracked: a runtime holding the last gaze through a blink says valid only, and that beats a jump
+	if (!(location.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
+		return false;
+	*gaze = location.pose;
+	return true;
 }
 
 ITrackedDevice::TrackedDeviceType BaseInput::ParseAndRemoveHandPrefix(std::string& toModify)

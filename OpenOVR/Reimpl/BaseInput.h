@@ -447,6 +447,13 @@ public: // INTERNAL FUNCTIONS
 	bool AreActionsLoaded();
 
 	/**
+	 * The eye gaze (XR_EXT_eye_gaze_interaction) located in a space at a time: false without a gaze (no extension,
+	 * no eye tracker, actions not loaded yet) or while it isn't valid. Its -Z is the direction the eyes look in.
+	 * Call with the session locked (shared).
+	 */
+	bool GetEyeGaze(XrSpace base, XrTime time, XrPosef* gaze);
+
+	/**
 	 * Get a number that increments each time xrSyncActions is called. Can be used to check if a cached input value
 	 * is current or not.
 	 */
@@ -842,6 +849,10 @@ private:
 	std::unordered_map<std::string, XrAction> indexGripExtensionActions;
 
 	XrActionSet legacyInputsSet = XR_NULL_HANDLE;
+
+	// In the legacy set when XR_EXT_eye_gaze_interaction is enabled: the gaze pose, and its space in this session
+	XrAction eyeGazeAction = XR_NULL_HANDLE;
+	XrSpace eyeGazeSpace = XR_NULL_HANDLE;
 
 	// inputEvaluator=steamvr: an action set with one action per raw input (by its OpenXR component, such as
 	// /input/trigger/click, for every hand), each profile's raw inputs and its binding file's evaluator, and the
