@@ -8,7 +8,36 @@
 #include <dxgi1_2.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
+
+bool RtRuntimeAdapterLuid(LUID* out)
+{
+	char want[64] = {};
+	DWORD len = GetEnvironmentVariableA("OC_TEST_RUNTIME_GPU_LUID", want, sizeof(want));
+	unsigned long long wanted = 0;
+	bool named = len > 0 && len < sizeof(want) && sscanf_s(want, "%llx", &wanted) == 1;
+	IDXGIFactory1* factory = nullptr;
+	if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&factory)))
+		return false;
+	bool found = false;
+	IDXGIAdapter1* adapter = nullptr;
+	// Bounded by the adapter count (EnumAdapters1 ends with DXGI_ERROR_NOT_FOUND)
+	for (UINT i = 0; factory->EnumAdapters1(i, &adapter) == S_OK; i++) {
+		DXGI_ADAPTER_DESC1 desc;
+		adapter->GetDesc1(&desc);
+		adapter->Release();
+		unsigned long long luid = ((unsigned long long)(uint32_t)desc.AdapterLuid.HighPart << 32) | desc.AdapterLuid.LowPart;
+		if (i == 0 || (named && luid == wanted)) {
+			*out = desc.AdapterLuid;
+			found = true;
+		}
+		if (named && luid == wanted)
+			break;
+	}
+	factory->Release();
+	return found;
+}
 
 namespace {
 
@@ -21,24 +50,12 @@ XrResult XRAPI_CALL GetD3D11GraphicsRequirements(XrInstance, XrSystemId, XrGraph
 		std::lock_guard<std::recursive_mutex> g(St().lock);
 		St().requirementsQueried.insert(RtApi::D3D11);
 	}
-	IDXGIFactory1* factory = nullptr;
-	if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&factory)))
+	if (!RtRuntimeAdapterLuid(&reqs->adapterLuid))
 		return XR_ERROR_RUNTIME_FAILURE;
-	IDXGIAdapter1* adapter = nullptr;
-	XrResult result = XR_ERROR_RUNTIME_FAILURE;
-	if (factory->EnumAdapters1(0, &adapter) == S_OK) {
-		DXGI_ADAPTER_DESC1 desc;
-		adapter->GetDesc1(&desc);
-		// The first adapter, as Monado names it
-		reqs->adapterLuid = desc.AdapterLuid;
-		reqs->minFeatureLevel = D3D_FEATURE_LEVEL_11_0;
-		adapter->Release();
-		std::lock_guard<std::recursive_mutex> g(St().lock);
-		St().requiredLuid = desc.AdapterLuid;
-		result = XR_SUCCESS;
-	}
-	factory->Release();
-	return result;
+	reqs->minFeatureLevel = D3D_FEATURE_LEVEL_11_0;
+	std::lock_guard<std::recursive_mutex> g(St().lock);
+	St().requiredLuid = reqs->adapterLuid;
+	return XR_SUCCESS;
 }
 
 XrResult Bind(const XrBaseInStructure* binding, RtSession* s)

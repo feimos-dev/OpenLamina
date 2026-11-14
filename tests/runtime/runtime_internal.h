@@ -253,4 +253,9 @@ bool RtActionSpaceScripted(const RtSpace* sp, uint64_t frame, ScriptPose* out);
 // extensions.cpp: functions of optional extensions; *extension gets the extension that must be enabled
 PFN_xrVoidFunction RtExtensionsLookup(const char* name, const char** extension);
 void RtExtensionsSystemProperties(XrSystemProperties* props);
+// The adapter the D3D11 and D3D12 requirements name: the one whose LUID is OC_TEST_RUNTIME_GPU_LUID (16 hex digits,
+// HighPart then LowPart) when that is set and one has it, else the first. False if there's none.
+bool RtRuntimeAdapterLuid(LUID* out);
+// The display's refresh rate changes to rate (XR_FB_display_refresh_rate's event, if it changed); with St().lock held
+void RtChangeRefreshRate(RtSession* s, float rate);
 bool RtExtensionsSessionInfo(const XrSessionCreateInfo* info, RtSession* session); // headless / overlay chains

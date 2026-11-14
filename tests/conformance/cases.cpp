@@ -21,6 +21,7 @@
 #include "IVRCompositor_006.h"
 #include "IVRCompositor_008.h"
 #include "IVRCompositor_029.h"
+#include "IVRExtendedDisplay_001.h"
 #include "IVRInput_010.h"
 #include "IVRInput_011.h"
 #include "IVROverlay_001.h"
@@ -48,6 +49,17 @@
 
 #ifndef _WIN32
 #include <unistd.h>
+#endif
+
+#include "gfx/GfxApi.h"
+
+#ifdef _WIN32
+#include <d3d9.h>
+#include <dxgi.h>
+#ifndef VK_NO_PROTOTYPES
+#define VK_NO_PROTOTYPES
+#endif
+#include <vulkan/vulkan.h>
 #endif
 
 using namespace conformance;
@@ -1815,6 +1827,249 @@ void OwnFramesRaceCase(CaseContext& c)
 	c.Record("frames", r);
 }
 
+#ifdef _WIN32
+// The DXGI adapters (DXGI 1.1's list, which DXGI 1.0's EnumAdapters has in the same order): LUIDs as LowPart |
+// HighPart << 32
+std::vector<uint64_t> DxgiAdapterLuids()
+{
+	std::vector<uint64_t> luids;
+	IDXGIFactory1* factory = nullptr;
+	if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&factory)))
+		return luids;
+	IDXGIAdapter1* adapter = nullptr;
+	for (UINT i = 0; i < 64 && factory->EnumAdapters1(i, &adapter) == S_OK; i++) {
+		DXGI_ADAPTER_DESC1 desc{};
+		adapter->GetDesc1(&desc);
+		adapter->Release();
+		luids.push_back((uint64_t)desc.AdapterLuid.LowPart | ((uint64_t)(uint32_t)desc.AdapterLuid.HighPart << 32));
+	}
+	factory->Release();
+	return luids;
+}
+
+// Has the stand-in name this adapter in its D3D requirements (read when OpenComposite asks, so set before Init)
+void NameRuntimeAdapter(uint64_t luid)
+{
+	char hex[32];
+	std::snprintf(hex, sizeof(hex), "%016llx", (unsigned long long)luid);
+	SetEnvironmentVariableA("OC_TEST_RUNTIME_GPU_LUID", hex);
+}
+
+// D3D9Ex's index of the adapter with luid, 0 if it has none (as OpenComposite answers then)
+int32_t D3D9AdapterIndexOf(uint64_t luid)
+{
+	HMODULE d3d9 = LoadLibraryW(L"d3d9.dll");
+	if (!d3d9)
+		return 0;
+	using Create9Ex = HRESULT(WINAPI*)(UINT, IDirect3D9Ex**);
+	auto create = (Create9Ex)GetProcAddress(d3d9, "Direct3DCreate9Ex");
+	IDirect3D9Ex* d3d = nullptr;
+	int32_t index = 0;
+	if (create && SUCCEEDED(create(D3D_SDK_VERSION, &d3d)) && d3d) {
+		for (UINT i = 0; i < d3d->GetAdapterCount() && i < 64; i++) {
+			LUID l{};
+			if (SUCCEEDED(d3d->GetAdapterLUID(i, &l)) && ((uint64_t)l.LowPart | ((uint64_t)(uint32_t)l.HighPart << 32)) == luid) {
+				index = (int32_t)i;
+				break;
+			}
+		}
+		d3d->Release();
+	}
+	FreeLibrary(d3d9);
+	return index;
+}
+
+// The last physical device of instance, with its deviceUUID named to the stand-in as the runtime's
+// (OC_TEST_RUNTIME_GPU_UUID); VK_NULL_HANDLE without one
+VkPhysicalDevice NameRuntimeVkDevice(VkInstance instance)
+{
+	HMODULE module = GetModuleHandleA("vulkan-1.dll");
+	auto gipa = module ? (PFN_vkGetInstanceProcAddr)GetProcAddress(module, "vkGetInstanceProcAddr") : nullptr;
+	if (!gipa || !instance)
+		return VK_NULL_HANDLE;
+	auto enumerate = (PFN_vkEnumeratePhysicalDevices)gipa(instance, "vkEnumeratePhysicalDevices");
+	auto props2 = (PFN_vkGetPhysicalDeviceProperties2)gipa(instance, "vkGetPhysicalDeviceProperties2");
+	if (!props2)
+		props2 = (PFN_vkGetPhysicalDeviceProperties2)gipa(instance, "vkGetPhysicalDeviceProperties2KHR");
+	uint32_t count = 0;
+	if (!enumerate || !props2 || enumerate(instance, &count, nullptr) != VK_SUCCESS || count == 0)
+		return VK_NULL_HANDLE;
+	std::vector<VkPhysicalDevice> devices(count);
+	if (enumerate(instance, &count, devices.data()) < 0 || count == 0)
+		return VK_NULL_HANDLE;
+	VkPhysicalDevice last = devices[count - 1];
+	VkPhysicalDeviceIDProperties id{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES };
+	VkPhysicalDeviceProperties2 p{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
+	p.pNext = &id;
+	props2(last, &p);
+	std::string hex;
+	char buf[3];
+	for (uint8_t b : id.deviceUUID) {
+		std::snprintf(buf, sizeof(buf), "%02x", b);
+		hex += buf;
+	}
+	SetEnvironmentVariableA("OC_TEST_RUNTIME_GPU_UUID", hex.c_str());
+	return last;
+}
+#endif
+
+// The runtime's GPU as OpenComposite answers it (expect/gpu.json), on the stand-in with scripts/gfx_all_apis.json: the
+// stand-in's D3D requirements name the last DXGI adapter (WARP's, where there's a GPU as well) and its Vulkan the last
+// physical device. Each answer is recorded as whether it's that adapter's; the Vulkan one (a record of its own) is
+// skipped without a Vulkan driver.
+void GpuAnswersCase(CaseContext& c)
+{
+#ifdef _WIN32
+	std::vector<uint64_t> luids = DxgiAdapterLuids();
+	if (luids.empty()) {
+		Json::Value r;
+		r["skipped"] = "no DXGI adapter";
+		c.Record("answers", r);
+		return;
+	}
+	const uint64_t runtimeLuid = luids.back();
+	const int32_t runtimeIndex = (int32_t)luids.size() - 1;
+	NameRuntimeAdapter(runtimeLuid);
+
+	std::string whyNoVulkan;
+	std::unique_ptr<GfxApi> vk = GfxApi::Create(GfxKind::Vulkan, &whyNoVulkan);
+	GfxTexture vkTex = vk ? vk->Pattern(16, 16, 43, 0) : GfxTexture{}; // VK_FORMAT_R8G8B8A8_SRGB
+	VkInstance vkInstance = vkTex.Made() ? (VkInstance)vkTex.vk.m_pInstance : VK_NULL_HANDLE;
+	VkPhysicalDevice runtimeVk = NameRuntimeVkDevice(vkInstance);
+
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	vr::EVRInitError le;
+	auto* display = (vr::IVRExtendedDisplay_001::IVRExtendedDisplay*)c.core->GetGenericInterface("IVRExtendedDisplay_001", &le);
+
+	Json::Value r;
+	int32_t dxgi = -1;
+	f.sys->GetDXGIOutputInfo(&dxgi);
+	r["dxgi_is_runtime_adapter"] = dxgi == runtimeIndex;
+	r["d3d9_is_runtime_adapter"] = f.sys->GetD3D9AdapterIndex() == D3D9AdapterIndexOf(runtimeLuid);
+	if (display) {
+		int32_t adapter = -1, output = -1;
+		display->GetDXGIOutputInfo(&adapter, &output);
+		r["extended_is_runtime_adapter"] = adapter == runtimeIndex;
+		r["extended_output"] = output;
+	}
+	uint64_t device = 0;
+	f.sys->GetOutputDevice(&device, vr::TextureType_DirectX, nullptr);
+	r["output_device_d3d11_is_runtime_luid"] = device == runtimeLuid;
+	device = 0;
+	f.sys->GetOutputDevice(&device, vr::TextureType_DirectX12, nullptr);
+	r["output_device_d3d12_is_runtime_luid"] = device == runtimeLuid;
+	c.Record("answers", r);
+
+	Json::Value v;
+	if (!runtimeVk) {
+		v["skipped"] = vk ? "no Vulkan physical device" : whyNoVulkan;
+	} else {
+		device = 0;
+		f.sys->GetOutputDevice(&device, vr::TextureType_Vulkan, (VkInstance_T*)vkInstance);
+		v["output_device_is_runtime_device"] = device == (uint64_t)runtimeVk;
+	}
+	c.Record("vulkan", v);
+	c.core->Cleanup();
+#else
+	Json::Value r;
+	r["skipped"] = "the GPU cases are Windows only";
+	c.Record("answers", r);
+#endif
+}
+
+// A game whose device is on another adapter than the runtime's (expect/gpu.json): the stand-in names the last DXGI
+// adapter, the game's D3D11 device is on the first. Submit answers SharedTexturesNotSupported (106) for both eyes.
+// Skipped with one adapter.
+void GpuOtherAdapterCase(CaseContext& c)
+{
+#ifdef _WIN32
+	std::vector<uint64_t> luids = DxgiAdapterLuids();
+	std::string why;
+	std::unique_ptr<GfxApi> gfx = luids.size() >= 2 ? GfxApi::Create(GfxKind::D3D11, &why) : nullptr;
+	if (!gfx) {
+		Json::Value r;
+		r["skipped"] = luids.size() < 2 ? "only one DXGI adapter" : why;
+		c.Record("submit", r);
+		return;
+	}
+	GfxTexture tex = gfx->Pattern(256, 256, 29, 0); // DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
+	ID3D11Device* device = nullptr;
+	if (tex.Made())
+		((ID3D11Texture2D*)tex.keep)->GetDevice(&device);
+	uint64_t gameLuid = 0;
+	if (device) {
+		IDXGIDevice* dxgi = nullptr;
+		IDXGIAdapter* adapter = nullptr;
+		DXGI_ADAPTER_DESC desc{};
+		if (SUCCEEDED(device->QueryInterface(__uuidof(IDXGIDevice), (void**)&dxgi)) && SUCCEEDED(dxgi->GetAdapter(&adapter))
+		    && SUCCEEDED(adapter->GetDesc(&desc)))
+			gameLuid = (uint64_t)desc.AdapterLuid.LowPart | ((uint64_t)(uint32_t)desc.AdapterLuid.HighPart << 32);
+		if (adapter)
+			adapter->Release();
+		if (dxgi)
+			dxgi->Release();
+		device->Release();
+	}
+	// The runtime on another adapter than the game's
+	uint64_t runtimeLuid = luids.back() != gameLuid ? luids.back() : luids.front();
+	NameRuntimeAdapter(runtimeLuid);
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	Json::Value r;
+	for (int frame = 0; frame < 3; frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+		r["left"] = (int)f.comp->Submit(vr::Eye_Left, tex.Texture(), nullptr, vr::Submit_Default);
+		r["right"] = (int)f.comp->Submit(vr::Eye_Right, tex.Texture(), nullptr, vr::Submit_Default);
+	}
+	c.core->Cleanup();
+	c.Record("submit", r);
+#else
+	Json::Value r;
+	r["skipped"] = "the GPU cases are Windows only";
+	c.Record("submit", r);
+#endif
+}
+
+// Prop_DisplayFrequency_Float over 20 frames (expect/display_frequency_*.json): before the first frame, at frame 5 and
+// at the end, rounded to whole hertz, and the first frame whose events had a VREvent_PropertyChanged for it (-1 for
+// none, recorded as is and as whether it's the 10th or 11th). With scripts/refresh_72_120.json the runtime offers XR_FB_display_refresh_rate and changes from 72 to 120 Hz
+// at its 10th frame; with scripts/display_120.json it has no such extension and a 120 Hz display.
+void DisplayFrequencyCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	auto frequency = [&] {
+		vr::ETrackedPropertyError e = vr::TrackedProp_Success;
+		return (int)std::lround(f.sys->GetFloatTrackedDeviceProperty(vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_DisplayFrequency_Float, &e));
+	};
+	Json::Value r;
+	r["before_frames"] = frequency();
+	int changedAt = -1;
+	for (int frame = 1; frame <= 20; frame++) {
+		GameFrame(f, tex.get());
+		vr::VREvent_t ev{};
+		for (int n = 0; n < 64 && f.sys->PollNextEvent(&ev, sizeof(ev)); n++) {
+			if (changedAt < 0 && ev.eventType == vr::VREvent_PropertyChanged && ev.trackedDeviceIndex == vr::k_unTrackedDeviceIndex_Hmd
+			    && ev.data.property.prop == vr::Prop_DisplayFrequency_Float)
+				changedAt = frame;
+		}
+		if (frame == 5)
+			r["at_frame_5"] = frequency();
+	}
+	r["at_frame_20"] = frequency();
+	r["changed_at_frame"] = changedAt;
+	// The runtime's 10th frame is the game's 10th or 11th (its first may be on the session before the game's device)
+	r["changed_at_frame_10_or_11"] = changedAt == 10 || changedAt == 11;
+	c.Record("frequency", r);
+	c.core->Cleanup();
+}
+
 } // namespace
 
 const std::map<std::string, CaseFn>& conformance::Cases()
@@ -1850,6 +2105,9 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "observer", ObserverCase },
 		{ "own-frames", OwnFramesCase },
 		{ "own-frames-race", OwnFramesRaceCase },
+		{ "gpu-answers", GpuAnswersCase },
+		{ "gpu-other-adapter", GpuOtherAdapterCase },
+		{ "display-frequency", DisplayFrequencyCase },
 	};
 	static const std::map<std::string, CaseFn> all = [] {
 		std::map<std::string, CaseFn> m = cases;

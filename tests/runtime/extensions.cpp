@@ -221,21 +221,26 @@ XrResult XRAPI_CALL RequestDisplayRefreshRate(XrSession, float rate)
 	RtSession* s = St().session.get();
 	if (!s)
 		return XR_ERROR_HANDLE_INVALID;
-	if (s->refreshRate != to) {
-		XrEventDataBuffer buf{ XR_TYPE_EVENT_DATA_BUFFER };
-		auto* ev = (EventDisplayRefreshRateChanged*)&buf;
-		ev->type = kTypeEventDisplayRefreshRateChanged;
-		ev->next = nullptr;
-		ev->session = (XrSession)s;
-		ev->fromDisplayRefreshRate = s->refreshRate;
-		ev->toDisplayRefreshRate = to;
-		s->refreshRate = to;
-		QueueEvent(buf);
-	}
+	RtChangeRefreshRate(s, to);
 	return XR_SUCCESS;
 }
 
 } // namespace
+
+void RtChangeRefreshRate(RtSession* s, float to)
+{
+	if (s->refreshRate == to)
+		return;
+	XrEventDataBuffer buf{ XR_TYPE_EVENT_DATA_BUFFER };
+	auto* ev = (EventDisplayRefreshRateChanged*)&buf;
+	ev->type = kTypeEventDisplayRefreshRateChanged;
+	ev->next = nullptr;
+	ev->session = (XrSession)s;
+	ev->fromDisplayRefreshRate = s->refreshRate;
+	ev->toDisplayRefreshRate = to;
+	s->refreshRate = to;
+	QueueEvent(buf);
+}
 
 PFN_xrVoidFunction RtExtensionsLookup(const char* name, const char** extension)
 {

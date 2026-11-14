@@ -45,6 +45,8 @@ public:
 	std::atomic<bool> exitExpected{ false };
 	// The app's graphics device couldn't be bound: the session stays on the temporary device
 	std::atomic<bool> appGraphicsUnusable{ false };
+	// Why: it's on another adapter than the runtime's (Submit then answers SharedTexturesNotSupported)
+	std::atomic<bool> appOnOtherAdapter{ false };
 
 	/**
 	 * To be called after xrCreateSession. Should only be used by DrvOpenXR.
@@ -85,6 +87,9 @@ public:
 	 * predicted display period.
 	 */
 	XrDuration RunOwnFrame(const OwnFrameLoop::LayerSource& source, const std::function<bool()>& wanted);
+
+	/** The runtime's last predicted display period (from xrWaitFrame), 0 before the first */
+	float DisplayPeriodMs() const { return displayPeriodMs; }
 
 	/**
 	 * Stops OpenComposite's own frames (and joins their thread) until the next session is created, or for good when

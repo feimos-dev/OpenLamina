@@ -166,6 +166,13 @@ jobs:
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases input-threads --repeat 5 --script tests/conformance/scripts/input_toggle.json --manifest tests/unit/data/manifest_toggle.json --expect tests/conformance/expect/input_threads.json --out conformance/input-threads-direct
           if ($LASTEXITCODE) { $failed++ }
+          # The runtime's GPU (the Vulkan record and a second adapter's case skip on a runner without them) and refresh rate
+          python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases gpu-answers,gpu-other-adapter --script tests/conformance/scripts/gfx_all_apis.json --expect tests/conformance/expect/gpu.json --allow-skip "gpu-.*" --out conformance/gpu
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases display-frequency --script tests/conformance/scripts/refresh_72_120.json --expect tests/conformance/expect/display_frequency_fb.json --out conformance/display-frequency-fb
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases display-frequency --script tests/conformance/scripts/display_120.json --expect tests/conformance/expect/display_frequency_measured.json --out conformance/display-frequency-measured
+          if ($LASTEXITCODE) { $failed++ }
           # OpenComposite's own frames while the game stalls, also while another thread reads input
           python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases own-frames,own-frames-race --repeat 5 --jobs 2 --expect tests/conformance/expect/own_frames.json --out conformance/own-frames
           if ($LASTEXITCODE) { $failed++ }
