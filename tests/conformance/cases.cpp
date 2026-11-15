@@ -835,6 +835,37 @@ void DeviceIdentityCase(CaseContext& c)
 	c.core->Cleanup();
 }
 
+// What a program that only watches the VR system (the Steam client) does to the OpenXR runtime. Run as steam.exe and
+// as oc_conformance.exe (expect/observer_steam.json, expect/observer_game.json) against the stand-in runtime, which
+// writes its dump (OC_TEST_RUNTIME_DUMP) when an instance is destroyed: the dump existing is the runtime having been
+// started.
+void ObserverCase(CaseContext& c)
+{
+	Json::Value program;
+#ifdef _WIN32
+	wchar_t path[MAX_PATH * 4];
+	DWORD n = GetModuleFileNameW(nullptr, path, (DWORD)(sizeof(path) / sizeof(path[0])));
+	program["program"] = std::filesystem::path(std::wstring(path, n)).filename().string();
+#endif
+	c.Record("program", program);
+
+	Json::Value init;
+	init["init_error"] = (int)c.core->Init(vr::VRApplication_Background, nullptr);
+	c.Record("Init(Background)", init);
+
+	Json::Value present;
+	present["ret"] = c.core->BIsHmdPresent();
+	c.Record("BIsHmdPresent", present);
+
+	Json::Value started;
+	const char* dump = getenv("OC_TEST_RUNTIME_DUMP");
+	std::error_code ec;
+	started["runtime_started"] = dump && std::filesystem::exists(dump, ec);
+	c.Record("OpenXR runtime", started);
+	if (init["init_error"].asInt() == vr::VRInitError_None)
+		c.core->Cleanup();
+}
+
 // This program's folder, where oc_echo_app is built
 std::filesystem::path OwnFolder()
 {
@@ -1418,6 +1449,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "events-listen", EventsListenCase },
 		{ "events-commit", EventsCommitCase },
 		{ "submit-edges", SubmitEdges },
+		{ "observer", ObserverCase },
 	};
 	return cases;
 }

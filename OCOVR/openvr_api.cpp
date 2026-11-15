@@ -10,6 +10,7 @@
 #include "generated/GVRClientCore.gen.h"
 #include "generated/version.h"
 
+#include "Misc/SteamClient.h"
 #include "Misc/backtrace.h"
 #include "logging.h"
 #include "steamvr_abi.h"
@@ -291,6 +292,15 @@ VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(EVRInitError* peError, EVRApp
 		return current_init_token;
 	}
 
+	if (eApplicationType == VRApplication_Background && oc_is_steam_client_program()) {
+		// The Steam client's own connection only watches the VR system: it is answered as a runtime does when nothing
+		// is running, without starting the OpenXR runtime (Linux lets other Background apps in, for Proton)
+		OOVR_LOG_ONCE("Refusing the Steam client's Background connection: no VR system is running");
+		if (peError)
+			*peError = VRInitError_Init_NoServerForBackgroundApp;
+		return 0;
+	}
+
 	if (eApplicationType != VRApplication_Scene)
 #ifndef _WIN32
 		if (eApplicationType != VRApplication_Background) // Proton uses this
@@ -341,6 +351,12 @@ VR_INTERFACE bool VR_CALLTYPE VR_IsHmdPresent()
 {
 	// If we're already running, then Oculus's implementation fails with XR_ERROR_RUNTIME_FAILURE
 	if (running)
+		return true;
+
+	// The Steam client asks this on its own, with no game running, to show the headset's state. Asking OpenXR starts
+	// the runtime (Monado, through its stand-in, say), so the Steam client is told what a runtime that is installed
+	// answers while nothing is running.
+	if (oc_is_steam_client_program())
 		return true;
 
 	// At this point, we should NOT be running OpenXR, so setup a new session just for this

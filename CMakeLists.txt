@@ -313,6 +313,7 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/Config.cpp
 	OpenOVR/Misc/JsonFile.cpp
 	OpenOVR/Misc/SteamVRPaths.cpp
+	OpenOVR/Misc/SteamClient.cpp
 	OpenOVR/Misc/SharedStore.cpp
 	OpenOVR/Misc/SteamVRSettings.cpp
 	OpenOVR/Misc/AppManifest.cpp
@@ -321,6 +322,7 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/LibMonado.cpp
 	OpenOVR/Misc/JsonFile.h
 	OpenOVR/Misc/SteamVRPaths.h
+	OpenOVR/Misc/SteamClient.h
 	OpenOVR/Misc/SharedStore.h
 	OpenOVR/Misc/SteamVRSettings.h
 	OpenOVR/Misc/AppManifest.h

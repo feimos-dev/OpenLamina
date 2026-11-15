@@ -75,6 +75,7 @@ add_executable(oc_unit_tests
 	unit/SessionLockTests.cpp
 	unit/JsonFileTests.cpp
 	unit/SteamVRPathsTests.cpp
+	unit/SteamClientTests.cpp
 	unit/SharedStoreTests.cpp
 	unit/DeviceIdentityTests.cpp
 	unit/SettingsTests.cpp
