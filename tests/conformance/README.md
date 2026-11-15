@@ -71,7 +71,7 @@ format is described at the top of `tests/runtime/script.h`.
 
 ## The Steam client
 
-The Steam client connects to the VR runtime by itself, with no game running. `--cases observer` records what that
+The Steam client connects to the VR runtime by itself, with no game running. `--cases observer` (Windows, with the stand-in runtime) records what that
 does to the OpenXR runtime: run it from a copy of `oc_conformance.exe` named `steam.exe` (`expect/observer_steam.json`:
 the Background connection refused, and the headset check answered with the stand-in runtime never started) and from
 `oc_conformance.exe` itself (`expect/observer_game.json`: the same check starts the runtime). The stand-in writes its

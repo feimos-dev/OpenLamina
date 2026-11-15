@@ -103,7 +103,7 @@ jobs:
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases applications --expect tests/conformance/expect/applications.json --out conformance/applications
           if ($LASTEXITCODE) { $failed++ }
-          # The Steam client (a copy named steam.exe) never starts the OpenXR runtime; another program's headset check does
+          # The Steam client (a copy named steam.exe) never starts the OpenXR runtime; any other program's headset check starts it
           New-Item -ItemType Directory -Force -Path build/observer | Out-Null
           Copy-Item build/tests/oc_conformance.exe build/observer/steam.exe
           $standIn = (Resolve-Path build/tests/runtime/oc_test_runtime.json).Path

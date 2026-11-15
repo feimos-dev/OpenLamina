@@ -354,8 +354,8 @@ VR_INTERFACE bool VR_CALLTYPE VR_IsHmdPresent()
 		return true;
 
 	// The Steam client asks this on its own, with no game running, to show the headset's state. Asking OpenXR starts
-	// the runtime (Monado, through its stand-in, say), so the Steam client is told what a runtime that is installed
-	// answers while nothing is running.
+	// the runtime, so the Steam client is told a headset is there without asking: a runtime reports a connected
+	// headset whether or not anything is running.
 	if (oc_is_steam_client_program())
 		return true;
 
