@@ -1,0 +1,108 @@
+{
+ "#": "The eye-tracked foveation calls on the stand-in with scripts/eye_gaze.json (run.py --cases eye-gaze --script scripts/eye_gaze.json, with --manifest manifest_basic.json and without), a 45 degree view each way: while the gaze (10 degrees right, 5 up) is valid, tracked or not, each eye's centre is (tan 10, tan 5 / cos 10); through a projection the same, Y negated by a flipped one, doubled by one twice as narrow; a null matrix false. Once it isn't valid, false and zeroes, as SteamVR answers without an eye tracker.",
+ "eye-gaze/both eyes, gaze tracked/-/-": {
+  "left": [
+   0.1763,
+   0.0888
+  ],
+  "ret": true,
+  "right": [
+   0.1763,
+   0.0888
+  ]
+ },
+ "eye-gaze/for projection, gaze tracked/-/-": {
+  "flipped": {
+   "ndc": [
+    0.1763,
+    -0.0888
+   ],
+   "ret": true
+  },
+  "left": {
+   "ndc": [
+    0.1763,
+    0.0888
+   ],
+   "ret": true
+  },
+  "narrow": {
+   "ndc": [
+    0.3527,
+    0.1777
+   ],
+   "ret": true
+  },
+  "null matrix": false
+ },
+ "eye-gaze/both eyes, gaze not tracked/-/-": {
+  "left": [
+   0.1763,
+   0.0888
+  ],
+  "ret": true,
+  "right": [
+   0.1763,
+   0.0888
+  ]
+ },
+ "eye-gaze/for projection, gaze not tracked/-/-": {
+  "flipped": {
+   "ndc": [
+    0.1763,
+    -0.0888
+   ],
+   "ret": true
+  },
+  "left": {
+   "ndc": [
+    0.1763,
+    0.0888
+   ],
+   "ret": true
+  },
+  "narrow": {
+   "ndc": [
+    0.3527,
+    0.1777
+   ],
+   "ret": true
+  },
+  "null matrix": false
+ },
+ "eye-gaze/both eyes, gaze invalid/-/-": {
+  "left": [
+   0.0,
+   0.0
+  ],
+  "ret": false,
+  "right": [
+   0.0,
+   0.0
+  ]
+ },
+ "eye-gaze/for projection, gaze invalid/-/-": {
+  "flipped": {
+   "ndc": [
+    0.0,
+    0.0
+   ],
+   "ret": false
+  },
+  "left": {
+   "ndc": [
+    0.0,
+    0.0
+   ],
+   "ret": false
+  },
+  "narrow": {
+   "ndc": [
+    0.0,
+    0.0
+   ],
+   "ret": false
+  },
+  "null matrix": false
+ }
+}

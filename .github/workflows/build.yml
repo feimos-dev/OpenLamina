@@ -125,6 +125,17 @@ jobs:
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases input-frames --script tests/conformance/scripts/input_toggle.json --manifest tests/unit/data/manifest_toggle.json --expected tests/conformance/baseline/input-direct.json --expect tests/conformance/expect/input_direct.json --out conformance/input-direct
           if ($LASTEXITCODE) { $failed++ }
+          # Eye-tracked foveation from the eye gaze: with an action manifest and with legacy input, canted views, eyeTracking=off, no extension
+          python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases eye-gaze --script tests/conformance/scripts/eye_gaze.json --manifest tests/unit/data/manifest_basic.json --expect tests/conformance/expect/eye_gaze.json --out conformance/eye-gaze
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases eye-gaze --script tests/conformance/scripts/eye_gaze.json --expect tests/conformance/expect/eye_gaze.json --out conformance/eye-gaze-legacy
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases eye-gaze --script tests/conformance/scripts/eye_gaze_canted.json --manifest tests/unit/data/manifest_basic.json --expect tests/conformance/expect/eye_gaze_canted.json --out conformance/eye-gaze-canted
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases eye-gaze --script tests/conformance/scripts/eye_gaze.json --manifest tests/unit/data/manifest_basic.json --ini tests/conformance/ini/eye_tracking_off.ini --expect tests/conformance/expect/eye_gaze_off.json --out conformance/eye-gaze-off
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases eye-gaze --manifest tests/unit/data/manifest_basic.json --expect tests/conformance/expect/eye_gaze_off.json --out conformance/eye-gaze-noext
+          if ($LASTEXITCODE) { $failed++ }
           # Input from two threads at once, under both evaluators
           python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases input-threads --script tests/conformance/scripts/input_toggle.json --manifest tests/unit/data/manifest_toggle.json --ini tests/conformance/ini/steamvr_evaluator.ini --expect tests/conformance/expect/input_threads.json --out conformance/input-threads-steamvr
           if ($LASTEXITCODE) { $failed++ }

@@ -1,0 +1,108 @@
+{
+ "#": "As eye_gaze.json with scripts/eye_gaze_canted.json and --manifest manifest_basic.json: views turned 10 degrees outwards, 40 degrees towards the nose and 45 the other ways, the gaze 10 degrees right, level. The left eye sees it 20 degrees right ((2 tan 20 + 1 - tan 40) / (1 + tan 40)), the right eye straight ahead (-(1 - tan 40) / (1 + tan 40)). The left eye's projection, flipped or not, is matched to the left eye.",
+ "eye-gaze/both eyes, gaze tracked/-/-": {
+  "left": [
+   0.4833,
+   0.0
+  ],
+  "ret": true,
+  "right": [
+   -0.0875,
+   0.0
+  ]
+ },
+ "eye-gaze/for projection, gaze tracked/-/-": {
+  "flipped": {
+   "ndc": [
+    0.4833,
+    0.0
+   ],
+   "ret": true
+  },
+  "left": {
+   "ndc": [
+    0.4833,
+    0.0
+   ],
+   "ret": true
+  },
+  "narrow": {
+   "ndc": [
+    0.8791,
+    0.0
+   ],
+   "ret": true
+  },
+  "null matrix": false
+ },
+ "eye-gaze/both eyes, gaze not tracked/-/-": {
+  "left": [
+   0.4833,
+   0.0
+  ],
+  "ret": true,
+  "right": [
+   -0.0875,
+   0.0
+  ]
+ },
+ "eye-gaze/for projection, gaze not tracked/-/-": {
+  "flipped": {
+   "ndc": [
+    0.4833,
+    0.0
+   ],
+   "ret": true
+  },
+  "left": {
+   "ndc": [
+    0.4833,
+    0.0
+   ],
+   "ret": true
+  },
+  "narrow": {
+   "ndc": [
+    0.8791,
+    0.0
+   ],
+   "ret": true
+  },
+  "null matrix": false
+ },
+ "eye-gaze/both eyes, gaze invalid/-/-": {
+  "left": [
+   0.0,
+   0.0
+  ],
+  "ret": false,
+  "right": [
+   0.0,
+   0.0
+  ]
+ },
+ "eye-gaze/for projection, gaze invalid/-/-": {
+  "flipped": {
+   "ndc": [
+    0.0,
+    0.0
+   ],
+   "ret": false
+  },
+  "left": {
+   "ndc": [
+    0.0,
+    0.0
+   ],
+   "ret": false
+  },
+  "narrow": {
+   "ndc": [
+    0.0,
+    0.0
+   ],
+   "ret": false
+  },
+  "null matrix": false
+ }
+}

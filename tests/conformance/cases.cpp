@@ -29,8 +29,10 @@
 #include "IVRSystem_007.h"
 #include "IVRSystem_009.h"
 #include "IVRSystem_022.h"
+#include "IVRSystem_026.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -1301,6 +1303,87 @@ void InputFramesCase(CaseContext& c)
 	c.core->Cleanup();
 }
 
+// The eye-tracked foveation calls (expect/eye_gaze*.json), on the stand-in with scripts/eye_gaze*.json: the gaze 10
+// degrees right (and 5 up, unless canted), tracked until frame 40 of the session, valid but not tracked until frame
+// 60, then not valid. Loads --manifest and updates its actions each frame if given, else reads the legacy input. Asks
+// at frames 30, 55 and 75 (loading the manifest may restart the session, so a few frames later in its count): each
+// eye's centre, and the centre through the left eye's projection, a Y-flipped copy of it and a projection of the
+// game's own (a narrower one). Values are rounded to 4 places.
+void EyeGazeCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	vr::EVRInitError le;
+	auto* sys = (vr::IVRSystem_026::IVRSystem*)c.core->GetGenericInterface("IVRSystem_026", &le);
+	auto* in = (vr::IVRInput_010::IVRInput*)c.core->GetGenericInterface("IVRInput_010", &le);
+	if (!sys || !in) {
+		c.Record("no IVRSystem_026 or IVRInput_010", Err(le));
+		c.core->Cleanup();
+		return;
+	}
+	vr::VRActionSetHandle_t set = vr::k_ulInvalidActionSetHandle;
+	if (!c.manifest.empty()) {
+		in->SetActionManifestPath(c.manifest.c_str());
+		in->GetActionSetHandle("/actions/main", &set);
+	}
+	auto round4 = [](float v) { return std::round((double)v * 10000) / 10000; };
+	auto ndc = [&](const vr::HmdVector2_t& v) {
+		Json::Value a(Json::arrayValue);
+		a.append(round4(v.v[0]));
+		a.append(round4(v.v[1]));
+		return a;
+	};
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	for (int frame = 1; frame <= 75; frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+		if (!c.manifest.empty()) {
+			vr::IVRInput_010::VRActiveActionSet_t active{};
+			active.ulActionSet = set;
+			in->UpdateActionState(&active, sizeof(active), 1);
+		} else {
+			vr::VRControllerState_t state{};
+			sys->GetControllerState(1, &state, sizeof(state));
+		}
+		if (frame == 30 || frame == 55 || frame == 75) {
+			std::string when = frame == 30 ? "tracked" : frame == 55 ? "not tracked" : "invalid";
+			vr::HmdVector2_t left = { { 9, 9 } }, right = { { 9, 9 } };
+			Json::Value eyes;
+			eyes["ret"] = sys->GetEyeTrackedFoveationCenter(&left, &right);
+			eyes["left"] = ndc(left);
+			eyes["right"] = ndc(right);
+			c.Record("both eyes, gaze " + when, eyes);
+
+			vr::HmdMatrix44_t own = sys->GetProjectionMatrix(vr::Eye_Left, 0.1f, 100.0f);
+			vr::HmdMatrix44_t flipped = own;
+			for (float& v : flipped.m[1])
+				v = -v;
+			vr::HmdMatrix44_t narrow = own;
+			narrow.m[0][0] *= 2;
+			narrow.m[1][1] *= 2;
+			Json::Value projections;
+			struct Named {
+				const char* name;
+				const vr::HmdMatrix44_t* m;
+			};
+			for (Named p : { Named{ "left", &own }, Named{ "flipped", &flipped }, Named{ "narrow", &narrow } }) {
+				vr::HmdVector2_t centre = { { 9, 9 } };
+				Json::Value r;
+				r["ret"] = sys->GetEyeTrackedFoveationCenterForProjection(p.m, &centre);
+				r["ndc"] = ndc(centre);
+				projections[p.name] = r;
+			}
+			vr::HmdVector2_t unused = { { 9, 9 } };
+			projections["null matrix"] = sys->GetEyeTrackedFoveationCenterForProjection(nullptr, &unused);
+			c.Record("for projection, gaze " + when, projections);
+		}
+		f.comp->Submit(vr::Eye_Left, tex.get(), nullptr, vr::Submit_Default);
+		f.comp->Submit(vr::Eye_Right, tex.get(), nullptr, vr::Submit_Default);
+	}
+	c.core->Cleanup();
+}
+
 // Events between programs (expect/events.json): run at the same time (run.py --jobs 2), "events-commit"
 // commits the room setup 1.5 s in, and "events-listen", polling for 5 s, gets its two events; the committing program
 // gets each once, not again back from the store. Scene apps, each with its own session on the stand-in: OpenLamina
@@ -1445,6 +1528,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "chaperone-read", ChaperoneReadCase },
 		{ "events", EventsCase },
 		{ "input-frames", InputFramesCase },
+		{ "eye-gaze", EyeGazeCase },
 		{ "input-threads", InputThreadsCase },
 		{ "events-listen", EventsListenCase },
 		{ "events-commit", EventsCommitCase },
