@@ -366,17 +366,13 @@ namespace RuntimeSwitcher
 
     internal static class AppIcon
     {
-        /// <summary>The EXE's own icon (icon.ico, built in), for the windows' title bars.</summary>
-        public static Icon Get()
+        private static readonly Lazy<Icon> Cached = new Lazy<Icon>(() =>
         {
-            try
-            {
-                return Icon.ExtractAssociatedIcon(Application.ExecutablePath);
-            }
-            catch (ArgumentException)
-            {
-                return null;
-            }
-        }
+            using (Stream icon = typeof(AppIcon).Assembly.GetManifestResourceStream("OpenLamina.icon.ico"))
+                return new Icon(icon);
+        });
+
+        /// <summary>The app's icon, from the embedded icon.ico so a title bar gets a frame of its own size.</summary>
+        public static Icon Get() => Cached.Value;
     }
 }
