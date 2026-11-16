@@ -33,10 +33,6 @@ namespace RuntimeSwitcher
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Mirador",
                 "OpenComposite");
 
-        public static bool MiradorInstalled =>
-            Directory.Exists(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                "Mirador"));
-
         /// <summary>True if a game (or anything else) has one of the DLLs loaded, so it can't be replaced now.</summary>
         public static bool InUse()
         {
