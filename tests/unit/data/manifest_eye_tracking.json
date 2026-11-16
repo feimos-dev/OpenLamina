@@ -1,0 +1,9 @@
+{
+  "default_bindings": [{ "controller_type": "oculus_touch", "binding_url": "bindings_eye_tracking.json" }],
+  "actions": [
+    { "name": "/actions/main/in/trigger", "type": "vector1" },
+    { "name": "/actions/main/in/eyes", "type": "eyetracking" }
+  ],
+  "action_sets": [{ "name": "/actions/main", "usage": "leftright" }],
+  "localization": [{ "language_tag": "en_US", "/actions/main": "Main" }]
+}

@@ -21,6 +21,7 @@
 #include "IVRCompositor_008.h"
 #include "IVRCompositor_029.h"
 #include "IVRInput_010.h"
+#include "IVRInput_011.h"
 #include "IVROverlay_001.h"
 #include "IVROverlay_006.h"
 #include "IVROverlay_007.h"
@@ -1384,6 +1385,78 @@ void EyeGazeCase(CaseContext& c)
 	c.core->Cleanup();
 }
 
+// IVRInput's eye tracking action (expect/eye_tracking.json), on the stand-in with scripts/eye_gaze.json and
+// --manifest manifest_eye_tracking.json: the gaze as the game sees it at frames 30 (tracked), 55 (not tracked) and
+// 75 (not valid), in the standing and seated spaces, and the argument errors at frame 30. Values are rounded to 4
+// places.
+void EyeTrackingInputCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	vr::EVRInitError le;
+	auto* in = (vr::IVRInput_011::IVRInput*)c.core->GetGenericInterface("IVRInput_011", &le);
+	if (!in || c.manifest.empty()) {
+		c.Record("no IVRInput_011 or manifest", Err(le));
+		c.core->Cleanup();
+		return;
+	}
+	in->SetActionManifestPath(c.manifest.c_str());
+	vr::VRActionSetHandle_t set = vr::k_ulInvalidActionSetHandle;
+	vr::VRActionHandle_t eyes = vr::k_ulInvalidActionHandle, trigger = vr::k_ulInvalidActionHandle;
+	in->GetActionSetHandle("/actions/main", &set);
+	in->GetActionHandle("/actions/main/in/eyes", &eyes);
+	in->GetActionHandle("/actions/main/in/trigger", &trigger);
+
+	auto round4 = [](float v) { return std::round((double)v * 10000) / 10000; };
+	auto vec3 = [&](const vr::HmdVector3_t& v) {
+		Json::Value a(Json::arrayValue);
+		for (float x : v.v)
+			a.append(round4(x));
+		return a;
+	};
+	auto read = [&](bool nextFrame, vr::ETrackingUniverseOrigin origin) {
+		vr::VREyeTrackingData_t data;
+		memset(&data, 0xff, sizeof(data));
+		Json::Value r;
+		r["error"] = (int)(nextFrame ? in->GetEyeTrackingDataForNextFrame(eyes, origin, &data, sizeof(data))
+		                             : in->GetEyeTrackingDataRelativeToNow(eyes, origin, -0.01f, &data, sizeof(data)));
+		r["active"] = data.bActive;
+		r["valid"] = data.bValid;
+		r["tracked"] = data.bTracked;
+		r["origin"] = vec3(data.vGazeOrigin);
+		r["target"] = vec3(data.vGazeTarget);
+		return r;
+	};
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	for (int frame = 1; frame <= 75; frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+		vr::IVRInput_011::VRActiveActionSet_t active{};
+		active.ulActionSet = set;
+		in->UpdateActionState(&active, sizeof(active), 1);
+		if (frame == 30 || frame == 55 || frame == 75) {
+			std::string when = frame == 30 ? "tracked" : frame == 55 ? "not tracked" : "invalid";
+			c.Record("for next frame, standing, gaze " + when, read(true, vr::TrackingUniverseStanding));
+			c.Record("relative to now, seated, gaze " + when, read(false, vr::TrackingUniverseSeated));
+		}
+		if (frame == 30) {
+			vr::VREyeTrackingData_t data;
+			Json::Value errors;
+			errors["null data"] = (int)in->GetEyeTrackingDataForNextFrame(eyes, vr::TrackingUniverseStanding, nullptr, sizeof(data));
+			errors["wrong size"] = (int)in->GetEyeTrackingDataForNextFrame(eyes, vr::TrackingUniverseStanding, &data, sizeof(data) - 1);
+			errors["invalid handle"] = (int)in->GetEyeTrackingDataForNextFrame(vr::k_ulInvalidActionHandle, vr::TrackingUniverseStanding, &data, sizeof(data));
+			errors["wrong type"] = (int)in->GetEyeTrackingDataForNextFrame(trigger, vr::TrackingUniverseStanding, &data, sizeof(data));
+			vr::IVRInput_011::InputDigitalActionData_t digital;
+			errors["digital read"] = (int)in->GetDigitalActionData(eyes, &digital, sizeof(digital), vr::k_ulInvalidInputValueHandle);
+			c.Record("errors", errors);
+		}
+		f.comp->Submit(vr::Eye_Left, tex.get(), nullptr, vr::Submit_Default);
+		f.comp->Submit(vr::Eye_Right, tex.get(), nullptr, vr::Submit_Default);
+	}
+	c.core->Cleanup();
+}
+
 // Events between programs (expect/events.json): run at the same time (run.py --jobs 2), "events-commit"
 // commits the room setup 1.5 s in, and "events-listen", polling for 5 s, gets its two events; the committing program
 // gets each once, not again back from the store. Scene apps, each with its own session on the stand-in: OpenLamina
@@ -1529,6 +1602,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "events", EventsCase },
 		{ "input-frames", InputFramesCase },
 		{ "eye-gaze", EyeGazeCase },
+		{ "eye-tracking", EyeTrackingInputCase },
 		{ "input-threads", InputThreadsCase },
 		{ "events-listen", EventsListenCase },
 		{ "events-commit", EventsCommitCase },

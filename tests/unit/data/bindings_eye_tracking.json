@@ -1,0 +1,11 @@
+{
+  "controller_type": "oculus_touch",
+  "bindings": {
+    "/actions/main": {
+      "sources": [
+        { "path": "/user/hand/right/input/trigger", "mode": "trigger", "inputs": { "pull": { "output": "/actions/main/in/trigger" } } },
+        { "path": "/user/hand/right/input/grip", "mode": "button", "inputs": { "click": { "output": "/actions/main/in/eyes" } } }
+      ]
+    }
+  }
+}

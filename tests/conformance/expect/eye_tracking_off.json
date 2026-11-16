@@ -1,0 +1,106 @@
+{
+ "#": "IVRInput's eye tracking action as in eye_tracking.json with eyeTracking=off (ini/eye_tracking_off.ini): no gaze, so as SteamVR answers an action with no eye tracker behind it, inactive at the head (None); the errors as with a gaze.",
+ "eye-tracking/for next frame, standing, gaze tracked/-/-": {
+  "active": false,
+  "error": 0,
+  "origin": [
+   0.0,
+   1.7,
+   0.0
+  ],
+  "target": [
+   0.0,
+   1.7,
+   0.0
+  ],
+  "tracked": false,
+  "valid": false
+ },
+ "eye-tracking/relative to now, seated, gaze tracked/-/-": {
+  "active": false,
+  "error": 0,
+  "origin": [
+   0.0,
+   1.7,
+   0.0
+  ],
+  "target": [
+   0.0,
+   1.7,
+   0.0
+  ],
+  "tracked": false,
+  "valid": false
+ },
+ "eye-tracking/errors/-/-": {
+  "digital read": 2,
+  "invalid handle": 3,
+  "null data": 0,
+  "wrong size": 4,
+  "wrong type": 0
+ },
+ "eye-tracking/for next frame, standing, gaze not tracked/-/-": {
+  "active": false,
+  "error": 0,
+  "origin": [
+   0.0,
+   1.7,
+   0.0
+  ],
+  "target": [
+   0.0,
+   1.7,
+   0.0
+  ],
+  "tracked": false,
+  "valid": false
+ },
+ "eye-tracking/relative to now, seated, gaze not tracked/-/-": {
+  "active": false,
+  "error": 0,
+  "origin": [
+   0.0,
+   1.7,
+   0.0
+  ],
+  "target": [
+   0.0,
+   1.7,
+   0.0
+  ],
+  "tracked": false,
+  "valid": false
+ },
+ "eye-tracking/for next frame, standing, gaze invalid/-/-": {
+  "active": false,
+  "error": 0,
+  "origin": [
+   0.0,
+   1.7,
+   0.0
+  ],
+  "target": [
+   0.0,
+   1.7,
+   0.0
+  ],
+  "tracked": false,
+  "valid": false
+ },
+ "eye-tracking/relative to now, seated, gaze invalid/-/-": {
+  "active": false,
+  "error": 0,
+  "origin": [
+   0.0,
+   1.7,
+   0.0
+  ],
+  "target": [
+   0.0,
+   1.7,
+   0.0
+  ],
+  "tracked": false,
+  "valid": false
+ }
+}
