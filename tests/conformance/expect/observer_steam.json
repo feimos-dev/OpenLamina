@@ -1,0 +1,7 @@
+{
+ "#": "Run as steam.exe (a copy of oc_conformance.exe) against the stand-in runtime (run.py --cases observer --xr-runtime <oc_test_runtime.json>): the Steam client only watches the VR system, so its background connection is refused and its headset check is answered without the OpenXR runtime being loaded.",
+ "observer/program/-/-": { "program": "steam.exe" },
+ "observer/Init(Background)/-/-": { "init_error": 121 },
+ "observer/BIsHmdPresent/-/-": { "ret": true },
+ "observer/OpenXR runtime/-/-": { "runtime_started": false }
+}

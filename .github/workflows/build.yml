@@ -103,6 +103,14 @@ jobs:
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases applications --expect tests/conformance/expect/applications.json --out conformance/applications
           if ($LASTEXITCODE) { $failed++ }
+          # The Steam client (a copy named steam.exe) never starts the OpenXR runtime; any other program's headset check starts it
+          New-Item -ItemType Directory -Force -Path build/observer | Out-Null
+          Copy-Item build/tests/oc_conformance.exe build/observer/steam.exe
+          $standIn = (Resolve-Path build/tests/runtime/oc_test_runtime.json).Path
+          python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/observer/steam.exe --xr-runtime $standIn --ci --cases observer --expect tests/conformance/expect/observer_steam.json --out conformance/observer-steam
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime $standIn --ci --cases observer --expect tests/conformance/expect/observer_game.json --out conformance/observer-game
+          if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases chaperone,chaperone-read --jobs 1 --script tests/conformance/scripts/stage_2x3.json --expect tests/conformance/expect/chaperone.json --out conformance/chaperone
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases events --script tests/conformance/scripts/legacy_click.json --expect tests/conformance/expect/events.json --out conformance/events

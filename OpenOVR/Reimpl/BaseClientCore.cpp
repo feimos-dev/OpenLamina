@@ -10,6 +10,7 @@
 #include "json/json.h"
 
 #include "Misc/JsonFile.h"
+#include "Misc/SteamClient.h"
 
 #ifdef _WIN32
 #include <ShlObj.h>
@@ -109,6 +110,13 @@ bool BaseClientCore::CheckAppEnabled()
 
 	// Finally, default to using OpenComposite
 	if (selected == Runtime::Default) {
+		selected = Runtime::OpenComposite;
+	}
+
+	// The Steam client is never sent to SteamVR: sending a program there sets VR_OVERRIDE in its environment, and
+	// every game the Steam client starts inherits that and loads SteamVR's client instead of OpenLamina
+	if (selected == Runtime::SteamVR && oc_is_steam_client_program()) {
+		OOVR_LOG_ONCE("Not sending the Steam client to SteamVR: the programs it starts would follow it");
 		selected = Runtime::OpenComposite;
 	}
 

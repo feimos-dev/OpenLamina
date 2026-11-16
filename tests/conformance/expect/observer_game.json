@@ -1,0 +1,7 @@
+{
+ "#": "The same case run as oc_conformance.exe, a program that isn't the Steam client: its headset check starts the OpenXR runtime, as a game's does before its Init.",
+ "observer/program/-/-": { "program": "oc_conformance.exe" },
+ "observer/Init(Background)/-/-": { "init_error": 121 },
+ "observer/BIsHmdPresent/-/-": { "ret": true },
+ "observer/OpenXR runtime/-/-": { "runtime_started": true }
+}
