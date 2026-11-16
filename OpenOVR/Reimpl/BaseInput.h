@@ -449,9 +449,11 @@ public: // INTERNAL FUNCTIONS
 	/**
 	 * The eye gaze (XR_EXT_eye_gaze_interaction) located in a space at a time: false without a gaze (no extension,
 	 * no eye tracker, actions not loaded yet) or while it isn't valid. Its -Z is the direction the eyes look in.
-	 * Call with the session locked (shared).
+	 * flags, if given, gets the location's flags. Call with the session locked (shared).
 	 */
-	bool GetEyeGaze(XrSpace base, XrTime time, XrPosef* gaze);
+	bool GetEyeGaze(XrSpace base, XrTime time, XrPosef* gaze, XrSpaceLocationFlags* flags = nullptr);
+	// Whether there is an eye gaze to ask GetEyeGaze for, valid or not
+	bool HasEyeGaze();
 
 	/**
 	 * Get a number that increments each time xrSyncActions is called. Can be used to check if a cached input value
@@ -476,6 +478,7 @@ private:
 		Vibration,
 		Pose,
 		Skeleton,
+		EyeTracking,
 	};
 
 	enum class ActionSetUsage {

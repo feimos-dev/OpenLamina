@@ -257,7 +257,7 @@ The available options are:
 * `haptics` - boolean, default `enabled`. 
 	* Should haptic feedback to the controllers be enabled.
 * `eyeTracking` - boolean, default `enabled`.
-	* Give games the eye gaze (OpenXR's `XR_EXT_eye_gaze_interaction`, where the runtime and headset have it), for games with eye-tracked foveated rendering. Disable it to not ask the runtime for the gaze; such games then use their fixed foveation.
+	* Give games the eye gaze (OpenXR's `XR_EXT_eye_gaze_interaction`, where the runtime and headset have it), for games with eye-tracked foveated rendering, through IVRSystem's foveation calls and IVRInput's eye tracking actions. It only does anything on a headset with an eye tracker. Disable it to not ask the runtime for the gaze; such games then use their fixed foveation.
 * `admitUnknownProps` - boolean, default `disabled`. 
 	* If asked for a tracked device property it does not understand, should OpenLamina ignore it.
 * `logGetTrackedProperty` - boolean, default `disabled`. 
