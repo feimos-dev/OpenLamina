@@ -1,7 +1,13 @@
-# OpenLamina
+<p align="center">
+  <img src="art/icon/icon.png" width="128" height="128" alt="OpenLamina's icon: a pane of glass, notched at one corner, over a blue sheet">
+</p>
 
-[![Build](https://img.shields.io/github/actions/workflow/status/fzeruhn/OpenLamina/build.yml?branch=main&style=for-the-badge&logo=github&label=build)](https://github.com/fzeruhn/OpenLamina/actions/workflows/build.yml)
-[![Release](https://img.shields.io/github/v/release/fzeruhn/OpenLamina?include_prereleases&style=for-the-badge&label=release)](https://github.com/fzeruhn/OpenLamina/releases)
+<h1 align="center">OpenLamina</h1>
+
+<p align="center">
+  <a href="https://github.com/fzeruhn/OpenLamina/actions/workflows/build.yml"><img src="https://img.shields.io/github/actions/workflow/status/fzeruhn/OpenLamina/build.yml?branch=main&style=for-the-badge&logo=github&label=build" alt="Build"></a>
+  <a href="https://github.com/fzeruhn/OpenLamina/releases"><img src="https://img.shields.io/github/v/release/fzeruhn/OpenLamina?include_prereleases&style=for-the-badge&label=release" alt="Release"></a>
+</p>
 
 Play SteamVR (OpenVR) games on any OpenXR runtime, without SteamVR.
 

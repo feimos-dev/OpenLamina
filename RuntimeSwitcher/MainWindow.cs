@@ -23,7 +23,6 @@ namespace RuntimeSwitcher
         private readonly Button _useSteamVR = NewButton("Use SteamVR");
         private readonly Button _perApp = NewButton("Per-app settings…");
         private readonly Label _openXR = Wrapping();
-        private readonly Label _mirador = Wrapping(gray: true);
         private readonly Label _version = Wrapping();
         private readonly Label _updateStatus = Wrapping();
         private readonly Button _update = NewButton("Update");
@@ -67,9 +66,8 @@ namespace RuntimeSwitcher
             root.Controls.Add(_statusDetail);
             root.Controls.Add(Row(_useOpenComposite, _useSteamVR, _perApp));
             root.Controls.Add(Wrapping(gray: true,
-                text: "Starting SteamVR from Steam also switches OpenVR games back to SteamVR."));
+                text: "Starting SteamVR from Steam switches OpenVR games back to SteamVR."));
             root.Controls.Add(_openXR);
-            root.Controls.Add(_mirador);
             root.Controls.Add(new Label
             {
                 BorderStyle = BorderStyle.Fixed3D, AutoSize = false, Height = 2, Width = TextWidth,
@@ -145,7 +143,6 @@ namespace RuntimeSwitcher
                 _status.Text = "Unknown";
                 _statusDetail.Text = $"{OpenVRPaths.DefaultFile} can't be read: {e.Message}";
                 _useOpenComposite.Enabled = _useSteamVR.Enabled = false;
-                _mirador.Visible = Install.MiradorInstalled;
                 return;
             }
 
@@ -158,8 +155,9 @@ namespace RuntimeSwitcher
                     _statusDetail.Text = $"This copy, in {Install.Folder}.";
                     break;
                 case RuntimeKind.Mirador:
-                    _status.Text = "OpenLamina (Mirador's copy)";
-                    _statusDetail.Text = $"Mirador's copy, in {first}. \"Use OpenLamina\" switches to this one.";
+                    _status.Text = "OpenLamina";
+                    _statusDetail.Text =
+                        $"Another copy, in {first}. \"Use OpenLamina\" switches to the one in {Install.Folder}.";
                     break;
                 case RuntimeKind.SteamVR:
                     _status.Text = "SteamVR";
@@ -190,17 +188,13 @@ namespace RuntimeSwitcher
             bool steamVR = Switcher.HasSteamVR(paths);
             _useSteamVR.Text = steamVR ? "Use SteamVR" : "Stop using OpenLamina";
             _useSteamVR.Enabled = steamVR ? current != RuntimeKind.SteamVR || oursListed : oursListed;
-
-            _mirador.Visible = Install.MiradorInstalled || Switcher.Lists(paths, Install.MiradorCopy);
-            _mirador.Text = "Mirador is installed: it has its own copy of OpenLamina for Monado, which its \"Set " +
-                            "OpenLamina\" button puts first. Either copy works; OpenVR games use the one shown above.";
         }
 
         private void ShowOpenXR()
         {
             string runtime = Install.OpenXRRuntime();
             _openXR.Text = runtime != null
-                ? $"OpenXR runtime: {runtime}. OpenLamina runs games on it."
+                ? $"OpenXR runtime: {runtime}"
                 : "No OpenXR runtime is set. OpenLamina needs one: make your headset's runtime the active OpenXR " +
                   "runtime (in its own app).";
             _openXR.ForeColor = runtime != null ? SystemColors.ControlText : Color.Firebrick;
@@ -372,17 +366,13 @@ namespace RuntimeSwitcher
 
     internal static class AppIcon
     {
-        /// <summary>The EXE's own icon (icon.ico, built in), for the windows' title bars.</summary>
-        public static Icon Get()
+        private static readonly Lazy<Icon> Cached = new Lazy<Icon>(() =>
         {
-            try
-            {
-                return Icon.ExtractAssociatedIcon(Application.ExecutablePath);
-            }
-            catch (ArgumentException)
-            {
-                return null;
-            }
-        }
+            using (Stream icon = typeof(AppIcon).Assembly.GetManifestResourceStream("OpenLamina.icon.ico"))
+                return new Icon(icon);
+        });
+
+        /// <summary>The app's icon, from the embedded icon.ico so a title bar gets a frame of its own size.</summary>
+        public static Icon Get() => Cached.Value;
     }
 }

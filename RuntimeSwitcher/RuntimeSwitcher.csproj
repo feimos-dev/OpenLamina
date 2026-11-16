@@ -39,6 +39,11 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- icon.ico (drawn by art/icon/make_icon.py) is embedded a second time for AppIcon; ApplicationIcon only sets the exe's. -->
+    <EmbeddedResource Include="icon.ico" LogicalName="OpenLamina.icon.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
     <PackageReference Include="Microsoft.NETFramework.ReferenceAssemblies" Version="1.0.3" PrivateAssets="all" />
     <PackageReference Include="Newtonsoft.Json" Version="13.0.4" />
     <Reference Include="System.Net.Http" />
