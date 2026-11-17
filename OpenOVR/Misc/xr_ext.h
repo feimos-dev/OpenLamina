@@ -67,6 +67,7 @@ public:
 
 	bool G2Controller_Available() { return supportsG2Controller; }
 	bool CylinderKHR_Available() { return supportsCylinderKHR; }
+	bool EyeGaze_Available() { return supportsEyeGaze; }
 	bool xrGetVisibilityMaskKHR_Available() { return pfnXrGetVisibilityMaskKHR != nullptr; }
 	bool xrMndxXdevSpace_Available()
 	{
@@ -245,6 +246,7 @@ private:
 
 	bool supportsG2Controller = false;
 	bool supportsCylinderKHR = false;
+	bool supportsEyeGaze = false;
 
 #if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
 	PFN_xrGetD3D11GraphicsRequirementsKHR pfnXrGetD3D11GraphicsRequirementsKHR = nullptr;

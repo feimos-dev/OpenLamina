@@ -1,0 +1,9 @@
+{
+  "#": "XR_EXT_eye_gaze_interaction's gaze 10 degrees right and 5 up; from frame 40 of the session valid but not tracked, from frame 60 not valid",
+  "extensions": ["XR_KHR_D3D11_enable", "XR_EXT_eye_gaze_interaction"],
+  "gaze": [
+    { "frame": 0, "yaw_deg": 10, "pitch_deg": 5 },
+    { "frame": 40, "yaw_deg": 10, "pitch_deg": 5, "tracked": false },
+    { "frame": 60, "valid": false }
+  ]
+}

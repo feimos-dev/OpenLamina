@@ -1,0 +1,108 @@
+{
+ "#": "As eye_gaze.json with --ini ini/eye_tracking_off.ini (eyeTracking=off), or without XR_EXT_eye_gaze_interaction (the stand-in's default script): never a gaze, false and zeroes throughout.",
+ "eye-gaze/both eyes, gaze tracked/-/-": {
+  "left": [
+   0.0,
+   0.0
+  ],
+  "ret": false,
+  "right": [
+   0.0,
+   0.0
+  ]
+ },
+ "eye-gaze/for projection, gaze tracked/-/-": {
+  "flipped": {
+   "ndc": [
+    0.0,
+    0.0
+   ],
+   "ret": false
+  },
+  "left": {
+   "ndc": [
+    0.0,
+    0.0
+   ],
+   "ret": false
+  },
+  "narrow": {
+   "ndc": [
+    0.0,
+    0.0
+   ],
+   "ret": false
+  },
+  "null matrix": false
+ },
+ "eye-gaze/both eyes, gaze not tracked/-/-": {
+  "left": [
+   0.0,
+   0.0
+  ],
+  "ret": false,
+  "right": [
+   0.0,
+   0.0
+  ]
+ },
+ "eye-gaze/for projection, gaze not tracked/-/-": {
+  "flipped": {
+   "ndc": [
+    0.0,
+    0.0
+   ],
+   "ret": false
+  },
+  "left": {
+   "ndc": [
+    0.0,
+    0.0
+   ],
+   "ret": false
+  },
+  "narrow": {
+   "ndc": [
+    0.0,
+    0.0
+   ],
+   "ret": false
+  },
+  "null matrix": false
+ },
+ "eye-gaze/both eyes, gaze invalid/-/-": {
+  "left": [
+   0.0,
+   0.0
+  ],
+  "ret": false,
+  "right": [
+   0.0,
+   0.0
+  ]
+ },
+ "eye-gaze/for projection, gaze invalid/-/-": {
+  "flipped": {
+   "ndc": [
+    0.0,
+    0.0
+   ],
+   "ret": false
+  },
+  "left": {
+   "ndc": [
+    0.0,
+    0.0
+   ],
+   "ret": false
+  },
+  "narrow": {
+   "ndc": [
+    0.0,
+    0.0
+   ],
+   "ret": false
+  },
+  "null matrix": false
+ }
+}

@@ -1,0 +1,11 @@
+{
+  "#": "As eye_gaze.json, looking level, on a headset whose views are each turned 10 degrees outwards and see 40 degrees towards the nose (45 the other ways)",
+  "extensions": ["XR_KHR_D3D11_enable", "XR_EXT_eye_gaze_interaction"],
+  "cant_deg": 10,
+  "fov_inner_deg": 40,
+  "gaze": [
+    { "frame": 0, "yaw_deg": 10, "pitch_deg": 0 },
+    { "frame": 40, "yaw_deg": 10, "pitch_deg": 0, "tracked": false },
+    { "frame": 60, "valid": false }
+  ]
+}

@@ -97,6 +97,7 @@ struct RtSpace {
 	XrPosef offset = kIdentity;
 	bool isAction = false;
 	XrPosef actionPose = kIdentity; // pose in STAGE for action spaces
+	RtAction* action = nullptr; // for action spaces: a gaze space follows the script's gaze (RtGazeSpace)
 };
 
 struct RtSwapchain {
@@ -159,6 +160,9 @@ const std::vector<int64_t>& RtD3D11Formats();
 
 // actions.cpp
 PFN_xrVoidFunction RtActionsLookup(const char* name);
+// An action space of an action bound to XR_EXT_eye_gaze_interaction's gaze pose (the extension enabled): its pose in
+// STAGE now and its location flags (none while the script's gaze is invalid)
+bool RtGazeSpace(const RtSpace* sp, XrPosef* poseInStage, XrSpaceLocationFlags* flags);
 void RtActionsOnFrame(RtSession* s); // per xrWaitFrame (presence events)
 void RtActionsReset();
 void RtActionsDump(Json::Value& root);

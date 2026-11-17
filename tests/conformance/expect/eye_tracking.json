@@ -1,0 +1,106 @@
+{
+ "#": "IVRInput's eye tracking action on the stand-in with scripts/eye_gaze.json (run.py --cases eye-tracking --script scripts/eye_gaze.json --manifest manifest_eye_tracking.json), a gaze 10 degrees right and 5 up from a head 1.7 m up, answered as SteamVR does (measured with a SteamVR driver giving a fixed gaze): active, the origin the head and the target 100 m along the gaze while it is valid, tracked or not; once it isn't, active but not valid, at the head. Errors: None for null data and for an action of another type (inactive, at the head), InvalidParam (4) for a wrong size, InvalidHandle (3), and WrongType (2) for a digital read.",
+ "eye-tracking/for next frame, standing, gaze tracked/-/-": {
+  "active": true,
+  "error": 0,
+  "origin": [
+   0.0,
+   1.7,
+   0.0
+  ],
+  "target": [
+   17.2987,
+   10.4156,
+   -98.106
+  ],
+  "tracked": true,
+  "valid": true
+ },
+ "eye-tracking/relative to now, seated, gaze tracked/-/-": {
+  "active": true,
+  "error": 0,
+  "origin": [
+   0.0,
+   1.7,
+   0.0
+  ],
+  "target": [
+   17.2987,
+   10.4156,
+   -98.106
+  ],
+  "tracked": true,
+  "valid": true
+ },
+ "eye-tracking/errors/-/-": {
+  "digital read": 2,
+  "invalid handle": 3,
+  "null data": 0,
+  "wrong size": 4,
+  "wrong type": 0
+ },
+ "eye-tracking/for next frame, standing, gaze not tracked/-/-": {
+  "active": true,
+  "error": 0,
+  "origin": [
+   0.0,
+   1.7,
+   0.0
+  ],
+  "target": [
+   17.2987,
+   10.4156,
+   -98.106
+  ],
+  "tracked": false,
+  "valid": true
+ },
+ "eye-tracking/relative to now, seated, gaze not tracked/-/-": {
+  "active": true,
+  "error": 0,
+  "origin": [
+   0.0,
+   1.7,
+   0.0
+  ],
+  "target": [
+   17.2987,
+   10.4156,
+   -98.106
+  ],
+  "tracked": false,
+  "valid": true
+ },
+ "eye-tracking/for next frame, standing, gaze invalid/-/-": {
+  "active": true,
+  "error": 0,
+  "origin": [
+   0.0,
+   1.7,
+   0.0
+  ],
+  "target": [
+   0.0,
+   1.7,
+   0.0
+  ],
+  "tracked": false,
+  "valid": false
+ },
+ "eye-tracking/relative to now, seated, gaze invalid/-/-": {
+  "active": true,
+  "error": 0,
+  "origin": [
+   0.0,
+   1.7,
+   0.0
+  ],
+  "target": [
+   0.0,
+   1.7,
+   0.0
+  ],
+  "tracked": false,
+  "valid": false
+ }
+}

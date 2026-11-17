@@ -12,6 +12,7 @@
 #include "Drivers/Backend.h"
 #include "Misc/Config.h"
 #include "Misc/EnumNames.h"
+#include "Misc/Foveation.h"
 #include "convert.h"
 #include "generated/static_bases.gen.h"
 
@@ -1003,14 +1004,83 @@ bool BaseSystem::PollNextEventWithPoseAndOverlays(ETrackingUniverseOrigin eOrigi
 	return PollNextEventWithPose(eOrigin, pEvent, uncbVREvent, pTrackedDevicePose);
 }
 
+// The eye gaze in the head's frame for the frame being rendered (its -Z the direction looked in): false without one.
+// Call with the session locked (shared).
+static bool GazeInHead(glm::quat* gazeInHead)
+{
+	BaseInput* input = GetUnsafeBaseInput();
+	XrPosef gaze;
+	if (!input || !xr_gbl || !input->GetEyeGaze(xr_gbl->viewSpace, xr_gbl->GetBestTime(), &gaze)) {
+		OOVR_LOG_ONCE("Eye-tracked foveation: no eye gaze (eyeTracking off, no eye tracker, no valid gaze yet, or the game's input isn't loaded yet), the game keeps its own foveation centre");
+		return false;
+	}
+	OOVR_LOG_ONCE("Eye-tracked foveation: the game gets the eye gaze");
+	*gazeInHead = X2G_quat(gaze.orientation);
+	return true;
+}
+
+// An eye's orientation in the head's frame, which a headset with canted displays turns outwards. Call with the
+// session locked (shared).
+static glm::quat EyeInHead(EVREye eye)
+{
+	if (!xr_gbl)
+		return glm::identity<glm::quat>();
+	XruCachedViews cached = xr_gbl->GetCachedViews(xr_gbl->viewSpace);
+	if (cached.viewCount != XruEyeCount || !(cached.viewState.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT))
+		return glm::identity<glm::quat>();
+	return X2G_quat(cached.views[eye].pose.orientation);
+}
+
 bool BaseSystem::GetEyeTrackedFoveationCenter(HmdVector2_t* pNdcLeft, HmdVector2_t* pNdcRight)
 {
-	return false;
+	// Zeroes and false without a gaze
+	if (pNdcLeft)
+		*pNdcLeft = {};
+	if (pNdcRight)
+		*pNdcRight = {};
+	if (!pNdcLeft || !pNdcRight)
+		return false;
+
+	auto lock = xr_session.lock_shared();
+	glm::quat gaze;
+	if (!GazeInHead(&gaze))
+		return false;
+
+	// Through each eye's own projection, as GetProjectionMatrix gives it (the depth range doesn't matter)
+	std::optional<HmdVector2_t> centres[2];
+	for (EVREye eye : { Eye_Left, Eye_Right }) {
+		glm::vec3 direction = Foveation::GazeInEye(gaze, EyeInHead(eye));
+		centres[eye] = Foveation::CenterForProjection(direction, GetProjectionMatrix(eye, 0.1f, 100.0f));
+	}
+	if (!centres[Eye_Left] || !centres[Eye_Right])
+		return false;
+	*pNdcLeft = *centres[Eye_Left];
+	*pNdcRight = *centres[Eye_Right];
+	return true;
 }
 
 bool BaseSystem::GetEyeTrackedFoveationCenterForProjection(const HmdMatrix44_t* pProjMat, HmdVector2_t* pNdc)
 {
-	return false;
+	if (pNdc)
+		*pNdc = {};
+	if (!pProjMat || !pNdc)
+		return false;
+
+	auto lock = xr_session.lock_shared();
+	glm::quat gaze;
+	if (!GazeInHead(&gaze))
+		return false;
+
+	// The matrix doesn't say which eye it is for; that matters only where the eyes are turned. The eye whose
+	// projection it is nearer to, else the head.
+	int eye = Foveation::EyeOfProjection(*pProjMat, GetProjectionMatrix(Eye_Left, 0.1f, 100.0f), GetProjectionMatrix(Eye_Right, 0.1f, 100.0f));
+	glm::quat eyeInHead = eye < 0 ? glm::identity<glm::quat>() : EyeInHead((EVREye)eye);
+
+	std::optional<HmdVector2_t> centre = Foveation::CenterForProjection(Foveation::GazeInEye(gaze, eyeInHead), *pProjMat);
+	if (!centre)
+		return false;
+	*pNdc = *centre;
+	return true;
 }
 
 EVRInitError BaseSystem::SetSDKVersion(uint32_t nVersionMajor, uint32_t nVersionMinor, uint32_t nVersionBuild)

@@ -92,7 +92,12 @@ XrBackend::~XrBackend()
 {
 	// The whole teardown under the session lock, as every other change to the session is. VR_Shutdown waits for it
 	// as long as it takes; process exit without VR_Shutdown waits at most a second (see lock_for_teardown).
-	auto lock = BackendManager::IsResetting() ? xr_session.lock() : xr_session.lock_for_teardown(std::chrono::seconds(1));
+	// Not a conditional expression: MSVC 19.44 wants a copy constructor for one, which SessionLock lacks
+	auto lock = [] {
+		if (BackendManager::IsResetting())
+			return xr_session.lock();
+		return xr_session.lock_for_teardown(std::chrono::seconds(1));
+	}();
 
 	// First clear out the compositors, since they might try and access the OpenXR instance
 	// in their destructor.

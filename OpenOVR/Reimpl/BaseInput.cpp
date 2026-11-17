@@ -409,12 +409,14 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 			return vr::VRInputError_None;
 
 		OOVR_LOG("Received another manifest! Restarting session to reattach inputs...");
+		std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
 		for (std::unique_ptr<ActionSet>& as : actionSets.GetItems()) {
 			OC_XR_LOG(xrDestroyActionSet(as->xr));
 		}
 		OC_XR_LOG(xrDestroyActionSet(legacyInputsSet));
 		legacyInputsSet = XR_NULL_HANDLE;
-		std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
+		eyeGazeAction = XR_NULL_HANDLE;
+		eyeGazeSpace = XR_NULL_HANDLE;
 		if (rawInputsSet != XR_NULL_HANDLE)
 			OC_XR_LOG(xrDestroyActionSet(rawInputsSet));
 		rawInputsSet = XR_NULL_HANDLE;
@@ -528,14 +530,9 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 			action.type = ActionType::Pose;
 		else if (type == "skeleton")
 			action.type = ActionType::Skeleton;
-		else if (type == "eyetracking") {
-			// OpenVR 2.15's eye tracking: there's no gaze to give (GetEyeTrackingData* report none), so leave the
-			// action out. GetActionHandle still answers it; reading it answers InvalidHandle with the data zeroed (inactive),
-			// and bindings to it are skipped, as for any action not in the manifest.
-			OOVR_LOGF("Skipping eye tracking action '%s'", action.fullName.c_str());
-			skippedActionSets.insert(action.setName);
-			continue;
-		} else {
+		else if (type == "eyetracking")
+			action.type = ActionType::EyeTracking;
+		else {
 			OOVR_LOGF("Warning: skipping action '%s' of unknown type '%s'", action.fullName.c_str(), type.c_str());
 			skippedActionSets.insert(action.setName);
 			continue;
@@ -690,6 +687,9 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 			continue;
 		case ActionType::Skeleton:
 			// Don't actually create an action for skeletons, since we'll get their data from the hand tracking extension.
+			continue;
+		case ActionType::EyeTracking:
+			// Nor for eye tracking: the data comes from the eye gaze action in the legacy set.
 			continue;
 		default:
 			OOVR_SOFT_ABORTF("Bad action type while remapping action %s: %d", act->fullName.c_str(), static_cast<int>(act->type));
@@ -876,6 +876,14 @@ void BaseInput::BindInputsForSession()
 		OC_XR_LOG(xrCreateActionSpace(xr_session.get(), &info, &lca.aimPoseSpace));
 	}
 
+	eyeGazeSpace = XR_NULL_HANDLE;
+	if (eyeGazeAction != XR_NULL_HANDLE) {
+		XrActionSpaceCreateInfo info = { XR_TYPE_ACTION_SPACE_CREATE_INFO };
+		info.poseInActionSpace = S2O_om34_pose(G2S_m34(glm::identity<glm::mat4>()));
+		info.action = eyeGazeAction;
+		OC_XR_LOG(xrCreateActionSpace(xr_session.get(), &info, &eyeGazeSpace));
+	}
+
 	// Note: even if actionSets is empty, we always still want to load the legacy set.
 
 	// Now attach the action sets to the OpenXR session, making them immutable (including attaching suggested bindings)
@@ -980,6 +988,9 @@ void BaseInput::LoadBindingsSet(const InteractionProfile& profile, const std::st
 					OOVR_LOGF("WARNING: Action '%s' (from binding file %s) does not exist in manifest, skipping", actionName.c_str(), bindingsPath.c_str());
 					continue;
 				}
+
+				if (action->type == ActionType::EyeTracking)
+					continue;
 
 				if (srcJson["mode"].asString() == "dpad") {
 					LoadDpadAction(profile, importBasePath, inputName, srcJson["parameters"]["sub_mode"].asString(), action, bindings, isKnuckles);
@@ -1442,6 +1453,26 @@ void BaseInput::CreateLegacyActions()
 
 		create(&ctrl.gripPoseAction, "grip-pose", "Grip Pose", XR_ACTION_TYPE_POSE_INPUT);
 		create(&ctrl.aimPoseAction, "aim-pose", "Aim Pose", XR_ACTION_TYPE_POSE_INPUT);
+	}
+
+	// The eye gaze, in the same always-active set; its profile is the eyes' own, so its binding is suggested here
+	eyeGazeAction = XR_NULL_HANDLE;
+	if (xr_ext->EyeGaze_Available() && xr_gbl && xr_gbl->eyeGazeProperties.supportsEyeGazeInteraction) {
+		XrActionCreateInfo info = { XR_TYPE_ACTION_CREATE_INFO };
+		info.actionType = XR_ACTION_TYPE_POSE_INPUT;
+		strcpy_arr(info.actionName, "eye-gaze");
+		strcpy_arr(info.localizedActionName, "Eye Gaze");
+		OC_XR_LOG(xrCreateAction(legacyInputsSet, &info, &eyeGazeAction));
+
+		XrPath profile = XR_NULL_PATH, pose = XR_NULL_PATH;
+		OC_XR_LOG(xrStringToPath(xr_instance, "/interaction_profiles/ext/eye_gaze_interaction", &profile));
+		OC_XR_LOG(xrStringToPath(xr_instance, "/user/eyes_ext/input/gaze_ext/pose", &pose));
+		XrActionSuggestedBinding binding = { eyeGazeAction, pose };
+		XrInteractionProfileSuggestedBinding suggested = { XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
+		suggested.interactionProfile = profile;
+		suggested.suggestedBindings = &binding;
+		suggested.countSuggestedBindings = 1;
+		OC_XR_LOG(xrSuggestInteractionProfileBindings(xr_instance, &suggested));
 	}
 }
 
@@ -2090,6 +2121,9 @@ EVRInputError BaseInput::GetDigitalActionData(VRActionHandle_t action, InputDigi
 	// A null or wrong-sized struct is an argument error, as SteamVR answers (VRInputError_InvalidParam)
 	if (!pActionData || unActionDataSize != sizeof(*pActionData))
 		return VRInputError_InvalidParam;
+
+	if (act->type == ActionType::EyeTracking)
+		return VRInputError_WrongType;
 
 	// inputEvaluator=steamvr: the evaluators' output, inactive if no active binding writes it
 	if (useEvaluator && rawInputsSet != XR_NULL_HANDLE) {
@@ -2969,6 +3003,9 @@ EVRInputError BaseInput::GetActionOrigins(VRActionSetHandle_t actionSetHandle, V
 		return VRInputError_InvalidHandle;
 	}
 
+	if (act->type == ActionType::EyeTracking)
+		return VRInputError_InvalidHandle;
+
 	if (act->type == ActionType::Skeleton || act->type == ActionType::Pose) {
 		// TODO what should this do?
 		OOVR_SOFT_ABORT("Skeleton and pose action origins not implemented, returning error");
@@ -3120,6 +3157,8 @@ EVRInputError BaseInput::GetActionBindingInfo(VRActionHandle_t actionHandle, OOV
 	// FIXME support any number of sources
 	// TODO does this support passing in unBindingInfoSize=0 and reading the required size? Check with SteamVR.
 	GET_ACTION_FROM_HANDLE(action, actionHandle);
+	if (action->type == ActionType::EyeTracking)
+		return VRInputError_None;
 
 	XrBoundSourcesForActionEnumerateInfo enumInfo = { XR_TYPE_BOUND_SOURCES_FOR_ACTION_ENUMERATE_INFO };
 	enumInfo.action = action->xr;
@@ -3534,6 +3573,31 @@ bool BaseInput::AreActionsLoaded()
 	return hasLoadedActions;
 }
 
+bool BaseInput::HasEyeGaze()
+{
+	std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
+	return hasLoadedActions && eyeGazeSpace != XR_NULL_HANDLE;
+}
+
+bool BaseInput::GetEyeGaze(XrSpace base, XrTime time, XrPosef* gaze, XrSpaceLocationFlags* flags)
+{
+	// A manifest being loaded replaces the space under this lock
+	std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
+	if (!hasLoadedActions || eyeGazeSpace == XR_NULL_HANDLE || base == XR_NULL_HANDLE)
+		return false;
+
+	XrSpaceLocation location = { XR_TYPE_SPACE_LOCATION };
+	if (XR_FAILED(xrLocateSpace(eyeGazeSpace, base, time, &location)))
+		return false;
+	// Not requiring tracked: a runtime holding the last gaze through a blink says valid only, and that beats a jump
+	if (!(location.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT))
+		return false;
+	*gaze = location.pose;
+	if (flags)
+		*flags = location.locationFlags;
+	return true;
+}
+
 ITrackedDevice::TrackedDeviceType BaseInput::ParseAndRemoveHandPrefix(std::string& toModify)
 {
 	static std::string leftPrefix = "/user/hand/left/";
@@ -3555,9 +3619,50 @@ ITrackedDevice::TrackedDeviceType BaseInput::ParseAndRemoveHandPrefix(std::strin
 EVRInputError BaseInput::GetEyeTrackingDataRelativeToNow(VRActionHandle_t action, ETrackingUniverseOrigin eOrigin,
     float fPredictedSecondsFromNow, VREyeTrackingData_t* pEyeTrackingData, uint32_t ulEyeTrackingDataSize)
 {
-	if (pEyeTrackingData)
-		memset(pEyeTrackingData, 0, ulEyeTrackingDataSize);
-	return VRInputError_NoData;
+	GET_ACTION_FROM_HANDLE(act, action);
+	if (ulEyeTrackingDataSize != sizeof(*pEyeTrackingData))
+		return VRInputError_InvalidParam;
+	if (!pEyeTrackingData)
+		return VRInputError_None;
+
+	// As SteamVR answers: in the space asked for; with no eye tracker behind the action (or for an action of
+	// another type) inactive, at the head; with one, active and as valid as the tracker's gaze. The time is
+	// ignored, as it is for pose actions.
+	*pEyeTrackingData = {};
+	auto lock = xr_session.lock_shared();
+	if (!xr_gbl)
+		return VRInputError_None;
+	XrSpace base = xr_space_from_tracking_origin(eOrigin);
+	XrTime time = xr_gbl->GetBestTime();
+	XrSpaceLocation head = { XR_TYPE_SPACE_LOCATION };
+	bool headValid = XR_SUCCEEDED(xrLocateSpace(xr_gbl->viewSpace, base, time, &head)) && (head.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT);
+	if (headValid)
+		pEyeTrackingData->vGazeOrigin = pEyeTrackingData->vGazeTarget = G2S_v3f(X2G_v3f(head.pose.position));
+	if (act->type != ActionType::EyeTracking || !HasEyeGaze())
+		return VRInputError_None;
+	pEyeTrackingData->bActive = true;
+
+	XrPosef gaze;
+	XrSpaceLocationFlags flags = 0;
+	if (!GetEyeGaze(base, time, &gaze, &flags))
+		return VRInputError_None;
+	// A runtime may give the direction without the eye's position: the head's is the nearest
+	if (!(flags & XR_SPACE_LOCATION_POSITION_VALID_BIT)) {
+		if (!headValid)
+			return VRInputError_None;
+		gaze.position = head.pose.position;
+	}
+
+	// OpenXR's gaze has no depth, so the fixation point is far along it: its parallax from the eyes' offset is
+	// negligible, and a game sees nothing near. Not infinite, which would turn a game's vector maths into NaNs.
+	constexpr float kFixationDistance = 100.0f;
+	glm::vec3 origin = X2G_v3f(gaze.position);
+	glm::vec3 target = origin + X2G_quat(gaze.orientation) * glm::vec3(0, 0, -kFixationDistance);
+	pEyeTrackingData->bValid = true;
+	pEyeTrackingData->bTracked = (flags & XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT) != 0;
+	pEyeTrackingData->vGazeOrigin = G2S_v3f(origin);
+	pEyeTrackingData->vGazeTarget = G2S_v3f(target);
+	return VRInputError_None;
 }
 
 EVRInputError BaseInput::GetEyeTrackingDataForNextFrame(VRActionHandle_t action, ETrackingUniverseOrigin eOrigin,

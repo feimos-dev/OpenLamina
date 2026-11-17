@@ -21,6 +21,7 @@
 #include "IVRCompositor_008.h"
 #include "IVRCompositor_029.h"
 #include "IVRInput_010.h"
+#include "IVRInput_011.h"
 #include "IVROverlay_001.h"
 #include "IVROverlay_006.h"
 #include "IVROverlay_007.h"
@@ -29,8 +30,10 @@
 #include "IVRSystem_007.h"
 #include "IVRSystem_009.h"
 #include "IVRSystem_022.h"
+#include "IVRSystem_026.h"
 
 #include <chrono>
+#include <cmath>
 #include <cstring>
 #include <filesystem>
 #include <fstream>
@@ -1301,6 +1304,159 @@ void InputFramesCase(CaseContext& c)
 	c.core->Cleanup();
 }
 
+// The eye-tracked foveation calls (expect/eye_gaze*.json), on the stand-in with scripts/eye_gaze*.json: the gaze 10
+// degrees right (and 5 up, unless canted), tracked until frame 40 of the session, valid but not tracked until frame
+// 60, then not valid. Loads --manifest and updates its actions each frame if given, else reads the legacy input. Asks
+// at frames 30, 55 and 75 (loading the manifest may restart the session, so a few frames later in its count): each
+// eye's centre, and the centre through the left eye's projection, a Y-flipped copy of it and a projection of the
+// game's own (a narrower one). Values are rounded to 4 places.
+void EyeGazeCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	vr::EVRInitError le;
+	auto* sys = (vr::IVRSystem_026::IVRSystem*)c.core->GetGenericInterface("IVRSystem_026", &le);
+	auto* in = (vr::IVRInput_010::IVRInput*)c.core->GetGenericInterface("IVRInput_010", &le);
+	if (!sys || !in) {
+		c.Record("no IVRSystem_026 or IVRInput_010", Err(le));
+		c.core->Cleanup();
+		return;
+	}
+	vr::VRActionSetHandle_t set = vr::k_ulInvalidActionSetHandle;
+	if (!c.manifest.empty()) {
+		in->SetActionManifestPath(c.manifest.c_str());
+		in->GetActionSetHandle("/actions/main", &set);
+	}
+	auto round4 = [](float v) { return std::round((double)v * 10000) / 10000; };
+	auto ndc = [&](const vr::HmdVector2_t& v) {
+		Json::Value a(Json::arrayValue);
+		a.append(round4(v.v[0]));
+		a.append(round4(v.v[1]));
+		return a;
+	};
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	for (int frame = 1; frame <= 75; frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+		if (!c.manifest.empty()) {
+			vr::IVRInput_010::VRActiveActionSet_t active{};
+			active.ulActionSet = set;
+			in->UpdateActionState(&active, sizeof(active), 1);
+		} else {
+			vr::VRControllerState_t state{};
+			sys->GetControllerState(1, &state, sizeof(state));
+		}
+		if (frame == 30 || frame == 55 || frame == 75) {
+			std::string when = frame == 30 ? "tracked" : frame == 55 ? "not tracked" : "invalid";
+			vr::HmdVector2_t left = { { 9, 9 } }, right = { { 9, 9 } };
+			Json::Value eyes;
+			eyes["ret"] = sys->GetEyeTrackedFoveationCenter(&left, &right);
+			eyes["left"] = ndc(left);
+			eyes["right"] = ndc(right);
+			c.Record("both eyes, gaze " + when, eyes);
+
+			vr::HmdMatrix44_t own = sys->GetProjectionMatrix(vr::Eye_Left, 0.1f, 100.0f);
+			vr::HmdMatrix44_t flipped = own;
+			for (float& v : flipped.m[1])
+				v = -v;
+			vr::HmdMatrix44_t narrow = own;
+			narrow.m[0][0] *= 2;
+			narrow.m[1][1] *= 2;
+			Json::Value projections;
+			struct Named {
+				const char* name;
+				const vr::HmdMatrix44_t* m;
+			};
+			for (Named p : { Named{ "left", &own }, Named{ "flipped", &flipped }, Named{ "narrow", &narrow } }) {
+				vr::HmdVector2_t centre = { { 9, 9 } };
+				Json::Value r;
+				r["ret"] = sys->GetEyeTrackedFoveationCenterForProjection(p.m, &centre);
+				r["ndc"] = ndc(centre);
+				projections[p.name] = r;
+			}
+			vr::HmdVector2_t unused = { { 9, 9 } };
+			projections["null matrix"] = sys->GetEyeTrackedFoveationCenterForProjection(nullptr, &unused);
+			c.Record("for projection, gaze " + when, projections);
+		}
+		f.comp->Submit(vr::Eye_Left, tex.get(), nullptr, vr::Submit_Default);
+		f.comp->Submit(vr::Eye_Right, tex.get(), nullptr, vr::Submit_Default);
+	}
+	c.core->Cleanup();
+}
+
+// IVRInput's eye tracking action (expect/eye_tracking.json), on the stand-in with scripts/eye_gaze.json and
+// --manifest manifest_eye_tracking.json: the gaze as the game sees it at frames 30 (tracked), 55 (not tracked) and
+// 75 (not valid), in the standing and seated spaces, and the argument errors at frame 30. Values are rounded to 4
+// places.
+void EyeTrackingInputCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	vr::EVRInitError le;
+	auto* in = (vr::IVRInput_011::IVRInput*)c.core->GetGenericInterface("IVRInput_011", &le);
+	if (!in || c.manifest.empty()) {
+		c.Record("no IVRInput_011 or manifest", Err(le));
+		c.core->Cleanup();
+		return;
+	}
+	in->SetActionManifestPath(c.manifest.c_str());
+	vr::VRActionSetHandle_t set = vr::k_ulInvalidActionSetHandle;
+	vr::VRActionHandle_t eyes = vr::k_ulInvalidActionHandle, trigger = vr::k_ulInvalidActionHandle;
+	in->GetActionSetHandle("/actions/main", &set);
+	in->GetActionHandle("/actions/main/in/eyes", &eyes);
+	in->GetActionHandle("/actions/main/in/trigger", &trigger);
+
+	auto round4 = [](float v) { return std::round((double)v * 10000) / 10000; };
+	auto vec3 = [&](const vr::HmdVector3_t& v) {
+		Json::Value a(Json::arrayValue);
+		for (float x : v.v)
+			a.append(round4(x));
+		return a;
+	};
+	auto read = [&](bool nextFrame, vr::ETrackingUniverseOrigin origin) {
+		vr::VREyeTrackingData_t data;
+		memset(&data, 0xff, sizeof(data));
+		Json::Value r;
+		r["error"] = (int)(nextFrame ? in->GetEyeTrackingDataForNextFrame(eyes, origin, &data, sizeof(data))
+		                             : in->GetEyeTrackingDataRelativeToNow(eyes, origin, -0.01f, &data, sizeof(data)));
+		r["active"] = data.bActive;
+		r["valid"] = data.bValid;
+		r["tracked"] = data.bTracked;
+		r["origin"] = vec3(data.vGazeOrigin);
+		r["target"] = vec3(data.vGazeTarget);
+		return r;
+	};
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	for (int frame = 1; frame <= 75; frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+		vr::IVRInput_011::VRActiveActionSet_t active{};
+		active.ulActionSet = set;
+		in->UpdateActionState(&active, sizeof(active), 1);
+		if (frame == 30 || frame == 55 || frame == 75) {
+			std::string when = frame == 30 ? "tracked" : frame == 55 ? "not tracked" : "invalid";
+			c.Record("for next frame, standing, gaze " + when, read(true, vr::TrackingUniverseStanding));
+			c.Record("relative to now, seated, gaze " + when, read(false, vr::TrackingUniverseSeated));
+		}
+		if (frame == 30) {
+			vr::VREyeTrackingData_t data;
+			Json::Value errors;
+			errors["null data"] = (int)in->GetEyeTrackingDataForNextFrame(eyes, vr::TrackingUniverseStanding, nullptr, sizeof(data));
+			errors["wrong size"] = (int)in->GetEyeTrackingDataForNextFrame(eyes, vr::TrackingUniverseStanding, &data, sizeof(data) - 1);
+			errors["invalid handle"] = (int)in->GetEyeTrackingDataForNextFrame(vr::k_ulInvalidActionHandle, vr::TrackingUniverseStanding, &data, sizeof(data));
+			errors["wrong type"] = (int)in->GetEyeTrackingDataForNextFrame(trigger, vr::TrackingUniverseStanding, &data, sizeof(data));
+			vr::IVRInput_011::InputDigitalActionData_t digital;
+			errors["digital read"] = (int)in->GetDigitalActionData(eyes, &digital, sizeof(digital), vr::k_ulInvalidInputValueHandle);
+			c.Record("errors", errors);
+		}
+		f.comp->Submit(vr::Eye_Left, tex.get(), nullptr, vr::Submit_Default);
+		f.comp->Submit(vr::Eye_Right, tex.get(), nullptr, vr::Submit_Default);
+	}
+	c.core->Cleanup();
+}
+
 // Events between programs (expect/events.json): run at the same time (run.py --jobs 2), "events-commit"
 // commits the room setup 1.5 s in, and "events-listen", polling for 5 s, gets its two events; the committing program
 // gets each once, not again back from the store. Scene apps, each with its own session on the stand-in: OpenLamina
@@ -1445,6 +1601,8 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "chaperone-read", ChaperoneReadCase },
 		{ "events", EventsCase },
 		{ "input-frames", InputFramesCase },
+		{ "eye-gaze", EyeGazeCase },
+		{ "eye-tracking", EyeTrackingInputCase },
 		{ "input-threads", InputThreadsCase },
 		{ "events-listen", EventsListenCase },
 		{ "events-commit", EventsCommitCase },

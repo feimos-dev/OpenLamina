@@ -1,0 +1,9 @@
+{
+  "#": "The gaze of eye_gaze.json, without a valid position",
+  "extensions": ["XR_KHR_D3D11_enable", "XR_EXT_eye_gaze_interaction"],
+  "gaze": [
+    { "frame": 0, "yaw_deg": 10, "pitch_deg": 5, "position_valid": false },
+    { "frame": 40, "yaw_deg": 10, "pitch_deg": 5, "position_valid": false, "tracked": false },
+    { "frame": 60, "valid": false }
+  ]
+}

@@ -1,5 +1,6 @@
 // The stand-in runtime's actions: sets, actions, suggested bindings, the current interaction profile (the script's,
-// once suggested), action states from the script's inputs, action spaces at fixed hand poses, and haptics.
+// once suggested), action states from the script's inputs, action spaces at fixed hand poses or at the script's gaze,
+// and haptics.
 
 #include "runtime_internal.h"
 
@@ -8,6 +9,9 @@
 #include <cstring>
 
 namespace {
+
+const char* const kEyeGazeProfile = "/interaction_profiles/ext/eye_gaze_interaction";
+const char* const kGazePose = "/user/eyes_ext/input/gaze_ext/pose";
 
 bool ValidPath(const std::string& p)
 {
@@ -192,9 +196,23 @@ XrResult XRAPI_CALL SyncActions(XrSession session, const XrActionsSyncInfo* info
 	return XR_SUCCESS;
 }
 
+// Bound to the gaze pose in the eye gaze profile, with XR_EXT_eye_gaze_interaction enabled (the eyes always have it)
+bool GazeAction(const RtAction* a)
+{
+	if (!a || !RtExtensionEnabled("XR_EXT_eye_gaze_interaction"))
+		return false;
+	auto it = St().suggested.find(RtPath(kEyeGazeProfile));
+	if (it == St().suggested.end())
+		return false;
+	for (auto& [action, path] : it->second)
+		if (action == a && RtPathString(path) == kGazePose)
+			return true;
+	return false;
+}
+
 bool ActionActive(RtSession* s, RtAction* a)
 {
-	return s->activeSets.count(a->set) && !BoundPaths(s, a, XR_NULL_PATH).empty();
+	return s->activeSets.count(a->set) && (!BoundPaths(s, a, XR_NULL_PATH).empty() || GazeAction(a));
 }
 
 XrResult XRAPI_CALL GetActionStateBoolean(XrSession session, const XrActionStateGetInfo* info, XrActionStateBoolean* state)
@@ -282,6 +300,7 @@ XrResult XRAPI_CALL CreateActionSpace(XrSession, const XrActionSpaceCreateInfo* 
 		return XR_ERROR_HANDLE_INVALID;
 	auto sp = std::make_unique<RtSpace>();
 	sp->isAction = true;
+	sp->action = it->second.get();
 	sp->offset = info->poseInActionSpace;
 	int hand = HandOf(RtPathString(info->subactionPath));
 	sp->actionPose = HandPose(hand < 0 ? 1 : hand);
@@ -331,6 +350,8 @@ XrResult XRAPI_CALL GetCurrentInteractionProfile(XrSession session, XrPath topLe
 	std::string top = RtPathString(topLevel);
 	bool hand = top == "/user/hand/left" || top == "/user/hand/right";
 	state->interactionProfile = hand ? s->currentProfile : XR_NULL_PATH;
+	if (top == "/user/eyes_ext" && RtExtensionEnabled("XR_EXT_eye_gaze_interaction") && St().suggested.count(RtPath(kEyeGazeProfile)))
+		state->interactionProfile = RtPath(kEyeGazeProfile);
 	return XR_SUCCESS;
 }
 
@@ -397,6 +418,33 @@ PFN_xrVoidFunction RtActionsLookup(const char* name)
 		if (!std::strcmp(e.name, name))
 			return e.fn;
 	return nullptr;
+}
+
+bool RtGazeSpace(const RtSpace* sp, XrPosef* poseInStage, XrSpaceLocationFlags* flags)
+{
+	std::lock_guard<std::recursive_mutex> g(St().lock);
+	if (!sp->isAction || !St().actions.count(sp->action) || !GazeAction(sp->action))
+		return false;
+	// The script's last entry from a frame up to the current one
+	ScriptGaze gaze;
+	uint64_t frame = St().session ? St().session->framesWaited : 0;
+	for (const ScriptGaze& e : GetScript().gaze)
+		if (e.frame <= frame)
+			gaze = e;
+	// From the head: yaw to the right is negative about +Y, pitch up positive about +X
+	const float toRad = 3.14159265f / 180.0f;
+	float yaw = -gaze.yawDeg * toRad, pitch = gaze.pitchDeg * toRad;
+	XrQuaternionf qYaw{ 0, std::sin(yaw / 2), 0, std::cos(yaw / 2) };
+	XrQuaternionf qPitch{ std::sin(pitch / 2), 0, 0, std::cos(pitch / 2) };
+	*poseInStage = Compose(kHead, { QMul(qYaw, qPitch), { 0, 0, 0 } });
+	if (!gaze.positionValid)
+		poseInStage->position = { 0, 0, 0 };
+	*flags = 0;
+	if (gaze.valid)
+		*flags |= XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | (gaze.positionValid ? XR_SPACE_LOCATION_POSITION_VALID_BIT : 0);
+	if (gaze.valid && gaze.tracked)
+		*flags |= XR_SPACE_LOCATION_ORIENTATION_TRACKED_BIT | XR_SPACE_LOCATION_POSITION_TRACKED_BIT;
+	return true;
 }
 
 void RtActionsOnFrame(RtSession* s)
