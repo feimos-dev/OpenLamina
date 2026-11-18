@@ -6,6 +6,7 @@
 #include "conformance.h"
 
 #include "gfx/GfxApi.h"
+#include "../PngWriter.h"
 
 #include "IVRCompositor_029.h"
 #include "IVROverlay_028.h"
@@ -15,6 +16,8 @@
 #endif
 
 #include <algorithm>
+#include <fstream>
+#include <filesystem>
 #include <cstdio>
 #include <thread>
 #include <map>
@@ -668,12 +671,82 @@ void Mirror(CaseContext& c)
 }
 #endif
 
+// Overlays from image files and the texture getters (D3D11, expect/gfx.json): a PNG of the pattern in a non-ASCII
+// folder shown on an overlay, a damaged file refused, and each overlay's texture and size answered
+void OverlayImages(CaseContext& c)
+{
+	Scene s(c);
+	if (!s.Start(GfxKind::D3D11, "images"))
+		return;
+	vr::EVRInitError le = vr::VRInitError_None;
+	auto* ov = (vr::IVROverlay_028::IVROverlay*)c.core->GetGenericInterface("IVROverlay_028", &le);
+	GfxTexture left = s.gfx->Pattern(256, 256, kDxgiRGBA8Srgb, 0);
+	GfxTexture right = s.gfx->Pattern(256, 256, kDxgiRGBA8Srgb, 1);
+	GfxTexture texture = s.gfx->Pattern(128, 64, kDxgiRGBA8Srgb, 0);
+	s.gfx->Flush();
+	if (!ov) {
+		c.Record("no overlay");
+		return;
+	}
+
+	// The PNG, written here: 64x64 of the pattern
+	std::vector<uint8_t> pattern = PatternBytes(64, 64);
+	std::vector<uint8_t> png = test_png::Encode(pattern.data(), 64, 64);
+	std::filesystem::path folder = std::filesystem::temp_directory_path() / std::filesystem::path(std::u8string(u8"oc_overlay_images_J\u00fcrgen"));
+	std::filesystem::create_directories(folder);
+	std::filesystem::path good = folder / "pattern.png", bad = folder / "damaged.png";
+	std::ofstream(good, std::ios::binary).write((const char*)png.data(), (std::streamsize)png.size());
+	std::ofstream(bad, std::ios::binary).write((const char*)png.data(), (std::streamsize)(png.size() / 2));
+
+	Json::Value r;
+	vr::VROverlayHandle_t file = vr::k_ulOverlayHandleInvalid, tex = vr::k_ulOverlayHandleInvalid;
+	ov->CreateOverlay("oc.test.file", "File", &file);
+	ov->CreateOverlay("oc.test.tex", "Texture", &tex);
+	auto utf8 = [](const std::filesystem::path& p) {
+		std::u8string u = p.u8string();
+		return std::string(u.begin(), u.end());
+	};
+	r["file"] = (int)ov->SetOverlayFromFile(file, utf8(good).c_str());
+	r["damaged"] = (int)ov->SetOverlayFromFile(tex, utf8(bad).c_str());
+	r["texture"] = (int)ov->SetOverlayTexture(tex, texture.Texture());
+	ov->ShowOverlay(file);
+
+	uint32_t w = 0, h = 0;
+	r["file_size_ret"] = (int)ov->GetOverlayTextureSize(file, &w, &h);
+	r["file_size"].append(w);
+	r["file_size"].append(h);
+	w = h = 0;
+	r["tex_size_ret"] = (int)ov->GetOverlayTextureSize(tex, &w, &h);
+	r["tex_size"].append(w);
+	r["tex_size"].append(h);
+	void* handle = nullptr;
+	vr::ETextureType type = vr::TextureType_Invalid;
+	vr::EColorSpace space = vr::ColorSpace_Auto;
+	vr::VRTextureBounds_t bounds{};
+	uint32_t format = 0;
+	r["file_texture"] = (int)ov->GetOverlayTexture(file, &handle, nullptr, &w, &h, &format, &type, &space, &bounds);
+	r["tex_texture"] = (int)ov->GetOverlayTexture(tex, &handle, nullptr, &w, &h, &format, &type, &space, &bounds);
+	r["tex_texture_is_its_own"] = handle == texture.tex.handle && type == vr::TextureType_DirectX;
+	r["release"] = (int)ov->ReleaseNativeOverlayHandle(tex, handle);
+
+	s.Frames(5, left, right, kFull, kFull, r);
+	r.removeMember("left");
+	r.removeMember("right");
+	r["dump_join"] = "last_layer:quad";
+	c.Record("images", r);
+	ov->DestroyOverlay(file);
+	ov->DestroyOverlay(tex);
+	std::error_code ec;
+	std::filesystem::remove_all(folder, ec);
+}
+
 } // namespace
 
 const std::map<std::string, CaseFn>& conformance::GfxCases()
 {
 	static const std::map<std::string, CaseFn> cases = {
 		{ "gfx-d3d11-basic", [](CaseContext& c) { Basic(c, GfxKind::D3D11, kDxgiRGBA8Srgb); } },
+		{ "overlay-images", OverlayImages },
 		{ "skybox-1", [](CaseContext& c) { Skybox(c, 1); } },
 		{ "skybox-2", [](CaseContext& c) { Skybox(c, 2); } },
 		{ "skybox-6", [](CaseContext& c) { Skybox(c, 6); } },
