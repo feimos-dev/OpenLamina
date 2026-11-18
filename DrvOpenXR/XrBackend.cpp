@@ -44,7 +44,9 @@
 #include "../OpenOVR/Misc/FrameStats.h"
 #include "../OpenOVR/Misc/MirrorWindow.h"
 #include "../OpenOVR/Misc/Process.h"
+#include "../OpenOVR/Misc/ProgramEvents.h"
 #include "../OpenOVR/Misc/SharedStore.h"
+#include "../OpenOVR/Reimpl/BaseSettings.h"
 #include "../OpenOVR/convert.h"
 #include "generated/static_bases.gen.h"
 
@@ -1144,6 +1146,7 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 	// The game's overlays for other programs to point at (with laserMouse), once its frame has ended
 	if (overlay)
 		overlay->_PublishOverlays();
+	NoticeRenderScale();
 
 	BaseSystem* sys = GetUnsafeBaseSystem();
 	if (sys) {
@@ -1994,6 +1997,30 @@ void XrBackend::StopOwnFrames(bool forGood)
 	// Goes with the interfaces, before them
 	if (forGood)
 		keptOverlay.reset();
+}
+
+void XrBackend::NoticeRenderScale()
+{
+	// Only when the settings changed: reading the generation is cheap, the scale isn't
+	SharedStore& store = SharedStore::Get();
+	const uint64_t generation = store.Generation(StoreDoc::Settings);
+	if (renderScaleRead && generation == settingsGeneration)
+		return;
+	settingsGeneration = generation;
+	renderScaleRead = true;
+	// Against what the game was told: the recommended size it asked for (nothing before it has asked), or the last event
+	const float scale = BaseSettings::RenderScale(store, oovr_global_configuration.SupersampleRatio());
+	const float answered = XrHMD::AnsweredRenderScale();
+	if (answered <= 0 || scale == answered) {
+		// Back at what the game has: a change away from it again is told again
+		notifiedRenderScale = 0;
+		return;
+	}
+	if (scale == notifiedRenderScale)
+		return;
+	notifiedRenderScale = scale;
+	OOVR_LOGF("The render scale is now %.3f: telling the game", scale);
+	OcPostEvent(vr::VREvent_SteamVRSectionSettingChanged, vr::k_unTrackedDeviceIndexInvalid, vr::VREvent_Data_t{}, false);
 }
 
 bool XrBackend::WantsOverlaysInstance()
