@@ -21,6 +21,7 @@
 #include <mutex>
 #include <set>
 
+#include "Misc/Config.h"
 #include "Misc/EnumNames.h"
 
 // Specific to OCOVR
@@ -127,6 +128,9 @@ VR_INTERFACE void* VR_CALLTYPE VR_GetGenericInterface(const char* interfaceVersi
 #ifndef _WIN32
 		valid_apptypes |= (1ull << VRApplication_Background); // Proton uses this
 #endif
+		// Overlay and background applications (VR_Init lets them in only where they get sessions of their own) have
+		// every interface, as SteamVR gives them
+		valid_apptypes |= (1ull << VRApplication_Overlay) | (1ull << VRApplication_Background);
 	}
 
 	EVRApplicationType apptype = utility_init && !running ? VRApplication_Utility : current_apptype;
@@ -301,7 +305,11 @@ VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(EVRInitError* peError, EVRApp
 		return 0;
 	}
 
-	if (eApplicationType != VRApplication_Scene)
+	// Overlay and background apps get sessions of their own where the OpenXR runtime has them (helperApps): the backend
+	// decides, and refuses them as below where it hasn't. Not beside a running game's session.
+	const bool helperApp = (eApplicationType == VRApplication_Overlay || eApplicationType == VRApplication_Background)
+	    && oovr_global_configuration.HelperApps() && !running;
+	if (eApplicationType != VRApplication_Scene && !helperApp)
 #ifndef _WIN32
 		if (eApplicationType != VRApplication_Background) // Proton uses this
 #endif
@@ -330,7 +338,7 @@ VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(EVRInitError* peError, EVRApp
 
 	// TODO seperate this from the rest of dllmain
 	EVRInitError backendError = VRInitError_None;
-	IBackend* backend = DrvOpenXR::CreateOpenXRBackend(pStartupInfo, &backendError);
+	IBackend* backend = DrvOpenXR::CreateOpenXRBackend(pStartupInfo, &backendError, eApplicationType);
 	if (!backend) {
 		if (peError)
 			*peError = backendError != VRInitError_None ? backendError : VRInitError_Init_Internal;

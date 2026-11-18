@@ -15,12 +15,13 @@ struct ID3D11Texture2D;
 
 class GfxInterop {
 public:
-	// WGL_NV_DX_interop2, with the game's OpenGL context current; nullptr (logged) if the GL driver lacks it
-	static std::unique_ptr<GfxInterop> ForGL();
+	// WGL_NV_DX_interop2, with the game's OpenGL context current; nullptr (logged) if the GL driver lacks it. On
+	// onDevice where given (a D3D11 device on the runtime's adapter), else on a device of its own.
+	static std::unique_ptr<GfxInterop> ForGL(ID3D11Device* onDevice = nullptr);
 #ifdef SUPPORT_VK
 	// VK_KHR_external_memory_win32 importing a D3D11 NT handle; nullptr (logged) if the game's device lacks it, or
 	// isn't on the runtime's adapter
-	static std::unique_ptr<GfxInterop> ForVulkan(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device, VkQueue queue);
+	static std::unique_ptr<GfxInterop> ForVulkan(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device, VkQueue queue, ID3D11Device* onDevice = nullptr);
 #endif
 
 	// The D3D11 texture holding this frame's copy of tex (the whole of its first layer, upright as shown, which the
@@ -36,8 +37,10 @@ public:
 	virtual ~GfxInterop();
 
 protected:
-	// Makes device, on the runtime's adapter (D3D11 requirements); false (logged) if it can't
+	// Makes device, on the runtime's adapter (D3D11 requirements), unless it was given; false (logged) if it can't
 	bool MakeDevice();
+	// Uses onDevice (referenced) in place of a device of its own
+	void UseDevice(ID3D11Device* onDevice);
 
 	ID3D11Device* device = nullptr;
 };

@@ -87,6 +87,10 @@ Upstream merge requests are linked as !*n* with their authors. Everything else w
 - With `keyboard`, the keyboard games show for typing text is back, on every graphics API, in a US or UK layout
   (`keyboardLayout`), typed on with the laser.
 - With `steamvrRenderModels`, controllers and trackers have SteamVR's own models, read from your SteamVR install.
+- Overlay applications (`VRApplication_Overlay`) and background applications (`VRApplication_Background`) run on
+  runtimes with overlay and headless sessions (`XR_EXTX_overlay`, `XR_MND_headless`, as Monado has): an overlay
+  application's overlays are shown over the game, and a background application reads poses and events. On Linux a
+  background application keeps the scene session it had before.
 
 **Stability and building**
 - The log opens before anything writes to it (upstream issue #479), and a log that can't be opened no longer crashes
@@ -295,6 +299,10 @@ The available options are:
 	* The controllers point at overlays that take mouse input (`VROverlayInputMethod_Mouse`) as a mouse: focus and mouse events, clicks with the trigger, a cursor where the laser meets the overlay, and laser haptics. Without it, such an overlay gets no events from the controllers. The keyboard and message boxes are pointed at with the lasers regardless (behind `keyboard` and `ownFrames`).
 * `steamvrRenderModels` - boolean, default `false`.
 	* Controller and tracker models from the user's SteamVR install, with their moving parts. Without it, OpenLamina's built-in hands and tracker.
+* `helperApps` - boolean, default `true`.
+	* Overlay and background applications get sessions of their own where the OpenXR runtime has overlay sessions (`XR_EXTX_overlay`) and headless sessions (`XR_MND_headless`). An overlay application's session is on a D3D11 device of OpenLamina's own, on the runtime's adapter, with frames OpenLamina runs for it; its textures are copied onto that device: Direct3D 11 and 12 textures through shared textures, OpenGL ones through `WGL_NV_DX_interop2` and Vulkan ones through `VK_KHR_external_memory_win32` (which the application's device must have enabled). Direct3D 10 textures, textures on another graphics adapter than the runtime's, and every texture on a runtime without D3D11 (Linux) are refused (`VROverlayError_InvalidTexture`, logged); images from memory (`SetOverlayRaw`, `SetOverlayFromFile`) are shown everywhere. A background application's session has no graphics; it reads poses at the time now where the runtime converts the system's clock (`XR_KHR_win32_convert_performance_counter_time`, `XR_KHR_convert_timespec_time`). On Linux a background application gets a scene session. Without those extensions, with this off, or when the runtime fails to start, `VR_Init` refuses them (130 `InvalidApplicationType`, 121 `NoServerForBackgroundApp`).
+* `overlayLayersPlacement` - whole number, default `1`.
+	* Where an overlay application's layers go among other programs' (`XrSessionCreateInfoOverlayEXTX::sessionLayersPlacement`): higher numbers are drawn over lower ones.
 * `logAllOpenVRCalls` - boolean, default `false`
 	* Log every OpenVR call a game makes. Similar to `logGetTrackedProperty`, this clutters logs and should not be enabled unless necessary.
 * `inputEvaluator` - `direct` or `steamvr`, default `direct`.

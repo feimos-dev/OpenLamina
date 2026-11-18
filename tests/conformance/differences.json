@@ -27,7 +27,7 @@
  {"interface": "IVRSettings_\\d+", "method": "Get(Bool|Int32|Float|String)", "field": "out", "reason": "the values are the PC's own steamvr.vrsettings"},
  {"interface": "IVRScreenshots_\\d+", "method": "GetScreenshotPropertyType|GetScreenshotPropertyFilename", "field": "out", "reason": "screenshot handles and file names are each runtime's own"},
  {"interface": "IVRNotifications_\\d+", "method": "CreateNotification", "field": "out", "reason": "notification ids are numbers each runtime picks"},
- {"interface": "IVR\\w+_\\d+", "method": "<lookup>", "field": "init_error", "reason": "OpenLamina refuses overlay, background, utility and other app types on Windows (not implemented yet), where SteamVR starts them"},
+ {"interface": "IVR\\w+_\\d+", "method": "<lookup>", "field": "init_error", "reason": "OpenLamina refuses overlay and background app types on Windows where the OpenXR runtime has no overlay or headless sessions (the stand-in by default), and utility and other app types always, where SteamVR starts them"},
  {"interface": "IVR\\w+_\\d+", "method": "<lookup>", "field": "lookup_error", "apptype": "0|2|3|4", "reason": "OpenLamina refuses these app types on Windows, so their lookups answer NotInitialized; scene apps (1) get every version"},
  {"interface": "IVRIPCResourceManagerClient_\\d+", "method": "<lookup>", "field": "lookup_error", "reason": "not_implemented.txt: SteamVR-internal, answered 105 on purpose"},
  {"interface": "init-matrix", "method": "Init\\((0|2|3|5)\\)", "field": "init_error", "reason": "app types SteamVR starts and OpenLamina refuses on Windows"},

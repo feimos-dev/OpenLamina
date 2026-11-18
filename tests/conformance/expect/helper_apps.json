@@ -1,0 +1,40 @@
+{
+ "#": "Overlay and background applications on overlay and headless sessions (scripts/helper_apps.json): an overlay app's session is on OpenLamina's own D3D11 device and its frames carry its overlays alone; its D3D11 and D3D12 textures are copied onto that device and shown; a background app's headless session has poses but runs no frames and can't submit (IsNotSceneApplication, 103)",
+ "overlay-app/frames/-/-": {
+  "init": 0,
+  "overlay_interface": true,
+  "create": 0,
+  "raw": 0,
+  "show": 0,
+  "session_overlay": true,
+  "layer_types": [
+   "quad"
+  ],
+  "frame_order_errors": 0,
+  "frames_at_least_40": true
+ },
+ "overlay-app-two-apis/textures/-/-": {
+  "init": 0,
+  "d3d11": 0,
+  "d3d12": 0,
+  "again": 0,
+  "binding": "d3d11",
+  "session_overlay": true,
+  "frame_order_errors": 0,
+  "quads_with_pattern": 2
+ },
+ "background-app/session/-/-": {
+  "init": 0,
+  "system": true,
+  "compositor": true,
+  "hmd_pose_valid": true,
+  "hmd_connected": true,
+  "wait_get_poses": 103,
+  "submit": 103,
+  "binding": "headless",
+  "session_overlay": false,
+  "frame_calls": 0,
+  "frame_order_errors": 0,
+  "stale_locates": 0
+ }
+}

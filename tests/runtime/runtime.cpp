@@ -162,6 +162,28 @@ uint64_t FramesWaited()
 	return St().session ? St().session->framesWaited : 0;
 }
 
+// A headless session runs no frames: what it locates is located at the time now. The dump counts each locate at a
+// time over 100 ms before the system clock's (XrTime as RtNowTime gives it).
+void NoteHeadlessLocateTime(XrTime time)
+{
+	RtSession* s = St().session.get();
+	if (!s || !s->headless || time >= RtNowTime() - 100000000)
+		return;
+	Dump& d = GetDump();
+	std::lock_guard<std::mutex> dg(d.lock);
+	Json::Value& n = d.root["stale_locates"];
+	n = n.asInt() + 1;
+}
+
+// The frame calls made so far
+void DumpFrameCalls(RtSession* s)
+{
+	Dump& d = GetDump();
+	std::lock_guard<std::mutex> dg(d.lock);
+	d.root["frames_waited"] = (Json::UInt64)s->framesWaited;
+	d.root["frames_begun"] = (Json::UInt64)s->framesBegun;
+}
+
 void CountFrameOrderError()
 {
 	Dump& d = GetDump();
@@ -569,10 +591,11 @@ XrResult XRAPI_CALL DestroySpace(XrSpace space)
 	return XR_SUCCESS;
 }
 
-XrResult XRAPI_CALL LocateSpace(XrSpace space, XrSpace base, XrTime, XrSpaceLocation* loc)
+XrResult XRAPI_CALL LocateSpace(XrSpace space, XrSpace base, XrTime time, XrSpaceLocation* loc)
 {
 	FAIL_POINT("xrLocateSpace");
 	std::lock_guard<std::recursive_mutex> g(St().lock);
+	NoteHeadlessLocateTime(time);
 	auto a = St().spaces.find((RtSpace*)space), b = St().spaces.find((RtSpace*)base);
 	if (a == St().spaces.end() || b == St().spaces.end())
 		return XR_ERROR_HANDLE_INVALID;
@@ -617,6 +640,7 @@ XrResult XRAPI_CALL LocateViews(XrSession, const XrViewLocateInfo* info, XrViewS
 {
 	FAIL_POINT("xrLocateViews");
 	std::lock_guard<std::recursive_mutex> g(St().lock);
+	NoteHeadlessLocateTime(info->displayTime);
 	auto b = St().spaces.find((RtSpace*)info->space);
 	if (b == St().spaces.end())
 		return XR_ERROR_HANDLE_INVALID;
@@ -796,6 +820,7 @@ XrResult XRAPI_CALL WaitFrame(XrSession, const XrFrameWaitInfo*, XrFrameState* f
 			RtChangeRefreshRate(s, ev.rate);
 	}
 	RtActionsOnFrame(s);
+	DumpFrameCalls(s);
 	St().time += Period();
 	fs->predictedDisplayTime = St().time + Period();
 	fs->predictedDisplayPeriod = Period();
@@ -812,13 +837,15 @@ XrResult XRAPI_CALL BeginFrame(XrSession, const XrFrameBeginInfo*)
 		return XR_ERROR_HANDLE_INVALID;
 	if (!s->running)
 		return XR_ERROR_SESSION_NOT_RUNNING;
-	if (s->framesBegun >= s->framesWaited) {
+	// As Monado answers a headless session: it has no frames to begin
+	if (s->headless || s->framesBegun >= s->framesWaited) {
 		CountFrameOrderError(); // a begin without a wait
 		return XR_ERROR_CALL_ORDER_INVALID;
 	}
 	bool discarded = s->frameOpen;
 	s->frameOpen = true;
 	s->framesBegun++;
+	DumpFrameCalls(s);
 	return discarded ? XR_FRAME_DISCARDED : XR_SUCCESS;
 }
 
@@ -1113,7 +1140,7 @@ XrResult XRAPI_CALL EndFrame(XrSession, const XrFrameEndInfo* info)
 	RtSession* s = St().session.get();
 	if (!s)
 		return XR_ERROR_HANDLE_INVALID;
-	if (!s->frameOpen) {
+	if (s->headless || !s->frameOpen) {
 		CountFrameOrderError(); // an end without a begin
 		return XR_ERROR_CALL_ORDER_INVALID;
 	}

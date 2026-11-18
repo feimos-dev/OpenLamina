@@ -9,6 +9,7 @@
 #include "../OpenOVR/Misc/xr_ext.h"
 #include "../OpenOVR/Reimpl/BaseInput.h"
 #include "../RuntimeExtensions/XR_MNDX_xdev_space.h"
+#include "HelperSession.h"
 #include "XrBackend.h"
 #include "XrGenericTracker.h"
 #include "generated/static_bases.gen.h"
@@ -22,6 +23,8 @@
 
 static XrBackend* currentBackend;
 static bool initialised = false;
+// The overlay session's create info, chained into xrCreateSession
+static HelperSessionChain helperChain;
 
 #ifdef _WIN32
 std::string GetExeName()
@@ -121,6 +124,7 @@ static IBackend* StartupFailed(vr::EVRInitError* error, vr::EVRInitError e)
 	xr_ext = nullptr;
 	currentBackend = nullptr;
 	initialised = false;
+	SetCurrentSessionKind(SessionKind::Scene);
 	if (error)
 		*error = e;
 	return nullptr;
@@ -154,7 +158,7 @@ static void handleStartupInfo(const char* startupInfo)
 	BaseInput::setStartupManifest(manifest);
 }
 
-IBackend* DrvOpenXR::CreateOpenXRBackend(const char* startupInfo, vr::EVRInitError* error)
+IBackend* DrvOpenXR::CreateOpenXRBackend(const char* startupInfo, vr::EVRInitError* error, vr::EVRApplicationType appType)
 {
 	if (error)
 		*error = vr::VRInitError_None;
@@ -183,19 +187,35 @@ IBackend* DrvOpenXR::CreateOpenXRBackend(const char* startupInfo, vr::EVRInitErr
 	uint32_t availableExtensionsCount = 0;
 	if (XrResult res = xrEnumerateInstanceExtensionProperties(nullptr, 0, &availableExtensionsCount, nullptr); XR_FAILED(res)) {
 		OOVR_LOGF("Failed to enumerate XR extensions: %d", res);
-		return StartupFailed(error, InitErrorFor(res));
+		return StartupFailed(error, RefusalWithoutSession(appType, oovr_global_configuration.HelperApps(), InitErrorFor(res)));
 	}
 	std::vector<XrExtensionProperties> extensionProperties;
 	extensionProperties.resize(availableExtensionsCount, { XR_TYPE_EXTENSION_PROPERTIES });
 	if (XrResult res = xrEnumerateInstanceExtensionProperties(nullptr, extensionProperties.size(), &availableExtensionsCount, extensionProperties.data()); XR_FAILED(res)) {
 		OOVR_LOGF("Failed to enumerate XR extensions: %d", res);
-		return StartupFailed(error, InitErrorFor(res));
+		return StartupFailed(error, RefusalWithoutSession(appType, oovr_global_configuration.HelperApps(), InitErrorFor(res)));
 	}
 	std::set<std::string> availableExtensions;
 	for (const XrExtensionProperties& ext : extensionProperties) {
 		availableExtensions.insert(ext.extensionName);
 		OOVR_LOGF("Extension: %s", ext.extensionName);
 	}
+
+	// Overlay and background applications: a session of their kind, or a refusal
+	const SessionChoice choice = ChooseSessionKind(appType, availableExtensions, oovr_global_configuration.HelperApps(), BackgroundAppsGetSceneSessions());
+	if (!choice.ok) {
+		OOVR_LOGF("Refusing application type %d: %s", (int)appType,
+		    oovr_global_configuration.HelperApps() ? "the OpenXR runtime has no overlay or headless sessions for it" : "helperApps is off");
+		return StartupFailed(error, choice.refusal);
+	}
+	SetCurrentSessionKind(choice.kind);
+	// A helper program whose session can't be started gets the refusal it gets without a runtime: a background
+	// application waits on 121 for a VR system to start
+	auto failed = [&](vr::EVRInitError e) {
+		return StartupFailed(error, choice.kind == SessionKind::Scene ? e : RefusalWithoutSession(appType, true, e));
+	};
+	if (choice.kind != SessionKind::Scene)
+		OOVR_LOGF("Application type %d gets an OpenXR %s session", (int)appType, choice.kind == SessionKind::Overlay ? "overlay" : "headless");
 
 	// The layers are only logged, so failing to list them doesn't matter
 	uint32_t availableLayersCount = 0;
@@ -292,6 +312,22 @@ IBackend* DrvOpenXR::CreateOpenXRBackend(const char* startupInfo, vr::EVRInitErr
 	// The display's refresh rate (Prop_DisplayFrequency_Float) and its changes
 	if (availableExtensions.contains(OC_XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME))
 		extensions.push_back(OC_XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME);
+	// A helper program's session. A headless one runs no frames, so its poses are located at the time now, which the
+	// runtime converts from the system's clock where it can.
+	if (choice.kind == SessionKind::Overlay) {
+		extensions.push_back(XR_EXTX_OVERLAY_EXTENSION_NAME);
+	} else if (choice.kind == SessionKind::Headless) {
+		extensions.push_back(XR_MND_HEADLESS_EXTENSION_NAME);
+#ifdef _WIN32
+		const char* clock = "XR_KHR_win32_convert_performance_counter_time";
+#else
+		const char* clock = "XR_KHR_convert_timespec_time";
+#endif
+		if (availableExtensions.contains(clock))
+			extensions.push_back(clock);
+		else
+			OOVR_LOGF("The OpenXR runtime has no %s: a background application's poses are located at its session's last state change", clock);
+	}
 
 	const char* const layers[] = {
 #ifdef XR_VALIDATION_LAYER_PATH
@@ -311,7 +347,7 @@ IBackend* DrvOpenXR::CreateOpenXRBackend(const char* startupInfo, vr::EVRInitErr
 #if ANDROID
 	if (!OpenComposite_Android_Create_Info) {
 		OOVR_LOG("Cannot create OpenXR instance - OpenComposite_Android_Create_Info not set");
-		return StartupFailed(error, vr::VRInitError_Init_Internal);
+		return failed(vr::VRInitError_Init_Internal);
 	}
 	XrInstanceCreateInfoAndroidKHR androidInfo = *OpenComposite_Android_Create_Info;
 	androidInfo.next = nullptr;
@@ -324,7 +360,7 @@ IBackend* DrvOpenXR::CreateOpenXRBackend(const char* startupInfo, vr::EVRInitErr
 			OOVR_LOGF("Is your OpenXR runtime running?");
 		}
 		xr_instance = XR_NULL_HANDLE;
-		return StartupFailed(error, InitErrorFor(res));
+		return failed(InitErrorFor(res));
 	}
 
 #ifdef _DEBUG
@@ -349,33 +385,36 @@ IBackend* DrvOpenXR::CreateOpenXRBackend(const char* startupInfo, vr::EVRInitErr
 	xr_ext = new XrExt(apiFlags, extensions);
 
 	if (XrResult res = CreateSystemID(); XR_FAILED(res))
-		return StartupFailed(error, InitErrorFor(res));
+		return failed(InitErrorFor(res));
 
 	// List off the views and store them locally for easy access
 	uint32_t viewCount = 0;
 	if (XrResult res = xrEnumerateViewConfigurationViews(xr_instance, xr_system, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 0, &viewCount, nullptr); XR_FAILED(res)) {
 		OOVR_LOGF("xrEnumerateViewConfigurationViews failed: %d", (int)res);
-		return StartupFailed(error, InitErrorFor(res));
+		return failed(InitErrorFor(res));
 	}
 
 	xr_views_list = std::vector<XrViewConfigurationView>(viewCount, { XR_TYPE_VIEW_CONFIGURATION_VIEW });
 
 	if (XrResult res = xrEnumerateViewConfigurationViews(xr_instance, xr_system, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, viewCount, &viewCount, xr_views_list.data()); XR_FAILED(res)) {
 		OOVR_LOGF("xrEnumerateViewConfigurationViews failed: %d", (int)res);
-		return StartupFailed(error, InitErrorFor(res));
+		return failed(InitErrorFor(res));
 	}
 
 	if (viewCount != XruEyeCount || viewCount != xr_views_list.size()) {
 		// A stereo headset has two views; anything else isn't one OpenVR games can draw for
 		OOVR_LOGF("The OpenXR runtime has %u primary stereo views, not 2", viewCount);
-		return StartupFailed(error, vr::VRInitError_Init_HmdNotFound);
+		return failed(vr::VRInitError_Init_HmdNotFound);
 	}
 
 	// Create a session - this tells the runtime that sooner or later we'd like to submit frames
 	// This is when we have to choose what graphics API to use
 
-	bool useVulkanTmpGfx = (apiFlags & XR_SUPPORTED_GRAPHICS_API_VK) && oovr_global_configuration.InitUsingVulkan();
-	bool useD3D11TmpGfx = (apiFlags & XR_SUPPORTED_GRAPHICS_API_D3D11);
+	// An overlay application's images from memory (SetOverlayRaw) go to D3D11 on the runtime's adapter, where the runtime
+	// has it; a headless session has no graphics at all
+	bool useD3D11TmpGfx = (apiFlags & XR_SUPPORTED_GRAPHICS_API_D3D11) && choice.kind != SessionKind::Headless;
+	bool useVulkanTmpGfx = (apiFlags & XR_SUPPORTED_GRAPHICS_API_VK) && choice.kind != SessionKind::Headless
+	    && (choice.kind == SessionKind::Overlay ? !useD3D11TmpGfx : oovr_global_configuration.InitUsingVulkan());
 
 #if !defined(SUPPORT_VK) && !defined(SUPPORT_DX) && !defined(SUPPORT_DX11)
 #error No available temporary graphics implementation
@@ -383,14 +422,19 @@ IBackend* DrvOpenXR::CreateOpenXRBackend(const char* startupInfo, vr::EVRInitErr
 
 	// Build a backend that works with OpenXR
 	currentBackend = new XrBackend(useVulkanTmpGfx, useD3D11TmpGfx);
-	if (!currentBackend->HasTemporaryGraphics()) {
+	if (!currentBackend->HasTemporaryGraphics() && choice.kind != SessionKind::Headless) {
 		OOVR_LOG("No graphics API to start the OpenXR session with (the runtime offers neither D3D11 nor Vulkan)");
-		return StartupFailed(error, vr::VRInitError_Init_Internal);
+		return failed(vr::VRInitError_Init_Internal);
 	}
 
-	// Setup our OpenXR session
-	if (XrResult res = SetupSession(); XR_FAILED(res))
-		return StartupFailed(error, InitErrorFor(res));
+	// Setup our OpenXR session. An overlay application's stays on OpenLamina's own device for good (its textures are
+	// copied onto it), so that its frames never use the program's device.
+	if (choice.kind == SessionKind::Overlay) {
+		if (!currentBackend->EnsureOverlaySession())
+			return failed(vr::VRInitError_Init_Internal);
+	} else if (XrResult res = SetupSession(); XR_FAILED(res)) {
+		return failed(InitErrorFor(res));
+	}
 	handleStartupInfo(startupInfo);
 
 	return currentBackend;
@@ -408,7 +452,8 @@ XrResult DrvOpenXR::SetupSession()
 	XrSessionCreateInfo sessionInfo{};
 	sessionInfo.type = XR_TYPE_SESSION_CREATE_INFO;
 	sessionInfo.systemId = xr_system;
-	sessionInfo.next = currentBackend->GetCurrentGraphicsBinding();
+	sessionInfo.next = helperChain.Chain(CurrentSessionKind(), CurrentSessionKind() == SessionKind::Headless ? nullptr : currentBackend->GetCurrentGraphicsBinding(),
+	    oovr_global_configuration.OverlayLayersPlacement());
 	if (XrResult res = xrCreateSession(xr_instance, &sessionInfo, &xr_session.get()); XR_FAILED(res)) {
 		// No session: the caller decides (falls back to the temporary device, or marks the session lost)
 		OOVR_LOGF("xrCreateSession failed: %d", (int)res);
@@ -507,4 +552,5 @@ void DrvOpenXR::FullShutdown()
 
 	initialised = false;
 	currentBackend = nullptr;
+	SetCurrentSessionKind(SessionKind::Scene);
 }

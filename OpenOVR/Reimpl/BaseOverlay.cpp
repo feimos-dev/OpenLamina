@@ -4,6 +4,7 @@
 #include <openxr/openxr.h>
 #define BASE_IMPL
 #include "../../DrvOpenXR/CpuSwapchain.h"
+#include "../../DrvOpenXR/HelperSession.h"
 #include "../../DrvOpenXR/XrBackend.h"
 #include "BaseCompositor.h"
 #include "Misc/FrameStats.h"
@@ -435,6 +436,12 @@ XrPosef AheadOfHead(vr::ETrackingUniverseOrigin space, float ahead, float below)
 	return XrPosef{ G2X_quat(turn), G2X_v3f(at) };
 }
 
+// The origin the frames' layers are in (an overlay application may have no IVRCompositor)
+vr::ETrackingUniverseOrigin FrameOrigin()
+{
+	return BaseSystem::currentSpace == XR_REFERENCE_SPACE_TYPE_LOCAL ? vr::TrackingUniverseSeated : vr::TrackingUniverseStanding;
+}
+
 // Each hand's laser, from its aim pose in the frame's space; none while input isn't available
 std::array<PointerRay, 2> ReadRays(bool available)
 {
@@ -663,8 +670,7 @@ void BaseOverlay::_UpdatePointer()
 	const bool focused = backend && backend->IsInputAvailable();
 	// Outside the layers' lock: reading input takes the input's own lock
 	const std::array<PointerRay, 2> rays = ReadRays(wanted && focused);
-	BaseCompositor* compositor = GetUnsafeBaseCompositor();
-	const vr::ETrackingUniverseOrigin space = compositor ? compositor->GetTrackingSpace() : vr::TrackingUniverseStanding;
+	const vr::ETrackingUniverseOrigin space = FrameOrigin();
 
 	std::unique_ptr<CpuSwapchain> dropped; // a closed keyboard's, destroyed once the lock is let go
 	bool keyboardClosed = false;
@@ -811,7 +817,7 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 	size_t firstOverlay = layerHeaders.size();
 	// find HMD position to sort overlays by distance
 	TrackedDevicePose_t hmdPose = {};
-	vr::ETrackingUniverseOrigin trackingSpace = GetUnsafeBaseCompositor()->GetTrackingSpace();
+	vr::ETrackingUniverseOrigin trackingSpace = FrameOrigin();
 	glm::vec3 hmdPosition = { 0.0f, 0.0f, 0.0f };
 	std::shared_ptr<ITrackedDevice> hmd = BackendManager::Instance().GetDevice(vr::k_unTrackedDeviceIndex_Hmd);
 	if (hmd) {
@@ -1817,35 +1823,58 @@ EVROverlayError BaseOverlay::SetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 	USEH();
 	if (!pTexture)
 		return VROverlayError_InvalidTexture;
+	if (CurrentSessionKind() == SessionKind::Headless)
+		OC_UNSUPPORTED(VROverlayError_RequestFailed, "SetOverlayTexture: a background application's session has no graphics to show it");
 	Texture_t texture = *pTexture;
-	BackendManager::Instance().OnOverlayTexture(&texture);
+	// An overlay application's session stays on OpenLamina's own device: its textures are copied onto it (below)
+	const bool overlaySession = CurrentSessionKind() == SessionKind::Overlay;
+	if (!overlaySession)
+		BackendManager::Instance().OnOverlayTexture(&texture);
+	auto* xrBackend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
 
 	// After OnOverlayTexture, which may restart the session
 	auto session = xr_session.lock_shared();
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
+
+	// The texture the compositor reads: the program's own, or (an overlay application's) its copy on OpenLamina's
+	// device, made here on the program's thread
+	Texture_t shown = texture;
+	if (overlaySession) {
+		std::string why;
+		ID3D11Texture2D* copy = xrBackend ? xrBackend->CopyOverlayTexture(&texture, &overlay->textureBounds, &why) : nullptr;
+		if (!copy)
+			OC_UNSUPPORTED(VROverlayError_InvalidTexture, "SetOverlayTexture: the overlay application's texture (type %d) can't be shown: %s", (int)texture.eType, why.c_str());
+		shown = Texture_t{ copy, TextureType_DirectX, texture.eColorSpace };
+	}
+
+	// A texture of another graphics API than the last one's needs another compositor
+	if (overlay->texture.handle && overlay->texture.eType != texture.eType) {
+		if (std::shared_ptr<Compositor> old = overlay->compositor.lock(); old && xrBackend)
+			xrBackend->UnregisterOverlayCompositor(old);
+		overlay->compositor.reset();
+	}
 	overlay->texture = texture;
 	// A texture replaces an image from memory
 	overlay->raw.reset();
 	overlay->rawImage = {};
 
-	if (!BackendManager::Instance().IsGraphicsConfigured())
+	if (!overlaySession && !BackendManager::Instance().IsGraphicsConfigured())
 		return VROverlayError_None;
 
 	std::shared_ptr<Compositor> compositor = overlay->compositor.lock();
 	if (!compositor) {
 		// Overlay apps needn't have asked for IVRCompositor
-		compositor = BaseCompositor::CreateCompositorAPI(&overlay->texture);
+		compositor = overlaySession ? xrBackend->MakeOverlayCompositor((ID3D11Texture2D*)shown.handle) : BaseCompositor::CreateCompositorAPI(&overlay->texture);
 		// No compositor for this texture type: nothing to draw
 		if (!compositor)
 			OC_UNSUPPORTED(VROverlayError_InvalidTexture, "SetOverlayTexture: no compositor for texture type %d", (int)overlay->texture.eType);
 		overlay->compositor = std::weak_ptr(compositor);
-		auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
-		backend->RegisterOverlayCompositor(compositor);
+		xrBackend->RegisterOverlayCompositor(compositor);
 	}
 
 	compositor->LoadSubmitContext();
 	// (subImage is the same for quad and cylinder layers)
-	compositor->Invoke(&overlay->texture, &overlay->textureBounds, overlay->compositionLayer.quad.subImage);
+	compositor->Invoke(&shown, &overlay->textureBounds, overlay->compositionLayer.quad.subImage);
 	compositor->ResetSubmitContext();
 
 	overlay->compositionLayer.base.space = xr_space_from_ref_space_type(BaseSystem::currentSpace);
@@ -1877,6 +1906,8 @@ EVROverlayError BaseOverlay::SetOverlayRaw(VROverlayHandle_t ulOverlayHandle, vo
 	Image image = ConvertToRgba8(pvBuffer, unWidth, unHeight, unWidth * unDepth, unDepth);
 	if (image.Empty())
 		return VROverlayError_InvalidParameter;
+	if (CurrentSessionKind() == SessionKind::Headless)
+		OC_UNSUPPORTED(VROverlayError_RequestFailed, "SetOverlayRaw: a background application's session has no graphics to show it");
 
 	// The overlay's image and swapchain are what OpenLamina's own frames draw from
 	auto session = xr_session.lock_shared();
@@ -2314,8 +2345,8 @@ BaseOverlay::VRMessageOverlayResponse BaseOverlay::ShowMessageOverlay(const char
 {
 	// Shown in frames of OpenLamina's own, run here until a button is clicked: without them, it can't be
 	auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
-	if (!backend || !backend->HasOwnFrames() || !backend->sessionActive)
-		OC_UNSUPPORTED(VRMessageOverlayResponse_CouldntFindSystemOverlay, "ShowMessageOverlay: no frames of OpenLamina's own to show it in");
+	if (!oovr_global_configuration.OwnFrames() || !backend || !backend->HasOwnFrames() || !backend->sessionActive)
+		OC_UNSUPPORTED(VRMessageOverlayResponse_CouldntFindSystemOverlay, "ShowMessageOverlay: no frames of OpenLamina's own to show it in (ownFrames)");
 	// Answered with the controllers' lasers, which read the game's input actions: before it has any, nothing could
 	// answer it
 	BaseInput* input = GetUnsafeBaseInput();

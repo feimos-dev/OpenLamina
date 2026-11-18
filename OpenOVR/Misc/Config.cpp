@@ -112,6 +112,23 @@ static float parse_float(string orig, string name, int line)
 	return result;
 }
 
+// A whole number of 0 or more
+static uint32_t parse_uint32_t(string orig, string name, int line)
+{
+	size_t used = 0;
+	unsigned long long value = 0;
+	try {
+		value = std::stoull(orig, &used);
+	} catch (const std::exception&) {
+		used = 0;
+	}
+	if (orig.empty() || used != orig.length() || orig[0] == '-' || value > 0xffffffffULL) {
+		BAD_VALUE("Value " + orig + " for " + name + " on line " + to_string(line) + " is not a whole number of 0 or more");
+	}
+	OOVR_LOGF("Setting config param %s to %llu", name.c_str(), value);
+	return (uint32_t)value;
+}
+
 static string parse_string(string orig, string name, int line)
 {
 	OOVR_LOGF("Setting config param %s to %s", name.c_str(), orig.c_str());
@@ -180,6 +197,8 @@ int Config::ini_handler(void* user, const char* pSection,
 		CFGOPT(bool, keyboard);
 		CFGOPT(bool, laserMouse);
 		CFGOPT(bool, steamvrRenderModels);
+		CFGOPT(bool, helperApps);
+		CFGOPT(uint32_t, overlayLayersPlacement);
 		CFGOPT(float, hiddenMeshVerticalScale);
 		CFGOPT(bool, logAllOpenVRCalls);
 		CFGOPT(string, bindingEditor);

@@ -1849,7 +1849,7 @@ void EyeTrackingInputCase(CaseContext& c)
 // Events between programs (expect/events.json): run at the same time (run.py --jobs 2), "events-commit"
 // commits the room setup 1.5 s in, and "events-listen", polling for 5 s, gets its two events; the committing program
 // gets each once, not again back from the store. Scene apps, each with its own session on the stand-in: OpenLamina
-// gives a Utility app no IVRSystem, and refuses overlay and background apps (not implemented yet)
+// gives a Utility app no IVRSystem, and the stand-in has no overlay or headless sessions by default
 vr::IVRSystem_022::IVRSystem* OpenSceneSystem(CaseContext& c)
 {
 	if (c.core->Init(vr::VRApplication_Scene, nullptr) != vr::VRInitError_None) {
@@ -2935,6 +2935,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 	static const std::map<std::string, CaseFn> all = [] {
 		std::map<std::string, CaseFn> m = cases;
 		m.insert(GfxCases().begin(), GfxCases().end());
+		m.insert(HelperCases().begin(), HelperCases().end());
 		return m;
 	}();
 	return all;

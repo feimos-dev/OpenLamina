@@ -181,6 +181,11 @@ public:
 	bool IsHeld() const { return thread_lock != Held::Unlocked; }
 };
 
+// The runtime's time now, through XR_KHR_win32_convert_performance_counter_time (Windows) or
+// XR_KHR_convert_timespec_time (elsewhere) where the instance has it enabled (a headless session's, which runs no
+// frames to take a time from); 0 without
+XrTime xr_time_now();
+
 XrSpace xr_space_from_tracking_origin(vr::ETrackingUniverseOrigin origin);
 XrSpace xr_space_from_ref_space_type(XrReferenceSpaceType spaceType);
 

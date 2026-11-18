@@ -29,6 +29,7 @@ using glm::vec4;
 #ifdef SUPPORT_VK
 #include "../../DrvOpenXR/pub/DrvOpenXR.h"
 #endif
+#include "../../DrvOpenXR/HelperSession.h"
 
 #include "BaseClientCore.h"
 #include "Drivers/Backend.h"
@@ -76,6 +77,12 @@ ovr_enum_t BaseCompositor::WaitGetPoses(TrackedDevicePose_t* renderPoseArray, ui
 	// Assume this method isn't being called between frames, b/c it really shouldn't be.
 	leftEyeSubmitted = false;
 	rightEyeSubmitted = false;
+
+	// An overlay or background application runs no frames of its own: the poses, and the answer SteamVR gives it
+	if (IsHelperSession()) {
+		GetLastPoses(renderPoseArray, renderPoseArrayCount, gamePoseArray, gamePoseArrayCount);
+		return VRCompositorError_IsNotSceneApplication;
+	}
 
 	BackendManager::Instance().WaitForTrackingData();
 
@@ -247,9 +254,9 @@ std::unique_ptr<Compositor> BaseCompositor::CreateCompositorAPI(const vr::Textur
 
 ovr_enum_t BaseCompositor::Submit(EVREye eye, const Texture_t* texture, const VRTextureBounds_t* bounds, EVRSubmitFlags submitFlags)
 {
-	if (BaseClientCore::appType == vr::VRApplication_Background) {
-		// As SteamVR answers a Background app that submits
-		OOVR_LOG_ONCE("A VRApplication_Background app is submitting frames: refused");
+	if (BaseClientCore::appType == vr::VRApplication_Background || IsHelperSession()) {
+		// As SteamVR answers a Background or Overlay app that submits
+		OOVR_LOG_ONCE("A VRApplication_Background or Overlay app is submitting frames: refused");
 		return VRCompositorError_IsNotSceneApplication;
 	}
 	if (!texture || (eye != Eye_Left && eye != Eye_Right))
@@ -337,6 +344,9 @@ void BaseCompositor::PostPresentHandoff()
 	// calls PostPresentHandOff to signal that all data is submitted and compositor can start work. Mimick this by
 	// calling SubmitFrames with a flag to say it is called from this function.
 
+	// An overlay or background application has no frame of its own to end
+	if (IsHelperSession())
+		return;
 	// As in Submit: the session isn't restarted while the frame is ended
 	auto lock = xr_session.lock_shared();
 	BackendManager::Instance().SubmitFrames(isInSkybox, true);
@@ -433,6 +443,9 @@ float BaseCompositor::GetCurrentGridAlpha()
 
 ovr_enum_t BaseCompositor::SetSkyboxOverride(const Texture_t* pTextures, uint32_t unTextureCount)
 {
+	// The scene app's: SteamVR answers an overlay or background application DoNotHaveFocus
+	if (IsHelperSession())
+		return VRCompositorError_DoNotHaveFocus;
 	return BackendManager::Instance().SetSkyboxOverride(pTextures, unTextureCount);
 }
 
