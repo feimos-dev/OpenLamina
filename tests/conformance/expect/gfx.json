@@ -377,7 +377,7 @@
    1024
   ],
   "dump:views[0].image": [
-   2048,
+   1024,
    1024
   ],
   "dump:views[0].samples.tl": "ff0000ff",
@@ -393,7 +393,7 @@
    1024
   ],
   "dump:views[1].image": [
-   2048,
+   1024,
    1024
   ],
   "dump:views[1].samples.tl": "00ff00ff",
@@ -441,8 +441,8 @@
    600
   ],
   "dump:views[0].image": [
-   1200,
-   600
+   1024,
+   1024
   ],
   "dump:views[0].samples.tl": "0000ffff",
   "dump:views[0].samples.tr": "0000ffff",
@@ -456,8 +456,8 @@
    600
   ],
   "dump:views[1].image": [
-   1200,
-   600
+   1024,
+   1024
   ],
   "dump:views[1].samples.tl": "ffffffff",
   "dump:views[1].samples.tr": "ffffffff",
@@ -503,7 +503,7 @@
    1024
   ],
   "dump:views[0].image": [
-   2048,
+   1024,
    1024
   ],
   "dump:views[0].samples.tl": "ff0000ff",
@@ -519,7 +519,7 @@
    1024
   ],
   "dump:views[1].image": [
-   2048,
+   1024,
    1024
   ],
   "dump:views[1].samples.tl": "00ff00ff",
@@ -567,8 +567,8 @@
    600
   ],
   "dump:views[0].image": [
-   1200,
-   600
+   1024,
+   1024
   ],
   "dump:views[0].samples.tl": "0000ffff",
   "dump:views[0].samples.tr": "0000ffff",
@@ -582,8 +582,8 @@
    600
   ],
   "dump:views[1].image": [
-   1200,
-   600
+   1024,
+   1024
   ],
   "dump:views[1].samples.tl": "ffffffff",
   "dump:views[1].samples.tr": "ffffffff",
@@ -881,7 +881,7 @@
    1024
   ],
   "dump:views[0].image": [
-   2048,
+   1024,
    1024
   ],
   "dump:views[0].samples.tl": "ff0000ff",
@@ -897,7 +897,7 @@
    1024
   ],
   "dump:views[1].image": [
-   2048,
+   1024,
    1024
   ],
   "dump:views[1].samples.tl": "00ff00ff",
@@ -945,8 +945,8 @@
    600
   ],
   "dump:views[0].image": [
-   1200,
-   600
+   1024,
+   1024
   ],
   "dump:views[0].samples.tl": "0000ffff",
   "dump:views[0].samples.tr": "0000ffff",
@@ -960,8 +960,8 @@
    600
   ],
   "dump:views[1].image": [
-   1200,
-   600
+   1024,
+   1024
   ],
   "dump:views[1].samples.tl": "ffffffff",
   "dump:views[1].samples.tr": "ffffffff",
