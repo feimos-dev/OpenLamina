@@ -26,8 +26,9 @@ bool xr_utils::PoseFromSpace(vr::TrackedDevicePose_t* pose, XrSpace space, vr::E
 
 	OOVR_FAILED_XR_SOFT_ABORT(xrLocateSpace(space, baseSpace, xr_gbl->GetBestTime(), &info));
 	
-	bool positionTracked = info.locationFlags & (XR_SPACE_LOCATION_POSITION_VALID_BIT != 0);
-	if (!positionTracked)
+	// A pose whose orientation is tracked is given, marked valid only when its position is tracked too
+	bool orientationTracked = (info.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0;
+	if (!orientationTracked)
 		return false;
 
 	glm::mat4 mat = X2G_om34_pose(info.pose);
@@ -65,9 +66,10 @@ void xr_utils::PoseFromHandTracking(vr::TrackedDevicePose_t* pose, XrHandJointLo
 	XrHandJointLocationEXT palmJoint = locations.jointLocations[boneToUse];
 	XrHandJointVelocityEXT velocity = velocities.jointVelocities[boneToUse];
 
-	bool positionTracked = palmJoint.locationFlags & (XR_SPACE_LOCATION_POSITION_VALID_BIT != 0);
+	// A pose whose orientation is tracked is given, marked valid only when its position is tracked too
+	bool orientationTracked = (palmJoint.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0;
 
-	if (!locations.isActive || !positionTracked) {
+	if (!locations.isActive || !orientationTracked) {
 		return;
 	}
 
