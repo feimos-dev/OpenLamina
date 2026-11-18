@@ -84,6 +84,8 @@ Upstream merge requests are linked as !*n* with their authors. Everything else w
   the trigger, scrolling with the thumbstick, and laser haptics.
 - Message boxes (`ShowMessageOverlay`) are shown in front of the player, in frames of OpenLamina's own, and answered
   with the laser.
+- The keyboard games show for typing text is back, on every graphics API, in a US or UK layout (`keyboardLayout`),
+  typed on with the laser.
 
 **Stability and building**
 - The log opens before anything writes to it (upstream issue #479), and a log that can't be opened no longer crashes
@@ -102,7 +104,7 @@ Every change was reviewed, and all four builds are made with warnings as errors 
 been tried yet in the game it is for. If something works upstream and not here, please
 [open an issue](https://github.com/fzeruhn/OpenLamina/issues/new).
 
-Not here yet: overlay apps (upstream !101), controller models and the virtual keyboard.
+Not here yet: overlay apps (upstream !101) and controller models.
 
 ## What OpenLamina is
 
@@ -290,6 +292,8 @@ The available options are:
 	* How a game's SteamVR bindings become input. `direct` turns each binding into OpenXR bindings, as before. `steamvr` has OpenLamina run SteamVR's binding modes (toggles, dpads, chords and the rest) on the controller's raw inputs, and maps legacy input as SteamVR does. `steamvr` hasn't been tried in many games yet; try it when a game's controls don't work under `direct`.
 * `bindingEditor` - string, default empty.
 	* The program a game's "open binding UI" request starts.
+* `keyboardLayout` - `us` or `uk`, default by the user's locale (`uk` for en-GB, `us` otherwise).
+	* The layout of the keyboard games show to type text on, with the controllers' lasers.
 
 The possible types are as follows:
 

@@ -13,6 +13,8 @@
 #include <d3dcompiler.h> // For compiling shaders! D3DCompile
 
 #pragma comment(lib, "d3dcompiler.lib")
+// D3D11CreateDevice, for the D3D10 bridge, the OpenGL and Vulkan interop and the temporary device
+#pragma comment(lib, "d3d11.lib")
 
 struct ShaderConstData {
 	float offsetX, offsetY;

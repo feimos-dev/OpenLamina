@@ -2,6 +2,7 @@
 
 #include "Canvas.h"
 
+#include "BuiltInResource.h"
 #include "Keyboard/SudoFontMeta.h"
 #include "resources.h"
 
@@ -12,24 +13,6 @@
 
 namespace {
 
-#ifdef _WIN32
-std::vector<char> ReadResource(int id, int type)
-{
-	// The module this code is in (OpenLamina's DLL, or a test program), whose resources hold the font
-	HMODULE module = nullptr;
-	if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT, (LPCWSTR)&ReadResource, &module))
-		return {};
-	HRSRC ref = FindResource(module, MAKEINTRESOURCE(id), MAKEINTRESOURCE(type));
-	if (!ref)
-		return {};
-	const char* data = (const char*)LoadResource(module, ref);
-	DWORD size = SizeofResource(module, ref);
-	if (!data || !size)
-		return {};
-	return std::vector<char>(data, data + size);
-}
-#endif
-
 // The keyboard's font, built in on Windows; null where it isn't
 const SudoFontMeta* Font()
 {
@@ -37,8 +20,8 @@ const SudoFontMeta* Font()
 	static std::unique_ptr<SudoFontMeta> font;
 	std::call_once(once, [] {
 #ifdef _WIN32
-		std::vector<char> meta = ReadResource(RES_O_FNT_UBUNTU, RES_T_FNTMETA);
-		std::vector<char> png = ReadResource(RES_O_FNT_UBUNTU, RES_T_PNG);
+		std::vector<char> meta = ReadBuiltInResource(RES_O_FNT_UBUNTU, RES_T_FNTMETA);
+		std::vector<char> png = ReadBuiltInResource(RES_O_FNT_UBUNTU, RES_T_PNG);
 		if (!meta.empty() && !png.empty())
 			font = std::make_unique<SudoFontMeta>(meta, png);
 #endif

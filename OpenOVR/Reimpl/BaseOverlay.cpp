@@ -18,6 +18,7 @@
 #include "Misc/Image.h"
 #include "Misc/Input/InteractionProfile.h"
 #include "Misc/Canvas.h"
+#include "Misc/Keyboard/KeyboardLayout.h"
 #include "Misc/LaserMouse.h"
 #include "Misc/OverlayMaths.h"
 #include "Misc/ScopeGuard.h"
@@ -372,6 +373,9 @@ constexpr float kPanelMetresPerPixel = 0.001f;
 constexpr int kPanelMargin = 40, kButtonGap = 20, kButtonHeight = 70, kButtonBottom = 40;
 constexpr float kPanelDistance = 1.5f;
 
+// The keyboard: ahead of the head and below it
+constexpr float kKeyboardDistance = 1.0f, kKeyboardBelow = 0.4f;
+
 double NowSeconds()
 {
 	using namespace std::chrono;
@@ -391,8 +395,8 @@ XrCompositionLayerQuad OwnQuad(const CpuSwapchain& chain, const XrPosef& pose, f
 	return quad;
 }
 
-// A pose ahead of the head and below it, level (turned only about the vertical) and facing the head: where a
-// message box goes. Without a head pose, from the origin looking along -Z.
+// A pose ahead of the head and below it, level (turned only about the vertical) and facing the head: where the
+// keyboard and a message box go. Without a head pose, from the origin looking along -Z.
 XrPosef AheadOfHead(vr::ETrackingUniverseOrigin space, float ahead, float below)
 {
 	glm::vec3 head(0.0f), forward(0.0f, 0.0f, -1.0f);
@@ -527,6 +531,14 @@ public:
 	bool cursorShown = false;
 	XrPosef cursorPose{ { 0, 0, 0, 1 }, { 0, 0, 0 } };
 
+	// The keyboard's quad; its placement in keyboardOrigin, and in the frame's space as last drawn
+	std::unique_ptr<CpuSwapchain> keyboardChain;
+	bool keyboardShown = false;
+	XrPosef keyboardPose{ { 0, 0, 0, 1 }, { 0, 0, 0 } };
+	vr::ETrackingUniverseOrigin keyboardOrigin = vr::TrackingUniverseStanding;
+	vr::VROverlayHandle_t keyboardFor = vr::k_ulOverlayHandleInvalid;
+	bool keyboardModal = false; // only the keyboard can be pointed at (KeyboardFlag_Modal)
+
 	// A message box (ShowMessageOverlay), while one is shown
 	struct Message {
 		std::wstring caption, text;
@@ -574,7 +586,7 @@ public:
 	std::atomic<bool> closeMessage{ false };
 
 	// The layers built from them for a frame, valid until it has ended
-	XrCompositionLayerQuad messageLayer{}, cursorLayer{};
+	XrCompositionLayerQuad keyboardLayer{}, messageLayer{}, cursorLayer{};
 
 	// The cursor shown at a point on a target, facing out of it: its swapchain made and filled on the game's thread
 	void ShowCursor(const XrPosef& point)
@@ -613,6 +625,7 @@ void BaseOverlay::_UpdatePointer()
 	bool wanted = false;
 	{
 		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		wanted = keyboard != nullptr;
 		for (const auto& kv : overlays) {
 			const OverlayData* o = kv.second;
 			if (o && o->visible && (o->inputMethod == VROverlayInputMethod_Mouse || o->asMouseUpdates > 0)
@@ -630,74 +643,121 @@ void BaseOverlay::_UpdatePointer()
 	BaseCompositor* compositor = GetUnsafeBaseCompositor();
 	const vr::ETrackingUniverseOrigin space = compositor ? compositor->GetTrackingSpace() : vr::TrackingUniverseStanding;
 
-	std::lock_guard<std::recursive_mutex> lock(layersLock);
-	Pointing& p = *pointing;
-
-	std::vector<PointerTarget> targets;
-	if (wanted && focused) {
-		for (const auto& kv : overlays) {
-			OverlayData* o = kv.second;
-			if (!o || !o->visible || !(o->inputMethod == VROverlayInputMethod_Mouse || o->asMouseUpdates > 0))
-				continue;
-			if (o->texture.handle == nullptr && o->rawImage.Empty())
-				continue;
-			PointerTarget t{};
-			if (!o->ComputePlacement(space, validOverlays, t.placement))
-				continue;
-			t.handle = (VROverlayHandle_t)(uintptr_t)o;
-			t.mask = o->intersectionMask;
-			t.mouseScale = o->mouseScale;
-			t.flags = (uint32_t)o->flags;
-			t.sortOrder = (int)std::min<uint32_t>(o->sortOrder, INT_MAX - 1);
-			targets.push_back(std::move(t));
-		}
-	}
-	for (const auto& kv : overlays) {
-		if (kv.second && kv.second->asMouseUpdates > 0)
-			kv.second->asMouseUpdates--;
-	}
-
-	// Stopped (nothing to point at, or the session lost focus): the update without rays lets go of a click and the
-	// focus
-	std::vector<PointerEvent> events;
-	p.mouse.Update(rays, targets, NowSeconds(), events);
-	p.running = wanted && focused;
-	for (const PointerEvent& e : events) {
-		OverlayData* o = (OverlayData*)(uintptr_t)e.handle;
-		if (validOverlays.count(o))
-			o->eventQueue.push(e.event);
-	}
-
-	// The cursor: a cursor overlay the target has, else OpenLamina's own (unless the target hides it)
+	std::unique_ptr<CpuSwapchain> dropped; // a closed keyboard's, destroyed once the lock is let go
+	bool keyboardClosed = false;
 	{
-		std::lock_guard<std::mutex> cursors(cursorPointsLock);
-		cursorPoints.clear();
-	}
-	p.cursorShown = false;
-	const int hand = p.mouse.ActiveHand();
-	const std::optional<overlay_maths::Hit> hit = p.mouse.Cursor(hand);
-	const VROverlayHandle_t target = p.mouse.Target(hand);
-	const PointerTarget* on = nullptr;
-	for (const PointerTarget& t : targets)
-		if (t.handle == target)
-			on = &t;
-	if (p.running && hit && on) {
-		const XrPosef point = overlay_maths::PointOn(on->placement, hit->u, hit->v);
-		OverlayData* o = validOverlays.count((OverlayData*)(uintptr_t)target) ? (OverlayData*)(uintptr_t)target : nullptr;
-		OverlayData* cursor = o && validOverlays.count((OverlayData*)(uintptr_t)o->cursor) ? (OverlayData*)(uintptr_t)o->cursor : nullptr;
-		if (cursor && cursor->visible) {
-			std::lock_guard<std::mutex> cursors(cursorPointsLock);
-			cursorPoints[cursor] = point;
-		} else if (!(on->flags & kOverlayFlagHideLaserIntersection)) {
-			p.ShowCursor(point);
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		Pointing& p = *pointing;
+
+		if (keyboard) {
+			XrPosef pose = keyboard->Placement();
+			if (p.keyboardOrigin != space)
+				pose = overlay_maths::ChangeOrigin(pose, p.keyboardOrigin, space, SeatedInStanding());
+			p.keyboardPose = pose;
 		}
+
+		std::vector<PointerTarget> targets;
+		if (wanted && focused) {
+			if (keyboard) {
+				PointerTarget t{};
+				t.handle = keyboard->Handle();
+				t.placement = overlay_maths::Placement{ p.keyboardPose, keyboard->WidthMeters(), keyboard->HeightMeters(), 0 };
+				t.mouseScale = { { (float)keyboard->CanvasWidth(), (float)keyboard->CanvasHeight() } };
+				t.sortOrder = INT_MAX; // on top of every overlay
+				targets.push_back(t);
+			}
+			if (!(keyboard && p.keyboardModal)) {
+				for (const auto& kv : overlays) {
+					OverlayData* o = kv.second;
+					if (!o || !o->visible || !(o->inputMethod == VROverlayInputMethod_Mouse || o->asMouseUpdates > 0))
+						continue;
+					if (o->texture.handle == nullptr && o->rawImage.Empty())
+						continue;
+					PointerTarget t{};
+					if (!o->ComputePlacement(space, validOverlays, t.placement))
+						continue;
+					t.handle = (VROverlayHandle_t)(uintptr_t)o;
+					t.mask = o->intersectionMask;
+					t.mouseScale = o->mouseScale;
+					t.flags = (uint32_t)o->flags;
+					t.sortOrder = (int)std::min<uint32_t>(o->sortOrder, INT_MAX - 1);
+					targets.push_back(std::move(t));
+				}
+			}
+		}
+		for (const auto& kv : overlays) {
+			if (kv.second && kv.second->asMouseUpdates > 0)
+				kv.second->asMouseUpdates--;
+		}
+
+		// Stopped (nothing to point at, or the session lost focus): the update without rays lets go of a click and
+		// the focus
+		std::vector<PointerEvent> events;
+		p.mouse.Update(rays, targets, NowSeconds(), events);
+		p.running = wanted && focused;
+		for (const PointerEvent& e : events) {
+			if (keyboard && e.handle == keyboard->Handle())
+				continue;
+			OverlayData* o = (OverlayData*)(uintptr_t)e.handle;
+			if (validOverlays.count(o))
+				o->eventQueue.push(e.event);
+		}
+
+		if (keyboard) {
+			keyboard->OnPointer(p.mouse, events);
+			for (const VREvent_t& e : keyboard->TakeEvents())
+				DispatchKeyboardEvent(e, p.keyboardFor);
+			if (keyboard->Closed()) {
+				dropped = DropKeyboard();
+				keyboardClosed = true;
+			}
+		}
+		if (keyboard && p.keyboardChain) {
+			if (keyboard->Dirty() || !p.keyboardChain->Live()) {
+				Canvas canvas(keyboard->CanvasWidth(), keyboard->CanvasHeight());
+				keyboard->Draw(canvas);
+				if (p.keyboardChain->Upload(canvas.Pixels()))
+					keyboard->MarkDrawn();
+			}
+			p.keyboardShown = p.keyboardChain->Live();
+		}
+
+		// The cursor: a cursor overlay the target has, else OpenLamina's own (unless the target hides it)
+		{
+			std::lock_guard<std::mutex> cursors(cursorPointsLock);
+			cursorPoints.clear();
+		}
+		p.cursorShown = false;
+		const int hand = p.mouse.ActiveHand();
+		const std::optional<overlay_maths::Hit> hit = p.mouse.Cursor(hand);
+		const VROverlayHandle_t target = p.mouse.Target(hand);
+		const PointerTarget* on = nullptr;
+		for (const PointerTarget& t : targets)
+			if (t.handle == target)
+				on = &t;
+		if (p.running && hit && on) {
+			const XrPosef point = overlay_maths::PointOn(on->placement, hit->u, hit->v);
+			OverlayData* o = validOverlays.count((OverlayData*)(uintptr_t)target) ? (OverlayData*)(uintptr_t)target : nullptr;
+			OverlayData* cursor = o && validOverlays.count((OverlayData*)(uintptr_t)o->cursor) ? (OverlayData*)(uintptr_t)o->cursor : nullptr;
+			if (cursor && cursor->visible) {
+				std::lock_guard<std::mutex> cursors(cursorPointsLock);
+				cursorPoints[cursor] = point;
+			} else if (!(on->flags & kOverlayFlagHideLaserIntersection)) {
+				p.ShowCursor(point);
+			}
+		}
+	}
+	dropped.reset();
+	if (keyboardClosed) {
+		if (BaseSystem* system = GetUnsafeBaseSystem())
+			system->_BlockInputsUntilReleased();
 	}
 }
 
 bool BaseOverlay::_AnyVisible()
 {
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
-	if (pointing->message)
+	if (keyboard || pointing->message)
 		return true;
 	for (const auto& kv : overlays) {
 		if (kv.second && kv.second->visible && (kv.second->texture.handle != nullptr || !kv.second->rawImage.Empty()))
@@ -719,15 +779,9 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 	//  when it's initially set to false, and when it's reset to true.
 	bool checkUsingInput = false;
 
-	if (keyboard) {
-#ifndef OC_XR_PORT
-		layerHeaders.push_back(keyboard->Update());
-#endif
+	// The keyboard takes the controllers' input from the game while it's shown (_HandleOverlayInput)
+	if (keyboard)
 		checkUsingInput = true;
-
-		if (keyboard->IsClosed())
-			HideKeyboard();
-	}
 
 	// sort overlays by distance starting with this index
 	size_t firstOverlay = layerHeaders.size();
@@ -825,9 +879,13 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 		}
 	}
 
-	// OpenLamina's own quads on top of the overlays: a message box, then the cursor. Filled on the game's thread
-	// (_UpdatePointer, ShowMessageOverlay): only those already in a swapchain are drawn.
+	// OpenLamina's own quads on top of the overlays: the keyboard, a message box, then the cursor. Filled on the game's
+	// thread (_UpdatePointer, ShowMessageOverlay): only those already in a swapchain are drawn.
 	Pointing& p = *pointing;
+	if (keyboard && p.keyboardShown && p.keyboardChain && p.keyboardChain->Live()) {
+		p.keyboardLayer = OwnQuad(*p.keyboardChain, p.keyboardPose, keyboard->WidthMeters(), keyboard->HeightMeters());
+		layerHeaders.push_back((XrCompositionLayerBaseHeader*)&p.keyboardLayer);
+	}
 	if (p.message && p.message->chain && p.message->chain->Live()) {
 		const overlay_maths::Placement& at = p.message->placement;
 		p.messageLayer = OwnQuad(*p.message->chain, at.pose, at.width, at.height);
@@ -845,16 +903,11 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 
 bool BaseOverlay::_HandleOverlayInput(EVREye side, TrackedDeviceIndex_t index, VRControllerState_t state)
 {
+	// The keyboard is typed on with the lasers (_UpdatePointer): while it's shown, the game doesn't get the input
 	if (!usingInput)
 		return true;
 
-	if (!keyboard)
-		return true;
-
-#ifndef OC_XR_PORT
-	keyboard->HandleOverlayInput(side, state, (float)ovr_GetTimeInSeconds());
-#endif
-	return false;
+	return !keyboard;
 }
 
 EVROverlayError BaseOverlay::FindOverlay(const char* pchOverlayKey, VROverlayHandle_t* pOverlayHandle)
@@ -1427,7 +1480,7 @@ bool BaseOverlay::PollNextOverlayEvent(VROverlayHandle_t ulOverlayHandle, VREven
 
 	memset(pEvent, 0, eventSize);
 
-	// The lasers queue events on the game's thread
+	// The lasers and the keyboard queue events on the game's thread
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	if (overlay->eventQueue.empty())
 		return false;
@@ -1935,94 +1988,136 @@ TrackedDeviceIndex_t BaseOverlay::GetPrimaryDashboardDevice()
 	OC_UNSUPPORTED(k_unTrackedDeviceIndexInvalid, "GetPrimaryDashboardDevice: there's no dashboard yet");
 }
 EVROverlayError BaseOverlay::ShowKeyboardWithDispatch(EGamepadTextInputMode eInputMode, EGamepadTextInputLineMode eLineInputMode,
-    const char* pchDescription, uint32_t unCharMax, const char* pchExistingText, bool bUseMinimalMode, uint64_t uUserValue,
-    VRKeyboard::eventDispatch_t eventDispatch)
+    uint32_t unFlags, const char* pchDescription, uint32_t unCharMax, const char* pchExistingText, uint64_t uUserValue,
+    VROverlayHandle_t forOverlay)
 {
-	// Submit a KeyboardDone event since the actual keyboard is not implemented yet.  This allows certain games to still proceed instead of crash.
-	SubmitPlaceholderKeyboardEvent(VREvent_KeyboardDone, eventDispatch, uUserValue);
+	const std::string existing = pchExistingText ? pchExistingText : "";
+	VRKeyboard::Mode mode = VRKeyboard::Mode::Normal;
+	if (unFlags & VRKeyboard::kFlagMinimal)
+		mode = VRKeyboard::Mode::Minimal;
+	else if (eInputMode == k_EGamepadTextInputModePassword)
+		mode = VRKeyboard::Mode::Password;
+	else if (eInputMode == k_EGamepadTextInputModeSubmit)
+		mode = VRKeyboard::Mode::Submit;
+	const bool multiline = eLineInputMode == k_EGamepadTextInputLineModeMultipleLines;
+	// EKeyboardFlags' KeyboardFlag_Modal: nothing but the keyboard can be pointed at
+	constexpr uint32_t modalFlag = 2;
 
-#ifndef OC_XR_PORT
-	if (!BaseCompositor::dxcomp)
-		return VROverlayError_RequestFailed;
+	// The session lock before the layers' lock, as everywhere
+	auto session = xr_session.lock_shared();
+	std::unique_ptr<VRKeyboard> made;
+	std::unique_ptr<CpuSwapchain> chain;
+	if (KeyboardLayout::Current()) {
+		made = std::make_unique<VRKeyboard>(mode, multiline, unFlags, existing, unCharMax, uUserValue);
+		chain = CpuSwapchain::Create(made->CanvasWidth(), made->CanvasHeight());
+	}
+	std::unique_ptr<CpuSwapchain> old;
+	if (!made || !chain) {
+		// It can't be shown (no layout built in, or no swapchain from memory on this session): done at once, with the
+		// text as given
+		{
+			std::lock_guard<std::recursive_mutex> lock(layersLock);
+			old = DropKeyboard();
+			keyboardCache = existing;
+		}
+		old.reset();
+		SubmitPlaceholderKeyboardEvent(VREvent_KeyboardDone, forOverlay, uUserValue);
+		OC_UNSUPPORTED(VROverlayError_None, "ShowKeyboard: the keyboard can't be shown on this session; answered as done, with the text as given");
+	}
 
-	if (eLineInputMode != k_EGamepadTextInputLineModeSingleLine)
-		return VROverlayError_RequestFailed;
-
-	// TODO use description
-	keyboard = make_unique<VRKeyboard>(BaseCompositor::dxcomp->GetDevice(), uUserValue, unCharMax, bUseMinimalMode, eventDispatch,
-	    (VRKeyboard::EGamepadTextInputMode)eInputMode);
-
-	keyboard->contents(VRKeyboard::CHAR_CONV.from_bytes(pchExistingText));
+	BaseCompositor* compositor = GetUnsafeBaseCompositor();
+	const ETrackingUniverseOrigin space = compositor ? compositor->GetTrackingSpace() : TrackingUniverseStanding;
+	made->SetPlacement(AheadOfHead(space, kKeyboardDistance, kKeyboardBelow));
+	{
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		// One keyboard at a time: a new one replaces the one shown
+		old = DropKeyboard();
+		keyboard = std::move(made);
+		Pointing& p = *pointing;
+		p.keyboardChain = std::move(chain);
+		p.keyboardShown = false;
+		p.keyboardFor = forOverlay;
+		p.keyboardOrigin = space;
+		p.keyboardPose = keyboard->Placement();
+		p.keyboardModal = (unFlags & modalFlag) != 0;
+	}
+	old.reset();
 
 	BaseSystem* system = GetUnsafeBaseSystem();
-	if (system) {
+	if (system)
 		system->_BlockInputsUntilReleased();
-	}
-#endif
-
 	return VROverlayError_None;
 }
 
-/** Placeholder method for submitting a KeyboardDone event when asked to show the keyboard since it is not implemented yet. **/
-void BaseOverlay::SubmitPlaceholderKeyboardEvent(vr::EVREventType ev, VRKeyboard::eventDispatch_t eventDispatch, uint64_t userValue)
+std::unique_ptr<CpuSwapchain> BaseOverlay::DropKeyboard()
 {
-	VREvent_Keyboard_t data{};
-	data.uUserValue = userValue;
+	if (keyboard)
+		keyboardCache = keyboard->Text();
+	keyboard.reset();
+	pointing->keyboardShown = false;
+	pointing->keyboardFor = k_ulOverlayHandleInvalid;
+	return std::move(pointing->keyboardChain);
+}
 
-	VREvent_t evt = { 0 };
+void BaseOverlay::DispatchKeyboardEvent(VREvent_t event, VROverlayHandle_t forOverlay)
+{
+	event.data.keyboard.overlayHandle = forOverlay;
+	if (forOverlay != k_ulOverlayHandleInvalid) {
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		OverlayData* overlay = (OverlayData*)(uintptr_t)forOverlay;
+		if (validOverlays.count(overlay))
+			overlay->eventQueue.push(event);
+		return;
+	}
+	if (BaseSystem* sys = GetUnsafeBaseSystem())
+		sys->_EnqueueEvent(event);
+}
+
+void BaseOverlay::SubmitPlaceholderKeyboardEvent(vr::EVREventType ev, VROverlayHandle_t forOverlay, uint64_t userValue)
+{
+	VREvent_t evt{};
 	evt.eventType = ev;
 	evt.trackedDeviceIndex = 0;
-	evt.data.keyboard = data;
-
-	eventDispatch(evt);
+	evt.data.keyboard.uUserValue = userValue;
+	DispatchKeyboardEvent(evt, forOverlay);
 }
 
 EVROverlayError BaseOverlay::ShowKeyboard(EGamepadTextInputMode eInputMode, EGamepadTextInputLineMode eLineInputMode,
     const char* pchDescription, uint32_t unCharMax, const char* pchExistingText, bool bUseMinimalMode, uint64_t uUserValue)
 {
-
-	VRKeyboard::eventDispatch_t dispatch = [](VREvent_t ev) {
-		BaseSystem* sys = GetUnsafeBaseSystem();
-		if (sys) {
-			sys->_EnqueueEvent(ev);
-		}
-	};
-
-	return ShowKeyboardWithDispatch(eInputMode, eLineInputMode, pchDescription, unCharMax, pchExistingText, bUseMinimalMode, uUserValue, dispatch);
+	return ShowKeyboardWithDispatch(eInputMode, eLineInputMode, bUseMinimalMode ? VRKeyboard::kFlagMinimal : 0, pchDescription, unCharMax,
+	    pchExistingText, uUserValue, k_ulOverlayHandleInvalid);
 }
 EVROverlayError BaseOverlay::ShowKeyboard(EGamepadTextInputMode eInputMode, EGamepadTextInputLineMode eLineInputMode, uint32_t unFlags,
     const char* pchDescription, uint32_t unCharMax, const char* pchExistingText, uint64_t uUserValue)
 {
-	// KeyboardFlag_Minimal = 1 (EKeyboardFlags)
-	return ShowKeyboard(eInputMode, eLineInputMode, pchDescription, unCharMax, pchExistingText, (unFlags & 1) != 0, uUserValue);
+	return ShowKeyboardWithDispatch(eInputMode, eLineInputMode, unFlags, pchDescription, unCharMax, pchExistingText, uUserValue,
+	    k_ulOverlayHandleInvalid);
 }
 EVROverlayError BaseOverlay::ShowKeyboardForOverlay(VROverlayHandle_t ulOverlayHandle,
     EGamepadTextInputMode eInputMode, EGamepadTextInputLineMode eLineInputMode,
     const char* pchDescription, uint32_t unCharMax, const char* pchExistingText,
     bool bUseMinimalMode, uint64_t uUserValue)
 {
-
 	USEH();
-
-	VRKeyboard::eventDispatch_t dispatch = [overlay](VREvent_t ev) {
-		overlay->eventQueue.push(ev);
-	};
-
-	return ShowKeyboardWithDispatch(eInputMode, eLineInputMode, pchDescription, unCharMax, pchExistingText, bUseMinimalMode, uUserValue, dispatch);
+	return ShowKeyboardWithDispatch(eInputMode, eLineInputMode, bUseMinimalMode ? VRKeyboard::kFlagMinimal : 0, pchDescription, unCharMax,
+	    pchExistingText, uUserValue, ulOverlayHandle);
 }
 EVROverlayError BaseOverlay::ShowKeyboardForOverlay(VROverlayHandle_t ulOverlayHandle, EGamepadTextInputMode eInputMode,
     EGamepadTextInputLineMode eLineInputMode, uint32_t unFlags, const char* pchDescription, uint32_t unCharMax,
     const char* pchExistingText, uint64_t uUserValue)
 {
-	// KeyboardFlag_Minimal = 1 (EKeyboardFlags)
-	return ShowKeyboardForOverlay(ulOverlayHandle, eInputMode, eLineInputMode, pchDescription, unCharMax, pchExistingText, (unFlags & 1) != 0, uUserValue);
+	USEH();
+	return ShowKeyboardWithDispatch(eInputMode, eLineInputMode, unFlags, pchDescription, unCharMax, pchExistingText, uUserValue, ulOverlayHandle);
 }
 uint32_t BaseOverlay::GetKeyboardText(char* pchText, uint32_t cchText)
 {
-	string str = keyboard ? VRKeyboard::CHAR_CONV.to_bytes(keyboard->contents()) : keyboardCache;
-
-	// Since keyboard is not functional yet, return this default text (Adventurer because this fix was made specifically for Skyrim VR)
-	str = "Adventurer";
+	// The keyboard's text, or the last one's after it has gone
+	std::string str;
+	{
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		str = keyboard ? keyboard->Text() : keyboardCache;
+	}
 
 	if (!pchText || cchText == 0)
 		return (uint32_t)str.size() + 1;
@@ -2033,16 +2128,14 @@ uint32_t BaseOverlay::GetKeyboardText(char* pchText, uint32_t cchText)
 }
 void BaseOverlay::HideKeyboard()
 {
-	// First, if the keyboard is currently open, cache it's contents
-	if (keyboard) {
-		keyboardCache = VRKeyboard::CHAR_CONV.to_bytes(keyboard->contents());
-	}
-
-	// Delete the keyboard instance
+	// The session lock before the layers' lock: the keyboard's swapchain goes with it
+	auto session = xr_session.lock_shared();
+	std::unique_ptr<CpuSwapchain> chain;
 	{
 		std::lock_guard<std::recursive_mutex> lock(layersLock);
-		keyboard.reset();
+		chain = DropKeyboard();
 	}
+	chain.reset();
 
 	BaseSystem* system = GetUnsafeBaseSystem();
 	if (system) {
@@ -2051,25 +2144,48 @@ void BaseOverlay::HideKeyboard()
 }
 void BaseOverlay::SetKeyboardTransformAbsolute(ETrackingUniverseOrigin eTrackingOrigin, const HmdMatrix34_t* pmatTrackingOriginToKeyboardTransform)
 {
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	if (!keyboard || !pmatTrackingOriginToKeyboardTransform) {
 		OOVR_LOG_ONCE("SetKeyboardTransformAbsolute with no keyboard open: ignored");
 		return;
 	}
-
-#ifdef OC_XR_PORT
-	OC_UNSUPPORTED_VOID("SetKeyboardTransformAbsolute: the keyboard isn't drawn yet");
-#else
-	BaseCompositor* compositor = GetUnsafeBaseCompositor();
-	if (compositor && eTrackingOrigin != compositor->GetTrackingSpace()) {
-		OC_UNSUPPORTED_VOID("SetKeyboardTransformAbsolute: origin %d isn't the compositor's %d", (int)eTrackingOrigin, (int)compositor->GetTrackingSpace());
-	}
-
-	keyboard->SetTransform(*pmatTrackingOriginToKeyboardTransform);
-#endif
+	// The keyboard's centre, in that origin (moved into the frame's when drawn)
+	const glm::mat4 m = S2G_m34(*pmatTrackingOriginToKeyboardTransform);
+	const glm::vec3 position(m[3]);
+	if (!IsFinite(position))
+		OC_UNSUPPORTED_VOID("SetKeyboardTransformAbsolute: a transform that isn't finite: ignored");
+	const glm::quat orientation = glm::normalize(glm::quat_cast(glm::mat3(m)));
+	keyboard->SetPlacement(XrPosef{ G2X_quat(orientation), G2X_v3f(position) });
+	pointing->keyboardOrigin = eTrackingOrigin;
 }
 void BaseOverlay::SetKeyboardPositionForOverlay(VROverlayHandle_t ulOverlayHandle, HmdRect2_t avoidRect)
 {
-	OC_UNSUPPORTED_VOID("SetKeyboardPositionForOverlay: the keyboard isn't drawn yet");
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	OverlayData* overlay = (OverlayData*)ulOverlayHandle;
+	if (!overlay || !validOverlays.count(overlay) || !keyboard) {
+		OOVR_LOG_ONCE("SetKeyboardPositionForOverlay with no keyboard open or no such overlay: ignored");
+		return;
+	}
+	BaseCompositor* compositor = GetUnsafeBaseCompositor();
+	const ETrackingUniverseOrigin space = compositor ? compositor->GetTrackingSpace() : TrackingUniverseStanding;
+	overlay_maths::Placement placement;
+	if (!overlay->ComputePlacement(space, validOverlays, placement))
+		OC_UNSUPPORTED_VOID("SetKeyboardPositionForOverlay: overlay '%s' can't be placed: the keyboard stays where it is", overlay->key.c_str());
+	// The rectangle is in the overlay's coordinates from its lower left: 0 to 1, or its mouse units where it's larger
+	float scaleX = 1, scaleY = 1;
+	if (std::max(std::abs(avoidRect.vTopLeft.v[0]), std::abs(avoidRect.vBottomRight.v[0])) > 1.0f && overlay->mouseScale.v[0] > 0)
+		scaleX = overlay->mouseScale.v[0];
+	if (std::max(std::abs(avoidRect.vTopLeft.v[1]), std::abs(avoidRect.vBottomRight.v[1])) > 1.0f && overlay->mouseScale.v[1] > 0)
+		scaleY = overlay->mouseScale.v[1];
+	const float centreU = (avoidRect.vTopLeft.v[0] + avoidRect.vBottomRight.v[0]) / 2 / scaleX;
+	const float bottomV = std::min(avoidRect.vTopLeft.v[1], avoidRect.vBottomRight.v[1]) / scaleY;
+	// Just below the rectangle, a little in front of the overlay
+	const glm::vec3 local((centreU - 0.5f) * placement.width, (bottomV - 0.5f) * placement.height - keyboard->HeightMeters() / 2 - 0.02f, 0.05f);
+	const glm::vec3 position = X2G_v3f(placement.pose.position) + X2G_quat(placement.pose.orientation) * local;
+	if (!IsFinite(position))
+		OC_UNSUPPORTED_VOID("SetKeyboardPositionForOverlay: no finite place below the rectangle: the keyboard stays where it is");
+	keyboard->SetPlacement(XrPosef{ placement.pose.orientation, G2X_v3f(position) });
+	pointing->keyboardOrigin = space;
 }
 EVROverlayError BaseOverlay::SetOverlayIntersectionMask(VROverlayHandle_t ulOverlayHandle, OOVR_VROverlayIntersectionMaskPrimitive_t* pMaskPrimitives, uint32_t unNumMaskPrimitives, uint32_t unPrimitiveSize)
 {

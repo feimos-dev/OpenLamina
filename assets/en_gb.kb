@@ -41,7 +41,7 @@ key \z \z
 .spans_to_right true
 
 # 4th row
-key \s \z 3.5 4 6 1
+key \s \s 3.5 4 6 1
 .label
 
 key \q \q 11.5 4
