@@ -5,6 +5,7 @@
   "overlay_shown": true,
   "frames_ended_at_least_80": true,
   "own_frames_show_the_game_frame": true,
+  "device_multithread_protected": true,
   "frame_order_errors": 0
  },
  "own-frames-race/frames/-/-": {

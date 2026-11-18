@@ -93,10 +93,14 @@ public:
 
 protected:
 	/**
-	 * Copies the bounds' area of the texture (nullptr: all of it) into an image of a swapchain of the area's size,
-	 * flipping it where the bounds run backwards (uMin > uMax, vMin > vMax), so the whole image is shown upright.
+	 * Copies the bounds' area of the texture (nullptr: all of it) to the origin of an image of a swapchain of the
+	 * texture's size, flipping it where the bounds run backwards (uMin > uMax, vMin > vMax), and sets copiedArea to the
+	 * area's size. A change of the bounds alone never makes a new swapchain.
 	 */
 	virtual void CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, std::optional<XruEye> eye, vr::EVRSubmitFlags submitFlags) = 0;
+	// The size of what CopyToSwapchain wrote at the image's origin: the part of it shown. Left at 0 x 0, the whole
+	// image is shown.
+	XrExtent2Di copiedArea{};
 
 	// For the compositors' OpenXR swapchain calls: true (with lastResult set, and the call logged once) if it failed
 	bool SwapchainCallFailed(XrResult res, const char* what);

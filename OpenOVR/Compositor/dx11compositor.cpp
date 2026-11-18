@@ -204,7 +204,7 @@ void DX11Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, uint32_t
 	src->GetDesc(&srcDesc);
 	const D3D11_TEXTURE2D_DESC fullSrcDesc = srcDesc;
 
-	// The swapchain is the size of the area shown
+	// The swapchain's size, if not the texture's
 	if (width && height) {
 		srcDesc.Width = width;
 		srcDesc.Height = height;
@@ -401,6 +401,15 @@ void DX11Compositor::DrawWithShader(ID3D11ShaderResourceView* view, uint32_t ind
 	ComPtr<ID3D11ShaderResourceView> appView;
 	ComPtr<ID3D11SamplerState> appSampler;
 	ComPtr<ID3D11InputLayout> appLayout;
+	// The game's geometry and tessellation shaders, which would otherwise run in the pass
+	ComPtr<ID3D11GeometryShader> appGs;
+	ComPtr<ID3D11HullShader> appHs;
+	ComPtr<ID3D11DomainShader> appDs;
+	ID3D11ClassInstance* appGsInstances[D3D11_SHADER_MAX_INTERFACES] = {};
+	ID3D11ClassInstance* appHsInstances[D3D11_SHADER_MAX_INTERFACES] = {};
+	ID3D11ClassInstance* appDsInstances[D3D11_SHADER_MAX_INTERFACES] = {};
+	UINT appGsInstanceCount = D3D11_SHADER_MAX_INTERFACES, appHsInstanceCount = D3D11_SHADER_MAX_INTERFACES,
+	     appDsInstanceCount = D3D11_SHADER_MAX_INTERFACES;
 	if (!appState) {
 		context->RSGetViewports(&numViewPorts, nullptr);
 		viewports.resize(numViewPorts);
@@ -420,14 +429,20 @@ void DX11Compositor::DrawWithShader(ID3D11ShaderResourceView* view, uint32_t ind
 		context->PSGetShaderResources(0, 1, &appView);
 		context->PSGetSamplers(0, 1, &appSampler);
 		context->IAGetInputLayout(&appLayout);
+		context->GSGetShader(&appGs, appGsInstances, &appGsInstanceCount);
+		context->HSGetShader(&appHs, appHsInstances, &appHsInstanceCount);
+		context->DSGetShader(&appDs, appDsInstances, &appDsInstanceCount);
+		context->GSSetShader(nullptr, nullptr, 0);
+		context->HSSetShader(nullptr, nullptr, 0);
+		context->DSSetShader(nullptr, nullptr, 0);
 	}
 
 	context->OMSetBlendState(nullptr, nullptr, 0xffffffff);
 	context->OMSetDepthStencilState(nullptr, 0);
 	context->RSSetState(nullptr);
 
-	// Draw over the whole swapchain image; the shader picks the source area
-	D3D11_VIEWPORT viewport = CD3D11_VIEWPORT(imagesHandles[index].texture, swapchain_rtvs[index]);
+	// Draw over the pass's area from the image's origin; the shader picks the source area
+	D3D11_VIEWPORT viewport = CD3D11_VIEWPORT(0.0f, 0.0f, (float)pass.width, (float)pass.height);
 	context->RSSetViewports(1, &viewport);
 	context->RSSetScissorRects(0, nullptr);
 
@@ -481,6 +496,13 @@ void DX11Compositor::DrawWithShader(ID3D11ShaderResourceView* view, uint32_t ind
 	for (UINT i = 0; i < appPsInstanceCount && i < D3D11_SHADER_MAX_INTERFACES; i++)
 		if (appPsInstances[i])
 			appPsInstances[i]->Release();
+	context->GSSetShader(appGs.Get(), appGsInstances, appGsInstanceCount);
+	context->HSSetShader(appHs.Get(), appHsInstances, appHsInstanceCount);
+	context->DSSetShader(appDs.Get(), appDsInstances, appDsInstanceCount);
+	for (ID3D11ClassInstance** instances : { appGsInstances, appHsInstances, appDsInstances })
+		for (UINT i = 0; i < D3D11_SHADER_MAX_INTERFACES; i++)
+			if (instances[i])
+				instances[i]->Release();
 	ID3D11ShaderResourceView* view0 = appView.Get();
 	context->PSSetShaderResources(0, 1, &view0);
 	ID3D11SamplerState* sampler0 = appSampler.Get();
@@ -511,17 +533,18 @@ void DX11Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 		OC_UNSUPPORTED_VOID("A D3D11 array texture of %u slices submitted with slice %u", srcDesc.ArraySize, arrayIndex);
 	}
 
-	// The bounds' area, which the swapchain is the size of
+	// The bounds' area, copied to the origin of an image of the texture's size
 	TextureRegion region;
 	if (!RegionFromBounds(bounds, srcDesc.Width, srcDesc.Height, region)) {
 		// Submit answers InvalidTexture; the eye is left out
 		lastResult = XR_ERROR_VALIDATION_FAILURE;
-		OC_UNSUPPORTED_VOID("D3D11 texture whose bounds have no area: u %f to %f, v %f to %f", (double)Bounds(bounds).uMin, (double)Bounds(bounds).uMax, (double)Bounds(bounds).vMin, (double)Bounds(bounds).vMax);
+		OC_UNSUPPORTED_VOID("A D3D11 texture of no size (%u x %u)", srcDesc.Width, srcDesc.Height);
 	}
 
-	CheckCreateSwapChain(texture, region.Width(), region.Height(), false);
+	CheckCreateSwapChain(texture, 0, 0, false);
 	if (!chain || XR_FAILED(lastResult))
 		return;
+	copiedArea = { (int32_t)region.Width(), (int32_t)region.Height() };
 
 	// The shader pass converts into the swapchain's format, and flips by the bounds (invertUsingShaders: always used).
 	// It needs a texture it can read: a multisampled one, or one not bound as a shader resource, is resolved or copied
@@ -598,6 +621,8 @@ void DX11Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 		pass.offsetY = (float)(region.flipY ? region.y1 : region.y0) / h;
 		pass.scaleX = (region.flipX ? -1.0f : 1.0f) * (float)region.Width() / w;
 		pass.scaleY = (region.flipY ? -1.0f : 1.0f) * (float)region.Height() / h;
+		pass.width = region.Width();
+		pass.height = region.Height();
 		// Gamma-encoded values: decoded when the view doesn't and the target encodes, encoded the other way round
 		const bool viewSrgb = FormatIsSrgb(GfxApiKind::D3D11, typedFormat);
 		const bool targetSrgb = FormatIsSrgb(GfxApiKind::D3D11, createInfo.format);

@@ -265,11 +265,11 @@ The available options are:
 * `stopOnSoftAbort` - boolean, default `disabled`.
     * Ends the game at the first call OpenLamina can't answer properly, as it used to. By default such a call gets an error or an empty answer and the game goes on; each one is logged the first time, and when the game shuts OpenVR down the log ends with a compatibility summary (`OpenLamina compatibility summary: <n> unsupported calls in <m> places`, then each place with how often it was hit). That list is what's worth reporting when a game misbehaves. Only enable this to find where a game first goes wrong.
 * `dx10Mode` - boolean, default `disabled`.
-    * Use DX10 instead of DX11 for games submitting DirectX textures.
+    * Ignored: Direct3D 10 textures are recognised by their interface.
 * `enableHiddenMeshFix` - boolean, default `enabled`. 
 	* Alter the coordinates of the hidden area mesh mask to fit within the view's projection. The hidden area mesh mask defines a region to which the game will not draw and is used to mask off areas of the display that you typically cannot see in the headset. If you see odd black regions around the view then try disabling this fix.
 * `invertUsingShaders` - boolean, default `disabled`. 
-	* Copy every frame through the shader pass (D3D11, D3D12) or a blit (Vulkan, OpenGL), even when its bounds don't flip it. Textures whose bounds flip them (games that render upside down and rely on the runtime to turn them over) are flipped in the copy either way, and their swapchain is the size of the bounds' area. This might have a minor cost in performance.
+	* Copy every frame through the shader pass (D3D11, D3D12) or a blit (Vulkan, OpenGL), even when its bounds don't flip it. Textures whose bounds flip them (games that render upside down and rely on the runtime to turn them over) are flipped in the copy either way. This might have a minor cost in performance.
 * `initUsingVulkan` - boolean, default `true`. 
 	* If available the temporary graphics adapter at start up will use Vulkan by default. This may be incompatible with some games. This will mostly affect Oculus headsets. 
 * `hiddenMeshVerticalScale` - float, default `1.0`. 
@@ -279,7 +279,7 @@ The available options are:
 * `submitDepth` - boolean, default `false`.
 	* For games that submit depth (`Submit_TextureWithDepth`), on runtimes with `XR_KHR_composition_layer_depth`: the depth goes to the runtime with each view (for reprojection), with the near and far planes of the game's projection. A Direct3D 12 game's depth texture is taken to be in `D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE` when it's submitted, as its colour texture is, and is left in it.
 * `ownFrames` - boolean, default `false`.
-	* While the game runs no frames (loading, a stall) and has an overlay or a skybox to show, OpenLamina runs frames of its own: the game's last frame again, which the runtime keeps reprojecting, with the overlays on top, or the skybox (`SetSkyboxOverride`) as equirect layers in its place. They start 100 ms after the game's last `WaitGetPoses` and never while its frame is open. Without it, a skybox is shown at once as a quad, and the runtime is left with the game's last frame.
+	* While the game runs no frames (loading, a stall) and has an overlay or a skybox to show, OpenLamina runs frames of its own: the game's last frame again, which the runtime keeps reprojecting, with the overlays on top, or the skybox (`SetSkyboxOverride`) as equirect layers in its place. They start 100 ms after the game's last `WaitGetPoses` and never while its frame is open. On a Direct3D 11 session the device's immediate context is made multithread protected (logged), since these frames end on a thread of their own; a Vulkan or OpenGL session runs none, since its queue or context is the game's (Vulkan and OpenGL games whose frames go through Direct3D 11 have them). Without it, a skybox is shown at once as a quad, and the runtime is left with the game's last frame.
 * `logAllOpenVRCalls` - boolean, default `false`
 	* Log every OpenVR call a game makes. Similar to `logGetTrackedProperty`, this clutters logs and should not be enabled unless necessary.
 * `inputEvaluator` - `direct` or `steamvr`, default `direct`.
