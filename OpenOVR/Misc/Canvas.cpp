@@ -13,18 +13,21 @@
 
 namespace {
 
-// The keyboard's font, built in on Windows; null where it isn't
+// The keyboard's font, built in; null if it can't be read
 const SudoFontMeta* Font()
 {
 	static std::once_flag once;
 	static std::unique_ptr<SudoFontMeta> font;
 	std::call_once(once, [] {
-#ifdef _WIN32
 		std::vector<char> meta = ReadBuiltInResource(RES_O_FNT_UBUNTU, RES_T_FNTMETA);
+#ifdef _WIN32
 		std::vector<char> png = ReadBuiltInResource(RES_O_FNT_UBUNTU, RES_T_PNG);
+#else
+		// Each resource is one file here
+		std::vector<char> png = ReadBuiltInResource(RES_O_FNT_UBUNTU_PNG, RES_T_PNG);
+#endif
 		if (!meta.empty() && !png.empty())
 			font = std::make_unique<SudoFontMeta>(meta, png);
-#endif
 	});
 	return font.get();
 }
