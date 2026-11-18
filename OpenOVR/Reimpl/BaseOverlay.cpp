@@ -2005,6 +2005,11 @@ EVROverlayError BaseOverlay::ShowKeyboardWithDispatch(EGamepadTextInputMode eInp
 
 	// The session lock before the layers' lock, as everywhere
 	auto session = xr_session.lock_shared();
+	if (!oovr_global_configuration.Keyboard()) {
+		// Answered as done at once (GetKeyboardText then has a name ready)
+		SubmitPlaceholderKeyboardEvent(VREvent_KeyboardDone, forOverlay, uUserValue);
+		return VROverlayError_None;
+	}
 	std::unique_ptr<VRKeyboard> made;
 	std::unique_ptr<CpuSwapchain> chain;
 	if (KeyboardLayout::Current()) {
@@ -2112,9 +2117,10 @@ EVROverlayError BaseOverlay::ShowKeyboardForOverlay(VROverlayHandle_t ulOverlayH
 }
 uint32_t BaseOverlay::GetKeyboardText(char* pchText, uint32_t cchText)
 {
-	// The keyboard's text, or the last one's after it has gone
-	std::string str;
-	{
+	// The keyboard's text, or the last one's after it has gone. Without the keyboard, a name: Skyrim's character
+	// creation waits for one
+	std::string str = "Adventurer";
+	if (oovr_global_configuration.Keyboard()) {
 		std::lock_guard<std::recursive_mutex> lock(layersLock);
 		str = keyboard ? keyboard->Text() : keyboardCache;
 	}

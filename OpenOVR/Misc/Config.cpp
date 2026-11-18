@@ -177,6 +177,8 @@ int Config::ini_handler(void* user, const char* pSection,
 		CFGOPT(bool, useSubmittedPose);
 		CFGOPT(bool, submitDepth);
 		CFGOPT(bool, ownFrames);
+		CFGOPT(bool, keyboard);
+		CFGOPT(bool, steamvrRenderModels);
 		CFGOPT(float, hiddenMeshVerticalScale);
 		CFGOPT(bool, logAllOpenVRCalls);
 		CFGOPT(string, bindingEditor);

@@ -2,6 +2,8 @@
 
 #include "SteamVRRenderModels.h"
 
+#include "Config.h"
+
 #include "Misc/JsonFile.h"
 #include "Misc/Numbers.h"
 #include "Misc/SteamVRPaths.h"
@@ -679,7 +681,10 @@ static std::mutex& ModelsLock()
 
 static const std::optional<fs::path>& Install()
 {
-	static const std::optional<fs::path>& install = *new std::optional<fs::path>(FindSteamVRInstall());
+	// None unless the user wants SteamVR's models (steamvrRenderModels), or a test names its SteamVR folder
+	const char* testDir = getenv("OC_TEST_STEAMVR_DIR");
+	const bool wanted = oovr_global_configuration.SteamVRRenderModels() || (testDir && *testDir);
+	static const std::optional<fs::path>& install = *new std::optional<fs::path>(wanted ? FindSteamVRInstall() : std::nullopt);
 	return install;
 }
 
