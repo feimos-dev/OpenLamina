@@ -64,7 +64,7 @@ TEST_CASE("Move_then_click_then_release")
 	LaserMouse mouse;
 	std::vector<PointerTarget> targets = { Square(7, 0, 0, -2) };
 	std::vector<PointerEvent> events;
-	// A quarter in from the left and up from the bottom: (25, 75) in mouse units, y from the top
+	// A quarter in from the left and up from the bottom: (25, 25) in mouse units, which count from the lower left
 	mouse.Update({ None(0), Ray(1, -0.25f, -0.25f) }, targets, 0.0, events);
 	mouse.Update({ None(0), Ray(1, -0.25f, -0.25f, true) }, targets, 0.1, events);
 	mouse.Update({ None(0), Ray(1, -0.25f, -0.25f, false) }, targets, 0.2, events);
@@ -78,7 +78,7 @@ TEST_CASE("Move_then_click_then_release")
 		CHECK(e.handle == 7);
 		CHECK(e.event.trackedDeviceIndex == 2);
 		CHECK(e.event.data.mouse.x == doctest::Approx(25.0f));
-		CHECK(e.event.data.mouse.y == doctest::Approx(75.0f));
+		CHECK(e.event.data.mouse.y == doctest::Approx(25.0f));
 	}
 	CHECK(m[1].event.data.mouse.button == vr::VRMouseButton_Left);
 	CHECK(m[2].event.data.mouse.button == vr::VRMouseButton_Left);
@@ -90,6 +90,38 @@ TEST_CASE("Move_then_click_then_release")
 	CHECK(mouse.Cursor(1)->u == doctest::Approx(0.25f));
 	CHECK_FALSE(mouse.Cursor(0).has_value());
 	CHECK(mouse.Target(1) == 7);
+}
+
+TEST_CASE("Mouse_y_counts_from_the_lower_left_unless_the_target_draws_from_the_top")
+{
+	// A point three quarters up the overlay: y is 75 from the bottom, 25 from the top
+	for (bool yDown : { false, true }) {
+		LaserMouse mouse;
+		PointerTarget t = Square(7, 0, 0, -2);
+		t.yDown = yDown;
+		std::vector<PointerEvent> events;
+		mouse.Update({ None(0), Ray(1, 0.1f, 0.25f) }, { t }, 0.0, events);
+		std::vector<PointerEvent> m = Only(events, kMouse);
+		REQUIRE(m.size() == 1);
+		CHECK(m[0].event.data.mouse.x == doctest::Approx(60.0f));
+		CHECK(m[0].event.data.mouse.y == doctest::Approx(yDown ? 25.0f : 75.0f));
+	}
+}
+
+TEST_CASE("Mouse_mask_is_in_the_lower_left_coordinates")
+{
+	// A mask over the upper half of the overlay, in y-up units: a point near the top is in it, one near the bottom not
+	PointerTarget t = Square(7, 0, 0, -2);
+	OOVR_VROverlayIntersectionMaskPrimitive_t rect{};
+	rect.m_nPrimitiveType = OverlayIntersectionPrimitiveType_Rectangle;
+	rect.m_Primitive.m_Rectangle = { 0, 50, 100, 50 };
+	t.mask.push_back(rect);
+	LaserMouse mouse;
+	std::vector<PointerEvent> events;
+	mouse.Update({ None(0), Ray(1, 0, 0.25f) }, { t }, 0.0, events);
+	CHECK(mouse.Target(1) == 7);
+	mouse.Update({ None(0), Ray(1, 0, -0.25f) }, { t }, 0.1, events);
+	CHECK(mouse.Target(1) == vr::k_ulOverlayHandleInvalid);
 }
 
 TEST_CASE("Nearest_overlay_wins_by_sort_order")
@@ -116,7 +148,7 @@ TEST_CASE("Nearest_overlay_wins_by_sort_order")
 
 TEST_CASE("Mask_excludes_hit")
 {
-	// The near overlay's mask is a small circle in its upper left: the ray through its centre goes on to the far one
+	// The near overlay's mask is a small circle in its lower left: the ray through its centre goes on to the far one
 	PointerTarget nearer = Square(1, 0, 0, -2, 0);
 	OOVR_VROverlayIntersectionMaskPrimitive_t circle{};
 	circle.m_nPrimitiveType = OverlayIntersectionPrimitiveType_Circle;
@@ -126,9 +158,9 @@ TEST_CASE("Mask_excludes_hit")
 	std::vector<PointerEvent> events;
 	mouse.Update({ None(0), Ray(1, 0, 0) }, { nearer, Square(2, 0, 0, -3, 0) }, 0, events);
 	CHECK(mouse.Target(1) == 2);
-	// In the circle (10, 10 from the upper left: u 0.1, v 0.9) the near one is hit
+	// In the circle (10, 10 from the lower left: u 0.1, v 0.1) the near one is hit
 	LaserMouse inside;
-	inside.Update({ None(0), Ray(1, -0.4f, 0.4f) }, { nearer, Square(2, 0, 0, -3, 0) }, 0, events);
+	inside.Update({ None(0), Ray(1, -0.4f, -0.4f) },{ nearer, Square(2, 0, 0, -3, 0) }, 0, events);
 	CHECK(inside.Target(1) == 1);
 }
 

@@ -25,6 +25,12 @@ const PointerTarget* Find(const std::vector<PointerTarget>& targets, vr::VROverl
 	return nullptr;
 }
 
+// The mouse's y for a texture coordinate v (0 at the bottom): up from the lower left, or down from the upper left
+float MouseY(const PointerTarget& t, float v)
+{
+	return (t.yDown ? 1 - v : v) * t.mouseScale.v[1];
+}
+
 vr::VREvent_t MakeEvent(uint32_t type, vr::TrackedDeviceIndex_t device)
 {
 	vr::VREvent_t e{};
@@ -58,7 +64,7 @@ void LaserMouse::Update(const std::array<PointerRay, 2>& rays, const std::vector
 					hand.target = clickTarget;
 					hand.hit = hit;
 					hand.x = hit.u * t->mouseScale.v[0];
-					hand.y = (1 - hit.v) * t->mouseScale.v[1];
+					hand.y = MouseY(*t, hit.v);
 				}
 			}
 			continue;
@@ -70,7 +76,7 @@ void LaserMouse::Update(const std::array<PointerRay, 2>& rays, const std::vector
 			if (!Intersect(t.placement, ray.origin, ray.dir, hit))
 				continue;
 			const float x = hit.u * t.mouseScale.v[0];
-			const float y = (1 - hit.v) * t.mouseScale.v[1];
+			const float y = MouseY(t, hit.v);
 			if (!InMask(t.mask, x, y))
 				continue;
 			if (best && (t.sortOrder < best->sortOrder || (t.sortOrder == best->sortOrder && hit.distance >= bestHit.distance)))
@@ -82,7 +88,7 @@ void LaserMouse::Update(const std::array<PointerRay, 2>& rays, const std::vector
 			hand.target = best->handle;
 			hand.hit = bestHit;
 			hand.x = bestHit.u * best->mouseScale.v[0];
-			hand.y = (1 - bestHit.v) * best->mouseScale.v[1];
+			hand.y = MouseY(*best, bestHit.v);
 		}
 	}
 
