@@ -43,6 +43,10 @@ using namespace vr;
 // Class to represent an overlay
 class BaseOverlay::OverlayData {
 public:
+	OverlayData(const OverlayData&) = delete;
+	OverlayData& operator=(const OverlayData&) = delete;
+	~OverlayData() { SetTexture({}); }
+
 	const string key;
 	string name;
 	HmdColor_t colour;
@@ -94,6 +98,19 @@ public:
 
 	// Rendering
 	Texture_t texture = {};
+
+	// A Direct3D 11 texture stays referenced while it's the overlay's: GetOverlayTexture and the image read use it
+	// after SetOverlayTexture has returned
+	void SetTexture(const Texture_t& t)
+	{
+#if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+		if (t.eType == TextureType_DirectX && t.handle)
+			((IUnknown*)t.handle)->AddRef();
+		if (texture.eType == TextureType_DirectX && texture.handle)
+			((IUnknown*)texture.handle)->Release();
+#endif
+		texture = t;
+	}
 
 	union {
 		XrCompositionLayerBaseHeader base;
@@ -1823,7 +1840,7 @@ EVROverlayError BaseOverlay::SetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 	// After OnOverlayTexture, which may restart the session
 	auto session = xr_session.lock_shared();
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
-	overlay->texture = texture;
+	overlay->SetTexture(texture);
 	// A texture replaces an image from memory
 	overlay->raw.reset();
 	overlay->rawImage = {};
@@ -1857,7 +1874,7 @@ EVROverlayError BaseOverlay::ClearOverlayTexture(VROverlayHandle_t ulOverlayHand
 	USEH();
 	auto session = xr_session.lock_shared();
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
-	overlay->texture = {};
+	overlay->SetTexture({});
 	overlay->raw.reset();
 	overlay->rawImage = {};
 
@@ -1888,7 +1905,7 @@ EVROverlayError BaseOverlay::SetOverlayRaw(VROverlayHandle_t ulOverlayHandle, vo
 		backend->UnregisterOverlayCompositor(comp);
 	}
 	overlay->compositor.reset();
-	overlay->texture = {};
+	overlay->SetTexture({});
 	overlay->rawImage = std::move(image);
 	if (!overlay->raw)
 		overlay->raw = CpuSwapchain::Create(unWidth, unHeight);
