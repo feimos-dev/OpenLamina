@@ -820,6 +820,9 @@ void BaseOverlay::TakeRemotePointerEvents()
 		if (r.eventType == VREvent_ScrollDiscrete || r.eventType == VREvent_ScrollSmooth) {
 			e.data.scroll.xdelta = r.x;
 			e.data.scroll.ydelta = r.y;
+		} else if (r.eventType == VREvent_FocusEnter || r.eventType == VREvent_FocusLeave) {
+			// As the lasers of this program's own session report them: with the overlay's handle
+			e.data.overlay.overlayHandle = r.handle;
 		} else {
 			// Across and up the overlay, in its own mouse units
 			e.data.mouse.x = r.x * o->mouseScale.v[0];
