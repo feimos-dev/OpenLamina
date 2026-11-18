@@ -300,8 +300,9 @@ XrResult XRAPI_CALL CreateActionSpace(XrSession, const XrActionSpaceCreateInfo* 
 		return XR_ERROR_HANDLE_INVALID;
 	auto sp = std::make_unique<RtSpace>();
 	sp->isAction = true;
-	sp->action = it->second.get();
 	sp->offset = info->poseInActionSpace;
+	sp->action = it->second.get();
+	sp->subaction = info->subactionPath;
 	int hand = HandOf(RtPathString(info->subactionPath));
 	sp->actionPose = HandPose(hand < 0 ? 1 : hand);
 	RtSpace* raw = sp.get();
@@ -469,6 +470,50 @@ void RtActionsOnFrame(RtSession* s)
 		ev->isUserPresent = p.worn ? XR_TRUE : XR_FALSE;
 		QueueEvent(buf);
 	}
+}
+
+bool RtActionSpaceScripted(const RtSpace* sp, uint64_t frame, ScriptPose* out)
+{
+	if (!sp->action || GetScript().poses.empty() || !St().actions.count(sp->action))
+		return false;
+	std::vector<std::string> paths;
+	if (RtSession* s = St().session.get())
+		paths = BoundPaths(s, sp->action, sp->subaction);
+	if (paths.empty()) {
+		// No current profile yet (or nothing bound in it): any profile's suggestion for the action
+		std::string prefix = sp->subaction != XR_NULL_PATH ? RtPathString(sp->subaction) : "";
+		for (auto& [profile, list] : St().suggested)
+			for (auto& [a, path] : list) {
+				std::string p = RtPathString(path);
+				if (a == sp->action && (prefix.empty() || p.rfind(prefix, 0) == 0))
+					paths.push_back(p);
+			}
+	}
+	for (const std::string& p : paths) {
+		if (const ScriptPose* pose = ScriptPoseAt(p, frame)) {
+			*out = *pose;
+			return true;
+		}
+	}
+	return false;
+}
+
+XrPosef RtSpaceInStage(const RtSpace* sp, ScriptPose* velocity)
+{
+	if (velocity)
+		*velocity = ScriptPose{};
+	XrPosef base = sp->isAction ? sp->actionPose : (sp->type == XR_REFERENCE_SPACE_TYPE_VIEW ? kHead : kIdentity);
+	ScriptPose scripted;
+	uint64_t frame = St().session ? St().session->framesWaited : 0;
+	XrSpaceLocationFlags gazeFlags;
+	if (sp->isAction && RtGazeSpace(sp, &base, &gazeFlags)) {
+		// A gaze space follows the script's gaze, not scripted poses (its velocities stay zero)
+	} else if (sp->isAction && RtActionSpaceScripted(sp, frame, &scripted)) {
+		base = scripted.pose;
+		if (velocity)
+			*velocity = scripted;
+	}
+	return Compose(base, sp->offset);
 }
 
 void RtActionsReset()

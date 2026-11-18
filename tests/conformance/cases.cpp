@@ -1609,5 +1609,10 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "submit-edges", SubmitEdges },
 		{ "observer", ObserverCase },
 	};
-	return cases;
+	static const std::map<std::string, CaseFn> all = [] {
+		std::map<std::string, CaseFn> m = cases;
+		m.insert(GfxCases().begin(), GfxCases().end());
+		return m;
+	}();
+	return all;
 }
