@@ -17,12 +17,16 @@ OOVR_Compositor_FrameTiming Timing(uint32_t index)
 }
 } // namespace
 
-TEST_CASE("FrameStats: counts the game's frames, its own frames and the dropped slots")
+TEST_CASE("FrameStats: counts the game's frames shown, its own frames and the dropped slots")
 {
 	FrameStats s;
 	auto now = FrameStats::Clock::now();
-	for (uint32_t i = 0; i < 10; i++)
+	// Twelve of the game's frames start, and ten are shown
+	for (uint32_t i = 0; i < 12; i++) {
 		s.OnAppFrame(Timing(i), i == 3 || i == 7 ? 1 : 0, now, 11.1);
+		if (i < 10)
+			s.OnAppPresent();
+	}
 	s.OnOwnFrame();
 	OOVR_Compositor_CumulativeStats c{};
 	s.Cumulative(42, &c, sizeof(c));

@@ -613,8 +613,16 @@ uint32_t TopLeftOfView(ID3D11ShaderResourceView* view)
 	return colour;
 }
 
-// The mirror window and the D3D11 mirror texture (expect/gfx.json): shown and hidden; the left eye's mirror is the
-// game's last left texture, copied on its device
+// A COM object's reference count
+ULONG References(IUnknown* object)
+{
+	object->AddRef();
+	return object->Release();
+}
+
+// The mirror window and the D3D11 mirror texture (expect/compositor.json): shown and hidden. Until the game first asks
+// for a mirror texture, its textures aren't referenced, and that first call fails (no frame kept yet). After that, the
+// left eye's mirror is the game's last left texture, copied on its device, given the device or one of its resources.
 void Mirror(CaseContext& c)
 {
 	Scene s(c);
@@ -626,18 +634,30 @@ void Mirror(CaseContext& c)
 	Json::Value r;
 	s.comp->ShowMirrorWindow();
 	r["visible"] = s.comp->IsMirrorWindowVisible();
+	auto* leftTex = (ID3D11Texture2D*)left.tex.handle;
+	const ULONG before = References(leftTex);
 	s.Frames(5, left, right, kFull, kFull, r);
-	r.removeMember("left");
-	r.removeMember("right");
+	r["not_referenced_before_asked"] = References(leftTex) == before;
 
 	ID3D11Device* device = nullptr;
-	((ID3D11Texture2D*)left.tex.handle)->GetDevice(&device);
+	leftTex->GetDevice(&device);
 	ID3D11ShaderResourceView* view = nullptr;
+	r["first_get"] = (int)s.comp->GetMirrorTextureD3D11(vr::Eye_Left, device, (void**)&view);
+	if (view)
+		s.comp->ReleaseMirrorTextureD3D11(view);
+	view = nullptr;
+	s.Frames(2, left, right, kFull, kFull, r);
+	r.removeMember("left");
+	r.removeMember("right");
 	r["get"] = (int)s.comp->GetMirrorTextureD3D11(vr::Eye_Left, device, (void**)&view);
 	char hex[9] = "";
 	if (view)
 		snprintf(hex, sizeof(hex), "%08x", TopLeftOfView(view));
 	r["left_top_left"] = hex;
+	if (view)
+		s.comp->ReleaseMirrorTextureD3D11(view);
+	view = nullptr;
+	r["get_with_resource"] = (int)s.comp->GetMirrorTextureD3D11(vr::Eye_Left, leftTex, (void**)&view);
 	if (view)
 		s.comp->ReleaseMirrorTextureD3D11(view);
 	device->Release();
