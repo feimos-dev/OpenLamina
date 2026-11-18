@@ -23,6 +23,8 @@ public:
 	inline bool UseSubmittedPose() const { return useSubmittedPose; }
 	/** With Submit_TextureWithDepth, where the runtime has XR_KHR_composition_layer_depth: each view gets the depth */
 	inline bool SubmitDepth() const { return submitDepth; }
+	/** Frames of OpenLamina's own while the game runs none: the game's last frame again, its overlays and its skybox */
+	inline bool OwnFrames() const { return ownFrames; }
 	float HiddenMeshVerticalScale() const { return hiddenMeshVerticalScale; }
 	inline bool LogAllOpenVRCalls() const { return logAllOpenVRCalls; }
 	/** The program OpenBindingUI starts; empty for none */
@@ -51,6 +53,7 @@ private:
 	bool initUsingVulkan = false;
 	bool useSubmittedPose = false;
 	bool submitDepth = false;
+	bool ownFrames = false;
 	float hiddenMeshVerticalScale = 1.0f;
 	bool logAllOpenVRCalls = false;
 	std::string bindingEditor;

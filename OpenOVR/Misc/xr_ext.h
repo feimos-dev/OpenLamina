@@ -81,7 +81,6 @@ public:
 	bool EyeGaze_Available() { return supportsEyeGaze; }
 	bool DepthKHR_Available() { return supportsDepthKHR; }
 	bool Equirect2KHR_Available() { return supportsEquirect2KHR; }
-	bool CubeKHR_Available() { return supportsCubeKHR; }
 	bool xrGetVisibilityMaskKHR_Available() { return pfnXrGetVisibilityMaskKHR != nullptr; }
 	bool xrMndxXdevSpace_Available()
 	{
@@ -273,7 +272,6 @@ private:
 	bool supportsEyeGaze = false;
 	bool supportsDepthKHR = false;
 	bool supportsEquirect2KHR = false;
-	bool supportsCubeKHR = false;
 
 #if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
 	PFN_xrGetD3D11GraphicsRequirementsKHR pfnXrGetD3D11GraphicsRequirementsKHR = nullptr;

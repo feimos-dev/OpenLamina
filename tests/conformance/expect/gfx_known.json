@@ -1,3 +1,0 @@
-{
- "#": "The frame cases' records that fail today, with why (run.py --known-failures: these may fail, any other failure fails the run, and one that passes is listed so it can come off)."
-}
