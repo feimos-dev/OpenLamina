@@ -621,6 +621,10 @@ void BaseOverlay::_UpdatePointer()
 	auto session = xr_session.lock_shared();
 	auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
 
+	// Overlays that take mouse input are pointed at only with the laserMouse key (the keyboard and the message box
+	// have their own); the game's own HandleControllerOverlayInteractionAsMouse always
+	const bool laserMouse = oovr_global_configuration.LaserMouse();
+
 	// Cheap first: is there anything to point at?
 	bool wanted = false;
 	{
@@ -628,7 +632,7 @@ void BaseOverlay::_UpdatePointer()
 		wanted = keyboard != nullptr;
 		for (const auto& kv : overlays) {
 			const OverlayData* o = kv.second;
-			if (o && o->visible && (o->inputMethod == VROverlayInputMethod_Mouse || o->asMouseUpdates > 0)
+			if (o && o->visible && ((laserMouse && o->inputMethod == VROverlayInputMethod_Mouse) || o->asMouseUpdates > 0)
 			    && (o->texture.handle != nullptr || !o->rawImage.Empty())) {
 				wanted = true;
 				break;
@@ -669,7 +673,7 @@ void BaseOverlay::_UpdatePointer()
 			if (!(keyboard && p.keyboardModal)) {
 				for (const auto& kv : overlays) {
 					OverlayData* o = kv.second;
-					if (!o || !o->visible || !(o->inputMethod == VROverlayInputMethod_Mouse || o->asMouseUpdates > 0))
+					if (!o || !o->visible || !((laserMouse && o->inputMethod == VROverlayInputMethod_Mouse) || o->asMouseUpdates > 0))
 						continue;
 					if (o->texture.handle == nullptr && o->rawImage.Empty())
 						continue;
