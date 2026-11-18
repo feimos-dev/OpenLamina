@@ -4,6 +4,7 @@
 
 #include "Config.h"
 
+#include "Misc/AppManifest.h"
 #include "Misc/JsonFile.h"
 #include "Misc/Numbers.h"
 #include "Misc/SteamVRPaths.h"
@@ -32,22 +33,6 @@ constexpr uintmax_t kMaxPngBytes = 64 * 1024 * 1024;
 constexpr uint32_t kMaxTextureSide = 8192;
 // More folders than any SteamVR install has: listing stops there
 constexpr int kMaxListed = 4096;
-
-// Empty for text that isn't UTF-8 (MSVC throws on it)
-fs::path FromUtf8(const std::string& s)
-{
-	try {
-		return fs::path(std::u8string(s.begin(), s.end()));
-	} catch (const std::exception&) {
-		return {};
-	}
-}
-
-std::string Utf8(const fs::path& p)
-{
-	std::u8string s = p.u8string();
-	return std::string(s.begin(), s.end());
-}
 
 bool IsDirectory(const fs::path& p)
 {
@@ -94,7 +79,7 @@ bool IsInsideFolder(const std::string& file)
 {
 	if (file.empty())
 		return false;
-	fs::path p = FromUtf8(file);
+	fs::path p = PathFromUtf8(file);
 	if (p.empty() || p.is_absolute() || p.has_root_name() || p.has_root_directory())
 		return false;
 	for (const fs::path& part : p)
@@ -238,7 +223,7 @@ long Resolve(long index, size_t count)
 {
 	if (index > 0 && (size_t)index <= count)
 		return index - 1;
-	if (index < 0 && (size_t)(-index) <= count)
+	if (index < 0 && index >= -(long)count) // not -index: that overflows for the smallest long
 		return (long)count + index;
 	return -1;
 }
@@ -298,7 +283,7 @@ std::vector<std::string> ListSteamVRRenderModels(const fs::path& steamvr)
 			for (fs::directory_iterator it(folder, ec), end; !ec && it != end && seen < kMaxListed; it.increment(ec), seen++) {
 				if (!IsDirectory(it->path()))
 					continue;
-				std::string name = Utf8(it->path().filename());
+				std::string name = PathToUtf8(it->path().filename());
 				if (IsPlainName(name))
 					names.push_back(prefix + name);
 			}
@@ -307,7 +292,7 @@ std::vector<std::string> ListSteamVRRenderModels(const fs::path& steamvr)
 		std::error_code ec;
 		int drivers = 0;
 		for (fs::directory_iterator it(steamvr / "drivers", ec), end; !ec && it != end && drivers < kMaxListed; it.increment(ec), drivers++) {
-			std::string driver = Utf8(it->path().filename());
+			std::string driver = PathToUtf8(it->path().filename());
 			if (IsPlainName(driver) && driver.find('}') == std::string::npos)
 				addFolders(it->path() / "resources" / "rendermodels", "{" + driver + "}");
 		}
@@ -328,14 +313,14 @@ fs::path SteamVRRenderModelFolder(const fs::path& steamvr, const std::string& na
 		std::string driver = name.substr(1, close - 1), model = name.substr(close + 1);
 		if (!IsPlainName(driver) || !IsPlainName(model))
 			return {};
-		fs::path d = FromUtf8(driver), m = FromUtf8(model);
+		fs::path d = PathFromUtf8(driver), m = PathFromUtf8(model);
 		if (d.empty() || m.empty())
 			return {};
 		return steamvr / "drivers" / d / "resources" / "rendermodels" / m;
 	}
 	if (!IsPlainName(name))
 		return {};
-	fs::path m = FromUtf8(name);
+	fs::path m = PathFromUtf8(name);
 	if (m.empty())
 		return {};
 	return steamvr / "resources" / "rendermodels" / m;
@@ -347,7 +332,7 @@ std::optional<RmModel> LoadSteamVRRenderModel(const fs::path& steamvr, const std
 		fs::path folder = SteamVRRenderModelFolder(steamvr, name);
 		if (folder.empty() || !IsDirectory(folder))
 			return std::nullopt;
-		fs::path stem = FromUtf8(FileStem(name));
+		fs::path stem = PathFromUtf8(FileStem(name));
 		fs::path json = folder / stem;
 		json += ".json";
 		fs::path obj = folder / stem;
@@ -366,7 +351,7 @@ std::optional<RmModel> LoadSteamVRRenderModel(const fs::path& steamvr, const std
 		std::error_code ec;
 		uintmax_t size = fs::file_size(json, ec);
 		if (ec || size > kMaxJsonBytes) {
-			OOVR_LOGF("Render model %s: %s is too large to be a model's", name.c_str(), Utf8(json).c_str());
+			OOVR_LOGF("Render model %s: %s is too large to be a model's", name.c_str(), PathToUtf8(json).c_str());
 			return std::nullopt;
 		}
 		Json::Value root;
@@ -528,7 +513,7 @@ bool LoadObj(const fs::path& obj, std::vector<RmVertex>& verts, std::vector<uint
 			for (const std::string& lib : libraries) {
 				if (!IsInsideFolder(lib))
 					continue;
-				std::string file = DiffuseOf(obj.parent_path() / FromUtf8(lib), material);
+				std::string file = DiffuseOf(obj.parent_path() / PathFromUtf8(lib), material);
 				if (!file.empty() && IsInsideFolder(file)) {
 					*diffuse = file;
 					break;
@@ -539,7 +524,7 @@ bool LoadObj(const fs::path& obj, std::vector<RmVertex>& verts, std::vector<uint
 		indices.insert(indices.end(), newIndices.begin(), newIndices.end());
 		return true;
 	} catch (const std::exception& e) {
-		OOVR_LOGF("Render model file %s can't be read: %s", Utf8(obj).c_str(), e.what());
+		OOVR_LOGF("Render model file %s can't be read: %s", PathToUtf8(obj).c_str(), e.what());
 		return false;
 	}
 }
@@ -550,20 +535,20 @@ std::optional<RmMesh> LoadRenderModelMesh(const RmModel& model, const std::strin
 	auto add = [&](const fs::path& obj) {
 		std::string diffuse;
 		if (!LoadObj(obj, mesh.vertices, mesh.indices, &diffuse)) {
-			OOVR_LOGF("Render model %s: %s can't be read", model.name.c_str(), Utf8(obj).c_str());
+			OOVR_LOGF("Render model %s: %s can't be read", model.name.c_str(), PathToUtf8(obj).c_str());
 			return;
 		}
 		if (mesh.diffuse.empty() && !diffuse.empty())
-			mesh.diffuse = obj.parent_path() / FromUtf8(diffuse);
+			mesh.diffuse = obj.parent_path() / PathFromUtf8(diffuse);
 	};
 
 	if (!component.empty()) {
 		auto it = std::find_if(model.components.begin(), model.components.end(), [&](const RmComponent& c) { return c.name == component; });
 		if (it == model.components.end() || it->objFile.empty())
 			return std::nullopt;
-		add(model.folder / FromUtf8(it->objFile));
+		add(model.folder / PathFromUtf8(it->objFile));
 	} else {
-		fs::path whole = model.folder / FromUtf8(FileStem(model.name));
+		fs::path whole = model.folder / PathFromUtf8(FileStem(model.name));
 		whole += ".obj";
 		if (IsFile(whole)) {
 			add(whole);
@@ -571,7 +556,7 @@ std::optional<RmMesh> LoadRenderModelMesh(const RmModel& model, const std::strin
 			// No OBJ of the whole model: its components as they are at rest
 			for (const RmComponent& c : model.components)
 				if (!c.objFile.empty() && ComponentVisible(c, false, false))
-					add(model.folder / FromUtf8(c.objFile));
+					add(model.folder / PathFromUtf8(c.objFile));
 		}
 	}
 	if (mesh.indices.empty())
@@ -583,7 +568,7 @@ std::optional<RmTexture> LoadRenderModelTexture(const fs::path& file)
 {
 	std::optional<std::string> data = ReadFile(file, kMaxPngBytes);
 	if (!data) {
-		OOVR_LOGF("Render model texture %s can't be read", Utf8(file).c_str());
+		OOVR_LOGF("Render model texture %s can't be read", PathToUtf8(file).c_str());
 		return std::nullopt;
 	}
 	const unsigned char* bytes = (const unsigned char*)data->data();
@@ -593,11 +578,11 @@ std::optional<RmTexture> LoadRenderModelTexture(const fs::path& file)
 	unsigned error = lodepng_inspect(&w, &h, &state, bytes, data->size());
 	lodepng_state_cleanup(&state);
 	if (error) {
-		OOVR_LOGF("Render model texture %s isn't a PNG (%s): the model has no texture", Utf8(file).c_str(), lodepng_error_text(error));
+		OOVR_LOGF("Render model texture %s isn't a PNG (%s): the model has no texture", PathToUtf8(file).c_str(), lodepng_error_text(error));
 		return std::nullopt;
 	}
 	if (w == 0 || h == 0 || w > kMaxTextureSide || h > kMaxTextureSide) {
-		OOVR_LOGF("Render model texture %s is %ux%u, larger than %u on a side: the model has no texture", Utf8(file).c_str(), w, h, kMaxTextureSide);
+		OOVR_LOGF("Render model texture %s is %ux%u, larger than %u on a side: the model has no texture", PathToUtf8(file).c_str(), w, h, kMaxTextureSide);
 		return std::nullopt;
 	}
 	RmTexture tex;
@@ -605,14 +590,14 @@ std::optional<RmTexture> LoadRenderModelTexture(const fs::path& file)
 		std::vector<unsigned char> rgba;
 		error = lodepng::decode(rgba, w, h, bytes, data->size());
 		if (error || rgba.size() != (size_t)w * h * 4) {
-			OOVR_LOGF("Render model texture %s can't be decoded (%s)", Utf8(file).c_str(), error ? lodepng_error_text(error) : "wrong size");
+			OOVR_LOGF("Render model texture %s can't be decoded (%s)", PathToUtf8(file).c_str(), error ? lodepng_error_text(error) : "wrong size");
 			return std::nullopt;
 		}
 		tex.width = w;
 		tex.height = h;
-		tex.rgba.assign(rgba.begin(), rgba.end());
+		tex.rgba = std::move(rgba);
 	} catch (const std::exception& e) {
-		OOVR_LOGF("Render model texture %s can't be decoded: %s", Utf8(file).c_str(), e.what());
+		OOVR_LOGF("Render model texture %s can't be decoded: %s", PathToUtf8(file).c_str(), e.what());
 		return std::nullopt;
 	}
 	return tex;
