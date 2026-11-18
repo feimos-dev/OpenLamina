@@ -380,9 +380,11 @@ def compare(results, expected_path, differences_path, arch):
 def check_expect(results, expect_path, allow_skip=None, rounds=None):
     """The mismatches with an --expect file, as (record key, text), in every round of a --repeat run (rounds: their
     numbers). A field "dump:<path>" is looked up in the record's joined dump. A skipped record passes only if its case
-    matches allow_skip (a regex)."""
+    matches allow_skip (a regex), and so do that case's other expected records."""
     expect = json.loads(Path(expect_path).read_text(encoding="utf-8"))
     by_key = {(expect_key(r), r.get("round")): r for r in results}
+    # A case skipped as a whole (its device can't be made here) has one record; its other expected records pass too
+    skipped_cases = {r.get("case") for r in results if r.get("skipped") and allow_skip and re.fullmatch(allow_skip, r.get("case", ""))}
     misses = []
     for k, fields in expect.items():
         if k.startswith("#"):
@@ -392,7 +394,8 @@ def check_expect(results, expect_path, allow_skip=None, rounds=None):
             r = by_key.get((k, n), by_key.get((k, None)))
             where = k if n is None else f"{k} (round {n})"
             if r is None:
-                misses.append((k, f"{where}: no such record"))
+                if k.split("/", 1)[0] not in skipped_cases:
+                    misses.append((k, f"{where}: no such record"))
                 continue
             if r.get("skipped"):
                 if not (allow_skip and re.fullmatch(allow_skip, r.get("case", ""))):

@@ -63,14 +63,14 @@ TEST_CASE("OwnFrameLoop: no frames before the game's first, then frames once it 
 	CHECK(fake.frames <= before + 1);
 }
 
-TEST_CASE("OwnFrameLoop: Always runs frames without the game, and stops when destroyed")
+TEST_CASE("OwnFrameLoop: EveryFrame runs frames without the game, and stops when destroyed")
 {
 	FakeFrames fake;
 	std::atomic<int> sourced{ 0 };
 	auto start = std::chrono::steady_clock::now();
 	{
 		OwnFrameLoop loop(
-		    OwnFrameLoop::Mode::Always, [&](XrTime, std::vector<const XrCompositionLayerBaseHeader*>&) { sourced++; }, 100ms,
+		    OwnFrameLoop::Mode::EveryFrame, [&](XrTime, std::vector<const XrCompositionLayerBaseHeader*>&) { sourced++; }, 100ms,
 		    fake.Runner());
 		CHECK(WaitFor([&] { return fake.frames >= 3; }));
 	}

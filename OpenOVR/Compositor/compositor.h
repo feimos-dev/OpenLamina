@@ -70,10 +70,11 @@ public:
 
 	/**
 	 * For a compositor that carries depth: copies a depth texture of its API into an image of a depth swapchain of the
-	 * texture's size, in the runtime's depth format of the same bits. True with subImage set; false (logged once)
-	 * where that can't be done. A compositor used for this is used for nothing else.
+	 * texture's size, in the runtime's depth format of the same bits. True with subImage set to the bounds' area of it
+	 * (the colour's bounds, as the depth lines up with the colour); false (logged once) where that can't be done, as
+	 * for flipped bounds. A compositor used for this is used for nothing else.
 	 */
-	bool InvokeDepth(const vr::Texture_t* depth, XrSwapchainSubImage& subImage);
+	bool InvokeDepth(const vr::Texture_t* depth, const vr::VRTextureBounds_t* bounds, XrSwapchainSubImage& subImage);
 
 	/**
 	 * What the last Invoke ran into: XR_SUCCESS, or the OpenXR swapchain call that failed (that eye's image is then

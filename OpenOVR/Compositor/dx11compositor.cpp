@@ -383,10 +383,24 @@ void DX11Compositor::DrawWithShader(ID3D11ShaderResourceView* view, uint32_t ind
 	UINT numViewPorts = 0, numScissors = 0;
 	std::vector<D3D11_VIEWPORT> viewports;
 	std::vector<D3D11_RECT> scissors;
-	ID3D11RasterizerState* pRSState = nullptr;
-	ID3D11Buffer* appVsBuffer = nullptr;
-	ID3D11Buffer* appPsBuffer = nullptr;
+	ComPtr<ID3D11RasterizerState> appRasterizer;
+	ComPtr<ID3D11Buffer> appVsBuffer, appPsBuffer;
 	D3D11_PRIMITIVE_TOPOLOGY currTopology = D3D11_PRIMITIVE_TOPOLOGY_UNDEFINED;
+	ID3D11RenderTargetView* appTargets[D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT] = {};
+	ComPtr<ID3D11DepthStencilView> appDepthView;
+	ComPtr<ID3D11BlendState> appBlend;
+	FLOAT appBlendFactor[4] = {};
+	UINT appSampleMask = 0xffffffff;
+	ComPtr<ID3D11DepthStencilState> appDepthState;
+	UINT appStencilRef = 0;
+	ComPtr<ID3D11VertexShader> appVs;
+	ComPtr<ID3D11PixelShader> appPs;
+	ID3D11ClassInstance* appVsInstances[D3D11_SHADER_MAX_INTERFACES] = {};
+	ID3D11ClassInstance* appPsInstances[D3D11_SHADER_MAX_INTERFACES] = {};
+	UINT appVsInstanceCount = D3D11_SHADER_MAX_INTERFACES, appPsInstanceCount = D3D11_SHADER_MAX_INTERFACES;
+	ComPtr<ID3D11ShaderResourceView> appView;
+	ComPtr<ID3D11SamplerState> appSampler;
+	ComPtr<ID3D11InputLayout> appLayout;
 	if (!appState) {
 		context->RSGetViewports(&numViewPorts, nullptr);
 		viewports.resize(numViewPorts);
@@ -394,13 +408,22 @@ void DX11Compositor::DrawWithShader(ID3D11ShaderResourceView* view, uint32_t ind
 		context->RSGetScissorRects(&numScissors, nullptr);
 		scissors.resize(numScissors);
 		context->RSGetScissorRects(&numScissors, scissors.data());
-		context->RSGetState(&pRSState);
+		context->RSGetState(&appRasterizer);
 		context->VSGetConstantBuffers(0, 1, &appVsBuffer);
 		context->PSGetConstantBuffers(0, 1, &appPsBuffer);
 		context->IAGetPrimitiveTopology(&currTopology);
+		context->OMGetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, appTargets, &appDepthView);
+		context->OMGetBlendState(&appBlend, appBlendFactor, &appSampleMask);
+		context->OMGetDepthStencilState(&appDepthState, &appStencilRef);
+		context->VSGetShader(&appVs, appVsInstances, &appVsInstanceCount);
+		context->PSGetShader(&appPs, appPsInstances, &appPsInstanceCount);
+		context->PSGetShaderResources(0, 1, &appView);
+		context->PSGetSamplers(0, 1, &appSampler);
+		context->IAGetInputLayout(&appLayout);
 	}
 
 	context->OMSetBlendState(nullptr, nullptr, 0xffffffff);
+	context->OMSetDepthStencilState(nullptr, 0);
 	context->RSSetState(nullptr);
 
 	// Draw over the whole swapchain image; the shader picks the source area
@@ -446,19 +469,31 @@ void DX11Compositor::DrawWithShader(ID3D11ShaderResourceView* view, uint32_t ind
 	}
 
 	context->IASetPrimitiveTopology(currTopology);
-	context->VSSetConstantBuffers(0, 1, &appVsBuffer);
-	context->PSSetConstantBuffers(0, 1, &appPsBuffer);
-	if (appVsBuffer)
-		appVsBuffer->Release();
-	if (appPsBuffer)
-		appPsBuffer->Release();
-	if (numViewPorts)
-		context->RSSetViewports(numViewPorts, viewports.data());
-	if (numScissors)
-		context->RSSetScissorRects(numScissors, scissors.data());
-	context->RSSetState(pRSState);
-	if (pRSState)
-		pRSState->Release();
+	context->IASetInputLayout(appLayout.Get());
+	ID3D11Buffer* buffers[2] = { appVsBuffer.Get(), appPsBuffer.Get() };
+	context->VSSetConstantBuffers(0, 1, &buffers[0]);
+	context->PSSetConstantBuffers(0, 1, &buffers[1]);
+	context->VSSetShader(appVs.Get(), appVsInstances, appVsInstanceCount);
+	context->PSSetShader(appPs.Get(), appPsInstances, appPsInstanceCount);
+	for (UINT i = 0; i < appVsInstanceCount && i < D3D11_SHADER_MAX_INTERFACES; i++)
+		if (appVsInstances[i])
+			appVsInstances[i]->Release();
+	for (UINT i = 0; i < appPsInstanceCount && i < D3D11_SHADER_MAX_INTERFACES; i++)
+		if (appPsInstances[i])
+			appPsInstances[i]->Release();
+	ID3D11ShaderResourceView* view0 = appView.Get();
+	context->PSSetShaderResources(0, 1, &view0);
+	ID3D11SamplerState* sampler0 = appSampler.Get();
+	context->PSSetSamplers(0, 1, &sampler0);
+	context->RSSetViewports(numViewPorts, viewports.data());
+	context->RSSetScissorRects(numScissors, scissors.data());
+	context->RSSetState(appRasterizer.Get());
+	context->OMSetBlendState(appBlend.Get(), appBlendFactor, appSampleMask);
+	context->OMSetDepthStencilState(appDepthState.Get(), appStencilRef);
+	context->OMSetRenderTargets(D3D11_SIMULTANEOUS_RENDER_TARGET_COUNT, appTargets, appDepthView.Get());
+	for (ID3D11RenderTargetView* target : appTargets)
+		if (target)
+			target->Release();
 }
 
 void DX11Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, std::optional<XruEye> eye, vr::EVRSubmitFlags submitFlags)

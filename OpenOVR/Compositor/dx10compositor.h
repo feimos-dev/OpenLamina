@@ -16,8 +16,9 @@
  */
 class DX10Compositor : public DX11Compositor {
 public:
-	// initial is one of the game's textures, whose device's BridgeDevice the session is on
-	explicit DX10Compositor(ID3D10Texture2D* initial);
+	// initial is one of the game's textures, whose device's BridgeDevice the session is on: nullptr (logged) where that
+	// device has no bridge, or a texture can't be made on it
+	static std::unique_ptr<DX10Compositor> Create(ID3D10Texture2D* initial);
 
 	void CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, std::optional<XruEye> eye, vr::EVRSubmitFlags submitFlags) override;
 
@@ -25,12 +26,15 @@ public:
 	static ID3D10Texture2D* AsD3D10Texture(const vr::Texture_t* texture);
 
 	// The D3D11 device on the adapter of tex's D3D10 device, made the first time for that device (logged on failure:
-	// nullptr). Kept until ReleaseBridgeDevice.
+	// nullptr). Kept until ReleaseBridgeDevice; until then, nullptr (logged once) for another D3D10 device's texture.
 	static ID3D11Device* BridgeDevice(ID3D10Texture2D* tex);
 	// After the session on it has been destroyed
 	static void ReleaseBridgeDevice();
 
 private:
+	// texel: a texture of the bridge device
+	explicit DX10Compositor(ID3D11Texture2D* texel);
+
 	// One of the game's textures and its shared copy
 	struct Shared {
 		D3D10_TEXTURE2D_DESC gameDesc{};

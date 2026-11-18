@@ -299,15 +299,16 @@ static std::string AdapterName(uint64_t luid)
 }
 
 // Whether the game's device, on the adapter gameLuid, is on the OpenXR runtime's adapter (or the runtime names
-// none): a session on another adapter's device can't share its images with the runtime. One soft failure if not.
+// none). One soft failure if not: the session is still tried, as a runtime may copy across adapters, and Submit answers
+// SharedTexturesNotSupported if it or its swapchains then fail.
 static bool OnRuntimeAdapter(uint64_t gameLuid)
 {
 	uint64_t runtimeLuid = 0;
 	if (!BaseSystem::_RuntimeAdapterLuid(&runtimeLuid) || runtimeLuid == gameLuid)
 		return true;
 	std::string game = AdapterName(gameLuid), runtime = AdapterName(runtimeLuid);
-	OC_SOFT_CHECK(false, false, "The game renders on %s, but the OpenXR runtime on %s: its frames can't be shown "
-	                            "(Submit answers SharedTexturesNotSupported)",
+	OC_SOFT_CHECK(false, false, "The game renders on %s, but the OpenXR runtime on %s: trying the session anyway "
+	                            "(if it or its swapchains fail, Submit answers SharedTexturesNotSupported)",
 	    game.c_str(), runtime.c_str());
 	return false;
 }
@@ -378,11 +379,8 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 			}
 			ComPtr<IDXGIAdapter> adapter;
 			DXGI_ADAPTER_DESC desc{};
-			if (dxgi && SUCCEEDED(dxgi->GetAdapter(&adapter)) && SUCCEEDED(adapter->GetDesc(&desc)) && !OnRuntimeAdapter(PackLuid(desc.AdapterLuid))) {
+			if (dxgi && SUCCEEDED(dxgi->GetAdapter(&adapter)) && SUCCEEDED(adapter->GetDesc(&desc)) && !OnRuntimeAdapter(PackLuid(desc.AdapterLuid)))
 				appOnOtherAdapter = true;
-				appGraphicsUnusable = true;
-				return false;
-			}
 		}
 #endif
 			break;
@@ -403,11 +401,8 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 			{
 				ComPtr<ID3D12Device> device12;
 				((D3D12TextureData_t*)tex->handle)->m_pResource->GetDevice(IID_PPV_ARGS(&device12));
-				if (device12 && !OnRuntimeAdapter(PackLuid(device12->GetAdapterLuid()))) {
+				if (device12 && !OnRuntimeAdapter(PackLuid(device12->GetAdapterLuid())))
 					appOnOtherAdapter = true;
-					appGraphicsUnusable = true;
-					return false;
-				}
 			}
 #endif
 			break;
@@ -859,7 +854,7 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 	if (!CheckOrInitCompositors(texture)) {
 		// A texture OpenComposite can't use (logged): this eye is left out of the frame
 		projectionViews[eye].subImage.swapchain = XR_NULL_HANDLE;
-		return appOnOtherAdapter ? kCompositorSharedTexturesNotSupported : kCompositorInvalidTexture;
+		return appOnOtherAdapter && appGraphicsUnusable ? kCompositorSharedTexturesNotSupported : kCompositorInvalidTexture;
 	}
 
 	XrCompositionLayerProjectionView& layer = projectionViews[eye];
@@ -868,8 +863,8 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 	// An OpenGL or Vulkan texture copied through D3D11: from here on, its D3D11 copy. The game's own texture stays
 	// what the pose and depth are read from.
 	const vr::Texture_t* submitted = texture;
-	vr::Texture_t copied;
 #if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+	vr::Texture_t copied;
 	if (gfxInterop && texture->eType == gfxInterop->Type()) {
 		ID3D11Texture2D* copy = gfxInterop->CopyIn(texture, bounds);
 		if (!copy) {
@@ -905,14 +900,16 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 			depthUsable = false;
 #endif
 		if (depthUsable)
-			SubmitDepth(eye, submitted, submitFlags);
+			SubmitDepth(eye, submitted, bounds, submitFlags);
 		else if (submitFlags & vr::Submit_TextureWithDepth)
 			OOVR_LOG_ONCE("Depth isn't sent for textures copied through another graphics API");
 		XrResult res = comp.LastResult();
-		if (res == XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED)
-			result = kCompositorUnsupportedFormat;
-		else if (res == XR_ERROR_VALIDATION_FAILURE)
+		if (res == XR_ERROR_VALIDATION_FAILURE)
 			result = kCompositorInvalidTexture; // the compositor's word for texture data it can't use
+		else if (XR_FAILED(res) && appOnOtherAdapter)
+			result = kCompositorSharedTexturesNotSupported; // a swapchain call failed for a device on another adapter
+		else if (res == XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED)
+			result = kCompositorUnsupportedFormat;
 		else if (XR_FAILED(res))
 			result = kCompositorRequestFailed;
 	}
@@ -960,7 +957,7 @@ void XrBackend::UseSubmittedPose(vr::EVREye eye, const vr::Texture_t* texture, v
 	pose.position = G2X_v3f(position + q * X2G_v3f(eyePose.position));
 }
 
-void XrBackend::SubmitDepth(vr::EVREye eye, const vr::Texture_t* texture, vr::EVRSubmitFlags submitFlags)
+void XrBackend::SubmitDepth(vr::EVREye eye, const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, vr::EVRSubmitFlags submitFlags)
 {
 	if (!oovr_global_configuration.SubmitDepth() || !(submitFlags & vr::Submit_TextureWithDepth))
 		return;
@@ -983,7 +980,7 @@ void XrBackend::SubmitDepth(vr::EVREye eye, const vr::Texture_t* texture, vr::EV
 	if (!comp)
 		comp = BaseCompositor::CreateCompositorAPI(&depth);
 	XrSwapchainSubImage sub{};
-	if (!comp || !comp->InvokeDepth(&depth, sub))
+	if (!comp || !comp->InvokeDepth(&depth, bounds, sub))
 		return;
 	// The range of depth values used: 0..1 unless the game says otherwise
 	float minDepth = info.vRange.v[0], maxDepth = info.vRange.v[1];

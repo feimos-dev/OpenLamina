@@ -60,9 +60,12 @@ DXGI_FORMAT ShareableFormat(DXGI_FORMAT format)
 	}
 }
 
-// A texture of the device, for DX11Compositor's constructor (which takes the device from a texture)
+// A texture of the device, for DX11Compositor's constructor (which takes the device from a texture): nullptr (logged)
+// if it can't be made
 ComPtr<ID3D11Texture2D> OneTexel(ID3D11Device* device)
 {
+	if (!device)
+		return nullptr;
 	D3D11_TEXTURE2D_DESC desc{};
 	desc.Width = desc.Height = 1;
 	desc.MipLevels = desc.ArraySize = 1;
@@ -71,15 +74,25 @@ ComPtr<ID3D11Texture2D> OneTexel(ID3D11Device* device)
 	desc.Usage = D3D11_USAGE_DEFAULT;
 	desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
 	ComPtr<ID3D11Texture2D> tex;
-	OOVR_FAILED_DX_ABORT(device->CreateTexture2D(&desc, nullptr, &tex));
+	HRESULT hr = device->CreateTexture2D(&desc, nullptr, &tex);
+	if (FAILED(hr))
+		OC_UNSUPPORTED(nullptr, "Direct3D 10: no texture on the Direct3D 11 device (0x%08lx): no compositor", (unsigned long)hr);
 	return tex;
 }
 
 } // namespace
 
-DX10Compositor::DX10Compositor(ID3D10Texture2D* initial)
-    : DX11Compositor(OneTexel(BridgeDevice(initial)).Get())
+DX10Compositor::DX10Compositor(ID3D11Texture2D* texel)
+    : DX11Compositor(texel)
 {
+}
+
+std::unique_ptr<DX10Compositor> DX10Compositor::Create(ID3D10Texture2D* initial)
+{
+	ComPtr<ID3D11Texture2D> texel = OneTexel(BridgeDevice(initial));
+	if (!texel)
+		return nullptr;
+	return std::unique_ptr<DX10Compositor>(new DX10Compositor(texel.Get()));
 }
 
 ID3D10Texture2D* DX10Compositor::AsD3D10Texture(const vr::Texture_t* texture)
@@ -113,6 +126,11 @@ ID3D11Device* DX10Compositor::BridgeDevice(ID3D10Texture2D* tex)
 	std::lock_guard<std::mutex> lock(bridgeLock);
 	if (bridge && bridgeFor == device10)
 		return bridge.Get();
+	// The session is on the first device's bridge: a texture of another device can't be copied into its swapchains
+	if (bridge) {
+		OOVR_LOG_ONCE("Direct3D 10: a texture of another D3D10 device than the session's: not shown");
+		return nullptr;
+	}
 
 	ComPtr<IDXGIDevice> dxgi;
 	ComPtr<IDXGIAdapter> adapter;

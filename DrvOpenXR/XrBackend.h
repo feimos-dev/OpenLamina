@@ -47,7 +47,7 @@ public:
 	std::atomic<bool> exitExpected{ false };
 	// The app's graphics device couldn't be bound: the session stays on the temporary device
 	std::atomic<bool> appGraphicsUnusable{ false };
-	// Why: it's on another adapter than the runtime's (Submit then answers SharedTexturesNotSupported)
+	// It's on another adapter than the runtime's: if its session or swapchains fail, Submit answers SharedTexturesNotSupported
 	std::atomic<bool> appOnOtherAdapter{ false };
 
 	/**
@@ -179,8 +179,8 @@ private:
 
 	// The pose a frame was rendered with (useSubmittedPose): the submitted head pose times the eye's pose in the head
 	void UseSubmittedPose(vr::EVREye eye, const vr::Texture_t* texture, vr::EVRSubmitFlags submitFlags);
-	// The depth that goes with a view (submitDepth), chained to it for this frame
-	void SubmitDepth(vr::EVREye eye, const vr::Texture_t* texture, vr::EVRSubmitFlags submitFlags);
+	// The depth that goes with a view (submitDepth), the bounds' area of it as of the colour, chained to it for this frame
+	void SubmitDepth(vr::EVREye eye, const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, vr::EVRSubmitFlags submitFlags);
 	XrCompositionLayerDepthInfoKHR depthInfos[XruEyeCount] = {};
 	std::unique_ptr<Compositor> depthCompositors[XruEyeCount];
 

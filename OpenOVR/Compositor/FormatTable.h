@@ -21,7 +21,8 @@ struct FormatChoice {
 //  2. otherwise the runtime's first format of the same bit depth class;
 //  3. otherwise its first 8-bit RGBA or BGRA format, with convert = true.
 // With no runtime formats at all (it couldn't say), the family member as rule 1 picks it, copied as it is.
-// std::nullopt only for formats no table knows (block-compressed other than BC1, depth formats as colour).
+// A format no table knows is tried as it is (OpenGL: blitted into 8-bit RGBA or BGRA where the runtime lacks it);
+// std::nullopt only for depth and stencil formats as colour, and DXGI's and Vulkan's block-compressed formats beyond BC1.
 std::optional<FormatChoice> ChooseSwapchainFormat(GfxApiKind api, int64_t gameFormat, vr::EColorSpace colourSpace,
     const std::vector<int64_t>& runtimeFormats);
 
