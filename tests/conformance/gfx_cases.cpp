@@ -11,6 +11,9 @@
 #include "IVROverlay_028.h"
 
 #include <algorithm>
+#include <thread>
+#include <map>
+#include <chrono>
 #include <cstring>
 
 using namespace conformance;
@@ -458,12 +461,70 @@ void PoseDepth(CaseContext& c, GfxKind kind, int64_t format)
 	c.Record("pose-depth", r);
 }
 
+// A skybox set while the game stalls (D3D11): count textures of 256x256 (1: lat-long, 2: a stereo pair, 6: cube faces;
+// texture i the pattern of eye i % 2), then 300 ms without frames, in which OpenLamina shows it in frames of its own.
+// Records the answers, and from the dump the frames that showed it and the last one's layers.
+void Skybox(CaseContext& c, uint32_t count)
+{
+	Scene s(c);
+	if (!s.Start(GfxKind::D3D11, "skybox"))
+		return;
+	GfxTexture left = s.gfx->Pattern(512, 512, kDxgiRGBA8Srgb, 0);
+	GfxTexture right = s.gfx->Pattern(512, 512, kDxgiRGBA8Srgb, 1);
+	std::vector<GfxTexture> sky;
+	for (uint32_t i = 0; i < count; i++)
+		sky.push_back(s.gfx->Pattern(256, 256, kDxgiRGBA8Srgb, (int)(i % 2)));
+	s.gfx->Flush();
+	std::vector<vr::Texture_t> textures;
+	for (GfxTexture& t : sky)
+		textures.push_back(*t.Texture());
+
+	Json::Value r;
+	s.Frames(5, left, right, kFull, kFull, r);
+	r["set"] = (int)s.comp->SetSkyboxOverride(textures.data(), count);
+	std::this_thread::sleep_for(std::chrono::milliseconds(300));
+	s.comp->ClearSkyboxOverride();
+	s.Frames(2, left, right, kFull, kFull, r);
+	r.removeMember("left");
+	r.removeMember("right");
+	s.c.core->Cleanup();
+	s.started = false;
+
+	Json::Value dump = ReadStandInDump();
+	if (!dump.isNull()) {
+		std::map<int64_t, Json::Value> skyFrames;
+		for (const Json::Value& layer : dump["layers"]) {
+			std::string type = layer["type"].asString();
+			if (type == "equirect2" || type == "cube" || type == "quad")
+				skyFrames[layer["frame"].asInt64()].append(layer);
+		}
+		r["frames_with_skybox_at_least_10"] = skyFrames.size() >= 10;
+		if (!skyFrames.empty()) {
+			Json::Value last;
+			for (const Json::Value& layer : skyFrames.rbegin()->second) {
+				Json::Value l;
+				l["type"] = layer["type"];
+				l["eye_visibility"] = layer["eye_visibility"];
+				l["rect"] = layer["rect"];
+				l["tl"] = layer["samples"]["tl"];
+				l["invalid"] = layer["invalid"];
+				last.append(l);
+			}
+			r["last"] = last;
+		}
+	}
+	c.Record("skybox", r);
+}
+
 } // namespace
 
 const std::map<std::string, CaseFn>& conformance::GfxCases()
 {
 	static const std::map<std::string, CaseFn> cases = {
 		{ "gfx-d3d11-basic", [](CaseContext& c) { Basic(c, GfxKind::D3D11, kDxgiRGBA8Srgb); } },
+		{ "skybox-1", [](CaseContext& c) { Skybox(c, 1); } },
+		{ "skybox-2", [](CaseContext& c) { Skybox(c, 2); } },
+		{ "skybox-6", [](CaseContext& c) { Skybox(c, 6); } },
 		{ "gfx-d3d12-basic", [](CaseContext& c) { Basic(c, GfxKind::D3D12, kDxgiRGBA8Srgb); } },
 		{ "gfx-vk-basic", [](CaseContext& c) { Basic(c, GfxKind::Vulkan, kVkRGBA8Srgb); } },
 		{ "gfx-gl-basic", [](CaseContext& c) { Basic(c, GfxKind::OpenGL, kGlSRGB8Alpha8); } },

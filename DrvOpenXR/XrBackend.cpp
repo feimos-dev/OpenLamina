@@ -34,6 +34,7 @@
 #include "../OpenOVR/Reimpl/BaseOverlay.h"
 #include "../OpenOVR/Reimpl/BaseSystem.h"
 #include "../OpenOVR/Compositor/DepthRange.h"
+#include "../OpenOVR/Misc/Equirect.h"
 #include "../OpenOVR/Misc/Config.h"
 #include "../OpenOVR/convert.h"
 #include "generated/static_bases.gen.h"
@@ -52,6 +53,7 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cinttypes>
 #include <mutex>
@@ -1075,10 +1077,86 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 	nFrameIndex++;
 }
 
+bool XrBackend::SkyboxShown()
+{
+	std::lock_guard<std::mutex> lock(skyboxLock);
+	return skybox.layerCount > 0;
+}
+
+int XrBackend::SetEquirectSkybox(const vr::Texture_t* textures, uint32_t count)
+{
+	// The textures are copied now: the game may change or free them once this returns
+	std::lock_guard<std::mutex> lock(skyboxLock);
+	skybox.layerCount = 0;
+	XrCompositionLayerEquirect2KHR layer{ XR_TYPE_COMPOSITION_LAYER_EQUIRECT2_KHR };
+	layer.space = xr_space_from_ref_space_type(BaseSystem::currentSpace);
+	layer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+	layer.pose = { { 0, 0, 0, 1 }, { 0, 0, 0 } };
+	layer.radius = 0; // a sphere at infinity
+	constexpr float pi = 3.14159265f;
+	layer.centralHorizontalAngle = 2 * pi;
+	layer.upperVerticalAngle = pi / 2;
+	layer.lowerVerticalAngle = -pi / 2;
+
+	if (count == 6) {
+		// Read back and turned into one lat-long image, which every runtime with equirect layers can show
+		std::unique_ptr<Compositor> reader = BaseCompositor::CreateCompositorAPI(&textures[0]);
+		if (!reader)
+			return 1; // VRCompositorError_RequestFailed
+		std::array<Image, 6> faces;
+		for (int i = 0; i < 6; i++) {
+			if (!reader->ReadbackToCpu(&textures[i], nullptr, faces[i])) {
+				OOVR_LOG_ONCE("SetSkyboxOverride: a cube face couldn't be read back");
+				return 1; // VRCompositorError_RequestFailed
+			}
+		}
+		Image equirect = CubeFacesToEquirect({ &faces[0], &faces[1], &faces[2], &faces[3], &faces[4], &faces[5] },
+		    std::min<uint32_t>(4096, faces[0].width * 4));
+		if (equirect.Empty())
+			return 1; // VRCompositorError_RequestFailed
+		if (!skybox.faces)
+			skybox.faces = CpuSwapchain::Create(equirect.width, equirect.height);
+		if (!skybox.faces || !skybox.faces->Upload(equirect))
+			return 1; // VRCompositorError_RequestFailed
+		layer.subImage = skybox.faces->SubImage();
+		skybox.layers[0] = layer;
+		skybox.layerCount = 1;
+		return 0;
+	}
+
+	// One lat-long texture, or a stereo pair: one layer for each eye. Copied as the quad has always been (upside down).
+	vr::VRTextureBounds_t bounds{ 0, 1, 1, 0 };
+	for (uint32_t i = 0; i < count; i++) {
+		if (!skybox.textures[i])
+			skybox.textures[i] = BaseCompositor::CreateCompositorAPI(&textures[i]);
+		if (!skybox.textures[i])
+			return 1; // VRCompositorError_RequestFailed
+		skybox.layers[i] = layer;
+		skybox.textures[i]->Invoke(&textures[i], &bounds, skybox.layers[i].subImage);
+		if (XR_FAILED(skybox.textures[i]->LastResult()))
+			return 1; // VRCompositorError_RequestFailed
+		if (count == 2)
+			skybox.layers[i].eyeVisibility = i == 0 ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT;
+	}
+	skybox.layerCount = (int)count;
+	return 0;
+}
+
 IBackend::openvr_enum_t XrBackend::SetSkyboxOverride(const vr::Texture_t* pTextures, uint32_t unTextureCount)
 {
-	// Needed for rFactor2 loading screens: one texture (or a stereo pair), shown as a quad. Six faces are a cube
-	// map, which isn't drawn yet: one face as a flat picture would be wrong, so that's RequestFailed.
+	// With equirect layers: one lat-long texture, a stereo pair or six cube faces, held and shown in OpenLamina's own
+	// frames while the game runs none (as SteamVR shows it), until ClearSkyboxOverride
+	if (xr_ext && xr_ext->Equirect2KHR_Available() && pTextures && (unTextureCount == 1 || unTextureCount == 2 || unTextureCount == 6)) {
+		if (!CheckOrInitCompositors(pTextures))
+			return 1; // VRCompositorError_RequestFailed
+		auto lock = xr_session.lock_shared();
+		if (!sessionActive || !usingApplicationGraphicsAPI)
+			return 0;
+		return SetEquirectSkybox(pTextures, unTextureCount);
+	}
+
+	// Without them, as before: one texture (or the first of a stereo pair), shown at once as a quad (rFactor2's loading
+	// screens). Six faces are a cube map: one face as a flat picture would be wrong, so that's RequestFailed.
 	if (unTextureCount >= 6) {
 		OOVR_LOG_ONCE("SetSkyboxOverride with a cube map: not supported yet");
 		return 1; // VRCompositorError_RequestFailed
@@ -1203,7 +1281,8 @@ IBackend::openvr_enum_t XrBackend::SetSkyboxOverride(const vr::Texture_t* pTextu
 
 void XrBackend::ClearSkyboxOverride()
 {
-	OOVR_SOFT_ABORT("No implementation");
+	std::lock_guard<std::mutex> lock(skyboxLock);
+	skybox.layerCount = 0;
 }
 
 /* Misc compositor */
@@ -1572,13 +1651,22 @@ void XrBackend::OnSessionCreated()
 	if (BaseClientCore::appType == vr::VRApplication_Scene)
 		BaseApplications::SetSceneProcess(true);
 
-	// Frames of OpenLamina's own while the game runs none and an overlay is shown
+	// Frames of OpenLamina's own while the game runs none and there's a skybox or an overlay to show
 	StopOwnFrames();
 	if (ownFramesStopped)
 		return;
 	ownFrames = std::make_unique<OwnFrameLoop>(
 	    OwnFrameLoop::Mode::WhenAppIdle,
-	    [](XrTime, std::vector<const XrCompositionLayerBaseHeader*>& layers) {
+	    [this](XrTime, std::vector<const XrCompositionLayerBaseHeader*>& layers) {
+		    // The skybox first, behind the overlays. Its layers are copied for this frame: a new skybox set meanwhile
+		    // replaces the stored ones
+		    {
+			    std::lock_guard<std::mutex> lock(skyboxLock);
+			    for (int i = 0; i < skybox.layerCount; i++) {
+				    ownFrameSkybox[i] = skybox.layers[i];
+				    layers.push_back((const XrCompositionLayerBaseHeader*)&ownFrameSkybox[i]);
+			    }
+		    }
 		    BaseOverlay* overlay = GetUnsafeBaseOverlay();
 		    if (!overlay)
 			    return;
@@ -1591,9 +1679,9 @@ void XrBackend::OnSessionCreated()
 	    [this](const OwnFrameLoop::LayerSource& source, const std::function<bool()>& wanted) {
 		    return RunOwnFrame(source, wanted);
 	    },
-	    [] {
+	    [this] {
 		    BaseOverlay* overlay = GetUnsafeBaseOverlay();
-		    return overlay && overlay->_AnyVisible();
+		    return SkyboxShown() || (overlay && overlay->_AnyVisible());
 	    });
 }
 
@@ -1703,6 +1791,10 @@ void XrBackend::PrepareForSessionShutdown()
 		c.reset();
 	}
 	skybox_compositor.reset();
+	{
+		std::lock_guard<std::mutex> lock(skyboxLock);
+		skybox = Skybox();
+	}
 	for (std::unique_ptr<Compositor>& c : depthCompositors)
 		c.reset();
 	for (XrCompositionLayerProjectionView& view : projectionViews)
