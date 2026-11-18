@@ -62,6 +62,12 @@ public:
 	 */
 	void OnSessionLost();
 	bool IsSessionLost() const { return sessionLost; }
+	/** The session is lost, not running, or stopping, exiting or about to be lost: nothing can be shown in it any more */
+	bool IsSessionEnded() const
+	{
+		return sessionLost || !sessionActive || sessionState == XR_SESSION_STATE_STOPPING || sessionState == XR_SESSION_STATE_EXITING
+		    || sessionState == XR_SESSION_STATE_LOSS_PENDING;
+	}
 
 	/** Called before OpenComposite asks the runtime to end the session itself, so its EXITING isn't a loss */
 	void ExpectSessionExit() { exitExpected = true; }
