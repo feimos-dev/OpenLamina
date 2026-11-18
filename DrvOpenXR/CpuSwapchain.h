@@ -1,6 +1,6 @@
 #pragma once
 // A swapchain filled from memory (an RGBA8 Image), on the current session's graphics API: what an overlay set with
-// SetOverlayRaw shows, or anything else OpenComposite draws itself.
+// SetOverlayRaw shows, or anything else OpenLamina draws itself.
 
 #include "../OpenOVR/Misc/Image.h"
 

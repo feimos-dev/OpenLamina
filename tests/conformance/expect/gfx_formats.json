@@ -1,5 +1,5 @@
 {
- "#": "The format cases (run.py --cases gfx-d3d11-formats,gfx-d3d12-formats,gfx-vk-formats,gfx-gl-formats --script scripts/gfx_rgba8_only.json --expect expect/gfx_formats.json): each API submits the test pattern of gfx/GfxApi.h in four formats it has (16-bit float, 11/11/10-bit float, 10-bit and 8-bit BGRX or BGRA or RGB) under a runtime that offers RGBA8 sRGB only, so OpenComposite converts each into it. Each format's textures have a size of their own (512, 448, 384, 320), by which its projection layer is found in the dump. Samples within 2 per channel.",
+ "#": "The format cases (run.py --cases gfx-d3d11-formats,gfx-d3d12-formats,gfx-vk-formats,gfx-gl-formats --script scripts/gfx_rgba8_only.json --expect expect/gfx_formats.json): each API submits the test pattern of gfx/GfxApi.h in four formats it has (16-bit float, 11/11/10-bit float, 10-bit and 8-bit BGRX or BGRA or RGB) under a runtime that offers RGBA8 sRGB only, so OpenLamina converts each into it. Each format's textures have a size of their own (512, 448, 384, 320), by which its projection layer is found in the dump. Samples within 2 per channel.",
  "gfx-d3d11-formats/format rgba16f/-/-": {
   "left": 0,
   "right": 0,

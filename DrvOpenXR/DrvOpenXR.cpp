@@ -441,7 +441,7 @@ void DrvOpenXR::StopOwnFrames()
 
 void DrvOpenXR::ShutdownSession()
 {
-	// No frames of OpenComposite's own on a session that's ending
+	// No frames of OpenLamina's own on a session that's ending
 	if (currentBackend)
 		currentBackend->StopOwnFrames();
 

@@ -1,6 +1,6 @@
 #pragma once
-// Frames run by OpenComposite itself when the game doesn't run any (loading, a stall, a blocking call), so the runtime
-// keeps getting frames, with OpenComposite's own layers (the visible overlays) and no projection layer.
+// Frames run by OpenLamina itself when the game doesn't run any (loading, a stall, a blocking call), so the runtime
+// keeps getting frames, with OpenLamina's own layers (the visible overlays) and no projection layer.
 
 #include <openxr/openxr.h>
 

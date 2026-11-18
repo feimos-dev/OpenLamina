@@ -217,7 +217,7 @@ public:
 	int _BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompositionLayerBaseHeader const* const*& result);
 
 	// Held while the overlays, their compositors or the keyboard are added, replaced or removed, and while a frame
-	// with their layers is built and ended (on the game's thread, or OpenComposite's own frames' thread). Holders take
+	// with their layers is built and ended (on the game's thread, or OpenLamina's own frames' thread). Holders take
 	// no other lock while holding it.
 	std::recursive_mutex& _LayersLock() { return layersLock; }
 
