@@ -123,8 +123,10 @@ private:
 	// False if the texture can't be used (logged): no session switch then, or the switch was undone
 	bool CheckOrInitCompositors(const vr::Texture_t* tex);
 	std::unique_ptr<Compositor> compositors[XruEyeCount];
-	// The game's last D3D11 texture of each eye, referenced, for the mirror texture; under mirrorLock
+	// The game's last D3D11 texture of each eye (its ID3D11Texture2D, referenced), for the mirror texture, kept only
+	// once the game has asked for one (mirrorWanted); under mirrorLock
 	vr::Texture_t lastEyeTexture[XruEyeCount]{};
+	bool mirrorWanted = false;
 	std::mutex mirrorLock;
 	std::set<void*> mirrorViews; // handed out by GetMirrorTextureD3D11 and not yet released
 	void KeepForMirror(vr::EVREye eye, const vr::Texture_t* texture);

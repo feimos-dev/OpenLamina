@@ -1123,7 +1123,11 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 	info.layers = headers;
 	info.layerCount = layer_count;
 
-	OOVR_FAILED_XR_SOFT_ABORT(xrEndFrame(xr_session.get(), &info));
+	XrResult endResult = xrEndFrame(xr_session.get(), &info);
+	OOVR_FAILED_XR_SOFT_ABORT(endResult);
+	// A present: the game's eye textures shown
+	if (XR_SUCCEEDED(endResult) && app_layer)
+		FrameStats::Get().OnAppPresent();
 	frameBegun = false;
 	if (overlayLock.owns_lock())
 		overlayLock.unlock();
@@ -1478,14 +1482,22 @@ bool XrBackend::GetFrameTiming(OOVR_Compositor_FrameTiming* pTiming, uint32_t un
 void XrBackend::KeepForMirror(vr::EVREye eye, const vr::Texture_t* texture)
 {
 #if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
-	// A reference held, so the texture outlives the game freeing it until the next one replaces it
+	// Once the game has asked for a mirror texture, its last D3D11 texture of each eye is referenced, so it outlives the
+	// game freeing it until the next one replaces it. A Direct3D 10 texture (or any other) isn't kept.
 	std::lock_guard<std::mutex> lock(mirrorLock);
+	if (!mirrorWanted && texture)
+		return;
+	ID3D11Texture2D* d3d11 = nullptr;
+	if (texture && texture->eType == vr::TextureType_DirectX && texture->handle
+#if defined(SUPPORT_DX10)
+	    && !DX10Compositor::AsD3D10Texture(texture)
+#endif
+	)
+		((IUnknown*)texture->handle)->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&d3d11);
 	vr::Texture_t& kept = lastEyeTexture[eye];
-	if (texture && texture->eType == vr::TextureType_DirectX && texture->handle)
-		((IUnknown*)texture->handle)->AddRef();
-	if (kept.handle && kept.eType == vr::TextureType_DirectX)
+	if (kept.handle)
 		((IUnknown*)kept.handle)->Release();
-	kept = texture && texture->eType == vr::TextureType_DirectX ? *texture : vr::Texture_t{};
+	kept = d3d11 ? vr::Texture_t{ d3d11, vr::TextureType_DirectX, texture->eColorSpace } : vr::Texture_t{};
 #endif
 }
 
@@ -1494,9 +1506,11 @@ IBackend::openvr_enum_t XrBackend::GetMirrorTextureD3D11(vr::EVREye eEye, void* 
 #if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
 	if (eEye != vr::Eye_Left && eEye != vr::Eye_Right)
 		return 1; // VRCompositorError_RequestFailed
-	// The eye the game submitted last, copied now on its own device
+	// The eye the game submitted last, copied now on its own device. The game's textures are kept from its first call
+	// on, so that one has none yet and fails.
 	std::lock_guard<std::mutex> lock(mirrorLock);
-	int result = DX11Compositor::MirrorView(&lastEyeTexture[eEye], (ID3D11Device*)pD3D11DeviceOrResource, (ID3D11ShaderResourceView**)ppD3D11ShaderResourceView);
+	mirrorWanted = true;
+	int result = DX11Compositor::MirrorView(&lastEyeTexture[eEye], (IUnknown*)pD3D11DeviceOrResource, (ID3D11ShaderResourceView**)ppD3D11ShaderResourceView);
 	if (result == 0)
 		mirrorViews.insert(*ppD3D11ShaderResourceView);
 	return result;

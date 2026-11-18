@@ -4,6 +4,7 @@
 
 #include "../Compositor/compositor_backend.h" // TODO don't import from OCOVR, and remove the "../"
 
+#include <mutex>
 #include <vector>
 
 typedef unsigned int GLuint;
@@ -136,13 +137,15 @@ private:
 
 	bool isInSkybox = false;
 
-	// The poses WaitGetPoses gave the last few frames, by pose prediction id (GetPosesForFrame)
+	// The poses WaitGetPoses gave the last few frames, by pose prediction id (GetPosesForFrame); under posesLock, as
+	// games ask for them from other threads
 	struct FramePoses {
 		uint32_t id = 0;
 		std::vector<vr::TrackedDevicePose_t> poses;
 	};
 	FramePoses recentPoses[4];
 	uint32_t lastPoseId = 0;
+	std::mutex posesLock;
 
 	// True if the current frame has only nullptr textures supplied, and should be ignored
 	bool isNullRender = false;

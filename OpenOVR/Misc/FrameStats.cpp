@@ -28,7 +28,6 @@ void FrameStats::OnFrameStart()
 void FrameStats::OnAppFrame(const OOVR_Compositor_FrameTiming& timing, uint32_t droppedSlots, Clock::time_point waitReturned, double period)
 {
 	std::lock_guard<std::mutex> g(lock);
-	presents++;
 	dropped += droppedSlots;
 	history.push_front(timing);
 	history.front().m_nSize = sizeof(OOVR_Compositor_FrameTiming);
@@ -36,6 +35,12 @@ void FrameStats::OnAppFrame(const OOVR_Compositor_FrameTiming& timing, uint32_t 
 		history.pop_back();
 	lastWaitReturned = waitReturned;
 	periodMs = period;
+}
+
+void FrameStats::OnAppPresent()
+{
+	std::lock_guard<std::mutex> g(lock);
+	presents++;
 }
 
 void FrameStats::OnOwnFrame()

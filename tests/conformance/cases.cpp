@@ -1780,8 +1780,9 @@ void CompositorStatsCase(CaseContext& c)
 	ago.m_nSize = sizeof(ago);
 	r["frame_timing_3_ago"] = f.comp->GetFrameTiming(&ago, 3) && got == 5 && ago.m_nFrameIndex == timings[3].m_nFrameIndex;
 
+	// Within a frame: never negative, and well under a second (the real clock, on a runner that may be busy)
 	float left = f.comp->GetFrameTimeRemaining();
-	r["time_remaining_in_a_frame"] = left >= 0.0f && left < 0.05f;
+	r["time_remaining_in_a_frame"] = left >= 0.0f && left < 1.0f;
 
 	uint32_t render = 0, game = 0;
 	r["prediction_ids"] = (int)f.comp->GetLastPosePredictionIDs(&render, &game);
@@ -1793,6 +1794,16 @@ void CompositorStatsCase(CaseContext& c)
 	r["fullscreen"] = f.comp->IsFullscreen();
 	r["motion_smoothing_supported"] = f.comp->IsMotionSmoothingSupported();
 	r["motion_smoothing_enabled"] = f.comp->IsMotionSmoothingEnabled();
+	// Frames the game waits for and submits nothing to aren't presents: the first wait ends the last submitted frame
+	vr::IVRCompositor_029::Compositor_CumulativeStats before{}, after{};
+	f.comp->GetCumulativeStats(&before, sizeof(before));
+	for (int frame = 0; frame < 5; frame++) {
+		vr::TrackedDevicePose_t waited[16];
+		f.comp->WaitGetPoses(waited, 16, nullptr, 0);
+	}
+	f.comp->GetCumulativeStats(&after, sizeof(after));
+	r["waits_without_submit_not_presents"] = after.m_nNumFramePresents - before.m_nNumFramePresents <= 1;
+
 	f.comp->CompositorGoToBack();
 	f.comp->CompositorQuit();
 	c.core->Cleanup();

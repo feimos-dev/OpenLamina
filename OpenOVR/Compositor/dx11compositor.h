@@ -23,9 +23,10 @@ public:
 
 	ID3D11Device* GetDevice() { return device; }
 
-	// A view of a copy of texture (the game's own) on device, for IVRCompositor::GetMirrorTextureD3D11: an OpenVR
-	// compositor error, with *view set only on success (the caller releases it)
-	static int MirrorView(const vr::Texture_t* texture, ID3D11Device* device, ID3D11ShaderResourceView** view);
+	// A view of a copy of texture (the game's ID3D11Texture2D) on deviceOrResource's device (an ID3D11Device, or a
+	// resource of it), for IVRCompositor::GetMirrorTextureD3D11: an OpenVR compositor error, with *view set only on
+	// success (the caller releases it)
+	static int MirrorView(const vr::Texture_t* texture, IUnknown* deviceOrResource, ID3D11ShaderResourceView** view);
 
 protected:
 	// A swapchain for the texture, width x height (0: the texture's size)
