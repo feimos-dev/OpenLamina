@@ -3,6 +3,7 @@
 #include <numbers>
 #define BASE_IMPL
 #include "BaseRenderModels.h"
+#include "Misc/AppManifest.h"
 #include "Misc/Config.h"
 #include "Misc/SteamVRRenderModels.h"
 #include "convert.h"
@@ -217,11 +218,6 @@ static std::shared_ptr<const RmTexture> SteamVRTexture(TextureID_t id)
 	std::lock_guard<std::mutex> guard(t.lock);
 	auto it = t.textures.find(id);
 	return it == t.textures.end() ? nullptr : it->second;
-}
-
-static std::filesystem::path PathFromUtf8(const string& s)
-{
-	return std::filesystem::path(std::u8string(s.begin(), s.end()));
 }
 
 // A model of SteamVR's install by name: a model ("<name>" or "{<driver>}<name>"), one of its components
