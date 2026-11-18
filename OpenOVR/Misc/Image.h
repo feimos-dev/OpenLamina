@@ -15,8 +15,9 @@ struct Image {
 };
 
 // An image of 1, 3 or 4 bytes per pixel (as SetOverlayRaw allows: grey, RGB, RGBA), rows of stride bytes top to
-// bottom, as RGBA8: a grey byte g becomes g g g 255, RGB gets alpha 255. An empty image for any other size, or for
-// no data.
+// bottom, as RGBA8: a grey byte g becomes g g g 255, RGB gets alpha 255. An empty image for any other size, for no
+// data, or for more than kMaxRawImageSide pixels on a side (the largest texture Direct3D 11 has).
+constexpr uint32_t kMaxRawImageSide = 16384;
 Image ConvertToRgba8(const void* data, uint32_t width, uint32_t height, uint32_t stride, uint32_t bytesPerPixel);
 
 // How a texture's texels are laid out in memory, for reading them back

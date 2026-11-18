@@ -4,6 +4,7 @@
 
 #include <cmath>
 #include <cstring>
+#include <new>
 
 uint32_t Image::At(uint32_t x, uint32_t y) const
 {
@@ -18,11 +19,18 @@ Image ConvertToRgba8(const void* data, uint32_t width, uint32_t height, uint32_t
 	Image out;
 	if (!data || !width || !height || (bytesPerPixel != 1 && bytesPerPixel != 3 && bytesPerPixel != 4))
 		return out;
+	// A size no texture has: its bytes wouldn't fit a 32-bit size
+	if (width > kMaxRawImageSide || height > kMaxRawImageSide)
+		return out;
 	if ((uint64_t)stride < (uint64_t)width * bytesPerPixel)
 		return out;
+	try {
+		out.rgba.resize((size_t)width * height * 4);
+	} catch (const std::bad_alloc&) {
+		return out;
+	}
 	out.width = width;
 	out.height = height;
-	out.rgba.resize((size_t)width * height * 4);
 	const auto* src = (const uint8_t*)data;
 	for (uint32_t y = 0; y < height; y++) {
 		const uint8_t* row = src + (size_t)y * stride;

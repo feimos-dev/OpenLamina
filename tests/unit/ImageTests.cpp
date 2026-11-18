@@ -42,6 +42,9 @@ TEST_CASE("Image_convert_1_3_4_bytes")
 	CHECK(ConvertToRgba8(rgba, 2, 1, 4, 4).Empty());
 	CHECK(ConvertToRgba8(nullptr, 2, 1, 8, 4).Empty());
 	CHECK(ConvertToRgba8(rgba, 0, 1, 8, 4).Empty());
+	// More pixels on a side than any texture has: refused before anything is read
+	CHECK(ConvertToRgba8(rgba, kMaxRawImageSide + 1, 1, (kMaxRawImageSide + 1) * 4, 4).Empty());
+	CHECK(ConvertToRgba8(rgba, 1, kMaxRawImageSide + 1, 4, 4).Empty());
 }
 
 TEST_CASE("Image_decode_texels")
