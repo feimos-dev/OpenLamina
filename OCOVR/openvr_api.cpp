@@ -251,7 +251,7 @@ VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal(EVRInitError* peError, EVRAppl
 
 VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(EVRInitError* peError, EVRApplicationType eApplicationType, const char* pStartupInfo)
 {
-	OOVR_LOG_ONCEF("Initializing OpenLamina, a fork of OpenComposite (github.com/fzeruhn/OpenLamina) - revision %s", OC_VERSION);
+	OOVR_LOG_ONCEF("Initializing OpenLamina, a fork of OpenComposite (github.com/feimos-dev/OpenLamina) - revision %s", OC_VERSION);
 	if (peError) {
 		*peError = VRInitError_None;
 	}

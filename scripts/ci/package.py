@@ -224,7 +224,7 @@ def main() -> None:
     output.add_argument("--out", type=Path)
     output.add_argument("--windows-folder", type=Path)
     parser.add_argument("--os", nargs="+", choices=["windows", "linux"], default=["windows", "linux"])
-    parser.add_argument("--repository", default="fzeruhn/OpenLamina")
+    parser.add_argument("--repository", default="feimos-dev/OpenLamina")
     parser.add_argument("--installer", type=Path, help="OpenLamina-Setup.exe, to put with the archives")
     args = parser.parse_args()
 

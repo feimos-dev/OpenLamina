@@ -5,8 +5,8 @@
 <h1 align="center">OpenLamina</h1>
 
 <p align="center">
-  <a href="https://github.com/fzeruhn/OpenLamina/actions/workflows/build.yml"><img src="https://img.shields.io/github/actions/workflow/status/fzeruhn/OpenLamina/build.yml?branch=main&style=for-the-badge&logo=github&label=build" alt="Build"></a>
-  <a href="https://github.com/fzeruhn/OpenLamina/releases"><img src="https://img.shields.io/github/v/release/fzeruhn/OpenLamina?include_prereleases&style=for-the-badge&label=release" alt="Release"></a>
+  <a href="https://github.com/feimos-dev/OpenLamina/actions/workflows/build.yml"><img src="https://img.shields.io/github/actions/workflow/status/feimos-dev/OpenLamina/build.yml?branch=main&style=for-the-badge&logo=github&label=build" alt="Build"></a>
+  <a href="https://github.com/feimos-dev/OpenLamina/releases"><img src="https://img.shields.io/github/v/release/feimos-dev/OpenLamina?include_prereleases&style=for-the-badge&label=release" alt="Release"></a>
 </p>
 
 Play SteamVR (OpenVR) games on any OpenXR runtime, without SteamVR.
@@ -17,7 +17,7 @@ merged anything since July 2025, and its open merge requests, some of them neede
 Alyx, have waited without review. OpenLamina takes them, fixes what review found in them, adds fixes of its own, and
 publishes Windows and Linux builds.
 
-**Bugs and questions about this fork go to [its issues](https://github.com/fzeruhn/OpenLamina/issues)**, not to
+**Bugs and questions about this fork go to [its issues](https://github.com/feimos-dev/OpenLamina/issues)**, not to
 upstream's GitLab or Discord as they can't help with changes they haven't made.
 
 ## What this fork has that upstream doesn't
@@ -90,13 +90,13 @@ Upstream merge requests are linked as !*n* with their authors. Everything else w
   their own output folders. ([!179](https://gitlab.com/znixian/OpenOVR/-/merge_requests/179), Kitlith)
 
 **Releases**
-- [Windows and Linux builds](https://github.com/fzeruhn/OpenLamina/releases), 64- and 32-bit, built by GitHub
+- [Windows and Linux builds](https://github.com/feimos-dev/OpenLamina/releases), 64- and 32-bit, built by GitHub
   Actions from the tagged commit, with checksums, the licences and the full source. Upstream's download links and
   launcher fetch upstream's builds.
 
 Every change was reviewed, and all four builds are made with warnings as errors on every change. Not every change has
 been tried yet in the game it is for. If something works upstream and not here, please
-[open an issue](https://github.com/fzeruhn/OpenLamina/issues/new).
+[open an issue](https://github.com/feimos-dev/OpenLamina/issues/new).
 
 Not here yet: overlay apps (upstream !101), controller models and the virtual keyboard.
 
@@ -122,7 +122,7 @@ A game listed there as broken by a missing interface will likely work with this 
 ## Installing
 
 Your headset's OpenXR runtime must be the active one: OpenLamina runs OpenVR games on it. Everything is on the
-[releases page](https://github.com/fzeruhn/OpenLamina/releases).
+[releases page](https://github.com/feimos-dev/OpenLamina/releases).
 
 ### Windows
 
@@ -301,7 +301,7 @@ haptics = off
 ## Reporting a bug
 
 If a game crashes, shows a missing interface, or behaves differently than under SteamVR, please
-[open an issue here](https://github.com/fzeruhn/OpenLamina/issues/new). Say:
+[open an issue here](https://github.com/feimos-dev/OpenLamina/issues/new). Say:
 
 - the game, your headset and OpenXR runtime, and which release of this fork (or commit) you use;
 - what happened and when: at start, after loading a level, on pressing a button;
@@ -319,7 +319,7 @@ If neither exists, look for `openlamina.log` next to the game's EXE.
 The source is GPL-3.0-or-later. Clone with its submodules:
 
 ```bash
-git clone --recursive https://github.com/fzeruhn/OpenLamina.git
+git clone --recursive https://github.com/feimos-dev/OpenLamina.git
 ```
 
 It's a standard CMake project, so IDEs such as CLion and Visual Studio can build it too. The scripts below build it

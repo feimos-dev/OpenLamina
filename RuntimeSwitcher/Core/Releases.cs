@@ -38,7 +38,7 @@ namespace RuntimeSwitcher.Core
     /// <summary>The fork's releases, from GitHub's API (GET /repos/{owner}/{repo}/releases).</summary>
     public static class Releases
     {
-        public const string Repository = "fzeruhn/OpenLamina";
+        public const string Repository = "feimos-dev/OpenLamina";
         public static readonly string ApiUrl = $"https://api.github.com/repos/{Repository}/releases?per_page=30";
         public static readonly string PageUrl = $"https://github.com/{Repository}/releases";
 

@@ -21,7 +21,7 @@ param(
     [Parameter(Mandatory)] [string]$Artifacts,
     [Parameter(Mandatory)] [string]$Version,
     [string]$Out,
-    [string]$Repository = 'fzeruhn/OpenLamina'
+    [string]$Repository = 'feimos-dev/OpenLamina'
 )
 
 $ErrorActionPreference = 'Stop'
