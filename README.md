@@ -277,7 +277,7 @@ The available options are:
 * `useSubmittedPose` - boolean, default `false`.
 	* For games that submit the head pose they rendered with (`Submit_TextureWithPose`): each eye's view is placed by that pose, rather than by the one OpenLamina located for the frame.
 * `submitDepth` - boolean, default `false`.
-	* For games that submit depth (`Submit_TextureWithDepth`), on runtimes with `XR_KHR_composition_layer_depth`: the depth goes to the runtime with each view (for reprojection), with the near and far planes of the game's projection.
+	* For games that submit depth (`Submit_TextureWithDepth`), on runtimes with `XR_KHR_composition_layer_depth`: the depth goes to the runtime with each view (for reprojection), with the near and far planes of the game's projection. A Direct3D 12 game's depth texture is taken to be in `D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE` when it's submitted, as its colour texture is, and is left in it.
 * `ownFrames` - boolean, default `false`.
 	* While the game runs no frames (loading, a stall) and has an overlay or a skybox to show, OpenLamina runs frames of its own: the game's last frame again, which the runtime keeps reprojecting, with the overlays on top, or the skybox (`SetSkyboxOverride`) as equirect layers in its place. They start 100 ms after the game's last `WaitGetPoses` and never while its frame is open. Without it, a skybox is shown at once as a quad, and the runtime is left with the game's last frame.
 * `logAllOpenVRCalls` - boolean, default `false`

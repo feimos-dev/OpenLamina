@@ -411,24 +411,17 @@ void Bounds(CaseContext& c, GfxKind kind, int64_t format)
 	}
 }
 
-// The pose a frame was rendered with and its depth: each eye's texture (512 x 512) goes with a head pose 0.5 m to the left
-// of the one WaitGetPoses gave, and a depth texture of 0.25 everywhere from a projection with near 0.1 and far 100
-// (Submit_TextureWithPose | Submit_TextureWithDepth). Records the located head's position as "head".
+// The pose a frame was rendered with and its depth: each eye's texture goes with a head pose 0.5 m to the left of the
+// one WaitGetPoses gave, and a depth texture of the colour's size of 0.25 everywhere from a projection with near 0.1 and
+// far 100 (Submit_TextureWithPose | Submit_TextureWithDepth). "pose-depth": 512 x 512 per eye, full bounds; "halves":
+// side-by-side halves of one 1536 x 768 texture and its depth (the depth's rect is the colour's half); "flipped":
+// 640 x 640 per eye with flipped bounds (no depth goes with it). Each has its own size, found by its rect in the dump.
+// The first records the located head's position as "head".
 void PoseDepth(CaseContext& c, GfxKind kind, int64_t format)
 {
 	Scene s(c);
 	if (!s.Start(kind, "pose-depth"))
 		return;
-	GfxTexture left = s.gfx->Pattern(512, 512, format, 0);
-	GfxTexture right = s.gfx->Pattern(512, 512, format, 1);
-	GfxTexture depth = s.gfx->Depth(512, 512, 0.25f);
-	s.gfx->Flush();
-	Json::Value r;
-	if (!left.Made() || !right.Made() || !depth.Made()) {
-		r["error"] = "the pattern or depth textures couldn't be made";
-		c.Record("pose-depth", r);
-		return;
-	}
 	// OpenVR's projection (D3D convention) for near 0.1 and far 100
 	const float n = 0.1f, f = 100.0f;
 	vr::HmdMatrix44_t projection{};
@@ -437,28 +430,58 @@ void PoseDepth(CaseContext& c, GfxKind kind, int64_t format)
 	projection.m[2][2] = f / (n - f);
 	projection.m[2][3] = n * f / (n - f);
 	projection.m[3][2] = -1;
-	for (int frame = 1; frame <= kFrames; frame++) {
-		vr::TrackedDevicePose_t poses[16];
-		s.comp->WaitGetPoses(poses, 16, nullptr, 0);
-		vr::HmdMatrix34_t head = poses[0].mDeviceToAbsoluteTracking;
-		r["head"] = Json::Value(Json::arrayValue);
-		for (int i = 0; i < 3; i++)
-			r["head"].append(head.m[i][3]);
-		head.m[0][3] -= 0.5f;
-		GfxTexture* eyes[2] = { &left, &right };
-		for (int eye = 0; eye < 2; eye++) {
-			vr::VRTextureWithPoseAndDepth_t t{};
-			static_cast<vr::Texture_t&>(t) = *eyes[eye]->Texture();
-			t.mDeviceToAbsoluteTracking = head;
-			t.depth.handle = depth.Texture()->handle;
-			t.depth.mProjection = projection;
-			t.depth.vRange = { 0, 1 };
-			r[eye ? "right" : "left"] = (int)s.comp->Submit(eye ? vr::Eye_Right : vr::Eye_Left, &t, &kFull,
-			    (vr::EVRSubmitFlags)(vr::Submit_TextureWithPose | vr::Submit_TextureWithDepth));
+	struct Config {
+		const char* name;
+		uint32_t w, h;
+		bool sideBySide;
+		vr::VRTextureBounds_t left, right;
+		uint32_t rectW, rectH;
+	};
+	const Config configs[] = {
+		{ "pose-depth", 512, 512, false, { 0, 0, 1, 1 }, { 0, 0, 1, 1 }, 512, 512 },
+		{ "halves", 1536, 768, true, { 0, 0, 0.5f, 1 }, { 0.5f, 0, 1, 1 }, 768, 768 },
+		{ "flipped", 640, 640, false, { 0, 1, 1, 0 }, { 0, 1, 1, 0 }, 640, 640 },
+	};
+	bool first = true;
+	for (const Config& cfg : configs) {
+		GfxTexture left = s.gfx->Pattern(cfg.w, cfg.h, format, 0);
+		GfxTexture right = cfg.sideBySide ? left : s.gfx->Pattern(cfg.w, cfg.h, format, 1);
+		GfxTexture depth = s.gfx->Depth(cfg.w, cfg.h, 0.25f);
+		s.gfx->Flush();
+		Json::Value r;
+		if (!left.Made() || !right.Made() || !depth.Made()) {
+			r["error"] = "the pattern or depth textures couldn't be made";
+			c.Record(cfg.name, r);
+			first = false;
+			continue;
 		}
+		const vr::VRTextureBounds_t* bounds[2] = { &cfg.left, &cfg.right };
+		for (int frame = 1; frame <= (first ? kFrames : 4); frame++) {
+			vr::TrackedDevicePose_t poses[16];
+			s.comp->WaitGetPoses(poses, 16, nullptr, 0);
+			vr::HmdMatrix34_t head = poses[0].mDeviceToAbsoluteTracking;
+			if (first) {
+				r["head"] = Json::Value(Json::arrayValue);
+				for (int i = 0; i < 3; i++)
+					r["head"].append(head.m[i][3]);
+			}
+			head.m[0][3] -= 0.5f;
+			GfxTexture* eyes[2] = { &left, &right };
+			for (int eye = 0; eye < 2; eye++) {
+				vr::VRTextureWithPoseAndDepth_t t{};
+				static_cast<vr::Texture_t&>(t) = *eyes[eye]->Texture();
+				t.mDeviceToAbsoluteTracking = head;
+				t.depth.handle = depth.Texture()->handle;
+				t.depth.mProjection = projection;
+				t.depth.vRange = { 0, 1 };
+				r[eye ? "right" : "left"] = (int)s.comp->Submit(eye ? vr::Eye_Right : vr::Eye_Left, &t, bounds[eye],
+				    (vr::EVRSubmitFlags)(vr::Submit_TextureWithPose | vr::Submit_TextureWithDepth));
+			}
+		}
+		r["dump_join"] = RectJoin(cfg.rectW, cfg.rectH);
+		c.Record(cfg.name, r);
+		first = false;
 	}
-	r["dump_join"] = "last_projection";
-	c.Record("pose-depth", r);
 }
 
 // A skybox set while the game stalls (D3D11): count textures of 256x256 (1: lat-long, 2: a stereo pair, 6: cube faces;

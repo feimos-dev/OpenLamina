@@ -81,8 +81,15 @@ bool DX12Compositor::EndOneShot(ID3D12CommandQueue* q)
 		return false;
 	if (oneShotFence->GetCompletedValue() < value) {
 		oneShotFence->SetEventOnCompletion(value, oneShotEvent);
-		if (WaitForSingleObject(oneShotEvent, 5000) != WAIT_OBJECT_0)
+		if (WaitForSingleObject(oneShotEvent, 5000) != WAIT_OBJECT_0) {
+			// Still running: its allocator and list (and the fence and event it signals) are left to it, not reset or
+			// freed under it. The next one-shot makes new ones.
+			oneShotAllocator.Detach();
+			oneShotList.Detach();
+			oneShotFence.Detach();
+			oneShotEvent = nullptr;
 			return false;
+		}
 	}
 	return true;
 }
@@ -187,7 +194,10 @@ bool DX12Compositor::ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTexture
 		list->ResourceBarrier(1, &back);
 	}
 	if (!EndOneShot(input->m_pCommandQueue)) {
+		// The copy may still be running: what it writes into is left to it too
 		OOVR_LOG_ONCE("A D3D12 texture readback didn't finish");
+		buffer.Detach();
+		resolved.Detach();
 		return false;
 	}
 	void* mapped = nullptr;

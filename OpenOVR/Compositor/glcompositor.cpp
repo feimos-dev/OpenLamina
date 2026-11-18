@@ -65,6 +65,9 @@ static PFNGLFRAMEBUFFERTEXTURELAYERPROC glFramebufferTextureLayer = nullptr;
 #ifndef GL_TEXTURE_DEPTH
 #define GL_TEXTURE_DEPTH 0x8071
 #endif
+#ifndef GL_FRAMEBUFFER_SRGB
+#define GL_FRAMEBUFFER_SRGB 0x8DB9
+#endif
 
 static void* getGlProcAddr(const char* name)
 {
@@ -124,6 +127,42 @@ void GLCompositor::ReadSwapchainImages()
 // BaseGLCompositor
 
 #if defined(SUPPORT_GL) || defined(SUPPORT_GLES)
+
+namespace {
+// The game's state a blit runs under, put back when this ends: its framebuffer bindings, its scissor test, which would
+// clip the blit, and (OpenGL) its sRGB conversion, which would change the texels. Both are off for the blit.
+class GameBlitState {
+public:
+	GameBlitState()
+	{
+		glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &draw);
+		glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &read);
+		scissor = glIsEnabled(GL_SCISSOR_TEST);
+		glDisable(GL_SCISSOR_TEST);
+#ifdef SUPPORT_GL
+		srgb = glIsEnabled(GL_FRAMEBUFFER_SRGB);
+		glDisable(GL_FRAMEBUFFER_SRGB);
+#endif
+	}
+	~GameBlitState()
+	{
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)draw);
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)read);
+		if (scissor)
+			glEnable(GL_SCISSOR_TEST);
+#ifdef SUPPORT_GL
+		if (srgb)
+			glEnable(GL_FRAMEBUFFER_SRGB);
+#endif
+	}
+	GameBlitState(const GameBlitState&) = delete;
+	GameBlitState& operator=(const GameBlitState&) = delete;
+
+private:
+	GLint draw = 0, read = 0;
+	GLboolean scissor = GL_FALSE, srgb = GL_FALSE;
+};
+} // namespace
 
 void GLBaseCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, std::optional<XruEye> eye, vr::EVRSubmitFlags submitFlags)
 {
@@ -197,6 +236,7 @@ void GLBaseCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::V
 	// Actually copy the image across
 	GLuint dst = images.at(currentIndex);
 	if (useBlit) {
+		GameBlitState gameState;
 		glBindFramebuffer(GL_FRAMEBUFFER, fboId[1]);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dst, 0);
 		glBindFramebuffer(GL_READ_FRAMEBUFFER, fboId[0]);
@@ -209,8 +249,6 @@ void GLBaseCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::V
 		    (GLint)(area.flipX ? area.x1 : area.x0), (GLint)(area.flipY ? area.y1 : area.y0), (GLint)(area.flipX ? area.x0 : area.x1), (GLint)(area.flipY ? area.y0 : area.y1),
 		    0, 0, (int)createInfo.width, (int)createInfo.height,
 		    GL_COLOR_BUFFER_BIT, GL_NEAREST);
-		glBindFramebuffer(GL_FRAMEBUFFER, 0);
-		glBindFramebuffer(GL_READ_FRAMEBUFFER, 0);
 	} else {
 		glCopyImageSubData(
 		    src, target, 0, (GLint)area.x0, (GLint)area.y0, layer, // 0 == no mipmapping, next three are xyz
@@ -271,11 +309,9 @@ bool GLBaseCompositor::CopyDepth(const vr::Texture_t* depth)
 	if (!AcquireAndWait((uint32_t)images.size(), index))
 		return false;
 	// A depth texture is blitted whole (level 0), as its framebuffer's depth: unlike glCopyImageSubData, that doesn't
-	// need the texture to be complete, which a depth texture without filtering set up isn't. The game's framebuffers
-	// are put back.
-	GLint previousDraw = 0, previousRead = 0;
-	glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &previousDraw);
-	glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &previousRead);
+	// need the texture to be complete, which a depth texture without filtering set up isn't. The game's state is put
+	// back.
+	GameBlitState gameState;
 	glBindFramebuffer(GL_READ_FRAMEBUFFER, fboId[0]);
 	glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, src, 0);
 	glReadBuffer(GL_NONE);
@@ -288,8 +324,6 @@ bool GLBaseCompositor::CopyDepth(const vr::Texture_t* depth)
 	glDrawBuffers(1, &noDrawBuffer);
 #endif
 	glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_DEPTH_BUFFER_BIT, GL_NEAREST);
-	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, (GLuint)previousDraw);
-	glBindFramebuffer(GL_READ_FRAMEBUFFER, (GLuint)previousRead);
 	if (glGetError() != GL_NO_ERROR)
 		OOVR_LOG_ONCE("WARNING: OpenGL depth texture copy failed!");
 	XrSwapchainImageReleaseInfo releaseInfo{ XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };

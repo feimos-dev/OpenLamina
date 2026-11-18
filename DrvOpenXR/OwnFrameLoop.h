@@ -29,7 +29,7 @@ public:
 
 	enum class Mode {
 		WhenAppIdle, // frames once the game has run one and then not called WaitGetPoses for idleAfter
-		Always, // every frame (overlay applications, which have no frames of their own)
+		EveryFrame, // every frame (overlay applications, which have no frames of their own)
 	};
 
 	OwnFrameLoop(Mode mode, LayerSource source, std::chrono::milliseconds idleAfter = std::chrono::milliseconds(100));
