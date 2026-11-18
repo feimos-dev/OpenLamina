@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <map>
 #include <string>
 #include <vector>
@@ -41,7 +42,17 @@ public:
 	int Width(wchar_t ch);
 	int Width(std::wstring str);
 
-	unsigned int GetLineHeight() { return lineHeight; }
+	unsigned int GetLineHeight() const { return lineHeight; }
+
+	// For drawing glyphs from the packed image: a character's place in it (null if the font lacks it), the image
+	// (RGBA8, rows of ImageWidth() pixels)
+	const CharInfo* Find(wchar_t ch) const
+	{
+		auto it = chars.find(ch);
+		return it == chars.end() ? nullptr : &it->second;
+	}
+	const std::vector<uint8_t>& Pixels() const { return pixel_data; }
+	unsigned int ImageWidth() const { return imgWidth; }
 
 private:
 	std::map<wchar_t, CharInfo> chars;

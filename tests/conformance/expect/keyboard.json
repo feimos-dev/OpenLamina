@@ -1,0 +1,14 @@
+{
+ "#": "The keyboard (run.py --cases keyboard --script scripts/keyboard.json --ini ini/keyboard_us.ini --expect expect/keyboard.json). The right laser clicks Shift, H, I and Done on the US keyboard: a KeyboardCharInput for each character (its UTF-8 in cNewInput, with the user value given), then KeyboardDone; GetKeyboardText answers the text typed, and the keyboard's 1 m x 0.404 m quad was drawn.",
+ "keyboard/typed/-/-": {
+  "show": 0,
+  "chars": ["H", "i"],
+  "user_value": 42,
+  "done": 1,
+  "closed": 0,
+  "text": "Hi",
+  "text_length": 2,
+  "keyboard_quad": true,
+  "frame_order_errors": 0
+ }
+}

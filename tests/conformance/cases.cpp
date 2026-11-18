@@ -18,6 +18,7 @@
 #include "IVRInput_003.h"
 #include "IVRNotifications_001.h"
 #include "IVRRenderModels_001.h"
+#include "IVRRenderModels_006.h"
 #include "IVRCompositor_006.h"
 #include "IVRCompositor_008.h"
 #include "IVRCompositor_029.h"
@@ -27,6 +28,7 @@
 #include "IVROverlay_001.h"
 #include "IVROverlay_006.h"
 #include "IVROverlay_007.h"
+#include "IVROverlay_025.h"
 #include "IVROverlay_028.h"
 #include "IVRSystem_003.h"
 #include "IVRSystem_007.h"
@@ -342,6 +344,203 @@ bool OpenFrames(CaseContext& c, Frames& f)
 	return true;
 }
 
+// Rounded to a millimetre (or a thousandth), so a record compares exactly
+double Milli(double v)
+{
+	double r = std::round(v * 1000) / 1000;
+	return r == 0 ? 0.0 : r; // no -0
+}
+
+Json::Value MilliArray(const Json::Value& a)
+{
+	Json::Value out(Json::arrayValue);
+	for (const Json::Value& v : a)
+		out.append(Milli(v.asDouble()));
+	return out;
+}
+
+Json::Value MilliArray(std::initializer_list<float> values)
+{
+	Json::Value out(Json::arrayValue);
+	for (float v : values)
+		out.append(Milli(v));
+	return out;
+}
+
+vr::HmdMatrix34_t Translation(float x, float y, float z)
+{
+	vr::HmdMatrix34_t m{};
+	m.m[0][0] = m.m[1][1] = m.m[2][2] = 1;
+	m.m[0][3] = x;
+	m.m[1][3] = y;
+	m.m[2][3] = z;
+	return m;
+}
+
+// One overlay per kind of transform, drawn for a few frames: the stand-in's dump has each layer's placement
+// (expect/overlay_transforms.json, with scripts/overlay_transforms.json). The head is at (0, 1.7, 0), looking along
+// -Z; every overlay is 1 m wide, with a square texture.
+void OverlayTransformsCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	vr::EVRInitError le;
+	auto* ov = (vr::IVROverlay_028::IVROverlay*)c.core->GetGenericInterface("IVROverlay_028", &le);
+	auto* ov025 = (vr::IVROverlay_025::IVROverlay*)c.core->GetGenericInterface("IVROverlay_025", &le);
+	if (!ov || !ov025) {
+		c.Record("no IVROverlay_028 or 025", Err(le));
+		c.core->Cleanup();
+		return;
+	}
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	std::vector<std::pair<std::string, vr::VROverlayHandle_t>> made;
+	auto make = [&](const char* name) {
+		vr::VROverlayHandle_t h = vr::k_ulOverlayHandleInvalid;
+		ov->CreateOverlay((std::string("oc.transforms.") + name).c_str(), name, &h);
+		ov->SetOverlayWidthInMeters(h, 1);
+		ov->SetOverlaySortOrder(h, (uint32_t)made.size() + 1); // drawn in this order
+		if (tex.get())
+			ov->SetOverlayTexture(h, tex.get());
+		ov->ShowOverlay(h);
+		made.emplace_back(name, h);
+		return h;
+	};
+	Json::Value set;
+	vr::HmdMatrix34_t m = Translation(0, 1.5f, -2);
+	vr::VROverlayHandle_t absolute = make("absolute");
+	set["absolute"] = (int)ov->SetOverlayTransformAbsolute(absolute, vr::TrackingUniverseStanding, &m);
+	m = Translation(0.5f, 1, -2);
+	set["seated"] = (int)ov->SetOverlayTransformAbsolute(make("seated"), vr::TrackingUniverseSeated, &m);
+	m = Translation(0, 0, -1.5f);
+	set["device"] = (int)ov->SetOverlayTransformTrackedDeviceRelative(make("device"), vr::k_unTrackedDeviceIndex_Hmd, &m);
+	set["component"] = (int)ov->SetOverlayTransformTrackedDeviceComponent(make("component"), vr::k_unTrackedDeviceIndex_Hmd, "tip");
+	// Half a metre right of the absolute overlay, turned 90 degrees to its left
+	m = Translation(0.5f, 0, 0);
+	m.m[0][0] = m.m[2][2] = 0;
+	m.m[0][2] = 1;
+	m.m[2][0] = -1;
+	set["relative"] = (int)ov025->SetOverlayTransformOverlayRelative(make("relative"), absolute, &m);
+	// A cursor nothing points at: at its own transform
+	vr::VROverlayHandle_t cursor = make("cursor");
+	m = Translation(-0.5f, 1.5f, -2);
+	ov->SetOverlayTransformAbsolute(cursor, vr::TrackingUniverseStanding, &m);
+	vr::HmdVector2_t hotspot{ { 0.5f, 0.5f } };
+	set["cursor"] = (int)ov->SetOverlayTransformCursor(cursor, &hotspot);
+	// Projections: 90 degrees for the left eye; 1 left, 0.5 right, 1 up and 0.5 down for the right one
+	m = Translation(-0.032f, 1.7f, 0);
+	vr::IVROverlay_028::VROverlayProjection_t left{ -1, 1, -1, 1 };
+	set["projection left"] = (int)ov->SetOverlayTransformProjection(make("projection left"), vr::TrackingUniverseStanding, &m, &left, vr::Eye_Left);
+	m = Translation(0.032f, 1.7f, 0);
+	vr::IVROverlay_028::VROverlayProjection_t right{ -1, 0.5f, -1, 0.5f };
+	set["projection right"] = (int)ov->SetOverlayTransformProjection(make("projection right"), vr::TrackingUniverseStanding, &m, &right, vr::Eye_Right);
+	vr::VROverlayHandle_t curved = make("curved");
+	m = Translation(0, 1, -1);
+	ov->SetOverlayTransformAbsolute(curved, vr::TrackingUniverseStanding, &m);
+	set["curved"] = (int)ov->SetOverlayCurvature(curved, 0.25f);
+	// Relative to each other: neither can be placed
+	vr::VROverlayHandle_t cycleA = make("cycle a"), cycleB = make("cycle b");
+	m = Translation(0, 0, 0);
+	set["cycle a"] = (int)ov025->SetOverlayTransformOverlayRelative(cycleA, cycleB, &m);
+	set["cycle b"] = (int)ov025->SetOverlayTransformOverlayRelative(cycleB, cycleA, &m);
+	c.Record("set", set);
+
+	Json::Value types;
+	for (auto& [name, h] : made) {
+		vr::IVROverlay_028::VROverlayTransformType type = vr::IVROverlay_028::VROverlayTransform_Invalid;
+		ov->GetOverlayTransformType(h, &type);
+		types[name] = (int)type;
+	}
+	c.Record("GetOverlayTransformType", types);
+
+	for (int frame = 1; frame <= 5; frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+		f.comp->Submit(vr::Eye_Left, tex.get(), nullptr, vr::Submit_Default);
+		f.comp->Submit(vr::Eye_Right, tex.get(), nullptr, vr::Submit_Default);
+	}
+
+	auto intersect = [&](const char* label, vr::VROverlayHandle_t h, vr::HmdVector3_t from, vr::HmdVector3_t dir) {
+		vr::IVROverlay_028::VROverlayIntersectionParams_t params{ from, dir, vr::TrackingUniverseStanding };
+		vr::IVROverlay_028::VROverlayIntersectionResults_t res{};
+		Json::Value r;
+		r["ret"] = ov->ComputeOverlayIntersection(h, &params, &res);
+		r["point"] = MilliArray({ res.vPoint.v[0], res.vPoint.v[1], res.vPoint.v[2] });
+		r["normal"] = MilliArray({ res.vNormal.v[0], res.vNormal.v[1], res.vNormal.v[2] });
+		r["uv"] = MilliArray({ res.vUVs.v[0], res.vUVs.v[1] });
+		r["distance"] = Milli(res.fDistance);
+		c.Record(label, r);
+	};
+	// From the absolute overlay's height, a quarter of its width in from its right edge
+	intersect("ComputeOverlayIntersection absolute", absolute, { { 0, 1.5f, 0 } }, { { 0.25f, 0, -2 } });
+	// The curved overlay (a quarter circle) from its cylinder's axis, 0.2 π to the right: u = 0.5 + 0.2 / 0.5
+	{
+		const float pi = 3.14159265f;
+		const float radius = 1 / (2 * pi * 0.25f);
+		const float angle = 0.2f * pi;
+		intersect("ComputeOverlayIntersection curved", curved, { { 0, 1, -1 + radius } }, { { std::sin(angle), 0, -std::cos(angle) } });
+	}
+	// A circle in the middle of the absolute overlay: the ray a quarter in misses it, the one at the centre hits it
+	{
+		vr::IVROverlay_028::VROverlayIntersectionMaskPrimitive_t circle{};
+		circle.m_nPrimitiveType = vr::IVROverlay_028::OverlayIntersectionPrimitiveType_Circle;
+		circle.m_Primitive.m_Circle = { 0.5f, 0.5f, 0.1f };
+		c.Record("SetOverlayIntersectionMask", Err(ov->SetOverlayIntersectionMask(absolute, &circle, 1, sizeof(circle))));
+	}
+	intersect("masked off centre", absolute, { { 0, 1.5f, 0 } }, { { 0.25f, 0, -2 } });
+	intersect("masked centre", absolute, { { 0, 1.5f, 0 } }, { { 0, 0, -1 } });
+	{
+		vr::HmdMatrix34_t point{};
+		Json::Value r;
+		r["ret"] = (int)ov->GetTransformForOverlayCoordinates(absolute, vr::TrackingUniverseStanding, { { 0.75f, 0.25f } }, &point);
+		r["p"] = MilliArray({ point.m[0][3], point.m[1][3], point.m[2][3] });
+		c.Record("GetTransformForOverlayCoordinates", r);
+	}
+	for (auto& [name, h] : made)
+		ov->DestroyOverlay(h);
+	c.core->Cleanup();
+
+	// The last frame's overlay layers (after the scene's projection), one record each, in their sort order
+	Json::Value dump = ReadStandInDump();
+	if (dump.isNull()) {
+		c.Record("no dump");
+		return;
+	}
+	const Json::Value& layers = dump["layers"];
+	Json::Value last(Json::arrayValue);
+	if (layers.size()) {
+		const Json::Value frame = layers[layers.size() - 1]["frame"];
+		for (const Json::Value& layer : layers)
+			if (layer["frame"] == frame && layer["type"].asString() != "projection")
+				last.append(layer);
+	}
+	std::vector<std::string> drawn;
+	for (auto& [name, h] : made)
+		if (name != "cycle a" && name != "cycle b")
+			drawn.push_back(name);
+	Json::Value count;
+	count["layers"] = last.size();
+	count["expected"] = (int)drawn.size();
+	c.Record("overlay layers", count);
+	for (Json::ArrayIndex i = 0; i < last.size() && i < drawn.size(); i++) {
+		const Json::Value& layer = last[i];
+		Json::Value r;
+		r["type"] = layer["type"];
+		r["p"] = MilliArray(layer["pose"]["p"]);
+		r["q"] = MilliArray(layer["pose"]["q"]);
+		r["eye_visibility"] = layer["eye_visibility"];
+		r["invalid"] = layer["invalid"];
+		if (layer.isMember("size"))
+			r["size"] = MilliArray(layer["size"]);
+		if (layer.isMember("radius")) {
+			r["radius"] = Milli(layer["radius"].asDouble());
+			r["angles"] = MilliArray(layer["angles"]);
+			r["aspect_ratio"] = Milli(layer["aspect_ratio"].asDouble());
+		}
+		c.Record("layer " + drawn[i], r);
+	}
+}
+
 void FrameLoop(CaseContext& c)
 {
 	Frames f;
@@ -641,10 +840,9 @@ Json::Value OldEventRecord(bool polled, const uint8_t* buffer)
 // masks (021 on), the 0.9.x gamma and visibility calls, and 001's texture of the device SetGraphicsDevice named
 void OldOverlay(CaseContext& c)
 {
-	if (c.core->Init(vr::VRApplication_Scene, nullptr) != vr::VRInitError_None) {
-		c.Record("Init failed");
+	Frames f;
+	if (!OpenFrames(c, f))
 		return;
-	}
 	vr::EVRInitError le;
 	auto* ov = (vr::IVROverlay_028::IVROverlay*)c.core->GetGenericInterface("IVROverlay_028", &le);
 	auto* ov007 = (vr::IVROverlay_007::IVROverlay*)c.core->GetGenericInterface("IVROverlay_007", &le);
@@ -659,17 +857,52 @@ void OldOverlay(CaseContext& c)
 	vr::VROverlayHandle_t h = vr::k_ulOverlayHandleInvalid;
 	c.Record("CreateOverlay", Err(ov->CreateOverlay("oc.old", "Old", &h)));
 
-	// The keyboard sends KeyboardDone at once: polled through 007 (the overlay's) and IVRSystem_009 (the system's)
+	// Keyboard events, typed with the laser (scripts/keyboard.json, ini/keyboard_us.ini; the old input read from frame
+	// 2 loads the actions it reads): the first character (H) polled through 007 from the overlay's keyboard, then the
+	// next (i) through IVRSystem_009 from the system's, shown once the first has come. Bounded by 80 frames.
 	alignas(8) uint8_t buffer[64];
-	ov007->ShowKeyboardForOverlay(h, vr::IVROverlay_007::k_EGamepadTextInputModeNormal, vr::IVROverlay_007::k_EGamepadTextInputLineModeSingleLine, "", 8, "",
-	    false, 0x1122334455667788ull);
-	memset(buffer, 0xCD, sizeof(buffer));
-	c.Record("IVROverlay_007 PollNextOverlayEvent", OldEventRecord(ov007->PollNextOverlayEvent(h, (vr::VREvent_t*)buffer), buffer));
+	callers::Texture frameTex(ArgSet::Valid, *c.call);
+	Json::Value overlayEvent, systemEvent;
+	for (int frame = 1; frame <= 80 && systemEvent.isNull(); frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+		f.comp->Submit(vr::Eye_Left, frameTex.get(), nullptr, vr::Submit_Default);
+		f.comp->Submit(vr::Eye_Right, frameTex.get(), nullptr, vr::Submit_Default);
+		if (frame >= 2) {
+			vr::VRControllerState_t state{};
+			f.sys->GetControllerState(2, &state, sizeof(state));
+		}
+		if (frame == 4)
+			ov007->ShowKeyboardForOverlay(h, vr::IVROverlay_007::k_EGamepadTextInputModeNormal, vr::IVROverlay_007::k_EGamepadTextInputLineModeSingleLine,
+			    "", 8, "", false, 0x1122334455667788ull);
+		if (overlayEvent.isNull()) {
+			memset(buffer, 0xCD, sizeof(buffer));
+			if (ov007->PollNextOverlayEvent(h, (vr::VREvent_t*)buffer)) {
+				overlayEvent = OldEventRecord(true, buffer);
+				ov007->HideKeyboard();
+				ov007->ShowKeyboard(vr::IVROverlay_007::k_EGamepadTextInputModeNormal, vr::IVROverlay_007::k_EGamepadTextInputLineModeSingleLine, "", 8, "",
+				    false, 0x55aaull);
+			}
+			continue;
+		}
+		// The system's other events first: the first keyboard one is recorded
+		for (int i = 0; i < 64; i++) {
+			memset(buffer, 0xCD, sizeof(buffer));
+			if (!sys009->PollNextEvent((vr::VREvent_t*)buffer))
+				break;
+			uint32_t type;
+			memcpy(&type, buffer, sizeof(type));
+			if (type >= vr::VREvent_KeyboardClosed && type <= vr::VREvent_KeyboardDone) {
+				systemEvent = OldEventRecord(true, buffer);
+				break;
+			}
+		}
+	}
 	ov007->HideKeyboard();
-	ov007->ShowKeyboard(vr::IVROverlay_007::k_EGamepadTextInputModeNormal, vr::IVROverlay_007::k_EGamepadTextInputLineModeSingleLine, "", 8, "", false, 0x55aaull);
-	memset(buffer, 0xCD, sizeof(buffer));
-	c.Record("IVRSystem_009 PollNextEvent", OldEventRecord(sys009->PollNextEvent((vr::VREvent_t*)buffer), buffer));
-	ov007->HideKeyboard();
+	memset(buffer, 0, sizeof(buffer));
+	memset(buffer + 32, 0xCD, 32);
+	c.Record("IVROverlay_007 PollNextOverlayEvent", overlayEvent.isNull() ? OldEventRecord(false, buffer) : overlayEvent);
+	c.Record("IVRSystem_009 PollNextEvent", systemEvent.isNull() ? OldEventRecord(false, buffer) : systemEvent);
 
 	// Flags: 007 passes NoDashboardTab as 3, 028 as 1 << 3; both are bit 3 of GetOverlayFlags
 	Json::Value flags;
@@ -1983,6 +2216,244 @@ void OwnFramesRaceCase(CaseContext& c)
 	c.Record("frames", r);
 }
 
+// The quads in the stand-in's dump of a size (w x h metres, to the millimetre), counted over the frames it kept
+int QuadsOfSize(const Json::Value& dump, double w, double h)
+{
+	int n = 0;
+	for (const Json::Value& layer : dump["layers"]) {
+		if (layer["type"].asString() != "quad" || layer["size"].size() != 2)
+			continue;
+		if (Milli(layer["size"][0].asDouble()) == Milli(w) && Milli(layer["size"][1].asDouble()) == Milli(h))
+			n++;
+	}
+	return n;
+}
+
+// The overlay events' names, in order, a repeated one once
+std::string EventName(uint32_t type)
+{
+	switch (type) {
+	case vr::VREvent_FocusEnter:
+		return "enter";
+	case vr::VREvent_FocusLeave:
+		return "leave";
+	case vr::VREvent_MouseMove:
+		return "move";
+	case vr::VREvent_MouseButtonDown:
+		return "down";
+	case vr::VREvent_MouseButtonUp:
+		return "up";
+	case vr::VREvent_ScrollDiscrete:
+		return "scroll";
+	case vr::VREvent_ScrollSmooth:
+		return "scroll-smooth";
+	default:
+		return std::to_string(type);
+	}
+}
+
+// The right controller's laser on an overlay that takes mouse input (expect/laser_mouse.json, with
+// scripts/laser.json): a 1 m overlay at (0, 1.5, -2), 200 x 100 in mouse units; the right aim pose at (0, 1.5, -1)
+// looking along -Z from frame 5, its trigger held from frame 10 to 12. The game reads the old input from frame 2,
+// which loads the actions the lasers read. PollNextOverlayEvent gives FocusEnter, MouseMove, MouseButtonDown and Up,
+// all at the overlay's centre, and the stand-in is sent a 2 cm cursor quad.
+void LaserMouseCase(CaseContext& c)
+{
+	using namespace vr::IVROverlay_028;
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	vr::EVRInitError le;
+	auto* ov = (IVROverlay*)c.core->GetGenericInterface("IVROverlay_028", &le);
+	if (!ov) {
+		c.Record("no IVROverlay_028", Err(le));
+		c.core->Cleanup();
+		return;
+	}
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	vr::VROverlayHandle_t h = vr::k_ulOverlayHandleInvalid;
+	Json::Value set;
+	set["create"] = (int)ov->CreateOverlay("oc.laser", "Laser", &h);
+	std::vector<uint8_t> grey(64 * 64 * 4, 0x80);
+	set["raw"] = (int)ov->SetOverlayRaw(h, grey.data(), 64, 64, 4);
+	set["width"] = (int)ov->SetOverlayWidthInMeters(h, 1);
+	vr::HmdMatrix34_t m = Translation(0, 1.5f, -2);
+	set["transform"] = (int)ov->SetOverlayTransformAbsolute(h, vr::TrackingUniverseStanding, &m);
+	set["input_method"] = (int)ov->SetOverlayInputMethod(h, VROverlayInputMethod_Mouse);
+	vr::HmdVector2_t scale{ { 200, 100 } };
+	set["mouse_scale"] = (int)ov->SetOverlayMouseScale(h, &scale);
+	set["show"] = (int)ov->ShowOverlay(h);
+	c.Record("set", set);
+
+	Json::Value order(Json::arrayValue);
+	std::string last;
+	Json::Value down, up;
+	bool hovered = false;
+	int haptic = -1;
+	for (int frame = 1; frame <= 30; frame++) {
+		GameFrame(f, tex.get());
+		if (frame >= 2) {
+			vr::VRControllerState_t state{};
+			f.sys->GetControllerState(2, &state, sizeof(state));
+		}
+		vr::VREvent_t ev{};
+		while (ov->PollNextOverlayEvent(h, &ev, sizeof(ev))) {
+			const std::string name = EventName(ev.eventType);
+			if (name != last)
+				order.append(name);
+			last = name;
+			Json::Value* at = ev.eventType == vr::VREvent_MouseButtonDown ? &down : (ev.eventType == vr::VREvent_MouseButtonUp ? &up : nullptr);
+			if (at && at->isNull()) {
+				(*at)["x"] = Milli(ev.data.mouse.x);
+				(*at)["y"] = Milli(ev.data.mouse.y);
+				(*at)["button"] = ev.data.mouse.button;
+				(*at)["device"] = (int)ev.trackedDeviceIndex;
+			}
+		}
+		if (!order.empty() && order[0].asString() == "enter" && !hovered) {
+			hovered = ov->IsHoverTargetOverlay(h);
+			haptic = (int)ov->TriggerLaserMouseHapticVibration(h, 0.05f, 0, 1);
+		}
+	}
+	ov->DestroyOverlay(h);
+	c.core->Cleanup();
+
+	Json::Value r;
+	r["order"] = order;
+	r["down"] = down;
+	r["up"] = up;
+	r["hover_target"] = hovered;
+	r["haptic"] = haptic;
+	Json::Value dump = ReadStandInDump();
+	if (!dump.isNull()) {
+		r["cursor_quad"] = QuadsOfSize(dump, 0.02, 0.02) > 0;
+		r["frame_order_errors"] = dump["frame_order_errors"];
+	}
+	c.Record("events", r);
+}
+
+// A message box answered with the laser (expect/message_overlay.json, with scripts/message_box.json): after 5 frames
+// (reading the old input from frame 2), ShowMessageOverlay with two buttons. Its panel (1 m x 0.5 m) is 1.5 m ahead of
+// the head, at (0, 1.7, -1.5); the right aim pose is on the second button from the start, and the script's trigger
+// clicks it at frame 20. The call returns ButtonPress_1, after frames of OpenLamina's own, in order. Another thread
+// closes the box after 10 s if it's still up, so the case always ends; it's joined before the case does.
+void MessageOverlayCase(CaseContext& c)
+{
+	using namespace vr::IVROverlay_028;
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	vr::EVRInitError le;
+	auto* ov = (IVROverlay*)c.core->GetGenericInterface("IVROverlay_028", &le);
+	if (!ov) {
+		c.Record("no IVROverlay_028", Err(le));
+		c.core->Cleanup();
+		return;
+	}
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	const int gameFrames = 10;
+	for (int frame = 1; frame <= gameFrames / 2; frame++) {
+		GameFrame(f, tex.get());
+		if (frame >= 2) {
+			vr::VRControllerState_t state{};
+			f.sys->GetControllerState(2, &state, sizeof(state));
+		}
+	}
+	std::atomic<bool> answered{ false };
+	std::atomic<bool> closedByWatchdog{ false };
+	std::thread watchdog([&] {
+		// At most 10 s, in 50 ms steps
+		for (int i = 0; i < 200 && !answered; i++)
+			std::this_thread::sleep_for(std::chrono::milliseconds(50));
+		if (!answered) {
+			closedByWatchdog = true;
+			ov->CloseMessageOverlay();
+		}
+	});
+	const int ret = (int)ov->ShowMessageOverlay("Save the game before quitting?", "OpenLamina test", "Cancel", "Save");
+	answered = true;
+	watchdog.join();
+	for (int frame = 0; frame < gameFrames / 2; frame++)
+		GameFrame(f, tex.get());
+	c.core->Cleanup();
+
+	Json::Value r;
+	r["ret"] = ret;
+	r["closed_by_watchdog"] = closedByWatchdog.load();
+	Json::Value dump = ReadStandInDump();
+	if (!dump.isNull()) {
+		r["own_frames_ran"] = dump["frames_ended"].asInt64() > gameFrames;
+		r["panel_quad"] = QuadsOfSize(dump, 1.0, 0.5) > 0;
+		r["frame_order_errors"] = dump["frame_order_errors"];
+	}
+	c.Record("ShowMessageOverlay", r);
+}
+
+// The keyboard typed on with the laser (expect/keyboard.json, with scripts/keyboard.json and ini/keyboard_us.ini):
+// ShowKeyboard at frame 4 (normal, one line); the keyboard (the US layout, 1 m x 0.404 m) is 1 m ahead of the head and
+// 0.4 m below it, at (0, 1.3, -1). The script points the right laser at Shift, H, I and Done in turn, clicking each:
+// two KeyboardCharInput events ("H" and "i"), then KeyboardDone, and GetKeyboardText answers "Hi". The stand-in is
+// sent the keyboard's quad while it's shown.
+void KeyboardCase(CaseContext& c)
+{
+	using namespace vr::IVROverlay_028;
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	vr::EVRInitError le;
+	auto* ov = (IVROverlay*)c.core->GetGenericInterface("IVROverlay_028", &le);
+	if (!ov) {
+		c.Record("no IVROverlay_028", Err(le));
+		c.core->Cleanup();
+		return;
+	}
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	int shown = -1;
+	Json::Value chars(Json::arrayValue);
+	int done = 0, closed = 0;
+	uint64_t userValue = 0;
+	for (int frame = 1; frame <= 80; frame++) {
+		GameFrame(f, tex.get());
+		if (frame >= 2) {
+			vr::VRControllerState_t state{};
+			f.sys->GetControllerState(2, &state, sizeof(state));
+		}
+		if (frame == 4)
+			shown = (int)ov->ShowKeyboard(k_EGamepadTextInputModeNormal, k_EGamepadTextInputLineModeSingleLine, 0, "Name", 0, "", 42);
+		vr::VREvent_t ev{};
+		while (f.sys->PollNextEvent(&ev, sizeof(ev))) {
+			if (ev.eventType == vr::VREvent_KeyboardCharInput) {
+				char text[9] = {};
+				memcpy(text, ev.data.keyboard.cNewInput, 8);
+				chars.append(text);
+				userValue = ev.data.keyboard.uUserValue;
+			} else if (ev.eventType == vr::VREvent_KeyboardDone) {
+				done++;
+			} else if (ev.eventType == vr::VREvent_KeyboardClosed) {
+				closed++;
+			}
+		}
+	}
+	char text[64] = {};
+	const uint32_t length = ov->GetKeyboardText(text, sizeof(text));
+	c.core->Cleanup();
+
+	Json::Value r;
+	r["show"] = shown;
+	r["chars"] = chars;
+	r["user_value"] = (Json::UInt64)userValue;
+	r["done"] = done;
+	r["closed"] = closed;
+	r["text"] = text;
+	r["text_length"] = length;
+	Json::Value dump = ReadStandInDump();
+	if (!dump.isNull()) {
+		r["keyboard_quad"] = QuadsOfSize(dump, 1.0, 0.404) > 0;
+		r["frame_order_errors"] = dump["frame_order_errors"];
+	}
+	c.Record("typed", r);
+}
+
 #ifdef _WIN32
 // The DXGI adapters (DXGI 1.1's list, which DXGI 1.0's EnumAdapters has in the same order): LUIDs as LowPart |
 // HighPart << 32
@@ -2226,6 +2697,194 @@ void DisplayFrequencyCase(CaseContext& c)
 	c.core->Cleanup();
 }
 
+// A 3x4 matrix as rows of numbers to 4 decimals (no -0)
+Json::Value Matrix34Record(const vr::HmdMatrix34_t& m)
+{
+	Json::Value rows(Json::arrayValue);
+	for (int r = 0; r < 3; r++) {
+		Json::Value row(Json::arrayValue);
+		for (int col = 0; col < 4; col++) {
+			double v = std::round((double)m.m[r][col] * 10000) / 10000;
+			row.append(v == 0 ? 0.0 : v);
+		}
+		rows.append(row);
+	}
+	return rows;
+}
+
+// SteamVR's render models from its install (expect/render_models.json). run.py points OC_TEST_STEAMVR_DIR at
+// tests/unit/data/steamvr, a fixture of our own: test_controller (a body and a trigger, one PNG) and vive_tracker,
+// whose JSON isn't JSON, so the built-in tracker is answered.
+void RenderModelsCase(CaseContext& c)
+{
+	using namespace vr::IVRRenderModels_006;
+	if (c.core->Init(vr::VRApplication_Scene, nullptr) != vr::VRInitError_None) {
+		c.Record("Init failed");
+		return;
+	}
+	vr::EVRInitError le;
+	auto* rm = (IVRRenderModels*)c.core->GetGenericInterface("IVRRenderModels_006", &le);
+	if (!rm) {
+		c.Record("no IVRRenderModels_006", Err(le));
+		c.core->Cleanup();
+		return;
+	}
+	// A model or texture is answered at once or within 100 tries, 10 ms apart
+	auto untilLoaded = [](auto call) {
+		EVRRenderModelError e = VRRenderModelError_Loading;
+		for (int i = 0; i < 100 && e == VRRenderModelError_Loading; i++) {
+			e = call();
+			if (e == VRRenderModelError_Loading)
+				std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		}
+		return e;
+	};
+	auto load = [&](const char* name, RenderModel_t** out) {
+		return (int)untilLoaded([&] { return rm->LoadRenderModel_Async(name, out); });
+	};
+
+	Json::Value r;
+	uint32_t count = rm->GetRenderModelCount();
+	r["count"] = count;
+	Json::Value names(Json::arrayValue);
+	for (uint32_t i = 0; i < count && i < 64; i++) {
+		char name[256] = {};
+		rm->GetRenderModelName(i, name, sizeof(name));
+		names.append(name);
+	}
+	r["names"] = names;
+	c.Record("models", r);
+
+	r = Json::Value();
+	RenderModel_t* model = nullptr;
+	r["ret"] = load("test_controller", &model);
+	if (model) {
+		r["vertices"] = model->unVertexCount;
+		r["triangles"] = model->unTriangleCount;
+		bool inRange = true;
+		for (uint32_t i = 0; i < model->unTriangleCount * 3; i++)
+			inRange = inRange && model->rIndexData[i] < model->unVertexCount;
+		r["indices_in_range"] = inRange;
+		r["textured"] = model->diffuseTextureId >= 0;
+		RenderModel_TextureMap_t* tex = nullptr;
+		TextureID_t id = model->diffuseTextureId;
+		r["texture_ret"] = (int)untilLoaded([&] { return rm->LoadTexture_Async(id, &tex); });
+		if (tex) {
+			r["texture"] = std::to_string(tex->unWidth) + "x" + std::to_string(tex->unHeight);
+			char px[16];
+			std::snprintf(px, sizeof(px), "%02x%02x%02x%02x", tex->rubTextureMapData[0], tex->rubTextureMapData[1],
+			    tex->rubTextureMapData[2], tex->rubTextureMapData[3]);
+			r["first_pixel"] = px;
+			rm->FreeTexture(tex);
+		}
+#ifdef _WIN32
+		// The same texture made on the game's D3D11 device
+		if (c.call->d3d11) {
+			void* d3dTex = nullptr;
+			r["d3d11_ret"] = (int)untilLoaded([&] { return rm->LoadTextureD3D11_Async(id, c.call->d3d11, &d3dTex); });
+			if (d3dTex) {
+				D3D11_TEXTURE2D_DESC desc{};
+				((ID3D11Texture2D*)d3dTex)->GetDesc(&desc);
+				r["d3d11_texture"] = std::to_string(desc.Width) + "x" + std::to_string(desc.Height);
+				rm->FreeTextureD3D11(d3dTex);
+			}
+		}
+#endif
+		rm->FreeRenderModel(model);
+	}
+	c.Record("load test_controller", r);
+
+	r = Json::Value();
+	uint32_t components = rm->GetComponentCount("test_controller");
+	r["count"] = components;
+	Json::Value list(Json::arrayValue);
+	for (uint32_t i = 0; i < components && i < 16; i++) {
+		Json::Value one;
+		char name[128] = {}, modelName[256] = {};
+		one["name_size"] = rm->GetComponentName("test_controller", i, name, sizeof(name));
+		one["name"] = name;
+		rm->GetComponentRenderModelName("test_controller", name, modelName, sizeof(modelName));
+		one["render_model"] = modelName;
+		one["has"] = rm->RenderModelHasComponent("test_controller", name);
+		one["buttons"] = (Json::UInt64)rm->GetComponentButtonMask("test_controller", name);
+		list.append(one);
+	}
+	r["components"] = list;
+	r["has_tip"] = rm->RenderModelHasComponent("test_controller", "tip");
+	c.Record("components", r);
+
+	r = Json::Value();
+	model = nullptr;
+	r["ret"] = load("test_controller/trigger", &model);
+	if (model) {
+		r["vertices"] = model->unVertexCount;
+		r["triangles"] = model->unTriangleCount;
+		rm->FreeRenderModel(model);
+	}
+	c.Record("load component", r);
+
+	r = Json::Value();
+	vr::VRControllerState_t state{};
+	RenderModel_ControllerMode_State_t mode{};
+	vr::RenderModel_ComponentState_t cs{};
+	state.rAxis[1].x = 1.0f; // the trigger pulled
+	r["ret"] = rm->GetComponentState("test_controller", "trigger", &state, &mode, &cs);
+	r["render_model"] = Matrix34Record(cs.mTrackingToComponentRenderModel);
+	r["local"] = Matrix34Record(cs.mTrackingToComponentLocal);
+	r["properties"] = cs.uProperties;
+	state.rAxis[1].x = 0.0f;
+	rm->GetComponentState("test_controller", "trigger", &state, &mode, &cs);
+	r["at_rest"] = Matrix34Record(cs.mTrackingToComponentRenderModel);
+	rm->GetComponentState("test_controller", "body", &state, &mode, &cs);
+	r["body_local"] = Matrix34Record(cs.mTrackingToComponentLocal);
+	r["body_properties"] = cs.uProperties;
+	c.Record("component state", r);
+
+	r = Json::Value();
+	char path[1024] = {};
+	EVRRenderModelError pe = VRRenderModelError_Loading;
+	uint32_t thumbSize = rm->GetRenderModelThumbnailURL("test_controller", path, sizeof(path), &pe);
+	r["thumbnail_error"] = (int)pe;
+	std::string url = path;
+	const std::string png = "test_controller.png";
+	r["thumbnail_is_its_png"] = url.rfind("file:///", 0) == 0 && url.size() > png.size() && url[8] != '/'
+	    && url.compare(url.size() - png.size(), png.size(), png) == 0;
+	r["thumbnail_size_matches"] = thumbSize == url.size() + 1;
+	pe = VRRenderModelError_Loading;
+	uint32_t originalSize = rm->GetRenderModelOriginalPath("test_controller", path, sizeof(path), &pe);
+	r["original_error"] = (int)pe;
+	std::string original = path;
+	std::replace(original.begin(), original.end(), '\\', '/');
+	const std::string obj = "rendermodels/test_controller/test_controller.obj";
+	r["original_is_its_obj"] = original.size() > obj.size() && original.compare(original.size() - obj.size(), obj.size(), obj) == 0;
+	r["original_size_matches"] = originalSize == std::string(path).size() + 1;
+	c.Record("paths", r);
+
+	r = Json::Value();
+	model = nullptr;
+	r["broken_ret"] = load("vive_tracker", &model);
+	if (model) {
+		r["broken_vertices"] = model->unVertexCount;
+		r["broken_textured"] = model->diffuseTextureId >= 0;
+		rm->FreeRenderModel(model);
+	}
+	model = nullptr;
+	r["hand_ret"] = load("renderLeftHand", &model);
+	if (model) {
+		r["hand_has_vertices"] = model->unVertexCount > 0;
+		rm->FreeRenderModel(model);
+	}
+	model = nullptr;
+	r["unknown_ret"] = load("no_such_model", &model);
+	r["unknown_null"] = model == nullptr;
+	model = nullptr;
+	r["outside_ret"] = load("../../bin", &model);
+	r["outside_null"] = model == nullptr;
+	c.Record("fallback", r);
+
+	c.core->Cleanup();
+}
+
 } // namespace
 
 const std::map<std::string, CaseFn>& conformance::Cases()
@@ -2243,6 +2902,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "old-calls", OldCalls },
 		{ "old-submit", OldSubmit },
 		{ "old-overlay", OldOverlay },
+		{ "overlay-transforms", OverlayTransformsCase },
 		{ "old-misc", OldMisc },
 		{ "new-interfaces", NewInterfaces },
 		{ "device-identity", DeviceIdentityCase },
@@ -2263,10 +2923,14 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "own-frames-race", OwnFramesRaceCase },
 		{ "own-frames-nothing-shown", OwnFramesNothingShownCase },
 		{ "own-frames-overlay-churn", OwnFramesOverlayChurnCase },
+		{ "laser-mouse", LaserMouseCase },
+		{ "message-overlay", MessageOverlayCase },
+		{ "keyboard", KeyboardCase },
 		{ "compositor-stats", CompositorStatsCase },
 		{ "gpu-answers", GpuAnswersCase },
 		{ "gpu-other-adapter", GpuOtherAdapterCase },
 		{ "display-frequency", DisplayFrequencyCase },
+		{ "render-models", RenderModelsCase },
 	};
 	static const std::map<std::string, CaseFn> all = [] {
 		std::map<std::string, CaseFn> m = cases;

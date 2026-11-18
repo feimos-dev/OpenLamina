@@ -17,6 +17,10 @@
 
 // Keyboard layouts
 #define RES_O_KB_EN_GB 5
+#define RES_O_KB_EN_US 6
+
+// The font's texture on Linux, where each resource is one file (on Windows it's RES_O_FNT_UBUNTU's RES_T_PNG)
+#define RES_O_FNT_UBUNTU_PNG 7
 
 // Resource list, used on Linux
 // clang-format off
@@ -25,4 +29,6 @@
 	f(RES_O_HAND_RIGHT) \
 	f(RES_O_VIVE_TRACKER) \
 	f(RES_O_FNT_UBUNTU) \
-	f(RES_O_KB_EN_GB) // clang-format on
+	f(RES_O_FNT_UBUNTU_PNG) \
+	f(RES_O_KB_EN_GB) \
+	f(RES_O_KB_EN_US) // clang-format on

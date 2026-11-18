@@ -1,0 +1,5 @@
+{
+  "#": "The message-overlay case with nobody to answer it: the runtime ends the session (EXITING) at frame 12, while the box is up. The lasers point at nothing.",
+  "interaction_profile": "/interaction_profiles/valve/index_controller",
+  "events": [{ "frame": 12, "type": "session_state", "state": "EXITING" }]
+}

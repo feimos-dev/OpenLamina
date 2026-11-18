@@ -470,6 +470,27 @@ public: // INTERNAL FUNCTIONS
 
 	bool AreActionsLoaded();
 
+	/** One hand's laser for pointing at overlays (LaserMouse) */
+	struct HandPointer {
+		XrPosef aim; // the aim pose: the laser runs along its -Z
+		float trigger; // 0 to 1
+		float stickX, stickY; // -1 to 1
+	};
+	/**
+	 * One hand's (0 the left, 1 the right) pointer: its aim pose located in base at time, its trigger and its
+	 * thumbstick (or trackpad), as of the last sync. From the old input's actions under inputEvaluator=direct, from the
+	 * raw inputs under steamvr. False before any actions are loaded, or while the hand's aim isn't tracked.
+	 * Takes the session lock (shared), then evaluatorLock.
+	 */
+	bool GetHandPointer(int hand, XrSpace base, XrTime time, HandPointer& out);
+	/**
+	 * Syncs the old input's actions (and the raw inputs) alone: for a call that blocks the game, which then syncs
+	 * none of its own (ShowMessageOverlay). Nothing before any actions are loaded.
+	 */
+	void SyncPointerActions();
+	/** A vibration on one hand (0 the left, 1 the right), through the old input's haptic action */
+	void TriggerHandHaptic(int hand, float seconds, float frequency, float amplitude);
+
 	/**
 	 * The eye gaze (XR_EXT_eye_gaze_interaction) located in a space at a time: false without a gaze (no extension,
 	 * no eye tracker, actions not loaded yet) or while it isn't valid. Its -Z is the direction the eyes look in.

@@ -62,6 +62,12 @@ public:
 	 */
 	void OnSessionLost();
 	bool IsSessionLost() const { return sessionLost; }
+	/** The session is lost, not running, or stopping, exiting or about to be lost: nothing can be shown in it any more */
+	bool IsSessionEnded() const
+	{
+		return sessionLost || !sessionActive || sessionState == XR_SESSION_STATE_STOPPING || sessionState == XR_SESSION_STATE_EXITING
+		    || sessionState == XR_SESSION_STATE_LOSS_PENDING;
+	}
 
 	/** Called before OpenComposite asks the runtime to end the session itself, so its EXITING isn't a loss */
 	void ExpectSessionExit() { exitExpected = true; }
@@ -99,6 +105,22 @@ public:
 	 * OpenLamina shuts down (before the interfaces their layers come from are destroyed)
 	 */
 	void StopOwnFrames(bool forGood = false);
+
+	/** Whether OpenLamina runs frames of its own on this session (RunOwnFramesWhile can show something) */
+	bool HasOwnFrames() const { return ownFrames != nullptr; }
+
+	/**
+	 * Runs OpenLamina's own frames on the calling thread while keepGoing() holds (OwnFrameLoop::RunWhile): a blocking
+	 * call such as ShowMessageOverlay. The caller holds the session lock (shared) throughout, so the loop isn't stopped
+	 * under it. False, running nothing, without own frames.
+	 */
+	bool RunOwnFramesWhile(const std::function<bool()>& keepGoing);
+
+	/**
+	 * Ends the game's frame if it's in the middle of one (begun, not yet submitted), with the overlays and without
+	 * its eye textures, so that own frames can run: for a blocking call made between WaitGetPoses and Submit
+	 */
+	void EndOpenAppFrame();
 
 #ifdef SUPPORT_VK
 	static void VkGetPhysicalDevice(VkInstance instance, VkPhysicalDevice* out);

@@ -1,0 +1,11 @@
+{
+ "#": "The mirror case without mirrorWindow (run.py --cases mirror --script scripts/gfx_all_apis.json): ShowMirrorWindow shows no window, and the mirror texture is given and follows the game's frames as with it.",
+ "mirror/mirror/-/-": {
+  "visible": false,
+  "first_get": 0,
+  "get": 0,
+  "left_top_left": "ff0000ff",
+  "left_top_left_after_other_frames": "0000ffff",
+  "hidden": true
+ }
+}

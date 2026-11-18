@@ -1,0 +1,10 @@
+{
+ "#": "A message box that the session ends under (run.py --cases message-overlay --script scripts/message_box_exit.json --ini ini/own_frames.ini --expect expect/message_overlay_exit.json). The runtime's EXITING arrives while the box is up and nothing has answered it: the call returns ApplicationQuit (6) on its own, not by the watchdog's close, with no frame call out of order.",
+ "message-overlay/ShowMessageOverlay/-/-": {
+  "ret": 6,
+  "closed_by_watchdog": false,
+  "own_frames_ran": true,
+  "panel_quad": true,
+  "frame_order_errors": 0
+ }
+}

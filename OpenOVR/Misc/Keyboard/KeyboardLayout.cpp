@@ -3,10 +3,16 @@
 
 #include "KeyboardLayout.h"
 #include "VRKeyboard.h"
+#include "Misc/BuiltInResource.h"
+#include "Misc/Config.h"
 #include "Misc/Numbers.h"
+#include "resources.h"
 
 #include <algorithm>
+#include <cctype>
 #include <cwctype>
+#include <memory>
+#include <mutex>
 #include <numbers>
 
 static void wstrim(wstring& s)
@@ -204,6 +210,7 @@ KeyboardLayout::KeyboardLayout(std::vector<char> data)
 
 	if (width == 0)
 		{ OOVR_LOG("Missing keyboard layout width specifier"); return; } // the built-in layout is broken: no keyboard
+	valid = !keys.empty();
 
 	// Calculate the adjacent keys
 	for (Key& key : keys) {
@@ -247,4 +254,62 @@ KeyboardLayout::KeyboardLayout(std::vector<char> data)
 
 KeyboardLayout::~KeyboardLayout()
 {
+}
+
+float KeyboardLayout::GetHeight() const
+{
+	float height = 0;
+	for (const Key& key : keys)
+		height = std::max(height, key.y + key.h);
+	return height;
+}
+
+const KeyboardLayout* KeyboardLayout::Get(Name name)
+{
+	static std::once_flag once[2];
+	static std::unique_ptr<KeyboardLayout> layouts[2];
+	const int i = name == Name::UK ? 0 : 1;
+	std::call_once(once[i], [&] {
+		std::vector<char> data = ReadBuiltInResource(name == Name::UK ? RES_O_KB_EN_GB : RES_O_KB_EN_US, RES_T_KBLAYOUT);
+		if (data.empty()) {
+			OOVR_LOGF("The %s keyboard layout isn't built in", name == Name::UK ? "UK" : "US");
+			return;
+		}
+		auto layout = std::make_unique<KeyboardLayout>(data);
+		if (layout->Valid())
+			layouts[i] = std::move(layout);
+	});
+	return layouts[i].get();
+}
+
+KeyboardLayout::Name KeyboardLayout::ForLocale(const std::string& locale)
+{
+	std::string l = locale;
+	for (char& c : l)
+		c = c == '_' ? '-' : (char)std::tolower((unsigned char)c);
+	return l.rfind("en-gb", 0) == 0 ? Name::UK : Name::US;
+}
+
+const KeyboardLayout* KeyboardLayout::Current()
+{
+	const std::string chosen = oovr_global_configuration.KeyboardLayout();
+	if (chosen == "uk")
+		return Get(Name::UK);
+	if (chosen == "us")
+		return Get(Name::US);
+	std::string locale;
+#ifdef _WIN32
+	wchar_t name[LOCALE_NAME_MAX_LENGTH] = {};
+	if (GetUserDefaultLocaleName(name, LOCALE_NAME_MAX_LENGTH) > 0)
+		locale = VRKeyboard::CHAR_CONV.to_bytes(name);
+#else
+	for (const char* var : { "LC_ALL", "LC_MESSAGES", "LANG" }) {
+		const char* value = getenv(var);
+		if (value && *value) {
+			locale = value;
+			break;
+		}
+	}
+#endif
+	return Get(ForLocale(locale));
 }

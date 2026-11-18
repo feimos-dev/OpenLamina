@@ -44,6 +44,9 @@ MAX_REPEAT = 100  # --repeat's bound: each round is a child process
 # Cases run as separate programs that must see each other's store: events-commit's room setup reaches events-listen,
 # chaperone's play area chaperone-read (run after it, --jobs 1). Every other child has a store of its own.
 SHARED_STORES = {"events-listen": "events", "events-commit": "events", "chaperone": "chaperone", "chaperone-read": "chaperone"}
+# Cases that read files of SteamVR's install get a fixture of our own as SteamVR (OC_TEST_STEAMVR_DIR, which wins over
+# OC_TEST_NO_STEAMVR); everything else runs without SteamVR
+CASE_ENV = {"render-models": {"OC_TEST_STEAMVR_DIR": str(HERE.parent / "unit" / "data" / "steamvr")}}
 # SteamVR's answers while vrserver was starting or stopping between children (Retry, AnotherAppLaunching,
 # ShuttingDown): a recording keeps them, a comparison skips them
 STEAMVR_TRANSIENT = {115, 117, 119}
@@ -214,7 +217,9 @@ class Runner:
         share = SHARED_STORES.get(name)
         if share and round_ is not None:
             share += f"-{round_}"
-        code = self.child(extra, raw, CASE_TIMEOUT, {"OC_TEST_RUNTIME_DUMP": str(dump)}, share)
+        env = {"OC_TEST_RUNTIME_DUMP": str(dump)}
+        env.update(CASE_ENV.get(name, {}))
+        code = self.child(extra, raw, CASE_TIMEOUT, env, share)
         records = read_jsonl(raw)
         dump_data = None
         if any("dump_join" in r for r in records) and dump.exists():

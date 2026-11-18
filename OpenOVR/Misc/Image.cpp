@@ -2,6 +2,11 @@
 
 #include "Image.h"
 
+#include "lodepng.h"
+
+#include <fstream>
+#include <iterator>
+
 #include <cmath>
 #include <cstring>
 #include <new>
@@ -181,4 +186,42 @@ void EncodeSrgbInPlace(Image& image)
 	for (size_t i = 0; i + 3 < image.rgba.size(); i += 4)
 		for (int c = 0; c < 3; c++)
 			image.rgba[i + c] = table[image.rgba[i + c]];
+}
+
+std::optional<Image> LoadImageFile(const std::filesystem::path& path, std::string* why)
+{
+	auto fail = [&](const char* reason) -> std::optional<Image> {
+		if (why)
+			*why = reason;
+		return std::nullopt;
+	};
+	// Its size first: a file isn't read whole before it's known to be a size worth reading
+	std::error_code ec;
+	const uintmax_t size = std::filesystem::file_size(path, ec);
+	if (ec)
+		return fail("it can't be opened");
+	if (size > kMaxImageFileBytes)
+		return fail("it's bigger than 64 MiB");
+	std::ifstream in(path, std::ios::binary);
+	if (!in)
+		return fail("it can't be opened");
+	try {
+		std::vector<unsigned char> bytes((size_t)size);
+		if (size && !in.read((char*)bytes.data(), (std::streamsize)size))
+			return fail("it can't be read");
+		unsigned width = 0, height = 0;
+		lodepng::State state;
+		if (lodepng_inspect(&width, &height, &state, bytes.data(), bytes.size()) != 0)
+			return fail("it isn't a PNG image");
+		if (width == 0 || height == 0 || width > kMaxImageFileSide || height > kMaxImageFileSide)
+			return fail("it's bigger than 8192 pixels on a side");
+		Image image;
+		if (lodepng::decode(image.rgba, width, height, bytes, LCT_RGBA, 8) != 0)
+			return fail("it's damaged");
+		image.width = width;
+		image.height = height;
+		return image;
+	} catch (const std::exception&) {
+		return fail("it's too big for memory");
+	}
 }

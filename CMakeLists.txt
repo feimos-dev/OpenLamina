@@ -332,6 +332,7 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/Numbers.cpp
 	OpenOVR/Misc/JsonFile.cpp
 	OpenOVR/Misc/SteamVRPaths.cpp
+	OpenOVR/Misc/SteamVRRenderModels.cpp
 	OpenOVR/Misc/SteamClient.cpp
 	OpenOVR/Misc/SharedStore.cpp
 	OpenOVR/Misc/SteamVRSettings.cpp
@@ -339,6 +340,12 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/ChaperoneData.cpp
 	OpenOVR/Misc/ProgramEvents.cpp
 	OpenOVR/Misc/LibMonado.cpp
+	OpenOVR/Misc/BuiltInResource.cpp
+	OpenOVR/Misc/BuiltInResource.h
+	OpenOVR/Misc/Canvas.cpp
+	OpenOVR/Misc/Canvas.h
+	OpenOVR/Misc/LaserMouse.cpp
+	OpenOVR/Misc/LaserMouse.h
 	OpenOVR/Misc/Equirect.cpp
 	OpenOVR/Misc/FrameStats.cpp
 	OpenOVR/Misc/FrameStats.h
@@ -348,8 +355,10 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/GlPixelStore.h
 	OpenOVR/Misc/Image.cpp
 	OpenOVR/Misc/Image.h
+	OpenOVR/Misc/OverlayMaths.cpp
 	OpenOVR/Misc/JsonFile.h
 	OpenOVR/Misc/SteamVRPaths.h
+	OpenOVR/Misc/SteamVRRenderModels.h
 	OpenOVR/Misc/SteamClient.h
 	OpenOVR/Misc/SharedStore.h
 	OpenOVR/Misc/SteamVRSettings.h
@@ -357,6 +366,7 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/ChaperoneData.h
 	OpenOVR/Misc/ProgramEvents.h
 	OpenOVR/Misc/LibMonado.h
+	OpenOVR/Misc/OverlayMaths.h
 	OpenOVR/Misc/SoftFail.cpp
 	OpenOVR/Misc/SoftFail.h
 	OpenOVR/Misc/Foveation.cpp

@@ -163,6 +163,15 @@ TEST_CASE("Manifest_with_non_ascii_path")
 	CHECK(PathFromUtf8(binary).parent_path() == dir.path.lexically_normal());
 }
 
+TEST_CASE("File_url_has_three_slashes")
+{
+#ifdef _WIN32
+	CHECK(FileUrl(PathFromUtf8("C:\\Spiele\\J\xC3\xBCrgen.png")) == "file:///C:/Spiele/J\xC3\xBCrgen.png");
+#else
+	CHECK(FileUrl(PathFromUtf8("/home/j\xC3\xBCrgen/a.png")) == "file:///home/j\xC3\xBCrgen/a.png");
+#endif
+}
+
 TEST_CASE("Applications_registry_calls")
 {
 	TempDir dir;

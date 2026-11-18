@@ -110,10 +110,15 @@ add_executable(oc_unit_tests
 	unit/NumbersTests.cpp
 	unit/ImageTests.cpp
 	unit/EquirectTests.cpp
+	unit/CanvasTests.cpp
 	unit/FrameStatsTests.cpp
 	unit/FormatTableTests.cpp
 	unit/DepthRangeTests.cpp
 	unit/OwnFrameLoopTests.cpp
+	unit/OverlayMathsTests.cpp
+	unit/LaserMouseTests.cpp
+	unit/KeyboardTests.cpp
+	unit/RenderModelTests.cpp
 	${OC_TEST_RESOURCES}
 )
 target_include_directories(oc_unit_tests PRIVATE

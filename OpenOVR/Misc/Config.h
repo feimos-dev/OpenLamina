@@ -26,6 +26,12 @@ public:
 	inline bool OwnFrames() const { return ownFrames; }
 	/** A desktop window with the game's left eye, when the game asks for one (IVRCompositor::ShowMirrorWindow) */
 	inline bool MirrorWindow() const { return mirrorWindow; }
+	/** The keyboard (IVROverlay::ShowKeyboard), pointed at with the controllers; without it, done at once */
+	inline bool Keyboard() const { return keyboard; }
+	/** Overlays that take mouse input (VROverlayInputMethod_Mouse) are pointed at with the controllers as a mouse */
+	inline bool LaserMouse() const { return laserMouse; }
+	/** SteamVR's render models from the user's install; without them, OpenLamina's built-in ones */
+	inline bool SteamVRRenderModels() const { return steamvrRenderModels; }
 	float HiddenMeshVerticalScale() const { return hiddenMeshVerticalScale; }
 	inline bool LogAllOpenVRCalls() const { return logAllOpenVRCalls; }
 	/** The program OpenBindingUI starts; empty for none */
@@ -33,6 +39,8 @@ public:
 	/** How IVRInput evaluates a game's binding files: "direct" (default, each binding turned into OpenXR
 	 * bindings) or "steamvr" (OpenLamina evaluates SteamVR's modes on the controller's raw inputs) */
 	std::string InputEvaluator() const { return inputEvaluator; }
+	/** The keyboard's layout: "us", "uk", or empty to choose by the user's locale (UK for en-GB, else US) */
+	const std::string& KeyboardLayout() const { return keyboardLayout; }
 
 private:
 	static int ini_handler(
@@ -56,10 +64,14 @@ private:
 	bool submitDepth = false;
 	bool ownFrames = false;
 	bool mirrorWindow = false;
+	bool keyboard = false;
+	bool laserMouse = false;
+	bool steamvrRenderModels = false;
 	float hiddenMeshVerticalScale = 1.0f;
 	bool logAllOpenVRCalls = false;
 	std::string bindingEditor;
 	std::string inputEvaluator = "direct";
+	std::string keyboardLayout;
 };
 
 extern Config oovr_global_configuration;

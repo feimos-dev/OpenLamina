@@ -1,0 +1,54 @@
+{
+ "#": "One overlay per transform kind on the stand-in (run.py --cases overlay-transforms --script scripts/overlay_transforms.json --expect expect/overlay_transforms.json). The head is at (0, 1.7, 0); poses in millimetres, from the dump's last frame. Overlay-relative overlays report the type they had before; the stand-in's seated origin is its standing one.",
+ "overlay-transforms/set/-/-": {
+  "absolute": 0, "seated": 0, "device": 0, "component": 0, "relative": 0, "cursor": 0,
+  "projection left": 0, "projection right": 0, "curved": 0, "cycle a": 0, "cycle b": 0
+ },
+ "overlay-transforms/GetOverlayTransformType/-/-": {
+  "absolute": 0, "seated": 0, "device": 1, "component": 3, "relative": 0, "cursor": 4,
+  "projection left": 8, "projection right": 8, "curved": 0, "cycle a": 0, "cycle b": 0
+ },
+ "overlay-transforms/ComputeOverlayIntersection absolute/-/-": {
+  "ret": true, "point": [0.25, 1.5, -2.0], "normal": [0.0, 0.0, 1.0], "uv": [0.75, 0.5], "distance": 2.016
+ },
+ "overlay-transforms/ComputeOverlayIntersection curved/-/-": {
+  "ret": true, "point": [0.374, 1.0, -0.878], "normal": [-0.588, 0.0, 0.809], "uv": [0.9, 0.5], "distance": 0.637
+ },
+ "overlay-transforms/SetOverlayIntersectionMask/-/-": { "ret": 0 },
+ "overlay-transforms/masked off centre/-/-": {
+  "ret": false, "point": [0.25, 1.5, -2.0], "uv": [0.75, 0.5]
+ },
+ "overlay-transforms/masked centre/-/-": {
+  "ret": true, "point": [0.0, 1.5, -2.0], "uv": [0.5, 0.5], "distance": 2.0
+ },
+ "overlay-transforms/GetTransformForOverlayCoordinates/-/-": { "ret": 0, "p": [0.25, 1.25, -2.0] },
+ "overlay-transforms/overlay layers/-/-": { "layers": 9, "expected": 9 },
+ "overlay-transforms/layer absolute/-/-": {
+  "type": "quad", "p": [0.0, 1.5, -2.0], "q": [0.0, 0.0, 0.0, 1.0], "size": [1.0, 1.0], "eye_visibility": "both", "invalid": []
+ },
+ "overlay-transforms/layer seated/-/-": {
+  "type": "quad", "p": [0.5, 1.0, -2.0], "q": [0.0, 0.0, 0.0, 1.0], "size": [1.0, 1.0], "eye_visibility": "both", "invalid": []
+ },
+ "overlay-transforms/layer device/-/-": {
+  "type": "quad", "p": [0.0, 1.7, -1.5], "q": [0.0, 0.0, 0.0, 1.0], "size": [1.0, 1.0], "eye_visibility": "both", "invalid": []
+ },
+ "overlay-transforms/layer component/-/-": {
+  "type": "quad", "p": [0.0, 1.7, 0.0], "q": [0.0, 0.0, 0.0, 1.0], "size": [1.0, 1.0], "eye_visibility": "both", "invalid": []
+ },
+ "overlay-transforms/layer relative/-/-": {
+  "type": "quad", "p": [0.5, 1.5, -2.0], "q": [0.0, 0.707, 0.0, 0.707], "size": [1.0, 1.0], "eye_visibility": "both", "invalid": []
+ },
+ "overlay-transforms/layer cursor/-/-": {
+  "type": "quad", "p": [-0.5, 1.5, -2.0], "q": [0.0, 0.0, 0.0, 1.0], "size": [1.0, 1.0], "eye_visibility": "both", "invalid": []
+ },
+ "overlay-transforms/layer projection left/-/-": {
+  "type": "quad", "p": [-0.032, 1.7, -1.0], "q": [0.0, 0.0, 0.0, 1.0], "size": [2.0, 2.0], "eye_visibility": "left", "invalid": []
+ },
+ "overlay-transforms/layer projection right/-/-": {
+  "type": "quad", "p": [-0.218, 1.95, -1.0], "q": [0.0, 0.0, 0.0, 1.0], "size": [1.5, 1.5], "eye_visibility": "right", "invalid": []
+ },
+ "overlay-transforms/layer curved/-/-": {
+  "type": "cylinder", "p": [0.0, 1.0, -0.363], "q": [0.0, 0.0, 0.0, 1.0], "radius": 0.637, "angles": [1.571], "aspect_ratio": 1.0,
+  "eye_visibility": "both", "invalid": []
+ }
+}

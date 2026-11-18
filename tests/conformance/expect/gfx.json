@@ -999,5 +999,31 @@
   "dump:views[1].samples.bl": "ff0000ff",
   "dump:views[1].samples.br": "00ff00ff",
   "dump:views[1].samples.c": "00ff00ff"
+ },
+ "overlay-images/images/-/-": {
+  "file": 0,
+  "damaged": 25,
+  "texture": 0,
+  "file_size_ret": 0,
+  "file_size": [
+   64,
+   64
+  ],
+  "tex_size_ret": 0,
+  "tex_size": [
+   128,
+   64
+  ],
+  "file_texture": 24,
+  "tex_texture": 0,
+  "tex_format": 29,
+  "tex_texture_is_a_view_of_it": true,
+  "release": 0,
+  "release_again": 20,
+  "dump:samples.tl": "ff0000ff",
+  "dump:samples.tr": "00ff00ff",
+  "dump:samples.bl": "0000ffff",
+  "dump:samples.br": "ffffffff",
+  "dump:invalid": []
  }
 }

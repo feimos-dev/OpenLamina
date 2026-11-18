@@ -80,6 +80,13 @@ Upstream merge requests are linked as !*n* with their authors. Everything else w
   ([!150](https://gitlab.com/znixian/OpenOVR/-/merge_requests/150), mittorn)
 - Curved overlays, through `XR_KHR_composition_layer_cylinder`, drawn flat where the runtime lacks it.
   ([!130](https://gitlab.com/znixian/OpenOVR/-/merge_requests/130), galister)
+- With `laserMouse`, the controllers point at overlays that take mouse input as a mouse: a cursor where the laser
+  meets one, clicks with the trigger, scrolling with the thumbstick, and laser haptics.
+- With `ownFrames`, message boxes (`ShowMessageOverlay`) are shown in front of the player, in frames of OpenLamina's
+  own, and answered with the laser.
+- With `keyboard`, the keyboard games show for typing text is back, on every graphics API, in a US or UK layout
+  (`keyboardLayout`), typed on with the laser.
+- With `steamvrRenderModels`, controllers and trackers have SteamVR's own models, read from your SteamVR install.
 
 **Stability and building**
 - The log opens before anything writes to it (upstream issue #479), and a log that can't be opened no longer crashes
@@ -98,7 +105,7 @@ Every change was reviewed, and all four builds are made with warnings as errors 
 been tried yet in the game it is for. If something works upstream and not here, please
 [open an issue](https://github.com/feimos-dev/OpenLamina/issues/new).
 
-Not here yet: overlay apps (upstream !101), controller models and the virtual keyboard.
+Not here yet: overlay apps (upstream !101).
 
 ## What OpenLamina is
 
@@ -282,6 +289,14 @@ The available options are:
 	* While the game runs no frames (loading, a stall) and has an overlay or a skybox to show, OpenLamina runs frames of its own: the game's last frame again, which the runtime keeps reprojecting, with the overlays on top, or the skybox (`SetSkyboxOverride`) as equirect layers in its place. They start 100 ms after the game's last `WaitGetPoses` and never while its frame is open. On a Direct3D 11 session the device's immediate context is made multithread protected (logged), since these frames end on a thread of their own; a Vulkan or OpenGL session runs none, since its queue or context is the game's (Vulkan and OpenGL games whose frames go through Direct3D 11 have them). Without it, a skybox is shown at once as a quad, and the runtime is left with the game's last frame.
 * `mirrorWindow` - boolean, default `false`.
 	* A window on the desktop with the game's left eye, for games that ask for one (`ShowMirrorWindow`); closing it hides it. Its image is read back from the game's texture at full size, about 30 times a second, which costs frame time on a headset of high resolution. Without it the call does nothing, and the OpenXR runtime may have a mirror of its own. Windows only.
+* `keyboard` - boolean, default `false`.
+	* The keyboard a game asks for (`ShowKeyboard`), typed by pointing at it with the controllers. The game still gets the controllers' input while it's up. Without it, the keyboard is answered as done at once.
+* `keyboardLayout` - `us` or `uk`, default by the user's locale (`uk` for en-GB, `us` otherwise).
+	* The layout of the keyboard games show to type text on, with the controllers' lasers.
+* `laserMouse` - boolean, default `false`.
+	* The controllers point at overlays that take mouse input (`VROverlayInputMethod_Mouse`) as a mouse: focus and mouse events, clicks with the trigger, a cursor where the laser meets the overlay, and laser haptics. Without it, such an overlay gets no events from the controllers. The keyboard and message boxes are pointed at with the lasers regardless (behind `keyboard` and `ownFrames`).
+* `steamvrRenderModels` - boolean, default `false`.
+	* Controller and tracker models from the user's SteamVR install, with their moving parts. Without it, OpenLamina's built-in hands and tracker.
 * `logAllOpenVRCalls` - boolean, default `false`
 	* Log every OpenVR call a game makes. Similar to `logGetTrackedProperty`, this clutters logs and should not be enabled unless necessary.
 * `inputEvaluator` - `direct` or `steamvr`, default `direct`.

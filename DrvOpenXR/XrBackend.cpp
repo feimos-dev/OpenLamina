@@ -1111,6 +1111,8 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 	BaseOverlay* overlay = GetUnsafeBaseOverlay();
 	std::unique_lock<std::recursive_mutex> overlayLock;
 	if (overlay) {
+		// The controllers' lasers on the overlays and the keyboard, on this thread: it fills their swapchains
+		overlay->_UpdatePointer();
 		overlayLock = std::unique_lock(overlay->_LayersLock());
 		layer_count = overlay->_BuildLayers(app_layer, headers, true);
 	} else if (app_layer) {
@@ -1849,6 +1851,20 @@ OwnFrameLoop::OwnFrameLoop(Mode mode, LayerSource source, std::chrono::milliseco
 	    return backend ? backend->RunOwnFrame(source, wanted) : 0;
     })
 {
+}
+
+bool XrBackend::RunOwnFramesWhile(const std::function<bool()>& keepGoing)
+{
+	if (!ownFrames)
+		return false;
+	ownFrames->RunWhile(keepGoing);
+	return true;
+}
+
+void XrBackend::EndOpenAppFrame()
+{
+	// As if the game had submitted, keeping whether it ends its frames from PostPresentHandoff
+	SubmitFrames(false, postPresentStatus);
 }
 
 void XrBackend::StopOwnFrames(bool forGood)

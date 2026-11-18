@@ -39,6 +39,9 @@ python tests/conformance/run.py --runtime build/bin/vrclient_x64.dll --conforman
   `OC_LOG_DIR` and `OC_STORE_DIR` under `--out`, so a run never touches the user's own logs or state. Each child has a
   store of its own (`store/<its output>`), so one child's settings and events never reach another, except the cases that
   work between programs (`SHARED_STORES` in `run.py`: events-listen with events-commit, chaperone with chaperone-read).
+  Each child also gets `OC_TEST_NO_STEAMVR=1`, so OpenLamina finds no SteamVR install, except `render-models`, which
+  gets `tests/unit/data/steamvr` (a fixture of our own, not Valve's files) as SteamVR's install through
+  `OC_TEST_STEAMVR_DIR` (`CASE_ENV` in `run.py`).
 
 `out/summary.txt` has the counts per status (`ok`, `ended`: OpenLamina ended the program, `crashed`, `timeout`) and
 every record that wasn't ok; `out/results.json` has every record. When a child ends early the runner starts it again
