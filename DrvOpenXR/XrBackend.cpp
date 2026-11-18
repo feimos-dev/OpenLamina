@@ -1634,7 +1634,7 @@ void XrBackend::BindInfoSet()
 			suggestedBindings.suggestedBindings = bindings.data();
 			suggestedBindings.countSuggestedBindings = bindings.size();
 
-			OC_XR_LOG(xrSuggestInteractionProfileBindings(xr_instance, &suggestedBindings));
+			OC_XR_LOG(xr_suggest_bindings_logged(suggestedBindings));
 		}
 	}
 

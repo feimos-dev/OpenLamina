@@ -215,6 +215,20 @@ XrSpace xr_space_from_tracking_origin(vr::ETrackingUniverseOrigin origin)
 	}
 }
 
+XrResult xr_suggest_bindings_logged(const XrInteractionProfileSuggestedBinding& suggested)
+{
+	XrResult res = xrSuggestInteractionProfileBindings(xr_instance, &suggested);
+	char profile[XR_MAX_PATH_LENGTH] = "?";
+	uint32_t length = 0;
+	if (XR_FAILED(xrPathToString(xr_instance, suggested.interactionProfile, sizeof(profile), &length, profile)))
+		strcpy(profile, "?");
+	char name[XR_MAX_RESULT_STRING_SIZE] = "";
+	if (XR_FAILED(xrResultToString(xr_instance, res, name)))
+		snprintf(name, sizeof(name), "%d", (int)res);
+	OOVR_LOGF("Suggested %s: %s (%u bindings)", profile, name, suggested.countSuggestedBindings);
+	return res;
+}
+
 XrSpace xr_space_from_ref_space_type(XrReferenceSpaceType spaceType)
 {
 	if (!xr_gbl)
