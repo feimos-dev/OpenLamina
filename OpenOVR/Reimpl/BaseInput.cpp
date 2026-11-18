@@ -3239,8 +3239,11 @@ EVRInputError BaseInput::GetActionBindingInfo(VRActionHandle_t actionHandle, OOV
 
 		std::vector<std::string> parts;
 		stringSplit(pathStr, parts);
-		if (parts.empty())
+		if (parts.size() < 5) {
+			// Not a /user/<a>/<b>/input/<c> path: this binding is left out
+			OOVR_LOG_ONCEF("A bound source path with fewer than five parts, left out: %s", pathStr.c_str());
 			continue;
+		}
 
 		// The last part of the string - which is something like '/user/hand/right/input/a/click' - is the mode
 		strcpy_arr(info.rchModeName, parts.back().c_str());

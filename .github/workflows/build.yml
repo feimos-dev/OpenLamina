@@ -129,6 +129,9 @@ jobs:
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases input-frames --script tests/conformance/scripts/input_toggle.json --manifest tests/unit/data/manifest_toggle.json --expected tests/conformance/baseline/input-direct.json --expect tests/conformance/expect/input_direct.json --out conformance/input-direct
           if ($LASTEXITCODE) { $failed++ }
+          # A bound source that isn't an input path: GetActionBindingInfo leaves it out
+          python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases binding-info --script tests/conformance/scripts/bound_source_odd.json --manifest tests/unit/data/manifest_toggle.json --expect tests/conformance/expect/binding_info.json --out conformance/binding-info
+          if ($LASTEXITCODE) { $failed++ }
           # Eye-tracked foveation from the eye gaze: with an action manifest and with legacy input, canted views, eyeTracking=off, no extension
           python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases eye-gaze --script tests/conformance/scripts/eye_gaze.json --manifest tests/unit/data/manifest_basic.json --expect tests/conformance/expect/eye_gaze.json --out conformance/eye-gaze
           if ($LASTEXITCODE) { $failed++ }

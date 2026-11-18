@@ -1,0 +1,7 @@
+{
+ "binding-info/odd source/-/-": {
+  "err": 0,
+  "returned_at_least_one": true,
+  "odd_source_left_out": true
+ }
+}
