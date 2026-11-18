@@ -62,6 +62,16 @@ public:
 	int visibility = 0; // IVROverlay_001's VROverlayVisibility
 	uint32_t systemOverlaySceneProcess = 0; // IVROverlay_001
 	std::queue<VREvent_t> eventQueue;
+	// An overlay whose events nobody polls doesn't grow without end: the oldest go (logged once)
+	void QueueEvent(const VREvent_t& e)
+	{
+		static constexpr size_t maxQueuedEvents = 1024;
+		if (eventQueue.size() >= maxQueuedEvents) {
+			eventQueue.pop();
+			OOVR_LOG_ONCE("An overlay's event queue is full (nothing polls its events?): dropping its oldest events");
+		}
+		eventQueue.push(e);
+	}
 
 	// Kept and returned, not shown yet (drawing or using them is not implemented yet)
 	uint32_t renderingPid = 0;
@@ -707,7 +717,7 @@ void BaseOverlay::_UpdatePointer()
 				continue;
 			OverlayData* o = (OverlayData*)(uintptr_t)e.handle;
 			if (validOverlays.count(o))
-				o->eventQueue.push(e.event);
+				o->QueueEvent(e.event);
 		}
 
 		if (keyboard) {
@@ -2082,7 +2092,7 @@ void BaseOverlay::DispatchKeyboardEvent(VREvent_t event, VROverlayHandle_t forOv
 		std::lock_guard<std::recursive_mutex> lock(layersLock);
 		OverlayData* overlay = (OverlayData*)(uintptr_t)forOverlay;
 		if (validOverlays.count(overlay))
-			overlay->eventQueue.push(event);
+			overlay->QueueEvent(event);
 		return;
 	}
 	if (BaseSystem* sys = GetUnsafeBaseSystem())
