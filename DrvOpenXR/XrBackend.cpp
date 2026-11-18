@@ -39,6 +39,8 @@
 #include "../OpenOVR/Compositor/DepthRange.h"
 #include "../OpenOVR/Misc/Equirect.h"
 #include "../OpenOVR/Misc/Config.h"
+#include "../OpenOVR/Misc/FrameStats.h"
+#include "../OpenOVR/Misc/MirrorWindow.h"
 #include "../OpenOVR/convert.h"
 #include "generated/static_bases.gen.h"
 
@@ -105,6 +107,11 @@ XrBackend::XrBackend(bool useVulkanTmpGfx, bool useD3D11TmpGfx)
 
 XrBackend::~XrBackend()
 {
+	// Its thread draws from frames this backend reads back
+	MirrorWindow::Get().Hide();
+	KeepForMirror(vr::Eye_Left, nullptr);
+	KeepForMirror(vr::Eye_Right, nullptr);
+
 	// The whole teardown under the session lock, as every other change to the session is. VR_Shutdown waits for it
 	// as long as it takes; process exit without VR_Shutdown waits at most a second (see lock_for_teardown).
 	// Not a conditional expression: MSVC 19.44 wants a copy constructor for one, which SessionLock lacks
@@ -778,9 +785,16 @@ void XrBackend::WaitForTrackingData()
 			OnFrameCallFailed(res);
 			return;
 		}
-		RecordFrameTiming(waitCall, std::chrono::steady_clock::now(), state.predictedDisplayTime, state.predictedDisplayPeriod);
+		auto waitReturned = std::chrono::steady_clock::now();
+		RecordFrameTiming(waitCall, waitReturned, state.predictedDisplayTime, state.predictedDisplayPeriod);
 		xr_gbl->nextPredictedFrameTime = state.predictedDisplayTime;
 		frameAwaitingBegin = true;
+
+		FrameStats::Get().OnFrameStart();
+		OOVR_Compositor_FrameTiming timing{};
+		timing.m_nSize = sizeof(timing);
+		if (GetFrameTiming(&timing, 0))
+			FrameStats::Get().OnAppFrame(timing, measuredDropped, waitReturned, displayPeriodMs);
 	}
 
 	// FIXME loop until this returns true?
@@ -914,6 +928,14 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 			result = kCompositorUnsupportedFormat;
 		else if (XR_FAILED(res))
 			result = kCompositorRequestFailed;
+
+		if (result == kCompositorNone) {
+			KeepForMirror(eye, texture);
+			// The mirror window shows the left eye, read back while it's open
+			Image mirror;
+			if (eye == vr::Eye_Left && MirrorWindow::Get().WantsFrame() && comp.ReadbackToCpu(texture, bounds, mirror))
+				MirrorWindow::Get().Offer(std::move(mirror));
+		}
 	}
 
 	submittedEyeTextures = true;
@@ -1446,14 +1468,43 @@ bool XrBackend::GetFrameTiming(OOVR_Compositor_FrameTiming* pTiming, uint32_t un
 
 /* D3D Mirror textures */
 /* #if defined(SUPPORT_DX) */
+void XrBackend::KeepForMirror(vr::EVREye eye, const vr::Texture_t* texture)
+{
+#if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+	// A reference held, so the texture outlives the game freeing it until the next one replaces it
+	std::lock_guard<std::mutex> lock(mirrorLock);
+	vr::Texture_t& kept = lastEyeTexture[eye];
+	if (texture && texture->eType == vr::TextureType_DirectX && texture->handle)
+		((IUnknown*)texture->handle)->AddRef();
+	if (kept.handle && kept.eType == vr::TextureType_DirectX)
+		((IUnknown*)kept.handle)->Release();
+	kept = texture && texture->eType == vr::TextureType_DirectX ? *texture : vr::Texture_t{};
+#endif
+}
+
 IBackend::openvr_enum_t XrBackend::GetMirrorTextureD3D11(vr::EVREye eEye, void* pD3D11DeviceOrResource, void** ppD3D11ShaderResourceView)
 {
-	OOVR_SOFT_ABORT("No implementation");
-	return 0;
+#if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+	if (eEye != vr::Eye_Left && eEye != vr::Eye_Right)
+		return 1; // VRCompositorError_RequestFailed
+	// The eye the game submitted last, copied now on its own device
+	std::lock_guard<std::mutex> lock(mirrorLock);
+	int result = DX11Compositor::MirrorView(&lastEyeTexture[eEye], (ID3D11Device*)pD3D11DeviceOrResource, (ID3D11ShaderResourceView**)ppD3D11ShaderResourceView);
+	if (result == 0)
+		mirrorViews.insert(*ppD3D11ShaderResourceView);
+	return result;
+#else
+	return 106; // VRCompositorError_SharedTexturesNotSupported
+#endif
 }
 void XrBackend::ReleaseMirrorTextureD3D11(void* pD3D11ShaderResourceView)
 {
-	OOVR_SOFT_ABORT("No implementation");
+#if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+	// Only views handed out here: anything else isn't ours to release
+	std::lock_guard<std::mutex> lock(mirrorLock);
+	if (pD3D11ShaderResourceView && mirrorViews.erase(pD3D11ShaderResourceView))
+		((IUnknown*)pD3D11ShaderResourceView)->Release();
+#endif
 }
 /* #endif */
 /** Returns the points of the Play Area. */
@@ -1835,6 +1886,7 @@ XrDuration XrBackend::RunOwnFrame(const OwnFrameLoop::LayerSource& source, const
 	frameCallFailures = 0;
 	// Not one of the game's frames, so the time since its last one isn't a frame interval
 	RestartFrameTiming();
+	FrameStats::Get().OnFrameStart();
 
 	XrFrameEndInfo info{ XR_TYPE_FRAME_END_INFO };
 	info.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
@@ -1860,6 +1912,8 @@ XrDuration XrBackend::RunOwnFrame(const OwnFrameLoop::LayerSource& source, const
 	}
 	if (XR_FAILED(res))
 		OOVR_LOG_ONCEF("xrEndFrame failed for an own frame: %d", (int)res);
+	else
+		FrameStats::Get().OnOwnFrame();
 
 	XrDuration period = state.predictedDisplayPeriod > 0 ? state.predictedDisplayPeriod : (XrDuration)(displayPeriodMs * 1e6f);
 	return period > 0 ? period : (XrDuration)11000000;

@@ -9,5 +9,6 @@
  { "interface": "IVROverlay_\\d+", "method": "CreateOverlay|CreateDashboardOverlay|FindOverlay", "field": "out", "reason": "overlay handles are pointers" },
  { "interface": "IVRSystem_\\d+", "method": "GetHiddenAreaMesh", "field": "ret", "reason": "the struct's padding bytes are uninitialised (a minor finding: zero them)" },
  { "interface": "IVRSystem_\\d+", "method": "PollNextEvent|PollNextEventWithPose", "field": "ret|out", "reason": "whether VREvent_ProcessConnected from another test process is pending yet is timing" },
- { "interface": "IVRSystem_\\d+", "method": "GetOutputDevice", "field": "out", "reason": "the runtime's adapter's LUID (for D3D) or Vulkan physical device handle, which Windows and the Vulkan loader assign afresh" }
+ { "interface": "IVRSystem_\\d+", "method": "GetOutputDevice", "field": "out", "reason": "the runtime's adapter's LUID (for D3D) or Vulkan physical device handle, which Windows and the Vulkan loader assign afresh" },
+ { "interface": "IVRCompositor_\\d+", "method": "GetFrameTimeRemaining", "field": "ret", "reason": "the time left in the current frame, measured when it's asked" }
 ]
