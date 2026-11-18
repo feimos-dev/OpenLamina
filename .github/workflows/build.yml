@@ -182,6 +182,11 @@ jobs:
           # OpenLamina's own frames while the game stalls, also while another thread reads input
           python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases own-frames,own-frames-race,own-frames-nothing-shown --repeat 5 --jobs 2 --expect tests/conformance/expect/own_frames.json --out conformance/own-frames
           if ($LASTEXITCODE) { $failed++ }
+          # Skyboxes: equirect layers in OpenLamina's own frames, and the old quad where the runtime has none
+          python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases skybox-1,skybox-2,skybox-6 --script tests/conformance/scripts/skybox.json --expect tests/conformance/expect/skybox.json --out conformance/skybox
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases skybox-1,skybox-6 --script tests/conformance/scripts/gfx_all_apis.json --expect tests/conformance/expect/skybox_bare.json --out conformance/skybox-bare
+          if ($LASTEXITCODE) { $failed++ }
           # inputEvaluator=steamvr suggests bindings for the same profiles as direct
           python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases input-manifest --manifest tests/unit/data/manifest_a_only.json --out conformance/profiles-direct
           python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases input-manifest --manifest tests/unit/data/manifest_a_only.json --ini tests/conformance/ini/steamvr_evaluator.ini --out conformance/profiles-steamvr
