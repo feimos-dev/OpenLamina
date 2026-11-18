@@ -103,6 +103,20 @@ TEST_CASE("Remote_overlay_gets_events_for_its_pid")
 	}
 }
 
+TEST_CASE("Remote_overlay_sort_order_above_the_signed_range")
+{
+	// The whole unsigned sort order, as another build may have written it: pointed at all the same
+	RemotePointer pointer;
+	pointer.isAlive = [](uint32_t, uint64_t) { return true; };
+	Json::Value doc;
+	doc["222"] = Entry(0x1234);
+	doc["222"]["overlays"][0]["sort_order"] = 3000000000u;
+	std::vector<StoreEvent> posted;
+	REQUIRE_NOTHROW(pointer.Update(Rays(false), doc, 111, 1.0, posted));
+	std::vector<RemotePointerEvent> events = Unpacked(posted);
+	CHECK(Has(events, vr::VREvent_MouseMove));
+}
+
 TEST_CASE("Dead_pid_ignored")
 {
 	RemotePointer pointer;

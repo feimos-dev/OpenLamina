@@ -685,7 +685,10 @@ bool SharedStore::OtherLiveProgram(const Json::Value& overlaysDoc, uint32_t self
 		const unsigned long long pid = std::strtoull(name.c_str(), nullptr, 10);
 		if (!pid || pid > 0xffffffffULL || pid == self)
 			continue;
-		const Json::Value& start = overlaysDoc[name]["start"];
+		const Json::Value& entry = overlaysDoc[name];
+		if (!entry.isObject())
+			continue;
+		const Json::Value& start = entry["start"];
 		if (IsSameProcessAlive((uint32_t)pid, start.isUInt64() ? start.asUInt64() : 0))
 			return true;
 	}

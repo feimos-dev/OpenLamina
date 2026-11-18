@@ -76,6 +76,18 @@ using namespace vr;
 
 std::mutex inputRestartMutex;
 std::unique_ptr<TemporaryGraphics> XrBackend::temporaryGraphics = nullptr;
+
+// Runs a step that reads the store's documents. They are files that another program, or another build, wrote: a value
+// of a type or size this build doesn't expect makes jsoncpp throw, and that mustn't reach the game's frame.
+template <typename Step>
+static void WithStoreDocuments(Step&& step)
+{
+	try {
+		step();
+	} catch (const Json::Exception& e) {
+		OOVR_LOG_ONCEF("A store document couldn't be read, and its step is left out: %s", e.what());
+	}
+}
 XrBackend::XrBackend(bool useVulkanTmpGfx, bool useD3D11TmpGfx)
 {
 	memset(projectionViews, 0, sizeof(projectionViews));
@@ -1119,9 +1131,9 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 	if (overlay) {
 		// The dashboard, then the controllers' lasers on the overlays and the keyboard, on this thread: it fills their
 		// swapchains
-		overlay->_UpdateDashboard();
-		overlay->_UpdateBounds();
-		overlay->_UpdatePointer();
+		WithStoreDocuments([&] { overlay->_UpdateDashboard(); });
+		WithStoreDocuments([&] { overlay->_UpdateBounds(); });
+		WithStoreDocuments([&] { overlay->_UpdatePointer(); });
 		overlayLock = std::unique_lock(overlay->_LayersLock());
 		layer_count = overlay->_BuildLayers(app_layer, headers, true);
 	} else if (app_layer) {
@@ -1148,7 +1160,7 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 
 	// The game's own dashboard overlays, for its dashboard's tabs (dashboardButton), once its frame has ended
 	if (overlay)
-		overlay->_PublishOverlays();
+		WithStoreDocuments([&] { overlay->_PublishOverlays(); });
 	NoticeRenderScale();
 
 	BaseSystem* sys = GetUnsafeBaseSystem();
@@ -1896,8 +1908,8 @@ void XrBackend::StartHelperLoop()
 		    BaseOverlay* overlay = GetUnsafeBaseOverlay();
 		    // The program's overlays for the scene app to point at, and its dashboard overlays as the dashboard shows them
 		    if (overlay) {
-			    overlay->_UpdateDashboard();
-			    overlay->_PublishOverlays();
+			    WithStoreDocuments([&] { overlay->_UpdateDashboard(); });
+			    WithStoreDocuments([&] { overlay->_PublishOverlays(); });
 		    }
 		    if (!overlaySession)
 			    return 0; // a headless session runs no frames
@@ -1907,7 +1919,7 @@ void XrBackend::StartHelperLoop()
 			    BaseInput* input = GetUnsafeBaseInput();
 			    if (input && overlay->_KeyboardShown() && IsInputAvailable())
 				    input->SyncPointerActions();
-			    overlay->_UpdatePointer();
+			    WithStoreDocuments([&] { overlay->_UpdatePointer(); });
 		    }
 		    return RunOwnFrame(source, wanted);
 	    });

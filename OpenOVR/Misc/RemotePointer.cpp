@@ -2,6 +2,7 @@
 
 #include "RemotePointer.h"
 
+#include <climits>
 #include <cstdlib>
 #include <cstring>
 #include <set>
@@ -144,7 +145,9 @@ void RemotePointer::Update(const std::array<PointerRay, 2>& rays, const Json::Va
 				// Units of the overlay's width and height: its owner scales them by its own mouse scale
 				t.mouseScale = { { 1.0f, 1.0f } };
 				t.flags = o["flags"].asUInt();
-				t.sortOrder = o["sort_order"].asInt();
+				// Another build may have written the whole unsigned number
+				const Json::Value& order = o["sort_order"];
+				t.sortOrder = order.isInt() ? order.asInt() : order.isUInt() ? INT_MAX - 1 : 0;
 				for (const Json::Value& m : o["mask"]) {
 					OOVR_VROverlayIntersectionMaskPrimitive_t primitive{};
 					if (m["rect"].isArray() && m["rect"].size() == 4) {

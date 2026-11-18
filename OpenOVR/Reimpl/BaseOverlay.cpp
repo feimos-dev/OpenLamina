@@ -1156,7 +1156,8 @@ void BaseOverlay::_PublishOverlays()
 			e["curvature"] = placed ? round(placement.curvature, 0.0001f) : 0.0;
 			e["input_method"] = (int)o->inputMethod;
 			e["flags"] = (Json::UInt64)o->flags;
-			e["sort_order"] = o->sortOrder;
+			// As the game's own targets have it: a signed number on the pointer's side
+			e["sort_order"] = std::min<uint32_t>(o->sortOrder, INT_MAX - 1);
 			e["visible"] = placed && (o->visible || o->dashboard) && (o->texture.handle != nullptr || !o->rawImage.Empty());
 			e["dashboard"] = o->dashboard;
 			if (o->thumbnail)

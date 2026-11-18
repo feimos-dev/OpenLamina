@@ -276,7 +276,7 @@ static void PublishSceneStats()
 	const uint32_t self = oc_current_pid();
 	SharedStore::Get().Update(StoreDoc::Scene, [&](Json::Value& scene) {
 		// Only while it's this program's
-		if (!scene.isObject() || scene["pid"].asUInt() != self)
+		if (!scene.isObject() || !scene["pid"].isUInt() || scene["pid"].asUInt() != self)
 			return;
 		scene["frame_stats"]["presents"] = stats.m_nNumFramePresents;
 		scene["frame_stats"]["dropped"] = stats.m_nNumDroppedFrames;
