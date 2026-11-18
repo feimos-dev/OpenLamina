@@ -1572,7 +1572,7 @@ void XrBackend::OnSessionCreated()
 	if (BaseClientCore::appType == vr::VRApplication_Scene)
 		BaseApplications::SetSceneProcess(true);
 
-	// Frames of OpenLamina's own while the game runs none, with the visible overlays
+	// Frames of OpenLamina's own while the game runs none and an overlay is shown
 	StopOwnFrames();
 	if (ownFramesStopped)
 		return;
@@ -1590,6 +1590,10 @@ void XrBackend::OnSessionCreated()
 	    std::chrono::milliseconds(100),
 	    [this](const OwnFrameLoop::LayerSource& source, const std::function<bool()>& wanted) {
 		    return RunOwnFrame(source, wanted);
+	    },
+	    [] {
+		    BaseOverlay* overlay = GetUnsafeBaseOverlay();
+		    return overlay && overlay->_AnyVisible();
 	    });
 }
 

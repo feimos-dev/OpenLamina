@@ -91,3 +91,22 @@ TEST_CASE("OwnFrameLoop: RunWhile runs the frames on the calling thread")
 	CHECK(fake.lastThread.load() == std::this_thread::get_id());
 	CHECK(loop.FramesRun() == 5);
 }
+
+TEST_CASE("OwnFrameLoop: WhenAppIdle runs no frames while there is nothing to show")
+{
+	FakeFrames fake;
+	std::atomic<bool> content{ false };
+	OwnFrameLoop loop(OwnFrameLoop::Mode::WhenAppIdle, nullptr, 20ms, fake.Runner(), [&] { return content.load(); });
+	loop.OnAppFrameStart();
+	std::this_thread::sleep_for(150ms);
+	CHECK(fake.frames == 0);
+
+	content = true;
+	CHECK(WaitFor([&] { return fake.frames > 0; }));
+
+	content = false;
+	std::this_thread::sleep_for(50ms);
+	int stopped = fake.frames;
+	std::this_thread::sleep_for(150ms);
+	CHECK(fake.frames <= stopped + 1);
+}

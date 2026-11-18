@@ -22,13 +22,17 @@ public:
 	// ran. Without one, the current XrBackend's (RunOwnFrame).
 	using FrameRunner = std::function<XrDuration(const LayerSource& source, const std::function<bool()>& wanted)>;
 
+	// WhenAppIdle runs frames only while this holds: with nothing of its own to show, the runtime keeps the game's last
+	// frame rather than getting empty ones
+	using ContentCheck = std::function<bool()>;
+
 	enum class Mode {
 		WhenAppIdle, // frames once the game has run one and then not called WaitGetPoses for idleAfter
 		Always, // every frame (overlay applications, which have no frames of their own)
 	};
 
 	OwnFrameLoop(Mode mode, LayerSource source, std::chrono::milliseconds idleAfter = std::chrono::milliseconds(100));
-	OwnFrameLoop(Mode mode, LayerSource source, std::chrono::milliseconds idleAfter, FrameRunner runner);
+	OwnFrameLoop(Mode mode, LayerSource source, std::chrono::milliseconds idleAfter, FrameRunner runner, ContentCheck hasContent = nullptr);
 	OwnFrameLoop(const OwnFrameLoop&) = delete;
 	OwnFrameLoop& operator=(const OwnFrameLoop&) = delete;
 
@@ -59,6 +63,7 @@ private:
 	const LayerSource source;
 	const std::chrono::milliseconds idleAfter;
 	const FrameRunner runner;
+	const ContentCheck hasContent;
 
 	mutable std::mutex stateLock;
 	std::condition_variable wake;
