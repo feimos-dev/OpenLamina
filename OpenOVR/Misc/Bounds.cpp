@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
 #include "Bounds.h"
+#include "ChaperoneData.h"
 
 #include <algorithm>
 #include <cmath>
@@ -12,6 +13,15 @@ float BoundsAlpha(float distanceToEdge)
 	if (distanceToEdge >= kBoundsNear)
 		return 0.0f;
 	return 1.0f - distanceToEdge / kBoundsNear;
+}
+
+XrExtent2Df BoundsPlayArea(const XrExtent2Df* runtime, const Json::Value& chaperoneDoc)
+{
+	if (runtime && runtime->width > 0.0f && runtime->height > 0.0f)
+		return *runtime;
+	if (std::optional<ChaperoneData> committed = ChaperoneData::FromJson(chaperoneDoc))
+		return { committed->playArea[0], committed->playArea[1] };
+	return { 0.0f, 0.0f };
 }
 
 std::vector<BoundsWall> BoundsWalls(float width, float depth, const std::vector<XrVector3f>& points)

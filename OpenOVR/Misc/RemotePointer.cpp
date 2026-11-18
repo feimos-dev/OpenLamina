@@ -93,7 +93,6 @@ void RemotePointer::SetFrameOrigin(vr::ETrackingUniverseOrigin frameOrigin, cons
 void RemotePointer::Update(const std::array<PointerRay, 2>& rays, const Json::Value& overlaysDoc, uint32_t selfPid, double now, std::vector<StoreEvent>& toPost)
 {
 	sawDead = false;
-	sawOthers = false;
 	std::vector<PointerTarget> targets;
 	std::set<std::pair<uint32_t, uint64_t>> present;
 	if (overlaysDoc.isObject()) {
@@ -107,7 +106,6 @@ void RemotePointer::Update(const std::array<PointerRay, 2>& rays, const Json::Va
 				sawDead = true;
 				continue;
 			}
-			sawOthers = true;
 			const Json::Value& list = overlaysDoc[name]["overlays"];
 			if (!list.isArray())
 				continue;

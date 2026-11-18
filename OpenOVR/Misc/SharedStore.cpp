@@ -692,6 +692,17 @@ bool SharedStore::OtherLiveProgram(const Json::Value& overlaysDoc, uint32_t self
 	return false;
 }
 
+bool SharedStore::OtherLiveProgram(const Json::Value& sceneDoc, const Json::Value& overlaysDoc, uint32_t self)
+{
+	if (sceneDoc.isObject() && sceneDoc["pid"].isUInt()) {
+		const uint32_t pid = sceneDoc["pid"].asUInt();
+		const Json::Value& start = sceneDoc["start"];
+		if (pid && pid != self && IsSameProcessAlive(pid, start.isUInt64() ? start.asUInt64() : 0))
+			return true;
+	}
+	return OtherLiveProgram(overlaysDoc, self);
+}
+
 bool SharedStore::IsProcessAlive(uint32_t pid)
 {
 	if (pid == 0)

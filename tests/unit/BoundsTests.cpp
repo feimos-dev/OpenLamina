@@ -36,3 +36,23 @@ TEST_CASE("Bounds_wall_near_one_edge")
 	CHECK(BoundsWalls(2, 3, { { 0, 1.7f, 0 } }).empty());
 	CHECK(BoundsWalls(0, 3, { { 0.9f, 1.7f, 0 } }).empty());
 }
+
+TEST_CASE("Bounds_play_area_falls_back_to_the_room_setup")
+{
+	Json::Value chaperone;
+	chaperone["play_area"].append(3.0f);
+	chaperone["play_area"].append(2.0f);
+	// The runtime's stage bounds win
+	const XrExtent2Df stage{ 4.0f, 5.0f };
+	XrExtent2Df area = BoundsPlayArea(&stage, chaperone);
+	CHECK(area.width == doctest::Approx(4.0f));
+	CHECK(area.height == doctest::Approx(5.0f));
+	// Without them, the committed room setup's play area
+	area = BoundsPlayArea(nullptr, chaperone);
+	CHECK(area.width == doctest::Approx(3.0f));
+	CHECK(area.height == doctest::Approx(2.0f));
+	// Without either, none
+	area = BoundsPlayArea(nullptr, Json::Value());
+	CHECK(area.width == 0.0f);
+	CHECK(area.height == 0.0f);
+}

@@ -124,13 +124,9 @@ VR_INTERFACE void* VR_CALLTYPE VR_GetGenericInterface(const char* interfaceVersi
 				*error = VRInitError_Init_InterfaceNotFound;
 			return NULL;
 		}
-		valid_apptypes = 1ull << VRApplication_Scene;
-#ifndef _WIN32
-		valid_apptypes |= (1ull << VRApplication_Background); // Proton uses this
-#endif
-		// Overlay and background applications (VR_Init lets them in only where they get sessions of their own) have
-		// every interface, as SteamVR gives them
-		valid_apptypes |= (1ull << VRApplication_Overlay) | (1ull << VRApplication_Background);
+		// Overlay and background applications (VR_Init lets them in only where they get sessions of their own, and a
+		// background one on Linux, where Proton uses it) have every interface, as SteamVR gives them
+		valid_apptypes = (1ull << VRApplication_Scene) | (1ull << VRApplication_Overlay) | (1ull << VRApplication_Background);
 	}
 
 	EVRApplicationType apptype = utility_init && !running ? VRApplication_Utility : current_apptype;
@@ -348,6 +344,7 @@ VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(EVRInitError* peError, EVRApp
 		return 0;
 	}
 	BackendManager::Create(backend);
+	DrvOpenXR::KeepOverlaysInstance();
 	// An earlier Utility Init not yet shut down is matched by a Shutdown too
 	scene_init_count = utility_init ? 2 : 1;
 	utility_init = false;

@@ -192,8 +192,13 @@ jobs:
           # OpenLamina's own frames while the game stalls, also while another thread reads input
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases own-frames,own-frames-race,own-frames-nothing-shown,own-frames-overlay-churn --repeat 5 --jobs 2 --ini tests/conformance/ini/own_frames.ini --expect tests/conformance/expect/own_frames.json --out conformance/own-frames
           if ($LASTEXITCODE) { $failed++ }
-          # Overlay and background applications on overlay and headless sessions, and their refusals without them
-          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases overlay-app,overlay-app-two-apis,background-app --script tests/conformance/scripts/helper_apps.json --expect tests/conformance/expect/helper_apps.json --out conformance/helper-apps
+          # Overlay and background applications on overlay and headless sessions (a background one only while a game
+          # runs), and their refusals without them
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases overlay-app,overlay-app-two-apis --script tests/conformance/scripts/helper_apps.json --expect tests/conformance/expect/helper_apps.json --out conformance/helper-apps
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases background-app,background-app-game --jobs 2 --script tests/conformance/scripts/helper_apps.json --expect tests/conformance/expect/background_app.json --out conformance/background-app
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases background-app-alone --script tests/conformance/scripts/helper_apps.json --expect tests/conformance/expect/background_app_alone.json --out conformance/background-app-alone
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases helper-apps-unsupported --expect tests/conformance/expect/helper_apps_unsupported.json --out conformance/helper-apps-unsupported
           if ($LASTEXITCODE) { $failed++ }
@@ -218,6 +223,8 @@ jobs:
           if ($LASTEXITCODE) { $failed++ }
           # The play area's walls near its edge with drawBounds, and none without
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases bounds --script tests/conformance/scripts/bounds.json --ini tests/conformance/ini/draw_bounds.ini --expect tests/conformance/expect/bounds.json --out conformance/bounds
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases bounds-room-setup --script tests/conformance/scripts/bounds_room_setup.json --ini tests/conformance/ini/draw_bounds.ini --expect tests/conformance/expect/bounds_room_setup.json --out conformance/bounds-room-setup
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases bounds --script tests/conformance/scripts/bounds.json --expect tests/conformance/expect/bounds_off.json --out conformance/bounds-off
           if ($LASTEXITCODE) { $failed++ }

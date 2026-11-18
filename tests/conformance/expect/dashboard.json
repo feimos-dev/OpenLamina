@@ -1,5 +1,5 @@
 {
- "#": "OpenLamina's dashboard (scripts/dashboard.json, ini/dashboard.ini, --manifest tests/unit/data/manifest_basic.json, --jobs 2): a long press of the left menu button opens it over the game, which gets DashboardActivated and whose actions read inactive while it's open; the overlay app draws its dashboard overlay at the panel's pose in its own frames; 'Quit game' gives the game VREvent_Quit and closes it",
+ "#": "OpenLamina's dashboard (scripts/dashboard.json, ini/dashboard.ini, --manifest tests/unit/data/manifest_basic.json, --jobs 2): a long press of the left menu button opens it over the game, which gets DashboardActivated and whose actions read inactive while it's open; the overlay app draws its dashboard overlay at the panel's pose in its own frames; 'Quit game' gives the game VREvent_Quit and closes it; the game's own dashboard overlay is published for its tab, and its other overlays aren't",
  "dashboard/dashboard/-/-": {
   "saw_overlay_app": true,
   "open_at_120": true,
@@ -12,7 +12,9 @@
   "activated": true,
   "quit": true,
   "deactivated": true,
-  "open_at_end": false
+  "open_at_end": false,
+  "own_dashboard_overlay_published": true,
+  "own_plain_overlay_published": false
  },
  "dashboard-overlay/dashboard overlay/-/-": {
   "init": 0,

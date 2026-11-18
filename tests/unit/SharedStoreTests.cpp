@@ -209,6 +209,25 @@ TEST_CASE("Store_process_start_tells_a_reused_pid")
 	CHECK(SharedStore::OtherLiveProgram(doc, self + 1)); // this process, seen from another
 }
 
+TEST_CASE("Store_live_program_from_scene_or_overlays")
+{
+	const uint32_t self = oc_current_pid();
+	const uint64_t start = SharedStore::OwnStartTime();
+	Json::Value scene(Json::objectValue), overlays(Json::objectValue);
+	CHECK(!SharedStore::OtherLiveProgram(scene, overlays, self + 1));
+	// The scene application: this process, seen from another
+	scene["pid"] = self;
+	scene["start"] = (Json::UInt64)start;
+	CHECK(SharedStore::OtherLiveProgram(scene, overlays, self + 1));
+	CHECK(!SharedStore::OtherLiveProgram(scene, overlays, self));
+	// One that has gone, its pid since reused
+	scene["start"] = (Json::UInt64)(start + 1);
+	CHECK(!SharedStore::OtherLiveProgram(scene, overlays, self + 1));
+	// An overlay application
+	overlays[std::to_string(self)]["start"] = (Json::UInt64)start;
+	CHECK(SharedStore::OtherLiveProgram(scene, overlays, self + 1));
+}
+
 TEST_CASE("Store_migrates_the_old_folders_documents_once")
 {
 	TempDir t;

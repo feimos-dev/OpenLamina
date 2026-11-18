@@ -73,6 +73,8 @@ public:
 	static bool IsSameProcessAlive(uint32_t pid, uint64_t start);
 	/** Whether a program other than self has an entry in the Overlays document and is still running */
 	static bool OtherLiveProgram(const Json::Value& overlaysDoc, uint32_t self);
+	/** The same, or the Scene document's scene application (other than self) is still running */
+	static bool OtherLiveProgram(const Json::Value& sceneDoc, const Json::Value& overlaysDoc, uint32_t self);
 
 	static constexpr uint32_t kFormat = 1;
 	static constexpr uint32_t kRingSize = 256;

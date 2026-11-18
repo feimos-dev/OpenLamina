@@ -11,9 +11,6 @@
 
 enum class SessionKind { Scene, Overlay, Headless };
 
-// Whether the runtime offers what this kind needs (XR_EXTX_overlay, XR_MND_headless); Scene: always
-bool HelperSessionsAvailable(SessionKind kind, const std::set<std::string>& runtimeExtensions);
-
 // What an application type gets: a session of a kind, or (ok false) the init error it is refused with
 struct SessionChoice {
 	bool ok = false;
@@ -21,9 +18,10 @@ struct SessionChoice {
 	vr::EVRInitError refusal = vr::VRInitError_None;
 };
 // Overlay and Background apps get helper sessions where the runtime has them and helperApps is on, and are otherwise
-// refused (130 InvalidApplicationType, 121 NoServerForBackgroundApp). With backgroundAsScene (Linux, where Proton's
-// helper relies on it), a Background app gets a scene session.
-SessionChoice ChooseSessionKind(vr::EVRApplicationType type, const std::set<std::string>& runtimeExtensions, bool helperApps, bool backgroundAsScene);
+// refused (130 InvalidApplicationType, 121 NoServerForBackgroundApp). A Background app also needs programRunning
+// (another OpenLamina program is running): it doesn't start the runtime, as SteamVR doesn't start for it. With
+// backgroundAsScene (Linux, where Proton's helper relies on it), a Background app gets a scene session.
+SessionChoice ChooseSessionKind(vr::EVRApplicationType type, const std::set<std::string>& runtimeExtensions, bool helperApps, bool backgroundAsScene, bool programRunning);
 
 // Whether Background apps get scene sessions here (Linux)
 bool BackgroundAppsGetSceneSessions();

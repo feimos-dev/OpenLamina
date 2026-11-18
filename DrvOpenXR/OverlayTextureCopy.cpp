@@ -16,7 +16,9 @@
 #include <d3d12.h>
 #endif
 
+#include <chrono>
 #include <map>
+#include <vector>
 
 using Microsoft::WRL::ComPtr;
 
@@ -91,8 +93,20 @@ struct OverlayTextureCopy::Impl {
 		HANDLE event = nullptr;
 		ComPtr<ID3D11Texture2D> opened;
 		ComPtr<ID3D11Texture2D> plain;
+		// Ended after the device's read of opened: the next copy writes shared only once it's done
+		ComPtr<ID3D11Query> readDone;
+		bool readPending = false;
+		bool Running() const { return fence && fence->GetCompletedValue() < fenceValue; }
 		~D3D12Copy()
 		{
+			// Waited for (bounded) while the program's queue still runs its copy; past that, its objects are left to it
+			if (Running() && event && SUCCEEDED(fence->SetEventOnCompletion(fenceValue, event)))
+				WaitForSingleObject(event, kCopyTimeoutMs);
+			if (Running()) {
+				allocator.Detach();
+				list.Detach();
+				shared.Detach();
+			}
 			if (event)
 				CloseHandle(event);
 		}
@@ -101,6 +115,36 @@ struct OverlayTextureCopy::Impl {
 		D3D12Copy& operator=(const D3D12Copy&) = delete;
 	};
 	std::map<void*, std::unique_ptr<D3D12Copy>> d3d12;
+	// Dropped copies whose last copy was still running, released once it's done
+	std::vector<std::unique_ptr<D3D12Copy>> retired;
+
+	void Retire(std::unique_ptr<D3D12Copy> copy)
+	{
+		if (!copy->Running())
+			return;
+		retired.push_back(std::move(copy));
+		// Past the bound, the oldest goes now (its destructor waits for it, bounded)
+		if (retired.size() > kMaxCopies)
+			retired.erase(retired.begin());
+	}
+
+	void ReleaseFinished()
+	{
+		std::erase_if(retired, [](const std::unique_ptr<D3D12Copy>& c) { return !c->Running(); });
+	}
+
+	// Whether the device has done its read of the copy's shared texture, waited for at most kCopyTimeoutMs
+	bool ReadDone(D3D12Copy& copy)
+	{
+		if (!copy.readPending)
+			return true;
+		const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(kCopyTimeoutMs);
+		HRESULT hr = S_FALSE;
+		while ((hr = context->GetData(copy.readDone.Get(), nullptr, 0, 0)) == S_FALSE && std::chrono::steady_clock::now() < until)
+			Sleep(1);
+		copy.readPending = hr != S_OK;
+		return hr == S_OK;
+	}
 #endif
 
 	// OpenGL and Vulkan: one each, for the program's context or device
@@ -196,6 +240,7 @@ struct OverlayTextureCopy::Impl {
 		programDevice->GetImmediateContext(&programContext);
 		if (copy->programMutex->AcquireSync(0, kCopyTimeoutMs) != S_OK) {
 			*why = "the shared texture stayed in use";
+			d3d11.erase(src); // a new shared pair next time
 			return nullptr;
 		}
 		if (sd.SampleDesc.Count > 1)
@@ -205,7 +250,8 @@ struct OverlayTextureCopy::Impl {
 		copy->programMutex->ReleaseSync(1);
 		if (copy->openedMutex->AcquireSync(1, kCopyTimeoutMs) != S_OK) {
 			*why = "the program's copy didn't finish in time";
-			// Handed back for the next copy (once the program's side is done with it)
+			// The keyed mutex stays at the program's key, with nothing to hand it back: a new shared pair next time
+			d3d11.erase(src);
 			return nullptr;
 		}
 		context->CopyResource(copy->plain.Get(), copy->opened.Get());
@@ -220,6 +266,7 @@ struct OverlayTextureCopy::Impl {
 			*why = "the D3D12 texture data has no resource or queue";
 			return nullptr;
 		}
+		ReleaseFinished();
 		ID3D12Resource* src = data->m_pResource;
 		ComPtr<ID3D12Device> programDevice;
 		src->GetDevice(IID_PPV_ARGS(&programDevice));
@@ -237,15 +284,20 @@ struct OverlayTextureCopy::Impl {
 		if (found != d3d12.end()) {
 			const D3D12_RESOURCE_DESC& was = found->second->source;
 			if (found->second->programDevice != programDevice || was.Width != sd.Width || was.Height != sd.Height || was.Format != sd.Format
-			    || was.SampleDesc.Count != sd.SampleDesc.Count)
+			    || was.SampleDesc.Count != sd.SampleDesc.Count) {
+				Retire(std::move(found->second));
 				d3d12.erase(found);
+			}
 		}
 		D3D12Copy* copy = nullptr;
 		if (auto it = d3d12.find(src); it != d3d12.end()) {
 			copy = it->second.get();
 		} else {
-			if (d3d12.size() >= kMaxCopies)
+			if (d3d12.size() >= kMaxCopies) {
+				for (auto& kv : d3d12)
+					Retire(std::move(kv.second));
 				d3d12.clear();
+			}
 			auto made = std::make_unique<D3D12Copy>();
 			made->programDevice = programDevice;
 			made->source = sd;
@@ -280,10 +332,12 @@ struct OverlayTextureCopy::Impl {
 			made->opened->GetDesc(&od);
 			made->plain = Plain(od);
 			made->event = CreateEventA(nullptr, FALSE, FALSE, nullptr);
+			const D3D11_QUERY_DESC eventQuery{ D3D11_QUERY_EVENT, 0 };
 			if (!made->plain || !made->event
 			    || FAILED(programDevice->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&made->allocator)))
 			    || FAILED(programDevice->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, made->allocator.Get(), nullptr, IID_PPV_ARGS(&made->list)))
-			    || FAILED(made->list->Close()) || FAILED(programDevice->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&made->fence)))) {
+			    || FAILED(made->list->Close()) || FAILED(programDevice->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&made->fence)))
+			    || FAILED(device->CreateQuery(&eventQuery, &made->readDone))) {
 				*why = "no D3D12 copy objects on the program's device";
 				return nullptr;
 			}
@@ -302,6 +356,16 @@ struct OverlayTextureCopy::Impl {
 			b.Transition.StateAfter = after;
 			return b;
 		};
+		// Its objects are reset only once the program's queue is done with them, and shared written only once the
+		// device has read it
+		if (copy->Running()) {
+			*why = "the last D3D12 copy is still running";
+			return nullptr;
+		}
+		if (!ReadDone(*copy)) {
+			*why = "OpenLamina's device is still reading the last D3D12 copy";
+			return nullptr;
+		}
 		if (FAILED(copy->allocator->Reset()) || FAILED(copy->list->Reset(copy->allocator.Get(), nullptr))) {
 			*why = "the D3D12 copy's command list can't be reset";
 			return nullptr;
@@ -342,10 +406,12 @@ struct OverlayTextureCopy::Impl {
 		if (FAILED(data->m_pCommandQueue->Signal(copy->fence.Get(), value)) || FAILED(copy->fence->SetEventOnCompletion(value, copy->event))
 		    || WaitForSingleObject(copy->event, kCopyTimeoutMs) != WAIT_OBJECT_0) {
 			*why = "the D3D12 copy didn't finish in time";
-			// Still running: its objects are left to it (the next copy waits for the fence again)
+			// Still running: the next copy is refused until its fence has passed
 			return nullptr;
 		}
 		context->CopyResource(copy->plain.Get(), copy->opened.Get());
+		context->End(copy->readDone.Get());
+		copy->readPending = true;
 		return copy->plain.Get();
 	}
 #endif

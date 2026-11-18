@@ -5,6 +5,8 @@
 #include "DrvOpenXR.h"
 
 #include "../OpenOVR/Misc/Config.h"
+#include "../OpenOVR/Misc/Process.h"
+#include "../OpenOVR/Misc/SharedStore.h"
 #include "../OpenOVR/Misc/android_api.h"
 #include "../OpenOVR/Misc/xr_ext.h"
 #include "../OpenOVR/Reimpl/BaseInput.h"
@@ -201,11 +203,20 @@ IBackend* DrvOpenXR::CreateOpenXRBackend(const char* startupInfo, vr::EVRInitErr
 		OOVR_LOGF("Extension: %s", ext.extensionName);
 	}
 
-	// Overlay and background applications: a session of their kind, or a refusal
-	const SessionChoice choice = ChooseSessionKind(appType, availableExtensions, oovr_global_configuration.HelperApps(), BackgroundAppsGetSceneSessions());
+	// Overlay and background applications: a session of their kind, or a refusal. A background application joins only
+	// while another OpenLamina program runs: making the instance can start the runtime (Monado's service on Windows).
+	const bool helperApps = oovr_global_configuration.HelperApps();
+	bool programRunning = false;
+	if (appType == vr::VRApplication_Background && helperApps && !BackgroundAppsGetSceneSessions()) {
+		SharedStore& store = SharedStore::Get();
+		programRunning = SharedStore::OtherLiveProgram(store.Read(StoreDoc::Scene), store.Read(StoreDoc::Overlays), oc_current_pid());
+	}
+	const SessionChoice choice = ChooseSessionKind(appType, availableExtensions, helperApps, BackgroundAppsGetSceneSessions(), programRunning);
 	if (!choice.ok) {
-		OOVR_LOGF("Refusing application type %d: %s", (int)appType,
-		    oovr_global_configuration.HelperApps() ? "the OpenXR runtime has no overlay or headless sessions for it" : "helperApps is off");
+		const char* why = !helperApps                                  ? "helperApps is off"
+		    : appType == vr::VRApplication_Background && !programRunning ? "no other OpenLamina program is running"
+		                                                                 : "the OpenXR runtime has no overlay or headless sessions for it";
+		OOVR_LOGF("Refusing application type %d: %s", (int)appType, why);
 		return StartupFailed(error, choice.refusal);
 	}
 	SetCurrentSessionKind(choice.kind);
@@ -475,6 +486,12 @@ XrResult DrvOpenXR::SetupSession()
 
 	currentBackend->OnSessionCreated();
 	return XR_SUCCESS;
+}
+
+void DrvOpenXR::KeepOverlaysInstance()
+{
+	if (currentBackend)
+		currentBackend->KeepOverlaysInstance();
 }
 
 void DrvOpenXR::StopOwnFrames()

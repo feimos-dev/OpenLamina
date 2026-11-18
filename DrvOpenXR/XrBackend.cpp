@@ -1113,11 +1113,6 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 		}
 	}
 
-	// The game's lasers reach other programs' overlays (laserMouse), and its dashboard opens (dashboardButton), even
-	// if it has no overlays of its own
-	if (!GetUnsafeBaseOverlay() && !keptOverlay && WantsOverlaysInstance())
-		keptOverlay = GetCreateBaseOverlay();
-
 	// If we have an overlay then add. Its layers stay as they are until the frame has ended.
 	BaseOverlay* overlay = GetUnsafeBaseOverlay();
 	std::unique_lock<std::recursive_mutex> overlayLock;
@@ -1151,7 +1146,7 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 		ownFrames->OnAppFrameEnd();
 	owner.unlock();
 
-	// The game's overlays for other programs to point at (with laserMouse), once its frame has ended
+	// The game's own dashboard overlays, for its dashboard's tabs (dashboardButton), once its frame has ended
 	if (overlay)
 		overlay->_PublishOverlays();
 	NoticeRenderScale();
@@ -2034,20 +2029,12 @@ void XrBackend::NoticeRenderScale()
 	OcPostEvent(vr::VREvent_SteamVRSectionSettingChanged, vr::k_unTrackedDeviceIndexInvalid, vr::VREvent_Data_t{}, false);
 }
 
-bool XrBackend::WantsOverlaysInstance()
+void XrBackend::KeepOverlaysInstance()
 {
 	if (BaseClientCore::appType != vr::VRApplication_Scene || IsHelperSession())
-		return false;
-	if (oovr_global_configuration.DashboardButton() != "off" || oovr_global_configuration.DrawBounds())
-		return true;
-	if (!oovr_global_configuration.LaserMouse())
-		return false;
-	// At most once a second: it reads the store and asks whether its programs are running
-	const auto now = std::chrono::steady_clock::now();
-	if (lastPointerCheck != std::chrono::steady_clock::time_point{} && now - lastPointerCheck < std::chrono::seconds(1))
-		return false;
-	lastPointerCheck = now;
-	return SharedStore::OtherLiveProgram(SharedStore::Get().Read(StoreDoc::Overlays), oc_current_pid());
+		return;
+	if (oovr_global_configuration.DashboardButton() != "off" || oovr_global_configuration.DrawBounds() || oovr_global_configuration.LaserMouse())
+		keptOverlay = GetCreateBaseOverlay();
 }
 
 XrDuration XrBackend::RunOwnFrame(const OwnFrameLoop::LayerSource& source, const std::function<bool()>& wanted)
