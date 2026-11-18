@@ -341,6 +341,7 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/LibMonado.cpp
 	OpenOVR/Misc/Equirect.cpp
 	OpenOVR/Misc/Equirect.h
+	OpenOVR/Misc/GlPixelStore.h
 	OpenOVR/Misc/Image.cpp
 	OpenOVR/Misc/Image.h
 	OpenOVR/Misc/JsonFile.h

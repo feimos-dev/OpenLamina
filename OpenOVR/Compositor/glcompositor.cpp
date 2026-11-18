@@ -17,6 +17,7 @@
 
 #include "../DrvOpenXR/XrBackend.h"
 #include "../Misc/Config.h"
+#include "../Misc/GlPixelStore.h"
 #include "../Misc/Image.h"
 #include "../Misc/SoftFail.h"
 #include "FormatTable.h"
@@ -338,7 +339,7 @@ bool GLBaseCompositor::ReadbackToCpu(const vr::Texture_t* texture, const vr::VRT
 	auto name = (GLuint)(intptr_t)texture->handle;
 	if (!name)
 		return false;
-	while (glGetError() != GL_NO_ERROR) {
+	for (int i = 0; i < 32 && glGetError() != GL_NO_ERROR; i++) {
 	}
 	GLint previous = 0, width = 0, height = 0, internalFormat = 0;
 	glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous);
@@ -352,11 +353,16 @@ bool GLBaseCompositor::ReadbackToCpu(const vr::Texture_t* texture, const vr::VRT
 		return false;
 	}
 	std::vector<uint8_t> texels((size_t)width * height * 4);
-	GLint alignment = 4;
-	glGetIntegerv(GL_PACK_ALIGNMENT, &alignment);
-	glPixelStorei(GL_PACK_ALIGNMENT, 1);
-	glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, texels.data());
-	glPixelStorei(GL_PACK_ALIGNMENT, alignment);
+	{
+		// Tightly packed rows into the vector, whatever the game's pixel-store state
+		GlPixelStore store(true);
+		if (!store.Ok()) {
+			glBindTexture(GL_TEXTURE_2D, (GLuint)previous);
+			OOVR_LOG_ONCE("An OpenGL texture couldn't be read back into memory: the game's pixel pack buffer can't be unbound");
+			return false;
+		}
+		glGetTexImage(GL_TEXTURE_2D, 0, GL_RGBA, GL_UNSIGNED_BYTE, texels.data());
+	}
 	glBindTexture(GL_TEXTURE_2D, (GLuint)previous);
 	if (glGetError() != GL_NO_ERROR) {
 		OOVR_LOG_ONCEF("An OpenGL texture of internal format 0x%x couldn't be read back into memory", internalFormat);

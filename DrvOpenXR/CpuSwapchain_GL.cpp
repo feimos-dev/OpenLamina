@@ -16,6 +16,8 @@
 #include <GL/glx.h>
 #endif
 
+#include "../OpenOVR/Misc/GlPixelStore.h"
+
 #include <cstring>
 
 namespace {
@@ -67,15 +69,19 @@ public:
 			std::memcpy(&bottomUp[(size_t)(height - 1 - y) * row], &texels[(size_t)y * row], row);
 		for (int i = 0; i < 32 && glGetError() != GL_NO_ERROR; i++) {
 		}
-		GLint previous = 0, alignment = 4;
+		GLint previous = 0;
 		glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous);
-		glGetIntegerv(GL_UNPACK_ALIGNMENT, &alignment);
-		glBindTexture(GL_TEXTURE_2D, images[index]);
-		glPixelStorei(GL_UNPACK_ALIGNMENT, 1);
-		glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, (GLsizei)width, (GLsizei)height, GL_RGBA, GL_UNSIGNED_BYTE, bottomUp.data());
-		glPixelStorei(GL_UNPACK_ALIGNMENT, alignment);
-		glBindTexture(GL_TEXTURE_2D, (GLuint)previous);
-		bool ok = glGetError() == GL_NO_ERROR;
+		bool ok = false;
+		{
+			// Tightly packed rows from the vector, whatever the context's pixel-store state
+			GlPixelStore store(false);
+			if (store.Ok()) {
+				glBindTexture(GL_TEXTURE_2D, images[index]);
+				glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, (GLsizei)width, (GLsizei)height, GL_RGBA, GL_UNSIGNED_BYTE, bottomUp.data());
+				glBindTexture(GL_TEXTURE_2D, (GLuint)previous);
+				ok = glGetError() == GL_NO_ERROR;
+			}
+		}
 		// Done before another context (the runtime's, or the one put back) uses the texture
 		if (current.switched)
 			glFinish();
