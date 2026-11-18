@@ -667,6 +667,7 @@ void BaseOverlay::_UpdatePointer()
 				t.handle = keyboard->Handle();
 				t.placement = overlay_maths::Placement{ p.keyboardPose, keyboard->WidthMeters(), keyboard->HeightMeters(), 0 };
 				t.mouseScale = { { (float)keyboard->CanvasWidth(), (float)keyboard->CanvasHeight() } };
+				t.yDown = true; // the canvas's coordinates
 				t.sortOrder = INT_MAX; // on top of every overlay
 				targets.push_back(t);
 			}
@@ -1554,9 +1555,9 @@ bool BaseOverlay::ComputeOverlayIntersection(VROverlayHandle_t ulOverlayHandle, 
 	pResults->vNormal = { hit.normal.x, hit.normal.y, hit.normal.z };
 	pResults->vUVs = { hit.u, hit.v };
 	pResults->fDistance = hit.distance;
-	// The mask is in the overlay's mouse coordinates, from its upper left
+	// The mask is in the overlay's mouse coordinates, from its lower left
 	const float x = hit.u * overlay->mouseScale.v[0];
-	const float y = (1 - hit.v) * overlay->mouseScale.v[1];
+	const float y = hit.v * overlay->mouseScale.v[1];
 	return on && overlay_maths::InMask(overlay->intersectionMask, x, y);
 }
 bool BaseOverlay::HandleControllerOverlayInteractionAsMouse(VROverlayHandle_t ulOverlayHandle, TrackedDeviceIndex_t unControllerDeviceIndex)
@@ -2291,6 +2292,7 @@ BaseOverlay::VRMessageOverlayResponse BaseOverlay::ShowMessageOverlay(const char
 		panel.handle = m.Handle();
 		panel.placement = m.placement;
 		panel.mouseScale = { { (float)kPanelWidth, (float)kPanelHeight } };
+		panel.yDown = true; // the canvas's coordinates
 		std::vector<PointerEvent> events;
 		m.mouse.Update(rays, { panel }, NowSeconds(), events);
 		auto buttonAt = [&](const VREvent_t& e) {
