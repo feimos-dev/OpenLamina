@@ -25,6 +25,7 @@
 #include "convert.h"
 #include "generated/static_bases.gen.h"
 #include <array>
+#include <atomic>
 #include <chrono>
 #include <climits>
 #include <optional>
@@ -365,6 +366,12 @@ namespace {
 constexpr int kCursorPixels = 64;
 constexpr float kCursorMetres = 0.02f;
 
+// A message box: a panel a millimetre per pixel, its buttons in a row along the bottom
+constexpr int kPanelWidth = 1000, kPanelHeight = 500;
+constexpr float kPanelMetresPerPixel = 0.001f;
+constexpr int kPanelMargin = 40, kButtonGap = 20, kButtonHeight = 70, kButtonBottom = 40;
+constexpr float kPanelDistance = 1.5f;
+
 double NowSeconds()
 {
 	using namespace std::chrono;
@@ -382,6 +389,28 @@ XrCompositionLayerQuad OwnQuad(const CpuSwapchain& chain, const XrPosef& pose, f
 	quad.pose = pose;
 	quad.size = { width, height };
 	return quad;
+}
+
+// A pose ahead of the head and below it, level (turned only about the vertical) and facing the head: where a
+// message box goes. Without a head pose, from the origin looking along -Z.
+XrPosef AheadOfHead(vr::ETrackingUniverseOrigin space, float ahead, float below)
+{
+	glm::vec3 head(0.0f), forward(0.0f, 0.0f, -1.0f);
+	if (std::shared_ptr<ITrackedDevice> hmd = BackendManager::Instance().GetDevice(vr::k_unTrackedDeviceIndex_Hmd)) {
+		TrackedDevicePose_t pose{};
+		hmd->GetPose(space, &pose, ETrackingStateType::TrackingStateType_Rendering);
+		if (pose.bPoseIsValid) {
+			const glm::mat4 m = S2G_m34(pose.mDeviceToAbsoluteTracking);
+			head = glm::vec3(m[3]);
+			glm::vec3 f = -glm::vec3(m[2]);
+			f.y = 0;
+			if (glm::length(f) > 1e-3f)
+				forward = glm::normalize(f);
+		}
+	}
+	const glm::quat turn = glm::angleAxis(std::atan2(-forward.x, -forward.z), glm::vec3(0.0f, 1.0f, 0.0f));
+	const glm::vec3 at = head + forward * ahead - glm::vec3(0.0f, below, 0.0f);
+	return XrPosef{ G2X_quat(turn), G2X_v3f(at) };
 }
 
 // Each hand's laser, from its aim pose in the frame's space; none while input isn't available
@@ -415,6 +444,76 @@ std::array<PointerRay, 2> ReadRays(bool available)
 	return rays;
 }
 
+// UTF-8 as the font draws it (characters it can't decode as '?')
+std::wstring WideText(const char* utf8)
+{
+	if (!utf8)
+		return {};
+	try {
+		return VRKeyboard::CHAR_CONV.from_bytes(utf8);
+	} catch (const std::range_error&) {
+		std::wstring out;
+		for (const char* c = utf8; *c; c++)
+			out += (unsigned char)*c < 0x80 ? (wchar_t)*c : L'?';
+		return out;
+	}
+}
+
+// Text broken into lines no wider than width, at spaces and newlines (a word wider than a line, at a character)
+std::vector<std::wstring> WrapText(const Canvas& canvas, const std::wstring& text, int width)
+{
+	std::vector<std::wstring> lines;
+	std::wstring line, word;
+	auto endWord = [&] {
+		if (word.empty())
+			return;
+		std::wstring joined = line.empty() ? word : line + L" " + word;
+		if (canvas.TextWidth(joined) <= width) {
+			line = joined;
+		} else {
+			if (!line.empty())
+				lines.push_back(line);
+			line.clear();
+			for (wchar_t c : word) {
+				if (!line.empty() && canvas.TextWidth(line + c) > width) {
+					lines.push_back(line);
+					line.clear();
+				}
+				line += c;
+			}
+		}
+		word.clear();
+	};
+	for (wchar_t c : text) {
+		if (c == L' ' || c == L'\t') {
+			endWord();
+		} else if (c == L'\n') {
+			endWord();
+			lines.push_back(line);
+			line.clear();
+		} else if (c != L'\r') {
+			word += c;
+		}
+	}
+	endWord();
+	if (!line.empty())
+		lines.push_back(line);
+	return lines;
+}
+
+struct PanelRect {
+	int x, y, w, h;
+	bool Contains(float px, float py) const { return px >= x && py >= y && px < x + w && py < y + h; }
+};
+
+// Button i of n, along the panel's bottom
+PanelRect ButtonRect(size_t i, size_t n)
+{
+	const int count = (int)std::max<size_t>(n, 1);
+	const int w = (kPanelWidth - 2 * kPanelMargin - (count - 1) * kButtonGap) / count;
+	return PanelRect{ kPanelMargin + (int)i * (w + kButtonGap), kPanelHeight - kButtonBottom - kButtonHeight, w, kButtonHeight };
+}
+
 } // namespace
 
 class BaseOverlay::Pointing {
@@ -428,8 +527,54 @@ public:
 	bool cursorShown = false;
 	XrPosef cursorPose{ { 0, 0, 0, 1 }, { 0, 0, 0 } };
 
+	// A message box (ShowMessageOverlay), while one is shown
+	struct Message {
+		std::wstring caption, text;
+		std::vector<std::pair<int, std::wstring>> buttons; // the answer each gives, its label
+		overlay_maths::Placement placement{};
+		std::unique_ptr<CpuSwapchain> chain;
+		Image image;
+		bool dirty = true; // to be drawn again
+		bool uploaded = false; // the image is in the swapchain
+		int hovered = -1, pressed = -1; // buttons by their place
+		LaserMouse mouse; // its own: the other overlays get no events while it's up
+		vr::VROverlayHandle_t Handle() const { return (vr::VROverlayHandle_t)(uintptr_t)this; }
+
+		// The panel as it looks now: the caption, the text and the buttons
+		void Draw()
+		{
+			Canvas canvas(kPanelWidth, kPanelHeight);
+			canvas.FillRect(0, 0, kPanelWidth, kPanelHeight, 0x2b2f36f0, 24);
+			const int line = Canvas::LineHeight();
+			int y = 30;
+			canvas.Text(kPanelMargin, y, caption, 0xffffffff);
+			y += line + 8;
+			canvas.FillRect(kPanelMargin, y, kPanelWidth - 2 * kPanelMargin, 2, 0x6a7486ff);
+			y += 16;
+			const int textEnd = ButtonRect(0, buttons.size()).y - 16;
+			for (const std::wstring& row : WrapText(canvas, text, kPanelWidth - 2 * kPanelMargin)) {
+				if (y + line > textEnd)
+					break;
+				canvas.Text(kPanelMargin, y, row, 0xd8d8d8ff);
+				y += line + 4;
+			}
+			for (size_t i = 0; i < buttons.size(); i++) {
+				const PanelRect r = ButtonRect(i, buttons.size());
+				const uint32_t colour = (int)i == pressed ? 0x2a5080ff : ((int)i == hovered ? 0x5a86c0ff : 0x3a6ea5ff);
+				canvas.FillRect(r.x, r.y, r.w, r.h, colour, 10);
+				const std::wstring& label = buttons[i].second;
+				canvas.Text(r.x + (r.w - canvas.TextWidth(label)) / 2, r.y + (r.h - line) / 2, label, 0xffffffff);
+			}
+			image = canvas.Pixels();
+			dirty = false;
+			uploaded = false;
+		}
+	};
+	std::unique_ptr<Message> message;
+	std::atomic<bool> closeMessage{ false };
+
 	// The layers built from them for a frame, valid until it has ended
-	XrCompositionLayerQuad cursorLayer{};
+	XrCompositionLayerQuad messageLayer{}, cursorLayer{};
 
 	// The cursor shown at a point on a target, facing out of it: its swapchain made and filled on the game's thread
 	void ShowCursor(const XrPosef& point)
@@ -552,6 +697,8 @@ void BaseOverlay::_UpdatePointer()
 bool BaseOverlay::_AnyVisible()
 {
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	if (pointing->message)
+		return true;
 	for (const auto& kv : overlays) {
 		if (kv.second && kv.second->visible && (kv.second->texture.handle != nullptr || !kv.second->rawImage.Empty()))
 			return true;
@@ -678,9 +825,14 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 		}
 	}
 
-	// OpenLamina's own quads on top of the overlays: the cursor. Filled on the game's thread (_UpdatePointer): only
-	// one already in a swapchain is drawn.
+	// OpenLamina's own quads on top of the overlays: a message box, then the cursor. Filled on the game's thread
+	// (_UpdatePointer, ShowMessageOverlay): only those already in a swapchain are drawn.
 	Pointing& p = *pointing;
+	if (p.message && p.message->chain && p.message->chain->Live()) {
+		const overlay_maths::Placement& at = p.message->placement;
+		p.messageLayer = OwnQuad(*p.message->chain, at.pose, at.width, at.height);
+		layerHeaders.push_back((XrCompositionLayerBaseHeader*)&p.messageLayer);
+	}
 	if (p.cursorShown && p.cursorChain && p.cursorChain->Live()) {
 		p.cursorLayer = OwnQuad(*p.cursorChain, p.cursorPose, kCursorMetres, kCursorMetres);
 		layerHeaders.push_back((XrCompositionLayerBaseHeader*)&p.cursorLayer);
@@ -1947,11 +2099,130 @@ EVROverlayError BaseOverlay::GetOverlayFlags(VROverlayHandle_t ulOverlayHandle, 
 }
 BaseOverlay::VRMessageOverlayResponse BaseOverlay::ShowMessageOverlay(const char* pchText, const char* pchCaption, const char* pchButton0Text, const char* pchButton1Text, const char* pchButton2Text, const char* pchButton3Text)
 {
-	OC_UNSUPPORTED(VRMessageOverlayResponse_CouldntFindSystemOverlay, "ShowMessageOverlay: there are no message overlays yet");
+	// Shown in frames of OpenLamina's own, run here until a button is clicked: without them, it can't be
+	auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
+	if (!backend || !backend->HasOwnFrames() || !backend->sessionActive)
+		OC_UNSUPPORTED(VRMessageOverlayResponse_CouldntFindSystemOverlay, "ShowMessageOverlay: no frames of OpenLamina's own to show it in");
+	// Answered with the controllers' lasers, which read the game's input actions: before it has any, nothing could
+	// answer it
+	BaseInput* input = GetUnsafeBaseInput();
+	if (!input || !input->AreActionsLoaded())
+		OC_UNSUPPORTED(VRMessageOverlayResponse_CouldntFindSystemOverlay, "ShowMessageOverlay: the game has loaded no input yet, so nothing could answer it");
+
+	auto message = std::make_unique<Pointing::Message>();
+	message->caption = WideText(pchCaption);
+	message->text = WideText(pchText);
+	const char* labels[4] = { pchButton0Text, pchButton1Text, pchButton2Text, pchButton3Text };
+	for (int i = 0; i < 4; i++) {
+		if (labels[i] && *labels[i])
+			message->buttons.emplace_back(i, WideText(labels[i]));
+	}
+	// Something to click: with no buttons, one that answers as the first
+	if (message->buttons.empty())
+		message->buttons.emplace_back(0, L"OK");
+	message->Draw();
+
+	// Held until it's answered: the session isn't restarted under it, nor its own frames stopped
+	auto session = xr_session.lock_shared();
+	{
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		if (pointing->message)
+			OC_UNSUPPORTED(VRMessageOverlayResponse_CouldntFindOrCreateClientOverlay, "ShowMessageOverlay: a message box is already shown");
+	}
+	message->chain = CpuSwapchain::Create(kPanelWidth, kPanelHeight);
+	if (!message->chain)
+		OC_UNSUPPORTED(VRMessageOverlayResponse_CouldntFindSystemOverlay, "ShowMessageOverlay: no swapchain from memory on this session to show it with");
+	BaseCompositor* compositor = GetUnsafeBaseCompositor();
+	const ETrackingUniverseOrigin space = compositor ? compositor->GetTrackingSpace() : TrackingUniverseStanding;
+	message->placement = overlay_maths::Placement{ AheadOfHead(space, kPanelDistance, 0), kPanelWidth * kPanelMetresPerPixel,
+		kPanelHeight * kPanelMetresPerPixel, 0 };
+	pointing->closeMessage = false;
+	{
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		pointing->message = std::move(message);
+		pointing->cursorShown = false;
+	}
+
+	// The game's frame, if it's in the middle of one, ends here (without its eye textures) so that frames can run
+	backend->EndOpenAppFrame();
+
+	int answer = -1;
+	const bool ran = backend->RunOwnFramesWhile([&]() -> bool {
+		if (pointing->closeMessage || backend->IsSessionLost()) {
+			answer = VRMessageOverlayResponse_ApplicationQuit;
+			return false;
+		}
+		// The game is blocked here and syncs no input: the lasers' actions are synced for it
+		const bool focused = backend->IsInputAvailable();
+		if (input && focused)
+			input->SyncPointerActions();
+		const std::array<PointerRay, 2> rays = ReadRays(focused);
+
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		Pointing& p = *pointing;
+		Pointing::Message& m = *p.message;
+		PointerTarget panel{};
+		panel.handle = m.Handle();
+		panel.placement = m.placement;
+		panel.mouseScale = { { (float)kPanelWidth, (float)kPanelHeight } };
+		std::vector<PointerEvent> events;
+		m.mouse.Update(rays, { panel }, NowSeconds(), events);
+		auto buttonAt = [&](const VREvent_t& e) {
+			for (size_t i = 0; i < m.buttons.size(); i++)
+				if (ButtonRect(i, m.buttons.size()).Contains(e.data.mouse.x, e.data.mouse.y))
+					return (int)i;
+			return -1;
+		};
+		for (const PointerEvent& e : events) {
+			const int at = e.event.eventType == VREvent_FocusLeave ? -1 : buttonAt(e.event);
+			switch (e.event.eventType) {
+			case VREvent_MouseMove:
+			case VREvent_FocusLeave:
+				m.dirty |= at != m.hovered;
+				m.hovered = at;
+				break;
+			case VREvent_MouseButtonDown:
+				m.pressed = at;
+				m.dirty = true;
+				break;
+			case VREvent_MouseButtonUp:
+				// A click: pressed and let go on the same button
+				if (at >= 0 && at == m.pressed)
+					answer = m.buttons[at].first;
+				m.pressed = -1;
+				m.dirty = true;
+				break;
+			default:
+				break;
+			}
+		}
+		if (m.dirty)
+			m.Draw();
+		// Filled here, on the calling thread (the game's), never on the own frames' thread
+		if (!m.uploaded || !m.chain->Live())
+			m.uploaded = m.chain->Upload(m.image);
+		p.cursorShown = false;
+		const int hand = m.mouse.ActiveHand();
+		if (std::optional<overlay_maths::Hit> hit = m.mouse.Cursor(hand); hit && m.mouse.Target(hand) == m.Handle())
+			p.ShowCursor(overlay_maths::PointOn(m.placement, hit->u, hit->v));
+		return answer < 0;
+	});
+
+	std::unique_ptr<Pointing::Message> shown;
+	{
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		shown = std::move(pointing->message);
+		pointing->cursorShown = false;
+	}
+	shown.reset();
+	if (!ran)
+		OC_UNSUPPORTED(VRMessageOverlayResponse_CouldntFindSystemOverlay, "ShowMessageOverlay: OpenLamina's own frames stopped");
+	return answer >= 0 ? (VRMessageOverlayResponse)answer : VRMessageOverlayResponse_ApplicationQuit;
 }
 void BaseOverlay::CloseMessageOverlay()
 {
-	OC_UNSUPPORTED_VOID("CloseMessageOverlay: there are no message overlays yet");
+	// The message box's frames, on the thread that showed it, end at their next pass
+	pointing->closeMessage = true;
 }
 
 EVROverlayError BaseOverlay::SetOverlayPreCurvePitch(vr::VROverlayHandle_t ulOverlayHandle, float fRadians)

@@ -1853,6 +1853,20 @@ OwnFrameLoop::OwnFrameLoop(Mode mode, LayerSource source, std::chrono::milliseco
 {
 }
 
+bool XrBackend::RunOwnFramesWhile(const std::function<bool()>& keepGoing)
+{
+	if (!ownFrames)
+		return false;
+	ownFrames->RunWhile(keepGoing);
+	return true;
+}
+
+void XrBackend::EndOpenAppFrame()
+{
+	// As if the game had submitted, keeping whether it ends its frames from PostPresentHandoff
+	SubmitFrames(false, postPresentStatus);
+}
+
 void XrBackend::StopOwnFrames(bool forGood)
 {
 	if (forGood)

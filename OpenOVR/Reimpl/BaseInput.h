@@ -483,6 +483,11 @@ public: // INTERNAL FUNCTIONS
 	 * Takes the session lock (shared), then evaluatorLock.
 	 */
 	bool GetHandPointer(int hand, XrSpace base, XrTime time, HandPointer& out);
+	/**
+	 * Syncs the old input's actions (and the raw inputs) alone: for a call that blocks the game, which then syncs
+	 * none of its own (ShowMessageOverlay). Nothing before any actions are loaded.
+	 */
+	void SyncPointerActions();
 	/** A vibration on one hand (0 the left, 1 the right), through the old input's haptic action */
 	void TriggerHandHaptic(int hand, float seconds, float frequency, float amplitude);
 
