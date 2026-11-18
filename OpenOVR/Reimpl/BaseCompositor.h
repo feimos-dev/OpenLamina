@@ -136,6 +136,14 @@ private:
 
 	bool isInSkybox = false;
 
+	// The poses WaitGetPoses gave the last few frames, by pose prediction id (GetPosesForFrame)
+	struct FramePoses {
+		uint32_t id = 0;
+		std::vector<vr::TrackedDevicePose_t> poses;
+	};
+	FramePoses recentPoses[4];
+	uint32_t lastPoseId = 0;
+
 	// True if the current frame has only nullptr textures supplied, and should be ignored
 	bool isNullRender = false;
 

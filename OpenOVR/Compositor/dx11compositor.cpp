@@ -822,4 +822,49 @@ bool DX11Compositor::CheckChainCompatible(D3D11_TEXTURE2D_DESC& inputDesc, vr::E
 	return usable;
 }
 
+
+int DX11Compositor::MirrorView(const vr::Texture_t* texture, ID3D11Device* device, ID3D11ShaderResourceView** view)
+{
+	constexpr int kNone = 0, kRequestFailed = 1, kSharedTexturesNotSupported = 106;
+	if (!view)
+		return kRequestFailed;
+	*view = nullptr;
+	if (!texture || texture->eType != vr::TextureType_DirectX || !texture->handle || !device)
+		return kSharedTexturesNotSupported; // no D3D11 frame of the game's yet, or another graphics API
+	auto* src = (ID3D11Texture2D*)texture->handle;
+	ID3D11Device* srcDevice = nullptr;
+	src->GetDevice(&srcDevice);
+	if (srcDevice)
+		srcDevice->Release();
+	if (srcDevice != device)
+		return kSharedTexturesNotSupported;
+
+	D3D11_TEXTURE2D_DESC desc;
+	src->GetDesc(&desc);
+	bool srgb = WantsSrgb(GfxApiKind::D3D11, desc.Format, texture->eColorSpace);
+	DXGI_FORMAT typed = (DXGI_FORMAT)FormatWithSrgb(GfxApiKind::D3D11, desc.Format, srgb);
+	D3D11_TEXTURE2D_DESC copyDesc = desc;
+	copyDesc.Format = typed;
+	copyDesc.MipLevels = 1;
+	copyDesc.ArraySize = 1;
+	copyDesc.SampleDesc = { 1, 0 };
+	copyDesc.Usage = D3D11_USAGE_DEFAULT;
+	copyDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	copyDesc.CPUAccessFlags = 0;
+	copyDesc.MiscFlags = 0;
+	ID3D11Texture2D* copy = nullptr;
+	if (FAILED(device->CreateTexture2D(&copyDesc, nullptr, &copy)))
+		return kRequestFailed;
+	ID3D11DeviceContext* ctx = nullptr;
+	device->GetImmediateContext(&ctx);
+	if (desc.SampleDesc.Count > 1)
+		ctx->ResolveSubresource(copy, 0, src, 0, typed);
+	else
+		ctx->CopySubresourceRegion(copy, 0, 0, 0, 0, src, 0, nullptr);
+	ctx->Release();
+	HRESULT hr = device->CreateShaderResourceView(copy, nullptr, view);
+	copy->Release(); // the view keeps it
+	return SUCCEEDED(hr) ? kNone : kRequestFailed;
+}
+
 #endif

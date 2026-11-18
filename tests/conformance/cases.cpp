@@ -1753,6 +1753,52 @@ bool ShowGreyOverlay(CaseContext& c)
 	return ov->SetOverlayRaw(h, grey.data(), 64, 64, 4) == 0 && ov->ShowOverlay(h) == 0;
 }
 
+// The compositor's statistics and timing after 30 of the game's frames (expect/compositor.json)
+void CompositorStatsCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	for (int frame = 0; frame < 30; frame++)
+		GameFrame(f, tex.get());
+
+	Json::Value r;
+	vr::IVRCompositor_029::Compositor_CumulativeStats stats{};
+	f.comp->GetCumulativeStats(&stats, sizeof(stats));
+	r["pid_set"] = stats.m_nPid != 0;
+	r["presents_at_least_29"] = stats.m_nNumFramePresents >= 29;
+	r["dropped"] = stats.m_nNumDroppedFrames;
+
+	vr::Compositor_FrameTiming timings[5]{};
+	timings[0].m_nSize = sizeof(vr::Compositor_FrameTiming);
+	uint32_t got = f.comp->GetFrameTimings(timings, 5);
+	r["timings"] = got;
+	r["timings_newest_first"] = got == 5 && timings[0].m_nFrameIndex > timings[1].m_nFrameIndex;
+	r["timing_sizes"] = got == 5 && timings[4].m_nSize == sizeof(vr::Compositor_FrameTiming);
+	vr::Compositor_FrameTiming ago{};
+	ago.m_nSize = sizeof(ago);
+	r["frame_timing_3_ago"] = f.comp->GetFrameTiming(&ago, 3) && got == 5 && ago.m_nFrameIndex == timings[3].m_nFrameIndex;
+
+	float left = f.comp->GetFrameTimeRemaining();
+	r["time_remaining_in_a_frame"] = left >= 0.0f && left < 0.05f;
+
+	uint32_t render = 0, game = 0;
+	r["prediction_ids"] = (int)f.comp->GetLastPosePredictionIDs(&render, &game);
+	r["prediction_ids_match"] = render != 0 && render == game;
+	vr::TrackedDevicePose_t poses[16]{};
+	r["poses_for_last_frame"] = (int)f.comp->GetPosesForFrame(render, poses, 16);
+	r["poses_for_old_frame"] = (int)f.comp->GetPosesForFrame(render - 10, poses, 16);
+
+	r["fullscreen"] = f.comp->IsFullscreen();
+	r["motion_smoothing_supported"] = f.comp->IsMotionSmoothingSupported();
+	r["motion_smoothing_enabled"] = f.comp->IsMotionSmoothingEnabled();
+	f.comp->CompositorGoToBack();
+	f.comp->CompositorQuit();
+	c.core->Cleanup();
+	c.Record("stats", r);
+}
+
 // OpenLamina's own frames while the game stalls (expect/own_frames.json, with ownFrames=true): with an overlay shown,
 // 10 frames, a second without any call, then 10 more. With the stand-in at 90 Hz, OpenLamina runs at least 60 frames
 // of its own in that second, each with the game's last frame again under the overlay, and no frame call comes out of
@@ -2206,6 +2252,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "own-frames-race", OwnFramesRaceCase },
 		{ "own-frames-nothing-shown", OwnFramesNothingShownCase },
 		{ "own-frames-overlay-churn", OwnFramesOverlayChurnCase },
+		{ "compositor-stats", CompositorStatsCase },
 		{ "gpu-answers", GpuAnswersCase },
 		{ "gpu-other-adapter", GpuOtherAdapterCase },
 		{ "display-frequency", DisplayFrequencyCase },
