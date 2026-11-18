@@ -155,7 +155,7 @@ jobs:
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases binding-info --script tests/conformance/scripts/bound_source_odd.json --manifest tests/unit/data/manifest_toggle.json --expect tests/conformance/expect/binding_info.json --out conformance/binding-info
           if ($LASTEXITCODE) { $failed++ }
           # The compositor's calls with every graphics API offered: the Vulkan extension lists with a null buffer
-          python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --only "IVRCompositor_0(19|2[0-9])" --script tests/conformance/scripts/gfx_all_apis.json --out conformance/compositor-all-apis
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --only "IVRCompositor_0(19|2[0-9])" --script tests/conformance/scripts/gfx_all_apis.json --out conformance/compositor-all-apis
           if ($LASTEXITCODE) { $failed++ }
           # Eye-tracked foveation from the eye gaze: with an action manifest and with legacy input, canted views, eyeTracking=off, no extension
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases eye-gaze --script tests/conformance/scripts/eye_gaze.json --manifest tests/unit/data/manifest_basic.json --expect tests/conformance/expect/eye_gaze.json --out conformance/eye-gaze
