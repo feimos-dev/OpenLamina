@@ -1,0 +1,4 @@
+{
+ "#": "A runtime without XR_EXTX_overlay and XR_MND_headless (the stand-in's default extensions): overlay apps get InvalidApplicationType (130), background apps NoServerForBackgroundApp (121); the same where the runtime fails to start (scripts/helper_apps_fail_instance.json)",
+ "helper-apps-unsupported/init/-/-": {"overlay": 130, "background": 121}
+}

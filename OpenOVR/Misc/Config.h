@@ -32,6 +32,10 @@ public:
 	inline bool LaserMouse() const { return laserMouse; }
 	/** SteamVR's render models from the user's install; without them, OpenLamina's built-in ones */
 	inline bool SteamVRRenderModels() const { return steamvrRenderModels; }
+	/** Overlay and background applications get overlay and headless sessions, where the runtime has them */
+	inline bool HelperApps() const { return helperApps; }
+	/** An overlay application's layers' place among other programs' (XrSessionCreateInfoOverlayEXTX) */
+	inline uint32_t OverlayLayersPlacement() const { return overlayLayersPlacement; }
 	float HiddenMeshVerticalScale() const { return hiddenMeshVerticalScale; }
 	inline bool LogAllOpenVRCalls() const { return logAllOpenVRCalls; }
 	/** The program OpenBindingUI starts; empty for none */
@@ -67,6 +71,8 @@ private:
 	bool keyboard = false;
 	bool laserMouse = false;
 	bool steamvrRenderModels = false;
+	bool helperApps = true;
+	uint32_t overlayLayersPlacement = 1;
 	float hiddenMeshVerticalScale = 1.0f;
 	bool logAllOpenVRCalls = false;
 	std::string bindingEditor;

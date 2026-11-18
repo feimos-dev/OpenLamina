@@ -54,6 +54,7 @@ add_executable(oc_conformance
 	conformance/oc_conformance.cpp
 	conformance/cases.cpp
 	conformance/gfx_cases.cpp
+	conformance/helper_cases.cpp
 	conformance/gfx/GfxApi.h
 	conformance/crash_report.cpp
 )

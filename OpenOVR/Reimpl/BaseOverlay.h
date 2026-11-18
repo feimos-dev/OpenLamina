@@ -204,6 +204,10 @@ private:
 	// destroyed once the lock is let go.
 	std::unique_ptr<CpuSwapchain> DropKeyboard();
 
+	// Images from memory whose swapchains went with the last session, put into this one: on the program's thread, in
+	// an overlay application on its own device (whose own frames don't fill swapchains). With layersLock held.
+	void UploadLostImages();
+
 public:
 	BaseOverlay();
 	// Destructor, since we have a map of pointers

@@ -6,7 +6,7 @@ records. See README.md.
          --xr-runtime none|stand-in|<manifest>|monado:<manifest> --out <dir> [--script <json>] [--expected <json>]
          [--differences <json>] [--expect <json>] [--known-failures <json>] [--allow-skip <regex>] [--only <regex>]
          [--cases <a,b,...>] [--jobs N] [--ci] [--allow-failures] [--real-runtime] [--ini <openlamina.ini>]
-         [--repeat N] [--case-arg <name>=<value>]...
+         [--repeat N] [--case-arg <name>=<value>]... [--apptypes <n,...>]
 
 Exit code 0 only if no child was ended by OpenLamina (exit 70), crashed or timed out, and nothing differed from
 --expected (beyond --differences) or --expect, except the records --known-failures lists.
@@ -251,14 +251,20 @@ class Runner:
         jobs = []
         only = re.compile(self.args.only) if self.args.only else None
         if not self.args.cases_only:
+            apptypes = [int(t) for t in self.args.apptypes.split(",")] if self.args.apptypes else None
             for v in load_versions():
                 if only and not only.fullmatch(v):
+                    continue
+                if apptypes:
+                    # Only these app types, with valid arguments
+                    for t in apptypes:
+                        jobs.append(("i", v, t, "valid"))
                     continue
                 for s in ARGSETS:
                     jobs.append(("i", v, 1, s))
                 for t in APPTYPES_VALID_ONLY:
                     jobs.append(("i", v, t, "valid"))
-        cases = self.args.cases.split(",") if self.args.cases else ([] if only else CASES)
+        cases = self.args.cases.split(",") if self.args.cases else ([] if only or self.args.apptypes else CASES)
         for c in cases:
             if self.args.repeat > 1:
                 for i in range(self.args.repeat):
@@ -458,6 +464,7 @@ def main():
     ap.add_argument("--real-runtime", action="store_true")
     ap.add_argument("--repeat", type=int, default=1, help=f"run each case this many times (at most {MAX_REPEAT})")
     ap.add_argument("--case-arg", action="append", metavar="NAME=VALUE", help="passed to every case (repeatable)")
+    ap.add_argument("--apptypes", help="the interfaces only under these app types (numbers, comma-separated), with valid arguments")
     args = ap.parse_args()
     if args.cases and not args.only:
         args.cases_only = True

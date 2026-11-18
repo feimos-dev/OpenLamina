@@ -242,6 +242,30 @@ void RtChangeRefreshRate(RtSession* s, float to)
 	QueueEvent(buf);
 }
 
+XrTime RtCounterTime(const LARGE_INTEGER& counter)
+{
+	LARGE_INTEGER frequency;
+	QueryPerformanceFrequency(&frequency);
+	return (XrTime)((double)counter.QuadPart * 1e9 / (double)frequency.QuadPart);
+}
+
+XrTime RtNowTime()
+{
+	LARGE_INTEGER counter;
+	QueryPerformanceCounter(&counter);
+	return RtCounterTime(counter);
+}
+
+namespace {
+XrResult XRAPI_CALL ConvertWin32PerformanceCounterToTime(XrInstance, const LARGE_INTEGER* counter, XrTime* time)
+{
+	if (!counter || !time)
+		return XR_ERROR_VALIDATION_FAILURE;
+	*time = RtCounterTime(*counter);
+	return XR_SUCCESS;
+}
+} // namespace
+
 PFN_xrVoidFunction RtExtensionsLookup(const char* name, const char** extension)
 {
 	struct Entry {
@@ -263,6 +287,7 @@ PFN_xrVoidFunction RtExtensionsLookup(const char* name, const char** extension)
 		{ "xrEnumerateDisplayRefreshRatesFB", (PFN_xrVoidFunction)EnumerateDisplayRefreshRates, "XR_FB_display_refresh_rate" },
 		{ "xrGetDisplayRefreshRateFB", (PFN_xrVoidFunction)GetDisplayRefreshRate, "XR_FB_display_refresh_rate" },
 		{ "xrRequestDisplayRefreshRateFB", (PFN_xrVoidFunction)RequestDisplayRefreshRate, "XR_FB_display_refresh_rate" },
+		{ "xrConvertWin32PerformanceCounterToTimeKHR", (PFN_xrVoidFunction)ConvertWin32PerformanceCounterToTime, "XR_KHR_win32_convert_performance_counter_time" },
 	};
 	for (const Entry& e : entries) {
 		if (!std::strcmp(e.name, name)) {

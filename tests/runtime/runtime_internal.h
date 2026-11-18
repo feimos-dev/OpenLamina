@@ -259,3 +259,7 @@ bool RtRuntimeAdapterLuid(LUID* out);
 // The display's refresh rate changes to rate (XR_FB_display_refresh_rate's event, if it changed); with St().lock held
 void RtChangeRefreshRate(RtSession* s, float rate);
 bool RtExtensionsSessionInfo(const XrSessionCreateInfo* info, RtSession* session); // headless / overlay chains
+// The system clock as XrTime (XR_KHR_win32_convert_performance_counter_time's conversion): QueryPerformanceCounter in
+// nanoseconds
+XrTime RtCounterTime(const LARGE_INTEGER& counter);
+XrTime RtNowTime();

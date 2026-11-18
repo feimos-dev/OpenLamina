@@ -6,6 +6,8 @@
 
 #include "TemporaryD3D11.h"
 
+#include <d3d10.h>
+
 static IDXGIAdapter1* d3d_get_adapter(const LUID& adapter_luid)
 {
 	// Turn the LUID into a specific graphics device adapter
@@ -59,6 +61,19 @@ TemporaryD3D11::TemporaryD3D11()
 		OOVR_LOGF("D3D11CreateDevice for the OpenXR runtime's adapter failed: 0x%08lx", (unsigned long)createDeviceRes);
 		device = nullptr;
 		return;
+	}
+
+	// An overlay application's session stays on this device, which OpenLamina's frames use on their own thread while
+	// the program's textures are copied onto it on the program's: its immediate context is serialised
+	ID3D11DeviceContext* context = nullptr;
+	device->GetImmediateContext(&context);
+	if (context) {
+		ID3D10Multithread* multithread = nullptr;
+		if (SUCCEEDED(context->QueryInterface(__uuidof(ID3D10Multithread), (void**)&multithread)) && multithread) {
+			multithread->SetMultithreadProtected(TRUE);
+			multithread->Release();
+		}
+		context->Release();
 	}
 
 	d3dInfo = XrGraphicsBindingD3D11KHR{ XR_TYPE_GRAPHICS_BINDING_D3D11_KHR };

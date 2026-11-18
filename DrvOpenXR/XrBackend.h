@@ -18,10 +18,12 @@
 #include <functional>
 #include <memory>
 #include <set>
+#include <string>
 #include <vector>
 #include <mutex>
 
 class XrGenericTracker;
+struct ID3D11Texture2D;
 
 class XrBackend : public IBackend {
 public:
@@ -78,6 +80,28 @@ public:
 	void PrepareForSessionShutdown();
 
 	const void* GetCurrentGraphicsBinding();
+
+	/**
+	 * An overlay application's session: made at Init, for good, on OpenLamina's own device (D3D11 on the runtime's
+	 * adapter where the runtime has D3D11, else Vulkan), which no thread of the program uses. False if there's no
+	 * session to be had (logged).
+	 */
+	bool EnsureOverlaySession();
+
+	/**
+	 * An overlay application's texture copied onto the overlay session's device, on the program's thread
+	 * (OverlayTextureCopy): nullptr, with why, if it can't be
+	 */
+	ID3D11Texture2D* CopyOverlayTexture(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, std::string* why);
+	/** A compositor for such a copy */
+	std::shared_ptr<Compositor> MakeOverlayCompositor(ID3D11Texture2D* copy);
+
+	/**
+	 * Whether the thread running OpenLamina's frames fills the swapchains drawn from memory (and the pointer's): in an
+	 * overlay application, whose session is on OpenLamina's own device. In a game, the game's thread does, as it uses the
+	 * session's device itself.
+	 */
+	bool OwnFramesFillSwapchains() const;
 
 	void RegisterOverlayCompositor(std::shared_ptr<Compositor> compositor);
 	void UnregisterOverlayCompositor(std::shared_ptr<Compositor> compositor);
@@ -204,6 +228,14 @@ private:
 
 	// Whether we've restarted the session to use the application's rendering API yet
 	std::atomic<bool> usingApplicationGraphicsAPI{ false };
+	// The type of the texture it was restarted for
+	// An overlay application's textures, copied onto its session's device
+	std::unique_ptr<class OverlayTextureCopy> overlayCopy;
+
+	// A helper program's frame loop (overlay sessions) or event loop (headless ones), made with each session
+	void StartHelperLoop();
+	// Held through each of its passes
+	std::mutex helperPassLock;
 
 	// The views for the two main eye layers
 	XrCompositionLayerProjectionView projectionViews[XruEyeCount];
