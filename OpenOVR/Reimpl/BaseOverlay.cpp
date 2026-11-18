@@ -148,6 +148,8 @@ static VROverlayHandle_t gamepadFocusOverlay = k_ulOverlayHandleInvalid;
 
 BaseOverlay::~BaseOverlay()
 {
+	// The session lock before the layers' lock, as everywhere: freeing a swapchain from memory takes it
+	auto session = xr_session.lock_shared();
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	for (const auto& kv : overlays) {
 		if (kv.second) {
@@ -205,7 +207,7 @@ bool BaseOverlay::_AnyVisible()
 	return false;
 }
 
-int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompositionLayerBaseHeader const* const*& layers)
+int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompositionLayerBaseHeader const* const*& layers, bool mayUpload)
 {
 	// Note that at least on MSVC, this shouldn't be doing any memory allocations
 	//  unless the list is expanding from new layers.
@@ -252,9 +254,10 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 			if (!overlay.visible || (overlay.texture.handle == nullptr && overlay.rawImage.Empty()))
 				continue;
 
-			// An image from memory whose swapchain went with the last session is put into one on this session
+			// An image from memory whose swapchain went with the last session is put into one on this session, by the
+			// game's thread: the upload uses the device's immediate context or queue, which it uses too
 			if (!overlay.rawImage.Empty()) {
-				if (overlay.raw && !overlay.raw->Live())
+				if (mayUpload && overlay.raw && !overlay.raw->Live())
 					overlay.raw->Upload(overlay.rawImage);
 				overlay.compositionLayer.quad.subImage = overlay.raw && overlay.raw->Live() ? overlay.raw->SubImage() : XrSwapchainSubImage{};
 			}
@@ -269,7 +272,6 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 			}
 
 			const XrRect2Di& srcSize = overlay.compositionLayer.quad.subImage.imageRect;
-			// (a flipped texture is drawn with a negative height)
 			const int32_t srcHeight = std::abs(srcSize.extent.height);
 			if (srcHeight <= 8 && srcSize.extent.width <= 8) {
 				// Hack for F1 22 which creates a low res texture to fade between scenes
@@ -409,6 +411,7 @@ EVROverlayError BaseOverlay::DestroyOverlay(VROverlayHandle_t ulOverlayHandle)
 	if (highQualityOverlay == ulOverlayHandle)
 		highQualityOverlay = vr::k_ulOverlayHandleInvalid;
 
+	auto session = xr_session.lock_shared();
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	if (std::shared_ptr<Compositor> comp = overlay->compositor.lock()) {
 		auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
@@ -1220,18 +1223,20 @@ EVROverlayError BaseOverlay::SetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 	USEH();
 	if (!pTexture)
 		return VROverlayError_InvalidTexture;
-	overlay->texture = *pTexture;
+	Texture_t texture = *pTexture;
+	BackendManager::Instance().OnOverlayTexture(&texture);
+
+	// After OnOverlayTexture, which may restart the session; the session lock before the layers' lock, as everywhere
+	auto session = xr_session.lock_shared();
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	overlay->texture = texture;
 	// A texture replaces an image from memory
 	overlay->raw.reset();
 	overlay->rawImage = {};
 
-	BackendManager::Instance().OnOverlayTexture(&overlay->texture);
-
 	if (!BackendManager::Instance().IsGraphicsConfigured())
 		return VROverlayError_None;
 
-	// After OnOverlayTexture, which may restart the session
-	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	std::shared_ptr<Compositor> compositor = overlay->compositor.lock();
 	if (!compositor) {
 		// Overlay apps needn't have asked for IVRCompositor
@@ -1256,6 +1261,7 @@ EVROverlayError BaseOverlay::SetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 EVROverlayError BaseOverlay::ClearOverlayTexture(VROverlayHandle_t ulOverlayHandle)
 {
 	USEH();
+	auto session = xr_session.lock_shared();
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	overlay->texture = {};
 	overlay->raw.reset();
@@ -1277,6 +1283,10 @@ EVROverlayError BaseOverlay::SetOverlayRaw(VROverlayHandle_t ulOverlayHandle, vo
 	Image image = ConvertToRgba8(pvBuffer, unWidth, unHeight, unWidth * unDepth, unDepth);
 	if (image.Empty())
 		return VROverlayError_InvalidParameter;
+
+	// The overlay's image and swapchain are what OpenLamina's own frames draw from
+	auto session = xr_session.lock_shared();
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 
 	// An image replaces a texture: shown as a texture overlay is, through its own swapchain
 	if (std::shared_ptr<Compositor> comp = overlay->compositor.lock()) {

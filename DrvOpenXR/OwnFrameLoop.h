@@ -1,6 +1,7 @@
 #pragma once
-// Frames run by OpenLamina itself when the game doesn't run any (loading, a stall, a blocking call), so the runtime
-// keeps getting frames, with OpenLamina's own layers (the visible overlays) and no projection layer.
+// Frames run by OpenLamina itself when the game doesn't run any (loading, a stall, a blocking call), with layers of
+// OpenLamina's choosing. WhenAppIdle starts them idleAfter the game's last frame call, so a game that keeps calling
+// WaitGetPoses without submitting, or stalls with its frame open, gets none.
 
 #include <openxr/openxr.h>
 

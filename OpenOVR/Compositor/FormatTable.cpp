@@ -196,7 +196,7 @@ std::optional<FormatChoice> ChooseSwapchainFormat(GfxApiKind api, int64_t gameFo
 	if (!wanted)
 		wanted = game;
 
-	// The runtime couldn't say what it has: that member, as before
+	// The runtime couldn't say what it has: that member
 	if (runtimeFormats.empty())
 		return FormatChoice{ wanted->format, false };
 
@@ -231,7 +231,7 @@ std::optional<FormatChoice> ChooseSwapchainFormat(GfxApiKind api, int64_t gameFo
 			return FormatChoice{ f, true };
 	}
 
-	// Nothing to convert into: tried as it is, as before
+	// Nothing to convert into: tried as it is
 	return FormatChoice{ wanted->format, false };
 }
 

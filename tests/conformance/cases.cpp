@@ -45,6 +45,7 @@
 #include <sstream>
 #include <atomic>
 #include <set>
+#include <map>
 #include <thread>
 
 #ifndef _WIN32
@@ -1739,17 +1740,6 @@ void GameFrame(Frames& f, const vr::Texture_t* tex)
 	f.comp->Submit(vr::Eye_Right, tex, nullptr, vr::Submit_Default);
 }
 
-// The frame numbers (as the stand-in counts them, per session) of the dump's projection layers, in order
-std::vector<int64_t> ProjectionFrames(const Json::Value& dump)
-{
-	std::vector<int64_t> frames;
-	for (const Json::Value& layer : dump["layers"]) {
-		if (layer["type"].asString() == "projection")
-			frames.push_back(layer["frame"].asInt64());
-	}
-	return frames;
-}
-
 // An overlay shown from memory (64x64 grey), so OpenLamina has something of its own to show in a stall
 bool ShowGreyOverlay(CaseContext& c)
 {
@@ -1762,18 +1752,10 @@ bool ShowGreyOverlay(CaseContext& c)
 	return ov->SetOverlayRaw(h, grey.data(), 64, 64, 4) == 0 && ov->ShowOverlay(h) == 0;
 }
 
-// The frames in a stall: the longest gap between two of the game's frames (all OpenLamina's own)
-int64_t LongestPause(const std::vector<int64_t>& projections)
-{
-	int64_t pause = 0;
-	for (size_t i = 1; i < projections.size(); i++)
-		pause = std::max<int64_t>(pause, projections[i] - projections[i - 1] - 1);
-	return pause;
-}
-
-// OpenLamina's own frames while the game stalls (expect/own_frames.json): with an overlay shown, 10 frames, a second
-// without any call, then 10 more. With the stand-in at 90 Hz, OpenLamina runs at least 60 frames of its own in that
-// second, none with a projection layer (only the game's frames have one), and no frame call comes out of order.
+// OpenLamina's own frames while the game stalls (expect/own_frames.json, with ownFrames=true): with an overlay shown,
+// 10 frames, a second without any call, then 10 more. With the stand-in at 90 Hz, OpenLamina runs at least 60 frames
+// of its own in that second, each with the game's last frame again under the overlay, and no frame call comes out of
+// order.
 void OwnFramesCase(CaseContext& c)
 {
 	Frames f;
@@ -1793,18 +1775,74 @@ void OwnFramesCase(CaseContext& c)
 	r["overlay_shown"] = shown;
 	Json::Value dump = ReadStandInDump();
 	if (!dump.isNull()) {
-		std::vector<int64_t> projections = ProjectionFrames(dump);
-		// Only the game's frames have one (its first may be lost to the session's move onto its device)
-		r["projection_layers_at_most_20"] = projections.size() <= 20;
 		r["frames_ended_at_least_80"] = dump["frames_ended"].asInt64() >= 10 + 10 + 60;
-		r["own_frames_in_the_pause_at_least_60"] = LongestPause(projections) >= 60;
+		// Every frame recorded with a quad (the overlay) also has the game's frame (its first may be lost to the
+		// session's move onto its device)
+		std::map<int64_t, std::pair<bool, bool>> frames; // frame: quad, projection
+		for (const Json::Value& layer : dump["layers"]) {
+			auto& f = frames[layer["frame"].asInt64()];
+			f.first |= layer["type"].asString() == "quad";
+			f.second |= layer["type"].asString() == "projection";
+		}
+		int withQuad = 0, withBoth = 0;
+		for (auto& [frame, f] : frames) {
+			withQuad += f.first;
+			withBoth += f.first && f.second;
+		}
+		r["own_frames_show_the_game_frame"] = withQuad >= 60 && withBoth >= withQuad - 1;
+		r["frame_order_errors"] = dump["frame_order_errors"];
+	}
+	c.Record("frames", r);
+}
+
+// An overlay's image replaced from another thread, in alternating sizes, while OpenLamina's own frames draw it
+// (expect/own_frames.json, with ownFrames=true): nothing crashes and no frame call comes out of order
+void OwnFramesOverlayChurnCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	vr::EVRInitError le = vr::VRInitError_None;
+	auto* ov = (vr::IVROverlay_028::IVROverlay*)c.core->GetGenericInterface("IVROverlay_028", &le);
+	vr::VROverlayHandle_t h = vr::k_ulOverlayHandleInvalid;
+	if (!ov || ov->CreateOverlay("oc.test.churn", "Churn", &h) != 0) {
+		c.Record("no overlay");
+		c.core->Cleanup();
+		return;
+	}
+	std::vector<uint8_t> grey(128 * 128 * 4, 0x80);
+	ov->SetOverlayRaw(h, grey.data(), 64, 64, 4);
+	ov->ShowOverlay(h);
+	for (int frame = 0; frame < 10; frame++)
+		GameFrame(f, tex.get());
+	std::atomic<int> sets{ 0 };
+	std::thread setter([&] {
+		// 60 images over about a second: the own frames run meanwhile
+		for (int i = 0; i < 60; i++) {
+			uint32_t size = i % 2 ? 128 : 64;
+			if (ov->SetOverlayRaw(h, grey.data(), size, size, 4) == 0)
+				sets++;
+			std::this_thread::sleep_for(std::chrono::milliseconds(15));
+		}
+	});
+	setter.join();
+	for (int frame = 0; frame < 10; frame++)
+		GameFrame(f, tex.get());
+	c.core->Cleanup();
+
+	Json::Value r;
+	r["sets"] = sets.load();
+	Json::Value dump = ReadStandInDump();
+	if (!dump.isNull()) {
+		r["own_frames_ran"] = dump["frames_ended"].asInt64() > 20 + 30;
 		r["frame_order_errors"] = dump["frame_order_errors"];
 	}
 	c.Record("frames", r);
 }
 
 // The same stall with nothing of OpenLamina's own to show (expect/own_frames.json): no frames of its own, so the
-// runtime keeps the game's last frame instead of getting empty ones
+// runtime is left with the game's last frame
 void OwnFramesNothingShownCase(CaseContext& c)
 {
 	Frames f;
@@ -1821,7 +1859,8 @@ void OwnFramesNothingShownCase(CaseContext& c)
 	Json::Value r;
 	Json::Value dump = ReadStandInDump();
 	if (!dump.isNull()) {
-		r["own_frames_in_the_pause"] = (Json::Int64)LongestPause(ProjectionFrames(dump));
+		// The game's 20, or one fewer (its first may be lost to the session's move onto its device)
+		r["only_the_game_frames"] = dump["frames_ended"].asInt64() <= 20;
 		r["frame_order_errors"] = dump["frame_order_errors"];
 	}
 	c.Record("frames", r);
@@ -2150,6 +2189,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "own-frames", OwnFramesCase },
 		{ "own-frames-race", OwnFramesRaceCase },
 		{ "own-frames-nothing-shown", OwnFramesNothingShownCase },
+		{ "own-frames-overlay-churn", OwnFramesOverlayChurnCase },
 		{ "gpu-answers", GpuAnswersCase },
 		{ "gpu-other-adapter", GpuOtherAdapterCase },
 		{ "display-frequency", DisplayFrequencyCase },

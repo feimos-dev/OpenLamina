@@ -1,5 +1,5 @@
 {
- "#": "Skyboxes on a runtime without equirect layers (run.py --cases skybox-1,skybox-6 --script scripts/gfx_all_apis.json): one texture is shown at once as a quad, as before; six faces answer RequestFailed.",
+ "#": "Skyboxes as before (run.py --cases skybox-1,skybox-6, on a runtime without equirect layers, or with ownFrames off): one texture is shown at once as a quad; six faces answer RequestFailed.",
  "skybox-1/skybox/-/-": {
   "set": 0,
   "last": [
