@@ -216,6 +216,11 @@ jobs:
           # A render scale another program sets reaches the game at its next frame (two programs)
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases settings-live,settings-live-setter --jobs 2 --script tests/conformance/scripts/helper_apps.json --expect tests/conformance/expect/settings_live.json --out conformance/settings-live
           if ($LASTEXITCODE) { $failed++ }
+          # The play area's walls near its edge with drawBounds, and none without
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases bounds --script tests/conformance/scripts/bounds.json --ini tests/conformance/ini/draw_bounds.ini --expect tests/conformance/expect/bounds.json --out conformance/bounds
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases bounds --script tests/conformance/scripts/bounds.json --expect tests/conformance/expect/bounds_off.json --out conformance/bounds-off
+          if ($LASTEXITCODE) { $failed++ }
           # Skyboxes: equirect layers in OpenLamina's own frames, and the old quad where the runtime has none
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases skybox-1,skybox-2,skybox-6 --script tests/conformance/scripts/skybox.json --ini tests/conformance/ini/own_frames.ini --expect tests/conformance/expect/skybox.json --out conformance/skybox
           if ($LASTEXITCODE) { $failed++ }

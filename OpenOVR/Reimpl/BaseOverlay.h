@@ -217,6 +217,10 @@ private:
 	// program's dashboard overlays follow (BaseOverlay.cpp)
 	struct DashboardState;
 	std::unique_ptr<DashboardState> dash;
+	// The play area's walls (drawBounds), drawn by the scene app (BaseOverlay.cpp)
+	struct BoundsState;
+	std::unique_ptr<BoundsState> bounds;
+
 	// The scene app's dashboard opens or closes: the store, the events, the game's input
 	void DashboardChanged(bool open, const char* overlayKey = nullptr);
 	// Where a dashboard overlay is drawn while it's the one shown (false while it isn't); with layersLock held
@@ -257,6 +261,10 @@ public:
 	// on the game's thread before _UpdatePointer; in every program, the store's Dashboard document read for its
 	// dashboard overlays. Not holding _LayersLock().
 	void _UpdateDashboard();
+
+	// The scene app's play area walls (drawBounds) near the HMD and the controllers: placed, and their grids filled, on
+	// the game's thread before the frame's layers are built. Not holding _LayersLock().
+	void _UpdateBounds();
 
 	// Held while the overlays, their compositors or the keyboard are added, replaced or removed, and while a frame
 	// with their layers is built and ended (on the game's thread, or OpenLamina's own frames' thread). Taken after the

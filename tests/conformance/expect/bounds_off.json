@@ -1,0 +1,6 @@
+{
+ "#": "Without drawBounds (its default), no walls",
+ "bounds/walls/-/-": {
+  "walls": 0
+ }
+}

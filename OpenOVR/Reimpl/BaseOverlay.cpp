@@ -18,6 +18,7 @@
 #endif
 #include "Drivers/Backend.h"
 #include "Misc/AppManifest.h"
+#include "Misc/Bounds.h"
 #include "Misc/Config.h"
 #include "Misc/Dashboard.h"
 #include "Misc/Image.h"
@@ -244,6 +245,21 @@ struct BaseOverlay::DashboardState {
 	XrPosef framePose{ { 0, 0, 0, 1 }, { 0, 0, 0 } }; // in the frame's space
 	XrCompositionLayerQuad layer{};
 	vr::VROverlayHandle_t Handle() const { return (vr::VROverlayHandle_t)(uintptr_t)this; }
+};
+
+struct BaseOverlay::BoundsState {
+	// The play area (its size read at most once a second), and each edge's wall: its swapchain, the alpha step its
+	// grid was drawn at, and its layer while it's shown. Under layersLock.
+	float width = 0, depth = 0;
+	double areaRead = -1;
+	static constexpr int kPixels = 256, kSteps = 16;
+	std::unique_ptr<CpuSwapchain> chains[4];
+	int drawnStep[4] = { -1, -1, -1, -1 };
+	bool unavailable = false;
+	bool shown[4] = {};
+	XrPosef pose[4]{};
+	float wallWidth[4] = {}, wallHeight[4] = {};
+	XrCompositionLayerQuad layers[4]{};
 };
 
 namespace {
@@ -769,7 +785,8 @@ public:
 };
 
 BaseOverlay::BaseOverlay()
-    : pointing(std::make_unique<Pointing>()), sharing(std::make_unique<Sharing>()), dash(std::make_unique<DashboardState>())
+    : pointing(std::make_unique<Pointing>()), sharing(std::make_unique<Sharing>()), dash(std::make_unique<DashboardState>()),
+      bounds(std::make_unique<BoundsState>())
 {
 	dash->dashboard = Dashboard(DashboardButtonSetting());
 	// Other programs' pointer events from now on
@@ -908,6 +925,67 @@ void BaseOverlay::_UpdateDashboard()
 	pose.position = G2X_v3f(X2G_v3f(pose.position) + q * glm::vec3(0.0f, 0.0f, -0.01f));
 	d.framePose = pose;
 	d.shown = d.chain->Live();
+}
+
+void BaseOverlay::_UpdateBounds()
+{
+	BoundsState& b = *bounds;
+	if (!oovr_global_configuration.DrawBounds() || BaseClientCore::appType != vr::VRApplication_Scene || IsHelperSession())
+		return;
+	auto session = xr_session.lock_shared(); // the play area and the devices' poses are read from the session
+	if (!xr_session.get())
+		return;
+	// The play area: the stage's bounds, read again at most once a second
+	const double now = NowSeconds();
+	if (b.areaRead < 0 || now - b.areaRead >= 1.0) {
+		b.areaRead = now;
+		XrExtent2Df extent{};
+		XrResult res = xrGetReferenceSpaceBoundsRect(xr_session.get(), XR_REFERENCE_SPACE_TYPE_STAGE, &extent);
+		const bool known = XR_SUCCEEDED(res) && res != XR_SPACE_BOUNDS_UNAVAILABLE;
+		b.width = known ? extent.width : 0;
+		b.depth = known ? extent.height : 0;
+	}
+	// The HMD and the controllers, in the standing space (the stage)
+	std::vector<XrVector3f> points;
+	auto add = [&](const std::shared_ptr<ITrackedDevice>& dev) {
+		if (!dev)
+			return;
+		TrackedDevicePose_t pose{};
+		dev->GetPose(vr::TrackingUniverseStanding, &pose, ETrackingStateType::TrackingStateType_Rendering);
+		if (pose.bPoseIsValid) {
+			const auto& m = pose.mDeviceToAbsoluteTracking.m;
+			points.push_back({ m[0][3], m[1][3], m[2][3] });
+		}
+	};
+	add(BackendManager::Instance().GetDevice(vr::k_unTrackedDeviceIndex_Hmd));
+	add(BackendManager::Instance().GetDeviceByHand(ITrackedDevice::HAND_LEFT));
+	add(BackendManager::Instance().GetDeviceByHand(ITrackedDevice::HAND_RIGHT));
+	const std::vector<BoundsWall> walls = BoundsWalls(b.width, b.depth, points);
+
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	for (bool& s : b.shown)
+		s = false;
+	const vr::ETrackingUniverseOrigin origin = FrameOrigin();
+	for (const BoundsWall& wall : walls) {
+		const int e = wall.edge;
+		if (!b.chains[e] && !b.unavailable) {
+			b.chains[e] = CpuSwapchain::Create(BoundsState::kPixels, BoundsState::kPixels);
+			b.unavailable = !b.chains[e];
+		}
+		if (!b.chains[e])
+			continue;
+		// Faded in steps, each drawn once (a quad layer has no alpha of its own)
+		const int step = std::max(1, (int)std::lround(wall.alpha * BoundsState::kSteps));
+		if (step != b.drawnStep[e] || !b.chains[e]->Live()) {
+			Canvas canvas(BoundsState::kPixels, BoundsState::kPixels);
+			DrawBoundsGrid(canvas, (float)step / BoundsState::kSteps);
+			b.drawnStep[e] = b.chains[e]->Upload(canvas.Pixels()) ? step : -1;
+		}
+		b.pose[e] = overlay_maths::ChangeOrigin(wall.pose, vr::TrackingUniverseStanding, origin, SeatedInStanding());
+		b.wallWidth[e] = wall.width;
+		b.wallHeight[e] = wall.height;
+		b.shown[e] = b.chains[e]->Live();
+	}
 }
 
 void BaseOverlay::DashboardChanged(bool open, const char* overlayKey)
@@ -1477,6 +1555,13 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 	// OpenLamina's own quads on top of the overlays: the keyboard, a message box, then the cursor. Filled on the game's
 	// thread (_UpdatePointer, ShowMessageOverlay): only those already in a swapchain are drawn.
 	Pointing& p = *pointing;
+	// The play area's walls, under OpenLamina's other quads
+	for (int e = 0; e < 4; e++) {
+		if (!bounds->shown[e] || !bounds->chains[e] || !bounds->chains[e]->Live())
+			continue;
+		bounds->layers[e] = OwnQuad(*bounds->chains[e], bounds->pose[e], bounds->wallWidth[e], bounds->wallHeight[e]);
+		layerHeaders.push_back((XrCompositionLayerBaseHeader*)&bounds->layers[e]);
+	}
 	if (dash->shown && dash->chain && dash->chain->Live()) {
 		dash->layer = OwnQuad(*dash->chain, dash->framePose, Dashboard::kWidthMetres, Dashboard::kHeightMetres);
 		layerHeaders.push_back((XrCompositionLayerBaseHeader*)&dash->layer);

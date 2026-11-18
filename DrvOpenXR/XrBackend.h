@@ -238,7 +238,8 @@ private:
 	std::mutex helperPassLock;
 
 	// The overlays' instance, made for a game without overlays of its own whose lasers point at other programs'
-	// (laserMouse) or which has a dashboard (dashboardButton), until OpenLamina shuts down
+	// (laserMouse) or which has a dashboard (dashboardButton) or the play area's walls (drawBounds), until OpenLamina shuts
+	// down
 	std::shared_ptr<class BaseOverlay> keptOverlay;
 	std::chrono::steady_clock::time_point lastPointerCheck{};
 	// Whether the game wants the overlays' instance: for its dashboard, or for another running program's overlays in the

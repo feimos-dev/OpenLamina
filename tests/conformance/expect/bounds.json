@@ -1,0 +1,13 @@
+{
+ "#": "The play area's walls (scripts/bounds.json): with drawBounds (ini/draw_bounds.ini) one 3 m wide wall on the +X edge, where the HMD is 0.2 m from it",
+ "bounds/walls/-/-": {
+  "walls": 1,
+  "positions": [
+   [
+    1.0,
+    1.25,
+    0.0
+   ]
+  ]
+ }
+}

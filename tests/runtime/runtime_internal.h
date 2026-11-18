@@ -88,6 +88,8 @@ inline XrPosef Inverse(const XrPosef& a)
 
 inline const XrPosef kIdentity{ { 0, 0, 0, 1 }, { 0, 0, 0 } };
 inline const XrPosef kHead{ { 0, 0, 0, 1 }, { 0, 1.7f, 0 } };
+// The HMD in STAGE: the script's "/user/head" pose at the current frame, else kHead
+XrPosef RtHeadPose();
 
 // Grip and aim pose of a hand in STAGE (both the same), 0 = left, 1 = right
 inline XrPosef HandPose(int hand) { return { { 0, 0, 0, 1 }, { hand == 0 ? -0.2f : 0.2f, 1.4f, -0.3f } }; }

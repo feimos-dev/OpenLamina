@@ -543,6 +543,36 @@ void SettingsLiveSetterCase(CaseContext& c)
 	c.Record("set", r);
 }
 
+// The play area's walls (scripts/bounds.json: a 2 x 3 m stage, the HMD 0.2 m from its +X edge): 30 frames, then the
+// last frame's walls (2.5 m tall quads) as the stand-in got them. With drawBounds one, on the +X edge; without, none.
+void BoundsCase(CaseContext& c)
+{
+	SceneApp app;
+	if (!OpenSceneApp(c, app))
+		return;
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	for (int frame = 1; frame <= 30; frame++)
+		SceneFrame(app, tex.get());
+	c.core->Cleanup();
+	Json::Value r;
+	Json::Value dump = ReadStandInDump();
+	const Json::Value& layers = dump["layers"];
+	const Json::Value lastFrame = layers.size() ? layers[layers.size() - 1]["frame"] : Json::Value();
+	int walls = 0;
+	Json::Value positions(Json::arrayValue);
+	for (const Json::Value& layer : layers) {
+		if (layer["frame"] != lastFrame || layer["type"].asString() != "quad" || layer["size"].size() != 2)
+			continue;
+		if (std::fabs(layer["size"][1].asDouble() - 2.5) > 1e-3)
+			continue;
+		walls++;
+		positions.append(RoundedPosition(layer["pose"]));
+	}
+	r["walls"] = walls;
+	r["positions"] = positions;
+	c.Record("walls", r);
+}
+
 // An overlay application with one overlay from memory and nothing else: no WaitGetPoses, so every frame is
 // OpenLamina's own. About 60 frames' time at 90 Hz.
 void OverlayAppCase(CaseContext& c)
@@ -724,6 +754,7 @@ const std::map<std::string, CaseFn>& conformance::HelperCases()
 		{ "dashboard-overlay", DashboardOverlayCase },
 		{ "settings-live", SettingsLiveCase },
 		{ "settings-live-setter", SettingsLiveSetterCase },
+		{ "bounds", BoundsCase },
 	};
 	return cases;
 }
