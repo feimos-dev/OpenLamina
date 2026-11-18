@@ -606,6 +606,11 @@ bool BaseCompositor::CanRenderScene()
 
 void BaseCompositor::ShowMirrorWindow()
 {
+	// Only where the user asked for it: its image is read back from the game's frames, which costs frame time
+	if (!oovr_global_configuration.MirrorWindow()) {
+		OOVR_LOG_ONCE("ShowMirrorWindow: the game asks for a mirror window, which mirrorWindow=true in openlamina.ini shows");
+		return;
+	}
 	MirrorWindow::Get().Show();
 }
 
