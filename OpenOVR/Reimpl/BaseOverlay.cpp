@@ -1664,10 +1664,10 @@ EVROverlayError BaseOverlay::DestroyOverlay(VROverlayHandle_t ulOverlayHandle)
 
 	auto session = xr_session.lock_shared();
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
-	if (std::shared_ptr<Compositor> comp = overlay->compositor.lock()) {
-		auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
+	auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
+	if (std::shared_ptr<Compositor> comp = overlay->compositor.lock())
 		backend->UnregisterOverlayCompositor(comp);
-	}
+	backend->ForgetOverlayTextures(overlay);
 	overlays.erase(overlay->key);
 	validOverlays.erase(overlay);
 	delete overlay;
@@ -2511,7 +2511,7 @@ EVROverlayError BaseOverlay::SetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 	Texture_t shown = texture;
 	if (overlaySession) {
 		std::string why;
-		ID3D11Texture2D* copy = xrBackend ? xrBackend->CopyOverlayTexture(&texture, &overlay->textureBounds, &why) : nullptr;
+		ID3D11Texture2D* copy = xrBackend ? xrBackend->CopyOverlayTexture(&texture, &overlay->textureBounds, &why, overlay) : nullptr;
 		if (!copy)
 			OC_UNSUPPORTED(VROverlayError_InvalidTexture, "SetOverlayTexture: the overlay application's texture (type %d) can't be shown: %s", (int)texture.eType, why.c_str());
 		shown = Texture_t{ copy, TextureType_DirectX, texture.eColorSpace };
@@ -2560,11 +2560,12 @@ EVROverlayError BaseOverlay::ClearOverlayTexture(VROverlayHandle_t ulOverlayHand
 	overlay->raw.reset();
 	overlay->rawImage = {};
 
-	if (std::shared_ptr<Compositor> comp = overlay->compositor.lock()) {
-		auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
+	auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
+	if (std::shared_ptr<Compositor> comp = overlay->compositor.lock())
 		backend->UnregisterOverlayCompositor(comp);
-	}
 	overlay->compositor.reset();
+	// An overlay application's textures were copied through shared ones, kept for the next copy: none comes
+	backend->ForgetOverlayTextures(overlay);
 	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::SetOverlayRaw(VROverlayHandle_t ulOverlayHandle, void* pvBuffer, uint32_t unWidth, uint32_t unHeight, uint32_t unDepth)

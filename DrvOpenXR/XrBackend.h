@@ -95,7 +95,9 @@ public:
 	 * An overlay application's texture copied onto the overlay session's device, on the program's thread
 	 * (OverlayTextureCopy): nullptr, with why, if it can't be
 	 */
-	ID3D11Texture2D* CopyOverlayTexture(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, std::string* why);
+	ID3D11Texture2D* CopyOverlayTexture(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, std::string* why, const void* owner);
+	// The overlay (CopyOverlayTexture's owner) shows no texture any more: what was kept to copy its textures is let go
+	void ForgetOverlayTextures(const void* owner);
 	/** A compositor for such a copy */
 	std::shared_ptr<Compositor> MakeOverlayCompositor(ID3D11Texture2D* copy);
 

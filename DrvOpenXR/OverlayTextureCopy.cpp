@@ -17,6 +17,7 @@
 #endif
 
 #include <chrono>
+#include <algorithm>
 #include <map>
 #include <vector>
 
@@ -77,8 +78,14 @@ struct OverlayTextureCopy::Impl {
 		ComPtr<ID3D11Texture2D> opened; // the same texture, on the device
 		ComPtr<IDXGIKeyedMutex> openedMutex;
 		ComPtr<ID3D11Texture2D> plain; // the device's own copy, which the compositor reads
+		const void* owner = nullptr;
+		uint64_t lastUse = 0;
 	};
 	std::map<void*, D3D11Copy> d3d11;
+	// Whose texture is being copied (what CopyIn was given), and a count of the copies made, by which the copy used
+	// longest ago is found when there are kMaxCopies
+	const void* owner = nullptr;
+	uint64_t uses = 0;
 
 #ifdef SUPPORT_DX12
 	// A D3D12 resource of the program's, through a shared resource of its device
@@ -91,6 +98,8 @@ struct OverlayTextureCopy::Impl {
 		ComPtr<ID3D12Fence> fence;
 		uint64_t fenceValue = 0;
 		HANDLE event = nullptr;
+		const void* owner = nullptr;
+		uint64_t lastUse = 0;
 		ComPtr<ID3D11Texture2D> opened;
 		ComPtr<ID3D11Texture2D> plain;
 		// Ended after the device's read of opened: the next copy writes shared only once it's done
@@ -204,8 +213,9 @@ struct OverlayTextureCopy::Impl {
 		if (auto it = d3d11.find(src); it != d3d11.end()) {
 			copy = &it->second;
 		} else {
+			// The one used longest ago makes room
 			if (d3d11.size() >= kMaxCopies)
-				d3d11.clear();
+				d3d11.erase(std::min_element(d3d11.begin(), d3d11.end(), [](const auto& a, const auto& b) { return a.second.lastUse < b.second.lastUse; }));
 			D3D11Copy made;
 			made.programDevice = programDevice;
 			made.source = sd;
@@ -237,6 +247,8 @@ struct OverlayTextureCopy::Impl {
 			}
 			copy = &d3d11.emplace(src, std::move(made)).first->second;
 		}
+		copy->owner = owner;
+		copy->lastUse = ++uses;
 
 		// On the program's device (its thread: the program is in the call), then on the device
 		ComPtr<ID3D11DeviceContext> programContext;
@@ -296,10 +308,11 @@ struct OverlayTextureCopy::Impl {
 		if (auto it = d3d12.find(src); it != d3d12.end()) {
 			copy = it->second.get();
 		} else {
+			// The one used longest ago makes room
 			if (d3d12.size() >= kMaxCopies) {
-				for (auto& kv : d3d12)
-					Retire(std::move(kv.second));
-				d3d12.clear();
+				auto oldest = std::min_element(d3d12.begin(), d3d12.end(), [](const auto& a, const auto& b) { return a.second->lastUse < b.second->lastUse; });
+				Retire(std::move(oldest->second));
+				d3d12.erase(oldest);
 			}
 			auto made = std::make_unique<D3D12Copy>();
 			made->programDevice = programDevice;
@@ -346,6 +359,8 @@ struct OverlayTextureCopy::Impl {
 			}
 			copy = d3d12.emplace(src, std::move(made)).first->second.get();
 		}
+		copy->owner = owner;
+		copy->lastUse = ++uses;
 
 		// On the program's queue: the program's texture is in PIXEL_SHADER_RESOURCE, as OpenVR's D3D12 textures are
 		// given, and is put back there; the shared one is left in COMMON for D3D11
@@ -442,7 +457,22 @@ OverlayTextureCopy::~OverlayTextureCopy()
 		device->Release();
 }
 
-ID3D11Texture2D* OverlayTextureCopy::CopyIn(const vr::Texture_t* tex, const vr::VRTextureBounds_t* bounds, std::string* why)
+void OverlayTextureCopy::Forget(const void* owner)
+{
+	std::erase_if(impl->d3d11, [&](const auto& kv) { return kv.second.owner == owner; });
+#ifdef SUPPORT_DX12
+	for (auto it = impl->d3d12.begin(); it != impl->d3d12.end();) {
+		if (it->second->owner == owner) {
+			impl->Retire(std::move(it->second));
+			it = impl->d3d12.erase(it);
+		} else {
+			++it;
+		}
+	}
+#endif
+}
+
+ID3D11Texture2D* OverlayTextureCopy::CopyIn(const vr::Texture_t* tex, const vr::VRTextureBounds_t* bounds, std::string* why, const void* owner)
 {
 	std::string ignored;
 	if (!why)
@@ -455,6 +485,7 @@ ID3D11Texture2D* OverlayTextureCopy::CopyIn(const vr::Texture_t* tex, const vr::
 		*why = "OpenLamina's D3D11 device can't open shared textures";
 		return nullptr;
 	}
+	impl->owner = owner;
 	switch (tex->eType) {
 	case vr::TextureType_DirectX: {
 		// A Direct3D 10 texture answers as one too, but its device isn't a D3D11 device
@@ -518,7 +549,9 @@ OverlayTextureCopy::OverlayTextureCopy(ID3D11Device* onDevice)
 
 OverlayTextureCopy::~OverlayTextureCopy() = default;
 
-ID3D11Texture2D* OverlayTextureCopy::CopyIn(const vr::Texture_t*, const vr::VRTextureBounds_t*, std::string* why)
+void OverlayTextureCopy::Forget(const void*) {}
+
+ID3D11Texture2D* OverlayTextureCopy::CopyIn(const vr::Texture_t*, const vr::VRTextureBounds_t*, std::string* why, const void*)
 {
 	if (why)
 		*why = "textures are copied through D3D11, which this platform lacks";

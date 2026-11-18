@@ -1958,14 +1958,20 @@ bool XrBackend::EnsureOverlaySession()
 	return true;
 }
 
-ID3D11Texture2D* XrBackend::CopyOverlayTexture(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, std::string* why)
+void XrBackend::ForgetOverlayTextures(const void* owner)
+{
+	if (overlayCopy)
+		overlayCopy->Forget(owner);
+}
+
+ID3D11Texture2D* XrBackend::CopyOverlayTexture(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, std::string* why, const void* owner)
 {
 	if (!overlayCopy) {
 		if (why)
 			*why = "the overlay session's device isn't a D3D11 one (the OpenXR runtime has no D3D11), so only images from memory can be shown";
 		return nullptr;
 	}
-	return overlayCopy->CopyIn(texture, bounds, why);
+	return overlayCopy->CopyIn(texture, bounds, why, owner);
 }
 
 std::shared_ptr<Compositor> XrBackend::MakeOverlayCompositor(ID3D11Texture2D* copy)

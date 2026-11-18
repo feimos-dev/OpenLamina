@@ -24,8 +24,12 @@ public:
 	OverlayTextureCopy& operator=(const OverlayTextureCopy&) = delete;
 
 	// On the program's thread: tex's first layer (bounds as for GfxInterop::CopyIn) in a texture of the device, valid
-	// until the next copy of the same texture; nullptr, with why, if it can't be copied
-	ID3D11Texture2D* CopyIn(const vr::Texture_t* tex, const vr::VRTextureBounds_t* bounds, std::string* why);
+	// until the next copy of the same texture; nullptr, with why, if it can't be copied. owner is whose texture it is
+	// (an overlay), for Forget. The textures it shares for copying are kept for the next copy of the same texture, at
+	// most 16 of each kind: the one used longest ago then makes room.
+	ID3D11Texture2D* CopyIn(const vr::Texture_t* tex, const vr::VRTextureBounds_t* bounds, std::string* why, const void* owner = nullptr);
+	// On the program's thread: what was kept for the owner's Direct3D textures is let go (it shows none any more)
+	void Forget(const void* owner);
 
 	// The device it copies onto
 	ID3D11Device* Device() const { return device; }
