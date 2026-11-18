@@ -22,6 +22,8 @@ public:
 	// The game's frame after its xrWaitFrame returned at waitReturned: its timing (as GetFrameTiming fills it in, with
 	// m_nSize the full struct), the display slots the runtime skipped before it, and the display period
 	void OnAppFrame(const OOVR_Compositor_FrameTiming& timing, uint32_t droppedSlots, Clock::time_point waitReturned, double periodMs);
+	// The game's frame was shown: xrEndFrame took it with the game's eye textures
+	void OnAppPresent();
 	// One of OpenLamina's own frames was shown
 	void OnOwnFrame();
 

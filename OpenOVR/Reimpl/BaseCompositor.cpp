@@ -81,6 +81,7 @@ ovr_enum_t BaseCompositor::WaitGetPoses(TrackedDevicePose_t* renderPoseArray, ui
 
 	ovr_enum_t result = GetLastPoses(renderPoseArray, renderPoseArrayCount, gamePoseArray, gamePoseArrayCount);
 	if (renderPoseArray && renderPoseArrayCount) {
+		std::lock_guard<std::mutex> lock(posesLock);
 		FramePoses& kept = recentPoses[++lastPoseId % std::size(recentPoses)];
 		kept.id = lastPoseId;
 		kept.poses.assign(renderPoseArray, renderPoseArray + renderPoseArrayCount);
@@ -774,6 +775,7 @@ bool BaseCompositor::GetCompositorBenchmarkResults(Compositor_BenchmarkResults* 
 ovr_enum_t BaseCompositor::GetLastPosePredictionIDs(uint32_t* pRenderPosePredictionID, uint32_t* pGamePosePredictionID)
 {
 	// The render and game poses come from the same WaitGetPoses
+	std::lock_guard<std::mutex> lock(posesLock);
 	if (pRenderPosePredictionID)
 		*pRenderPosePredictionID = lastPoseId;
 	if (pGamePosePredictionID)
@@ -785,6 +787,7 @@ ovr_enum_t BaseCompositor::GetPosesForFrame(uint32_t unPosePredictionID, Tracked
 {
 	if (pPoseArray)
 		memset(pPoseArray, 0, sizeof(TrackedDevicePose_t) * unPoseArrayCount);
+	std::lock_guard<std::mutex> lock(posesLock);
 	for (const FramePoses& kept : recentPoses) {
 		if (kept.id == 0 || kept.id != unPosePredictionID)
 			continue;

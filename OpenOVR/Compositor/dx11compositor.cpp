@@ -822,20 +822,28 @@ bool DX11Compositor::CheckChainCompatible(D3D11_TEXTURE2D_DESC& inputDesc, vr::E
 	return usable;
 }
 
-
-int DX11Compositor::MirrorView(const vr::Texture_t* texture, ID3D11Device* device, ID3D11ShaderResourceView** view)
+int DX11Compositor::MirrorView(const vr::Texture_t* texture, IUnknown* deviceOrResource, ID3D11ShaderResourceView** view)
 {
 	constexpr int kNone = 0, kRequestFailed = 1, kSharedTexturesNotSupported = 106;
 	if (!view)
 		return kRequestFailed;
 	*view = nullptr;
-	if (!texture || texture->eType != vr::TextureType_DirectX || !texture->handle || !device)
-		return kSharedTexturesNotSupported; // no D3D11 frame of the game's yet, or another graphics API
-	auto* src = (ID3D11Texture2D*)texture->handle;
-	ID3D11Device* srcDevice = nullptr;
+	if (!texture || texture->eType != vr::TextureType_DirectX || !texture->handle)
+		return kRequestFailed; // no D3D11 frame of the game's kept yet
+	// The game's device: given, or a resource's (any D3D11 device child)
+	ComPtr<ID3D11Device> device;
+	if (deviceOrResource && FAILED(deviceOrResource->QueryInterface(IID_PPV_ARGS(&device)))) {
+		ComPtr<ID3D11DeviceChild> child;
+		if (SUCCEEDED(deviceOrResource->QueryInterface(IID_PPV_ARGS(&child))))
+			child->GetDevice(&device);
+	}
+	if (!device)
+		return kSharedTexturesNotSupported; // neither a D3D11 device nor one of its resources
+	ComPtr<ID3D11Texture2D> src;
+	if (FAILED(((IUnknown*)texture->handle)->QueryInterface(IID_PPV_ARGS(&src))))
+		return kSharedTexturesNotSupported;
+	ComPtr<ID3D11Device> srcDevice;
 	src->GetDevice(&srcDevice);
-	if (srcDevice)
-		srcDevice->Release();
 	if (srcDevice != device)
 		return kSharedTexturesNotSupported;
 
@@ -858,9 +866,9 @@ int DX11Compositor::MirrorView(const vr::Texture_t* texture, ID3D11Device* devic
 	ID3D11DeviceContext* ctx = nullptr;
 	device->GetImmediateContext(&ctx);
 	if (desc.SampleDesc.Count > 1)
-		ctx->ResolveSubresource(copy, 0, src, 0, typed);
+		ctx->ResolveSubresource(copy, 0, src.Get(), 0, typed);
 	else
-		ctx->CopySubresourceRegion(copy, 0, 0, 0, 0, src, 0, nullptr);
+		ctx->CopySubresourceRegion(copy, 0, 0, 0, 0, src.Get(), 0, nullptr);
 	ctx->Release();
 	HRESULT hr = device->CreateShaderResourceView(copy, nullptr, view);
 	copy->Release(); // the view keeps it
