@@ -206,6 +206,9 @@ jobs:
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases message-overlay --script tests/conformance/scripts/message_box.json --ini tests/conformance/ini/own_frames_steamvr.ini --expect tests/conformance/expect/message_overlay.json --out conformance/message-overlay-steamvr
           if ($LASTEXITCODE) { $failed++ }
+          # A message box the session ends under answers as the game's quit
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases message-overlay --script tests/conformance/scripts/message_box_exit.json --ini tests/conformance/ini/own_frames.ini --expect tests/conformance/expect/message_overlay_exit.json --out conformance/message-overlay-exit
+          if ($LASTEXITCODE) { $failed++ }
           # The keyboard, typed on with the laser
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases keyboard --script tests/conformance/scripts/keyboard.json --ini tests/conformance/ini/keyboard_us.ini --expect tests/conformance/expect/keyboard.json --out conformance/keyboard
           if ($LASTEXITCODE) { $failed++ }

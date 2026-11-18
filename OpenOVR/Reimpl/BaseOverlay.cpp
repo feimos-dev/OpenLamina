@@ -454,7 +454,9 @@ std::wstring WideText(const char* utf8)
 	if (!utf8)
 		return {};
 	try {
-		return VRKeyboard::CHAR_CONV.from_bytes(utf8);
+		// Its own converter: the shared one isn't thread-safe, and a message box is built on the caller's thread
+		std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
+		return converter.from_bytes(utf8);
 	} catch (const std::range_error&) {
 		std::wstring out;
 		for (const char* c = utf8; *c; c++)
@@ -2251,11 +2253,6 @@ BaseOverlay::VRMessageOverlayResponse BaseOverlay::ShowMessageOverlay(const char
 
 	// Held until it's answered: the session isn't restarted under it, nor its own frames stopped
 	auto session = xr_session.lock_shared();
-	{
-		std::lock_guard<std::recursive_mutex> lock(layersLock);
-		if (pointing->message)
-			OC_UNSUPPORTED(VRMessageOverlayResponse_CouldntFindOrCreateClientOverlay, "ShowMessageOverlay: a message box is already shown");
-	}
 	message->chain = CpuSwapchain::Create(kPanelWidth, kPanelHeight);
 	if (!message->chain)
 		OC_UNSUPPORTED(VRMessageOverlayResponse_CouldntFindSystemOverlay, "ShowMessageOverlay: no swapchain from memory on this session to show it with");
@@ -2263,11 +2260,22 @@ BaseOverlay::VRMessageOverlayResponse BaseOverlay::ShowMessageOverlay(const char
 	const ETrackingUniverseOrigin space = compositor ? compositor->GetTrackingSpace() : TrackingUniverseStanding;
 	message->placement = overlay_maths::Placement{ AheadOfHead(space, kPanelDistance, 0), kPanelWidth * kPanelMetresPerPixel,
 		kPanelHeight * kPanelMetresPerPixel, 0 };
-	pointing->closeMessage = false;
+	// Claimed in one go: one box at a time, and a close from here on (CloseMessageOverlay only counts while one is
+	// shown) ends it
+	bool busy = false;
 	{
 		std::lock_guard<std::recursive_mutex> lock(layersLock);
-		pointing->message = std::move(message);
-		pointing->cursorShown = false;
+		if (pointing->message) {
+			busy = true;
+		} else {
+			pointing->closeMessage = false;
+			pointing->message = std::move(message);
+			pointing->cursorShown = false;
+		}
+	}
+	if (busy) {
+		message.reset();
+		OC_UNSUPPORTED(VRMessageOverlayResponse_CouldntFindOrCreateClientOverlay, "ShowMessageOverlay: a message box is already shown");
 	}
 
 	// The game's frame, if it's in the middle of one, ends here (without its eye textures) so that frames can run
@@ -2275,7 +2283,10 @@ BaseOverlay::VRMessageOverlayResponse BaseOverlay::ShowMessageOverlay(const char
 
 	int answer = -1;
 	const bool ran = backend->RunOwnFramesWhile([&]() -> bool {
-		if (pointing->closeMessage || backend->IsSessionLost()) {
+		// The game is blocked here and polls no events: the session's states (focus, stopping, a loss) are read here
+		backend->PumpEvents();
+		// Ended as the game's quit: by CloseMessageOverlay, or a session that stopped, was lost or exited
+		if (pointing->closeMessage || backend->IsSessionEnded()) {
 			answer = VRMessageOverlayResponse_ApplicationQuit;
 			return false;
 		}
@@ -2349,8 +2360,11 @@ BaseOverlay::VRMessageOverlayResponse BaseOverlay::ShowMessageOverlay(const char
 }
 void BaseOverlay::CloseMessageOverlay()
 {
-	// The message box's frames, on the thread that showed it, end at their next pass
-	pointing->closeMessage = true;
+	// The message box's frames, on the thread that showed it, end at their next pass. With none shown, there's
+	// nothing to close (and the next one isn't closed by this)
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	if (pointing->message)
+		pointing->closeMessage = true;
 }
 
 EVROverlayError BaseOverlay::SetOverlayPreCurvePitch(vr::VROverlayHandle_t ulOverlayHandle, float fRadians)
