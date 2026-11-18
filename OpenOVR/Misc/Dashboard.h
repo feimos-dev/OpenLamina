@@ -1,0 +1,79 @@
+#pragma once
+// OpenLamina's dashboard: opened over the game with the left controller's menu button (dashboardButton), it shows
+// each program's dashboard overlay (IVROverlay::CreateDashboardOverlay) in a panel ahead of the player, with a tab
+// per program to choose between them and a "Quit game" button. The scene app's instance runs it and draws the frame
+// and tabs around the panel; the program whose overlay is chosen draws that overlay itself at the panel's pose (no
+// texture crosses programs). The store's Dashboard document says which:
+//   { "open": bool, "active_pid": pid, "active_overlay": handle, "panel_pose": {"p": [x, y, z], "q": [x, y, z, w]},
+//     "scene_pid": pid, "scene_start": its start time }   (the panel's pose in the standing space)
+// Another program asks the scene app to open it (ShowDashboard) with a document that names no scene app:
+//   { "open": true, "requested_by": pid, "requested_start": its start time, "requested_at": wall time in seconds,
+//     "requested_overlay": key }
+
+#include "Canvas.h"
+
+#include "json/json.h"
+
+#include <cstdint>
+#include <functional>
+#include <optional>
+#include <string>
+#include <vector>
+
+class Dashboard {
+public:
+	enum class Button { MenuLong, Menu, Off }; // ini dashboardButton=menu_long|menu|off, default off (0.6 s on the left menu button for menu_long)
+
+	// The frame's canvas, and its size in metres: the panel in its middle, tabs above, "Quit game" below
+	static constexpr int kWidth = 1024, kHeight = 768;
+	static constexpr float kWidthMetres = 1.6f, kHeightMetres = 1.2f;
+	// How long the menu button is held to open or close it (MenuLong)
+	static constexpr double kLongPress = 0.6;
+
+	struct Rect {
+		int x, y, w, h;
+		bool Contains(float px, float py) const { return px >= x && py >= y && px < x + w && py < y + h; }
+	};
+	// Tab i along the top, and the quit button at the bottom right, in the canvas's pixels (from its top left)
+	static Rect TabRect(size_t i);
+	static Rect QuitRect();
+
+	explicit Dashboard(Button button = Button::Off)
+	    : button(button)
+	{
+	}
+
+	void OnInput(bool leftMenuDown, double now); // opens and closes
+	bool Open() const { return open; }
+	void SetOpen(bool isOpen); // ShowDashboard, a quit, the store
+
+	// The scene app's instance draws the frame: tabs with each program's name (from the store), and "Quit game"
+	void Draw(Canvas& canvas, const Json::Value& dashboardDoc, const Json::Value& overlaysDoc) const;
+	std::optional<std::string> OnClick(float u, float v); // "tab:<pid>:<handle>" or "quit"; u, v from the top left, 0 to 1
+
+	// The programs' dashboard overlays in the Overlays document, live ones only: each tab's id and label
+	struct Tab {
+		uint32_t pid;
+		uint64_t handle;
+		std::wstring label;
+	};
+	std::vector<Tab> Tabs(const Json::Value& overlaysDoc) const;
+
+	// Whether a program (its pid and start time) is running (tests replace it)
+	std::function<bool(uint32_t, uint64_t)> isAlive;
+
+private:
+	Button button;
+	bool open = false;
+	bool held = false; // the button, at the last OnInput
+	double heldSince = 0;
+	bool toggledThisPress = false;
+	mutable std::vector<Tab> drawnTabs; // as last drawn, for OnClick
+};
+
+// The document's rules (alive: whether a pid with a start time runs)
+using ProcessAlive = std::function<bool(uint32_t pid, uint64_t start)>;
+// Open, by a scene app that's still running (a crashed one's document is a closed one)
+bool DashboardDocOpen(const Json::Value& doc, const ProcessAlive& alive);
+// A request a scene app adopts: no scene app named, from a program that's still running, under 2 s old at nowWall
+bool DashboardDocRequest(const Json::Value& doc, double nowWall, const ProcessAlive& alive);

@@ -210,6 +210,9 @@ jobs:
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases remote-pointer-peer-dies,remote-pointer-dying-overlay --jobs 2 --script tests/conformance/scripts/remote_pointer.json --ini tests/conformance/ini/laser_mouse.ini --expect tests/conformance/expect/remote_pointer_peer_dies.json --out conformance/remote-pointer-peer-dies
           if ($LASTEXITCODE) { $failed++ }
+          # OpenLamina's dashboard over the game, with an overlay app's dashboard overlay (two programs)
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases dashboard,dashboard-overlay --jobs 2 --script tests/conformance/scripts/dashboard.json --ini tests/conformance/ini/dashboard.ini --manifest tests/unit/data/manifest_basic.json --expect tests/conformance/expect/dashboard.json --out conformance/dashboard
+          if ($LASTEXITCODE) { $failed++ }
           # Skyboxes: equirect layers in OpenLamina's own frames, and the old quad where the runtime has none
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases skybox-1,skybox-2,skybox-6 --script tests/conformance/scripts/skybox.json --ini tests/conformance/ini/own_frames.ini --expect tests/conformance/expect/skybox.json --out conformance/skybox
           if ($LASTEXITCODE) { $failed++ }

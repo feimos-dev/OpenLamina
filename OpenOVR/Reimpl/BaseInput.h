@@ -488,6 +488,17 @@ public: // INTERNAL FUNCTIONS
 	 * none of its own (ShowMessageOverlay). Nothing before any actions are loaded.
 	 */
 	void SyncPointerActions();
+	/**
+	 * Whether a hand's (0 the left, 1 the right) menu button is held, as of the last sync: the old input's system and
+	 * menu buttons under inputEvaluator=direct, the raw inputs under steamvr. False before any actions are loaded.
+	 */
+	bool GetHandMenu(int hand);
+	/**
+	 * While OpenLamina's dashboard is open, the game's input is held: its digital and analog actions read inactive, and
+	 * its old controller states zero
+	 */
+	static void SetHeldByDashboard(bool held);
+	static bool HeldByDashboard();
 	/** A vibration on one hand (0 the left, 1 the right), through the old input's haptic action */
 	void TriggerHandHaptic(int hand, float seconds, float frequency, float amplitude);
 

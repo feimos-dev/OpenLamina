@@ -19,6 +19,7 @@
 #include "Drivers/Backend.h"
 #include "Misc/AppManifest.h"
 #include "Misc/Config.h"
+#include "Misc/Dashboard.h"
 #include "Misc/Image.h"
 #include "Misc/Input/InteractionProfile.h"
 #include "Misc/Canvas.h"
@@ -74,6 +75,10 @@ public:
 	float gamma = 1.0f; // IVROverlay_001-006
 	int visibility = 0; // IVROverlay_001's VROverlayVisibility
 	uint32_t systemOverlaySceneProcess = 0; // IVROverlay_001
+	// CreateDashboardOverlay's pair: shown only in the dashboard, while it's the one chosen (the thumbnail never)
+	bool dashboard = false;
+	bool thumbnail = false;
+	uint32_t dashboardScenePid = 0; // SetDashboardOverlaySceneProcess
 	std::queue<VREvent_t> eventQueue;
 	// An overlay whose events nobody polls doesn't grow without end: the oldest go (logged once)
 	void QueueEvent(const VREvent_t& e)
@@ -220,8 +225,93 @@ struct BaseOverlay::Sharing {
 	double lastTry = -1;
 };
 
+struct BaseOverlay::DashboardState {
+	Dashboard dashboard; // the game's thread's (_UpdateDashboard)
+	// ShowDashboard in the scene app, from any thread: acted on by _UpdateDashboard; the overlay's key under layersLock
+	std::atomic<bool> openRequested{ false };
+	std::string requestedKey;
+	// The store's Dashboard document, as last read: under layersLock
+	bool open = false;
+	uint32_t activePid = 0;
+	uint64_t activeOverlay = 0;
+	XrPosef panelPose{ { 0, 0, 0, 1 }, { 0, 0, 0 } }; // in the standing space
+	// The scene app's frame, filled on the game's thread
+	std::unique_ptr<CpuSwapchain> chain;
+	bool chainUnavailable = false;
+	bool shown = false;
+	bool dirty = true;
+	uint64_t drawnOverlays = 0, drawnDashboard = 0; // the documents' generations it was drawn from
+	XrPosef framePose{ { 0, 0, 0, 1 }, { 0, 0, 0 } }; // in the frame's space
+	XrCompositionLayerQuad layer{};
+	vr::VROverlayHandle_t Handle() const { return (vr::VROverlayHandle_t)(uintptr_t)this; }
+};
+
+namespace {
+
+Json::Value PoseJson(const XrPosef& pose)
+{
+	Json::Value v;
+	v["p"] = Json::Value(Json::arrayValue);
+	v["q"] = Json::Value(Json::arrayValue);
+	for (float f : { pose.position.x, pose.position.y, pose.position.z })
+		v["p"].append(f);
+	for (float f : { pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w })
+		v["q"].append(f);
+	return v;
+}
+
+bool PoseFromJson(const Json::Value& v, XrPosef& out)
+{
+	const Json::Value& p = v["p"];
+	const Json::Value& q = v["q"];
+	if (!p.isArray() || p.size() != 3 || !q.isArray() || q.size() != 4)
+		return false;
+	out.position = { p[0].asFloat(), p[1].asFloat(), p[2].asFloat() };
+	out.orientation = { q[0].asFloat(), q[1].asFloat(), q[2].asFloat(), q[3].asFloat() };
+	return true;
+}
+
+Dashboard::Button DashboardButtonSetting()
+{
+	const std::string& b = oovr_global_configuration.DashboardButton();
+	return b == "menu_long" ? Dashboard::Button::MenuLong : (b == "menu" ? Dashboard::Button::Menu : Dashboard::Button::Off);
+}
+
+// A game, which runs the dashboard where dashboardButton is on
+bool IsSceneApp()
+{
+	return CurrentSessionKind() == SessionKind::Scene && BaseClientCore::appType == vr::VRApplication_Scene;
+}
+
+bool SceneDashboard()
+{
+	return IsSceneApp() && DashboardButtonSetting() != Dashboard::Button::Off;
+}
+
+double WallSeconds()
+{
+	return std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
+}
+
+uint32_t PidOf(const Json::Value& v)
+{
+	return v.isUInt() ? v.asUInt() : 0;
+}
+
+} // namespace
+
 BaseOverlay::~BaseOverlay()
 {
+	// An open dashboard closes with the scene app
+	if (dash && SceneDashboard() && dash->dashboard.Open()) {
+		const uint32_t self = oc_current_pid();
+		SharedStore::Get().Update(StoreDoc::Dashboard, [&](Json::Value& doc) {
+			if (doc.isObject() && PidOf(doc["scene_pid"]) == self)
+				doc["open"] = false;
+		});
+		BaseInput::SetHeldByDashboard(false);
+	}
+
 	// This program's overlays leave the store with it
 	if (sharing && sharing->wrote) {
 		const std::string self = std::to_string(oc_current_pid());
@@ -422,17 +512,6 @@ bool BaseOverlay::OverlayData::ComputePlacement(vr::ETrackingUniverseOrigin trac
 }
 
 namespace {
-
-// A game (a scene session of a scene application)
-bool IsSceneApp()
-{
-	return CurrentSessionKind() == SessionKind::Scene && BaseClientCore::appType == vr::VRApplication_Scene;
-}
-
-uint32_t PidOf(const Json::Value& v)
-{
-	return v.isUInt() ? v.asUInt() : 0;
-}
 
 // The cursor: a circle on a 2 cm quad
 constexpr int kCursorPixels = 64;
@@ -690,8 +769,9 @@ public:
 };
 
 BaseOverlay::BaseOverlay()
-    : pointing(std::make_unique<Pointing>()), sharing(std::make_unique<Sharing>())
+    : pointing(std::make_unique<Pointing>()), sharing(std::make_unique<Sharing>()), dash(std::make_unique<DashboardState>())
 {
+	dash->dashboard = Dashboard(DashboardButtonSetting());
 	// Other programs' pointer events from now on
 	SharedStore::Get().PollEvents(sharing->eventCursor);
 }
@@ -733,6 +813,164 @@ void BaseOverlay::TakeRemotePointerEvents()
 	}
 }
 
+void BaseOverlay::_UpdateDashboard()
+{
+	DashboardState& d = *dash;
+	const uint32_t self = oc_current_pid();
+	SharedStore& store = SharedStore::Get();
+	// The scene app runs the dashboard (with dashboardButton); other programs' dashboard overlays follow it. A program
+	// with neither reads nothing.
+	const bool sceneDashboard = SceneDashboard();
+	bool ownsDashboardOverlays = false;
+	{
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		for (const auto& kv : overlays)
+			ownsDashboardOverlays = ownsDashboardOverlays || (kv.second && kv.second->dashboard);
+		if (!sceneDashboard && !ownsDashboardOverlays) {
+			d.open = false;
+			d.shown = false;
+			return;
+		}
+	}
+	Json::Value doc = store.Read(StoreDoc::Dashboard);
+
+	if (sceneDashboard) {
+		auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
+		BaseInput* input = GetUnsafeBaseInput();
+		const bool menu = input && backend && backend->IsInputAvailable() && input->GetHandMenu(0);
+		const bool wasOpen = d.dashboard.Open();
+		// The button's time is the frames' (their predicted display time), which a long press is held for
+		const double now = xr_gbl && xr_gbl->nextPredictedFrameTime > 0 ? (double)xr_gbl->nextPredictedFrameTime * 1e-9 : NowSeconds();
+		d.dashboard.OnInput(menu, now);
+		// Asked for by this program (ShowDashboard), or by another one through the store: a live request
+		std::string requestedKey;
+		bool requested = false;
+		if (d.openRequested.exchange(false)) {
+			requested = true;
+			std::lock_guard<std::recursive_mutex> lock(layersLock);
+			requestedKey = d.requestedKey;
+		} else if (DashboardDocRequest(doc, WallSeconds(), SharedStore::IsSameProcessAlive)) {
+			requested = true;
+			requestedKey = doc["requested_overlay"].isString() ? doc["requested_overlay"].asString() : std::string();
+		}
+		if (requested && !wasOpen && !d.dashboard.Open())
+			d.dashboard.SetOpen(true);
+		if (d.dashboard.Open() != wasOpen) {
+			DashboardChanged(d.dashboard.Open(), requestedKey.c_str());
+		} else if (!d.dashboard.Open() && PidOf(doc["scene_pid"]) == self && doc["open"].isBool() && doc["open"].asBool()) {
+			// The document says this program's dashboard is open when it isn't: it is put right
+			store.Update(StoreDoc::Dashboard, [&](Json::Value& written) {
+				if (written.isObject() && PidOf(written["scene_pid"]) == self)
+					written["open"] = false;
+			});
+		}
+		doc = store.Read(StoreDoc::Dashboard);
+	}
+
+	// The document as every program's dashboard overlays follow it: open while its scene app runs
+	XrPosef panel{ { 0, 0, 0, 1 }, { 0, 0, 0 } };
+	const bool open = DashboardDocOpen(doc, SharedStore::IsSameProcessAlive) && PoseFromJson(doc["panel_pose"], panel);
+	{
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		d.open = open;
+		d.activePid = PidOf(doc["active_pid"]);
+		d.activeOverlay = doc["active_overlay"].isUInt64() ? doc["active_overlay"].asUInt64() : 0;
+		d.panelPose = panel;
+	}
+	if (!sceneDashboard)
+		return;
+
+	// The scene app's frame: drawn again when the documents change
+	const uint64_t overlaysGen = store.Generation(StoreDoc::Overlays), dashboardGen = store.Generation(StoreDoc::Dashboard);
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	d.shown = false;
+	if (!d.dashboard.Open())
+		return;
+	if (!d.chain && !d.chainUnavailable) {
+		d.chain = CpuSwapchain::Create(Dashboard::kWidth, Dashboard::kHeight);
+		d.chainUnavailable = !d.chain;
+		d.dirty = true;
+	}
+	if (!d.chain)
+		return;
+	if (d.dirty || !d.chain->Live() || overlaysGen != d.drawnOverlays || dashboardGen != d.drawnDashboard) {
+		Canvas canvas(Dashboard::kWidth, Dashboard::kHeight);
+		d.dashboard.Draw(canvas, doc, store.Read(StoreDoc::Overlays));
+		if (d.chain->Upload(canvas.Pixels())) {
+			d.dirty = false;
+			d.drawnOverlays = overlaysGen;
+			d.drawnDashboard = dashboardGen;
+		}
+	}
+	// Just behind the panel, in the frame's space
+	XrPosef pose = overlay_maths::ChangeOrigin(panel, vr::TrackingUniverseStanding, FrameOrigin(), SeatedInStanding());
+	const glm::quat q = X2G_quat(pose.orientation);
+	pose.position = G2X_v3f(X2G_v3f(pose.position) + q * glm::vec3(0.0f, 0.0f, -0.01f));
+	d.framePose = pose;
+	d.shown = d.chain->Live();
+}
+
+void BaseOverlay::DashboardChanged(bool open, const char* overlayKey)
+{
+	DashboardState& d = *dash;
+	const uint32_t self = oc_current_pid();
+	SharedStore& store = SharedStore::Get();
+	if (open) {
+		// The program shown first: the one asked for, else the first with a dashboard overlay
+		std::vector<Dashboard::Tab> tabs = d.dashboard.Tabs(store.Read(StoreDoc::Overlays));
+		const Dashboard::Tab* active = tabs.empty() ? nullptr : &tabs[0];
+		if (overlayKey && *overlayKey) {
+			Json::Value overlaysDoc = store.Read(StoreDoc::Overlays);
+			for (const Dashboard::Tab& t : tabs)
+				for (const Json::Value& o : overlaysDoc[std::to_string(t.pid)]["overlays"])
+					if (o["handle"].asUInt64() == t.handle && o["key"].asString() == overlayKey)
+						active = &t;
+		}
+		const XrPosef panel = AheadOfHead(vr::TrackingUniverseStanding, 1.5f, 0.2f);
+		store.Update(StoreDoc::Dashboard, [&](Json::Value& doc) {
+			doc = Json::Value(Json::objectValue);
+			doc["open"] = true;
+			doc["scene_pid"] = self;
+			doc["scene_start"] = (Json::UInt64)SharedStore::OwnStartTime();
+			doc["active_pid"] = active ? active->pid : 0;
+			doc["active_overlay"] = (Json::UInt64)(active ? active->handle : 0);
+			doc["panel_pose"] = PoseJson(panel);
+		});
+	} else {
+		store.Update(StoreDoc::Dashboard, [&](Json::Value& doc) {
+			doc = Json::Value(Json::objectValue);
+			doc["open"] = false;
+			doc["scene_pid"] = self;
+			doc["scene_start"] = (Json::UInt64)SharedStore::OwnStartTime();
+		});
+	}
+	{
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		d.dirty = true;
+	}
+	// The game's input is held while it's open, and the click or press that closed it isn't the game's
+	BaseInput::SetHeldByDashboard(open);
+	if (!open) {
+		if (BaseSystem* system = GetUnsafeBaseSystem())
+			system->_BlockInputsUntilReleased();
+	}
+	vr::VREvent_Data_t data{};
+	data.process.pid = self;
+	OcPostEvent(open ? VREvent_DashboardActivated : VREvent_DashboardDeactivated, k_unTrackedDeviceIndex_Hmd, data, true);
+}
+
+bool BaseOverlay::DashboardPlacement(const OverlayData& overlay, vr::ETrackingUniverseOrigin origin, overlay_maths::Placement& out) const
+{
+	const DashboardState& d = *dash;
+	if (!overlay.dashboard || overlay.thumbnail || !d.open || d.activePid != oc_current_pid() || d.activeOverlay != (uint64_t)(uintptr_t)&overlay)
+		return false;
+	out.pose = origin == vr::TrackingUniverseStanding ? d.panelPose : overlay_maths::ChangeOrigin(d.panelPose, vr::TrackingUniverseStanding, origin, SeatedInStanding());
+	out.width = overlay.widthMeters;
+	out.height = overlay.widthMeters / overlay.AspectRatio();
+	out.curvature = 0;
+	return out.width > 0 && out.height > 0;
+}
+
 void BaseOverlay::_PublishOverlays()
 {
 	if (!IsHelperSession() && !oovr_global_configuration.LaserMouse())
@@ -769,7 +1007,8 @@ void BaseOverlay::_PublishOverlays()
 			if (!o)
 				continue;
 			overlay_maths::Placement placement{};
-			const bool placed = o->ComputePlacement(vr::TrackingUniverseStanding, validOverlays, placement);
+			const bool placed = o->dashboard ? DashboardPlacement(*o, vr::TrackingUniverseStanding, placement)
+			                                 : o->ComputePlacement(vr::TrackingUniverseStanding, validOverlays, placement);
 			Json::Value e;
 			e["handle"] = (Json::UInt64)(uintptr_t)o;
 			e["key"] = o->key;
@@ -778,7 +1017,7 @@ void BaseOverlay::_PublishOverlays()
 			// that it doesn't change as the device moves, and the game places it with its own poses of that frame
 			const char* role = nullptr;
 			XrPosef pose = placement.pose;
-			if (placed) {
+			if (placed && !o->dashboard) {
 				const OverlayData* root = o;
 				for (int depth = 0; depth < 16 && root->overlayRelative && validOverlays.count((OverlayData*)(uintptr_t)root->relativeParent); depth++)
 					root = (const OverlayData*)(uintptr_t)root->relativeParent;
@@ -834,8 +1073,10 @@ void BaseOverlay::_PublishOverlays()
 			e["input_method"] = (int)o->inputMethod;
 			e["flags"] = (Json::UInt64)o->flags;
 			e["sort_order"] = o->sortOrder;
-			e["visible"] = placed && o->visible && (o->texture.handle != nullptr || !o->rawImage.Empty());
-			e["dashboard"] = false;
+			e["visible"] = placed && (o->visible || o->dashboard) && (o->texture.handle != nullptr || !o->rawImage.Empty());
+			e["dashboard"] = o->dashboard;
+			if (o->thumbnail)
+				e["thumbnail"] = true;
 			list.append(e);
 		}
 	}
@@ -895,7 +1136,7 @@ void BaseOverlay::_UpdatePointer()
 	bool wanted = false;
 	{
 		std::lock_guard<std::recursive_mutex> lock(layersLock);
-		bool overlaysWanted = remoteWanted;
+		bool overlaysWanted = remoteWanted || dash->shown;
 		for (const auto& kv : overlays) {
 			const OverlayData* o = kv.second;
 			if (o && o->visible && ((laserMouse && o->inputMethod == VROverlayInputMethod_Mouse) || o->asMouseUpdates > 0)
@@ -916,6 +1157,7 @@ void BaseOverlay::_UpdatePointer()
 	std::unique_ptr<CpuSwapchain> dropped; // a closed keyboard's, destroyed once the lock is let go
 	bool keyboardClosed = false;
 	std::vector<StoreEvent> remoteEvents; // posted once the lock is let go
+	std::optional<std::string> dashClick;
 	{
 		std::lock_guard<std::recursive_mutex> lock(layersLock);
 		Pointing& p = *pointing;
@@ -937,6 +1179,22 @@ void BaseOverlay::_UpdatePointer()
 				t.yDown = true; // the canvas's coordinates
 				t.sortOrder = INT_MAX; // on top of every overlay
 				targets.push_back(t);
+			}
+			// The dashboard's tabs and quit button (its middle is the panel, another program's to point at)
+			if (dash->shown && !(keyboard && p.keyboardModal)) {
+				PointerTarget t{};
+				t.handle = dash->Handle();
+				t.placement = overlay_maths::Placement{ dash->framePose, Dashboard::kWidthMetres, Dashboard::kHeightMetres, 0 };
+				t.mouseScale = { { (float)Dashboard::kWidth, (float)Dashboard::kHeight } };
+				t.yDown = true;
+				t.sortOrder = INT_MAX - 1;
+				for (const Dashboard::Rect& r : { Dashboard::Rect{ 0, 0, Dashboard::kWidth, Dashboard::TabRect(0).y + Dashboard::TabRect(0).h }, Dashboard::QuitRect() }) {
+					OOVR_VROverlayIntersectionMaskPrimitive_t m{};
+					m.m_nPrimitiveType = OverlayIntersectionPrimitiveType_Rectangle;
+					m.m_Primitive.m_Rectangle = { (float)r.x, (float)r.y, (float)r.w, (float)r.h };
+					t.mask.push_back(m);
+				}
+				targets.push_back(std::move(t));
 			}
 			if (!(keyboard && p.keyboardModal) && pointHere) {
 				for (const auto& kv : overlays) {
@@ -995,6 +1253,12 @@ void BaseOverlay::_UpdatePointer()
 		for (const PointerEvent& e : events) {
 			if (keyboard && e.handle == keyboard->Handle())
 				continue;
+			// A click on the dashboard's frame, acted on once the lock is let go
+			if (e.handle == dash->Handle()) {
+				if (e.event.eventType == VREvent_MouseButtonUp && !dashClick)
+					dashClick = dash->dashboard.OnClick(e.event.data.mouse.x / Dashboard::kWidth, e.event.data.mouse.y / Dashboard::kHeight);
+				continue;
+			}
 			OverlayData* o = (OverlayData*)(uintptr_t)e.handle;
 			if (validOverlays.count(o))
 				o->QueueEvent(e.event);
@@ -1050,6 +1314,26 @@ void BaseOverlay::_UpdatePointer()
 	}
 	dropped.reset();
 	PostRemotePointerEvents(remoteEvents);
+	if (dashClick && *dashClick == "quit") {
+		// "Quit game": the game is asked to quit, and the dashboard closes
+		OcPostEvent(VREvent_Quit, k_unTrackedDeviceIndexInvalid, VREvent_Data_t{}, false);
+		dash->dashboard.SetOpen(false);
+		DashboardChanged(false);
+	} else if (dashClick && dashClick->rfind("tab:", 0) == 0) {
+		// "tab:<pid>:<handle>": that program's overlay is shown
+		const std::string rest = dashClick->substr(4);
+		const size_t colon = rest.find(':');
+		if (colon != std::string::npos) {
+			const uint32_t pid = (uint32_t)std::strtoul(rest.substr(0, colon).c_str(), nullptr, 10);
+			const uint64_t handle = std::strtoull(rest.substr(colon + 1).c_str(), nullptr, 10);
+			SharedStore::Get().Update(StoreDoc::Dashboard, [&](Json::Value& doc) {
+				if (doc.isObject() && doc["open"].isBool() && doc["open"].asBool()) {
+					doc["active_pid"] = pid;
+					doc["active_overlay"] = (Json::UInt64)handle;
+				}
+			});
+		}
+	}
 	if (keyboardClosed) {
 		if (BaseSystem* system = GetUnsafeBaseSystem())
 			system->_BlockInputsUntilReleased();
@@ -1059,8 +1343,13 @@ void BaseOverlay::_UpdatePointer()
 bool BaseOverlay::_AnyVisible()
 {
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
-	if (keyboard || pointing->message)
+	if (keyboard || pointing->message || dash->shown)
 		return true;
+	overlay_maths::Placement shownInDashboard;
+	for (const auto& kv : overlays) {
+		if (kv.second && kv.second->dashboard && DashboardPlacement(*kv.second, FrameOrigin(), shownInDashboard))
+			return true;
+	}
 	for (const auto& kv : overlays) {
 		if (kv.second && kv.second->visible && (kv.second->texture.handle != nullptr || !kv.second->rawImage.Empty()))
 			return true;
@@ -1105,8 +1394,12 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 		if (kv.second) {
 			OverlayData& overlay = *kv.second;
 
+			// A dashboard overlay is shown in the dashboard alone, while it's the one chosen
+			overlay_maths::Placement dashboardPlacement{};
+			const bool inDashboard = overlay.dashboard && DashboardPlacement(overlay, trackingSpace, dashboardPlacement);
+
 			// Skip hiddden overlays, and those without a valid texture or image (eg, after calling ClearOverlayTexture).
-			if (!overlay.visible || (overlay.texture.handle == nullptr && overlay.rawImage.Empty()))
+			if ((overlay.dashboard ? !inDashboard : !overlay.visible) || (overlay.texture.handle == nullptr && overlay.rawImage.Empty()))
 				continue;
 
 			// An image from memory whose swapchain went with the last session is put into one on this session, by the
@@ -1135,8 +1428,8 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 			}
 
 			// Skip overlay if we can't compute where it goes
-			overlay_maths::Placement placement;
-			if (!overlay.ComputePlacement(trackingSpace, validOverlays, placement))
+			overlay_maths::Placement placement = dashboardPlacement;
+			if (!inDashboard && !overlay.ComputePlacement(trackingSpace, validOverlays, placement))
 				continue;
 			const glm::vec3 position = X2G_v3f(placement.pose.position);
 			const glm::quat orientation = X2G_quat(placement.pose.orientation);
@@ -1184,6 +1477,10 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 	// OpenLamina's own quads on top of the overlays: the keyboard, a message box, then the cursor. Filled on the game's
 	// thread (_UpdatePointer, ShowMessageOverlay): only those already in a swapchain are drawn.
 	Pointing& p = *pointing;
+	if (dash->shown && dash->chain && dash->chain->Live()) {
+		dash->layer = OwnQuad(*dash->chain, dash->framePose, Dashboard::kWidthMetres, Dashboard::kHeightMetres);
+		layerHeaders.push_back((XrCompositionLayerBaseHeader*)&dash->layer);
+	}
 	if (keyboard && p.keyboardShown && p.keyboardChain && p.keyboardChain->Live()) {
 		p.keyboardLayer = OwnQuad(*p.keyboardChain, p.keyboardPose, keyboard->WidthMeters(), keyboard->HeightMeters());
 		layerHeaders.push_back((XrCompositionLayerBaseHeader*)&p.keyboardLayer);
@@ -2357,37 +2654,102 @@ EVROverlayError BaseOverlay::CreateDashboardOverlay(const char* pchOverlayKey, c
 		*pMainHandle = k_ulOverlayHandleInvalid;
 	if (pThumbnailHandle)
 		*pThumbnailHandle = k_ulOverlayHandleInvalid;
-	OC_UNSUPPORTED(VROverlayError_RequestFailed, "CreateDashboardOverlay: there's no dashboard yet");
+	// A game's dashboard overlay is shown in its own dashboard: with dashboardButton off there's none to show it in
+	if (IsSceneApp() && !SceneDashboard())
+		OC_UNSUPPORTED(VROverlayError_RequestFailed, "CreateDashboardOverlay: there's no dashboard (dashboardButton is off)");
+	if (!pchOverlayKey || !pchOverlayFriendlyName || !pMainHandle || !pThumbnailHandle)
+		return VROverlayError_InvalidParameter;
+	// A pair: the overlay shown in the dashboard, and its thumbnail (OpenLamina's dashboard has name tabs instead)
+	EVROverlayError err = CreateOverlay(pchOverlayKey, pchOverlayFriendlyName, pMainHandle);
+	if (err != VROverlayError_None)
+		return err;
+	// The thumbnail's key is OpenLamina's own: one no program uses, and short whatever the main key's length
+	const std::string thumbnailKey = std::string(1, (char)1) + "thumbnail:" + std::to_string((uint64_t)*pMainHandle);
+	err = CreateOverlay(thumbnailKey.c_str(), pchOverlayFriendlyName, pThumbnailHandle);
+	if (err != VROverlayError_None) {
+		DestroyOverlay(*pMainHandle);
+		*pMainHandle = k_ulOverlayHandleInvalid;
+		return err;
+	}
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	((OverlayData*)*pMainHandle)->dashboard = true;
+	OverlayData* thumbnail = (OverlayData*)*pThumbnailHandle;
+	thumbnail->dashboard = true;
+	thumbnail->thumbnail = true;
+	return VROverlayError_None;
 }
 bool BaseOverlay::IsDashboardVisible()
 {
-	// TODO should this be based of whether Dash is open?
-	// Probably, but handling focus opens some other issues as it triggers under other conditions.
-	return false;
+	// OpenLamina's dashboard, run by the scene app (dashboardButton): a game with it off has none
+	if (IsSceneApp() && !SceneDashboard())
+		return false;
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	return dash->open;
 }
 bool BaseOverlay::IsActiveDashboardOverlay(VROverlayHandle_t ulOverlayHandle)
 {
-	OC_UNSUPPORTED(false, "IsActiveDashboardOverlay: there's no dashboard yet");
+	if (IsSceneApp() && !SceneDashboard())
+		OC_UNSUPPORTED(false, "IsActiveDashboardOverlay: there's no dashboard (dashboardButton is off)");
+	USEHB();
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	return overlay->dashboard && !overlay->thumbnail && dash->open && dash->activePid == oc_current_pid()
+	    && dash->activeOverlay == (uint64_t)(uintptr_t)overlay;
 }
 EVROverlayError BaseOverlay::SetDashboardOverlaySceneProcess(VROverlayHandle_t ulOverlayHandle, uint32_t unProcessId)
 {
 	USEH();
-	OC_UNSUPPORTED(VROverlayError_None, "SetDashboardOverlaySceneProcess: there's no dashboard yet");
+	// Kept and returned: every program's dashboard overlays are shown over whichever game runs
+	overlay->dashboardScenePid = unProcessId;
+	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::GetDashboardOverlaySceneProcess(VROverlayHandle_t ulOverlayHandle, uint32_t* punProcessId)
 {
 	USEH();
-	if (punProcessId)
-		*punProcessId = 0;
-	OC_UNSUPPORTED(VROverlayError_RequestFailed, "GetDashboardOverlaySceneProcess: there's no dashboard yet");
+	if (IsSceneApp() && !SceneDashboard()) {
+		if (punProcessId)
+			*punProcessId = 0;
+		OC_UNSUPPORTED(VROverlayError_RequestFailed, "GetDashboardOverlaySceneProcess: there's no dashboard (dashboardButton is off)");
+	}
+	if (!punProcessId)
+		return VROverlayError_InvalidParameter;
+	*punProcessId = overlay->dashboardScenePid;
+	return VROverlayError_None;
 }
 void BaseOverlay::ShowDashboard(const char* pchOverlayToShow)
 {
-	OC_UNSUPPORTED_VOID("ShowDashboard: there's no dashboard yet");
+	if (IsSceneApp()) {
+		if (!SceneDashboard())
+			OC_UNSUPPORTED_VOID("ShowDashboard: there's no dashboard (dashboardButton is off)");
+		// Opened on the game's thread, at its next frame
+		{
+			std::lock_guard<std::recursive_mutex> lock(layersLock);
+			dash->requestedKey = pchOverlayToShow ? pchOverlayToShow : "";
+		}
+		dash->openRequested = true;
+		return;
+	}
+	// Another program asks the scene app to, through the store: unless it's open already
+	const uint32_t self = oc_current_pid();
+	SharedStore::Get().Update(StoreDoc::Dashboard, [&](Json::Value& doc) {
+		if (DashboardDocOpen(doc, SharedStore::IsSameProcessAlive))
+			return;
+		doc = Json::Value(Json::objectValue);
+		doc["open"] = true;
+		doc["requested_by"] = self;
+		doc["requested_start"] = (Json::UInt64)SharedStore::OwnStartTime();
+		doc["requested_at"] = WallSeconds();
+		doc["requested_overlay"] = pchOverlayToShow ? pchOverlayToShow : "";
+	});
 }
 TrackedDeviceIndex_t BaseOverlay::GetPrimaryDashboardDevice()
 {
-	OC_UNSUPPORTED(k_unTrackedDeviceIndexInvalid, "GetPrimaryDashboardDevice: there's no dashboard yet");
+	if (IsSceneApp() && !SceneDashboard())
+		OC_UNSUPPORTED(k_unTrackedDeviceIndexInvalid, "GetPrimaryDashboardDevice: there's no dashboard (dashboardButton is off)");
+	// The left controller opens it
+	if (!IsDashboardVisible())
+		return k_unTrackedDeviceIndexInvalid;
+	std::shared_ptr<ITrackedDevice> left = BackendManager::Instance().GetDeviceByHand(ITrackedDevice::HAND_LEFT);
+	return left ? left->DeviceIndex() : k_unTrackedDeviceIndexInvalid;
 }
 EVROverlayError BaseOverlay::ShowKeyboardWithDispatch(EGamepadTextInputMode eInputMode, EGamepadTextInputLineMode eLineInputMode,
     uint32_t unFlags, const char* pchDescription, uint32_t unCharMax, const char* pchExistingText, uint64_t uUserValue,
