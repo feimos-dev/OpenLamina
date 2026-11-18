@@ -12,6 +12,9 @@
 #include "Misc/EnumNames.h"
 #include "BaseSystem.h"
 #include "Compositor/compositor.h"
+#if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+#include "Compositor/dxcompositor.h"
+#endif
 #include "Drivers/Backend.h"
 #include "Misc/AppManifest.h"
 #include "Misc/Config.h"
@@ -186,7 +189,7 @@ static VROverlayHandle_t gamepadFocusOverlay = k_ulOverlayHandleInvalid;
 
 BaseOverlay::~BaseOverlay()
 {
-	// The session lock before the layers' lock, as everywhere: freeing a swapchain from memory takes it
+	// Freeing a swapchain from memory takes the session lock
 	auto session = xr_session.lock_shared();
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	for (const auto& kv : overlays) {
@@ -634,7 +637,7 @@ BaseOverlay::BaseOverlay()
 
 void BaseOverlay::_UpdatePointer()
 {
-	// The session lock before the layers' lock, as everywhere: swapchains are filled and input read under it
+	// Swapchains are filled and input read under the session lock
 	auto session = xr_session.lock_shared();
 	auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
 
@@ -642,7 +645,6 @@ void BaseOverlay::_UpdatePointer()
 	// have their own); the game's own HandleControllerOverlayInteractionAsMouse always
 	const bool laserMouse = oovr_global_configuration.LaserMouse();
 
-	// Cheap first: is there anything to point at?
 	bool wanted = false;
 	{
 		std::lock_guard<std::recursive_mutex> lock(layersLock);
@@ -801,7 +803,7 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 	//  when it's initially set to false, and when it's reset to true.
 	bool checkUsingInput = false;
 
-	// The keyboard takes the controllers' input from the game while it's shown (_HandleOverlayInput)
+	// Set while the keyboard is up. Nothing reads it: the game keeps getting the controllers' input meanwhile.
 	if (keyboard)
 		checkUsingInput = true;
 
@@ -925,7 +927,7 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 
 bool BaseOverlay::_HandleOverlayInput(EVREye side, TrackedDeviceIndex_t index, VRControllerState_t state)
 {
-	// The keyboard is typed on with the lasers (_UpdatePointer): while it's shown, the game doesn't get the input
+	// Nothing calls this: the keyboard is typed on with the lasers (_UpdatePointer), and the game keeps the input
 	if (!usingInput)
 		return true;
 
@@ -1818,7 +1820,7 @@ EVROverlayError BaseOverlay::SetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 	Texture_t texture = *pTexture;
 	BackendManager::Instance().OnOverlayTexture(&texture);
 
-	// After OnOverlayTexture, which may restart the session; the session lock before the layers' lock, as everywhere
+	// After OnOverlayTexture, which may restart the session
 	auto session = xr_session.lock_shared();
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	overlay->texture = texture;
@@ -1911,7 +1913,7 @@ EVROverlayError BaseOverlay::SetOverlayFromFile(VROverlayHandle_t ulOverlayHandl
 	std::optional<Image> image = LoadImageFile(PathFromUtf8(pchFilePath), &why);
 	if (!image) {
 		OOVR_LOGF("SetOverlayFromFile: '%s' can't be shown: %s", pchFilePath, why.c_str());
-		return VROverlayError_InvalidParameter;
+		return VROverlayError_UnableToLoadFile;
 	}
 	return SetOverlayRaw(ulOverlayHandle, image->rgba.data(), image->width, image->height, 4);
 }
@@ -1926,23 +1928,84 @@ EVROverlayError BaseOverlay::GetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 		*pHeight = 0;
 	if (pNativeFormat)
 		*pNativeFormat = 0;
-	// The owner's own texture, as SteamVR answers the overlay's owner; an image from memory or a file has none
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	// An image from memory or a file has no texture
 	if (!overlay->texture.handle)
 		return VROverlayError_InvalidTexture;
-	if (pNativeTextureHandle)
-		*pNativeTextureHandle = overlay->texture.handle;
-	if (pAPIType)
-		*pAPIType = overlay->texture.eType;
-	if (pColorSpace)
-		*pColorSpace = overlay->texture.eColorSpace;
-	if (pTextureBounds)
-		*pTextureBounds = overlay->textureBounds;
-	return GetOverlayTextureSize(ulOverlayHandle, pWidth, pHeight);
+#if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+	if (overlay->texture.eType == TextureType_DirectX) {
+		// A shader resource view of the owner's texture, bound on the device of pNativeTextureRef (the texture's own
+		// device without one), which ReleaseNativeOverlayHandle releases
+		auto* texture = (ID3D11Texture2D*)overlay->texture.handle;
+		ID3D11Device* device = nullptr;
+		texture->GetDevice(&device);
+		ID3D11Device* refDevice = nullptr;
+		if (pNativeTextureRef)
+			((ID3D11Resource*)pNativeTextureRef)->GetDevice(&refDevice);
+		const bool otherDevice = refDevice && refDevice != device;
+		if (refDevice)
+			refDevice->Release();
+		if (otherDevice) {
+			device->Release();
+			OC_UNSUPPORTED(VROverlayError_RequestFailed, "GetOverlayTexture: pNativeTextureRef is on another device than the overlay's texture");
+		}
+		D3D11_TEXTURE2D_DESC desc{};
+		texture->GetDesc(&desc);
+		ID3D11ShaderResourceView* view = nullptr;
+		HRESULT hr = E_FAIL;
+		if (desc.Format != TypedDxgi(desc.Format)) {
+			// A typeless texture is viewed through its family's linear format
+			D3D11_SHADER_RESOURCE_VIEW_DESC viewDesc{};
+			viewDesc.Format = TypedDxgi(desc.Format);
+			const bool ms = desc.SampleDesc.Count > 1;
+			if (ms && desc.ArraySize > 1) {
+				viewDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DMSARRAY;
+				viewDesc.Texture2DMSArray.ArraySize = desc.ArraySize;
+			} else if (ms) {
+				viewDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DMS;
+			} else if (desc.ArraySize > 1) {
+				viewDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
+				viewDesc.Texture2DArray.MipLevels = desc.MipLevels;
+				viewDesc.Texture2DArray.ArraySize = desc.ArraySize;
+			} else {
+				viewDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2D;
+				viewDesc.Texture2D.MipLevels = desc.MipLevels;
+			}
+			hr = device->CreateShaderResourceView(texture, &viewDesc, &view);
+		} else {
+			hr = device->CreateShaderResourceView(texture, nullptr, &view);
+		}
+		device->Release();
+		if (FAILED(hr) || !view) {
+			OOVR_SOFT_ABORTF("GetOverlayTexture: no shader resource view of the overlay's texture (format %d, HRESULT 0x%08x)", (int)desc.Format, (unsigned)hr);
+			return VROverlayError_RequestFailed;
+		}
+		handedOutViews.insert(view);
+		if (pNativeTextureHandle)
+			*pNativeTextureHandle = view;
+		if (pNativeFormat)
+			*pNativeFormat = (uint32_t)desc.Format;
+		if (pAPIType)
+			*pAPIType = overlay->texture.eType;
+		if (pColorSpace)
+			*pColorSpace = overlay->texture.eColorSpace;
+		if (pTextureBounds)
+			*pTextureBounds = overlay->textureBounds;
+		return GetOverlayTextureSize(ulOverlayHandle, pWidth, pHeight);
+	}
+#endif
+	OC_UNSUPPORTED(VROverlayError_RequestFailed, "GetOverlayTexture: only a D3D11 overlay texture can be read back");
 }
 EVROverlayError BaseOverlay::ReleaseNativeOverlayHandle(VROverlayHandle_t ulOverlayHandle, void* pNativeTextureHandle)
 {
 	USEH();
-	// GetOverlayTexture hands out the owner's own texture, which isn't ours to release
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	// Only a handle GetOverlayTexture handed out, once
+	if (!pNativeTextureHandle || !handedOutViews.erase(pNativeTextureHandle))
+		return VROverlayError_InvalidParameter;
+#if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+	((ID3D11ShaderResourceView*)pNativeTextureHandle)->Release();
+#endif
 	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::GetOverlayTextureSize(VROverlayHandle_t ulOverlayHandle, uint32_t* pWidth, uint32_t* pHeight)
@@ -2026,16 +2089,12 @@ EVROverlayError BaseOverlay::ShowKeyboardWithDispatch(EGamepadTextInputMode eInp
 	else if (eInputMode == k_EGamepadTextInputModeSubmit)
 		mode = VRKeyboard::Mode::Submit;
 	const bool multiline = eLineInputMode == k_EGamepadTextInputLineModeMultipleLines;
-	// EKeyboardFlags' KeyboardFlag_Modal: nothing but the keyboard can be pointed at
-	constexpr uint32_t modalFlag = 2;
-
-	// The session lock before the layers' lock, as everywhere
-	auto session = xr_session.lock_shared();
 	if (!oovr_global_configuration.Keyboard()) {
 		// Answered as done at once (GetKeyboardText then has a name ready)
 		SubmitPlaceholderKeyboardEvent(VREvent_KeyboardDone, forOverlay, uUserValue);
 		return VROverlayError_None;
 	}
+	auto session = xr_session.lock_shared();
 	std::unique_ptr<VRKeyboard> made;
 	std::unique_ptr<CpuSwapchain> chain;
 	if (KeyboardLayout::Current()) {
@@ -2070,7 +2129,7 @@ EVROverlayError BaseOverlay::ShowKeyboardWithDispatch(EGamepadTextInputMode eInp
 		p.keyboardFor = forOverlay;
 		p.keyboardOrigin = space;
 		p.keyboardPose = keyboard->Placement();
-		p.keyboardModal = (unFlags & modalFlag) != 0;
+		p.keyboardModal = (unFlags & VRKeyboard::kFlagModal) != 0;
 	}
 	old.reset();
 
@@ -2176,7 +2235,6 @@ void BaseOverlay::HideKeyboard()
 }
 void BaseOverlay::SetKeyboardTransformAbsolute(ETrackingUniverseOrigin eTrackingOrigin, const HmdMatrix34_t* pmatTrackingOriginToKeyboardTransform)
 {
-	// The session lock before the layers' lock, as everywhere
 	auto session = xr_session.lock_shared();
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	if (!keyboard || !pmatTrackingOriginToKeyboardTransform) {

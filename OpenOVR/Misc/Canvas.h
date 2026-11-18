@@ -19,8 +19,6 @@ public:
 	void Text(int x, int y, std::wstring_view text, uint32_t rgba);
 	int TextWidth(std::wstring_view text) const;
 	static int LineHeight();
-	// Scaled into the rectangle (nearest pixel)
-	void Draw(const Image& image, int x, int y, int w, int h);
 
 	const Image& Pixels() const { return image; }
 

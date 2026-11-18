@@ -180,7 +180,7 @@ namespace {
 struct SteamVRTextures {
 	std::mutex lock;
 	std::map<std::filesystem::path, TextureID_t> ids; // -1: couldn't be read
-	std::map<TextureID_t, std::shared_ptr<const RmTexture>> textures;
+	std::map<TextureID_t, std::shared_ptr<const Image>> textures;
 };
 SteamVRTextures& Textures()
 {
@@ -200,7 +200,7 @@ static TextureID_t SteamVRTextureId(const std::filesystem::path& file)
 		if (it != t.ids.end())
 			return it->second;
 	}
-	std::optional<RmTexture> tex = LoadRenderModelTexture(file); // logged if it can't be read
+	std::optional<Image> tex = LoadRenderModelTexture(file); // logged if it can't be read
 	std::lock_guard<std::mutex> guard(t.lock);
 	auto it = t.ids.find(file);
 	if (it != t.ids.end())
@@ -208,11 +208,11 @@ static TextureID_t SteamVRTextureId(const std::filesystem::path& file)
 	TextureID_t id = tex ? (TextureID_t)t.textures.size() + 1 : -1;
 	t.ids.emplace(file, id);
 	if (tex)
-		t.textures.emplace(id, std::make_shared<const RmTexture>(std::move(*tex)));
+		t.textures.emplace(id, std::make_shared<const Image>(std::move(*tex)));
 	return id;
 }
 
-static std::shared_ptr<const RmTexture> SteamVRTexture(TextureID_t id)
+static std::shared_ptr<const Image> SteamVRTexture(TextureID_t id)
 {
 	SteamVRTextures& t = Textures();
 	std::lock_guard<std::mutex> guard(t.lock);
@@ -575,7 +575,7 @@ EVRRenderModelError BaseRenderModels::LoadTexture_Async(TextureID_t textureId, R
 	RenderModel_TextureMap_t& tx = **texture;
 
 	// A SteamVR model's texture
-	if (std::shared_ptr<const RmTexture> steamvr = SteamVRTexture(textureId)) {
+	if (std::shared_ptr<const Image> steamvr = SteamVRTexture(textureId)) {
 		tx.unWidth = (uint16_t)steamvr->width;
 		tx.unHeight = (uint16_t)steamvr->height;
 		uint8_t* pixels = new uint8_t[steamvr->rgba.size()];
@@ -613,7 +613,7 @@ EVRRenderModelError BaseRenderModels::LoadTextureD3D11_Async(TextureID_t texture
 {
 	if (ppD3D11Texture2D)
 		*ppD3D11Texture2D = nullptr;
-	std::shared_ptr<const RmTexture> tex = SteamVRTexture(textureId);
+	std::shared_ptr<const Image> tex = SteamVRTexture(textureId);
 	// OpenLamina's own models have no texture ids (only the hand colour LoadTexture_Async gives)
 	if (!tex)
 		OC_UNSUPPORTED(VRRenderModelError_NotSupported, "LoadTextureD3D11_Async: no texture %d (only SteamVR's models have textures)", (int)textureId);
@@ -682,7 +682,7 @@ EVRRenderModelError BaseRenderModels::LoadIntoTextureD3D11_Async(TextureID_t tex
 		pixels[i] = pixColour;
 	}
 	// A SteamVR model's texture of the texture's size: its pixels
-	std::shared_ptr<const RmTexture> steamvr = SteamVRTexture(textureId);
+	std::shared_ptr<const Image> steamvr = SteamVRTexture(textureId);
 	if (steamvr && steamvr->width == desc.Width && steamvr->height == desc.Height)
 		memcpy(pixels, steamvr->rgba.data(), (size_t)px_count * sizeof(pix_t));
 
@@ -1061,10 +1061,8 @@ uint32_t BaseRenderModels::GetRenderModelThumbnailURL(const char* pchRenderModel
 		if (peError)
 			*peError = VRRenderModelError_None;
 		string url;
-		if (!model->thumbnail.empty()) {
-			std::u8string generic = (model->folder / PathFromUtf8(model->thumbnail)).generic_u8string();
-			url = "file:///" + string(generic.begin(), generic.end());
-		}
+		if (!model->thumbnail.empty())
+			url = FileUrl(model->folder / PathFromUtf8(model->thumbnail));
 		return CopyOutModelString(url, pchThumbnailURL, unThumbnailURLLen);
 	}
 

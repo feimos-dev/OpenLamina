@@ -160,7 +160,7 @@ TEST_CASE("Render_model_from_folder")
 	CHECK(!LoadRenderModelMesh(*model, "no such component").has_value());
 
 	// The texture: 2x2, red, green / blue, white
-	std::optional<RmTexture> tex = LoadRenderModelTexture(whole->diffuse);
+	std::optional<Image> tex = LoadRenderModelTexture(whole->diffuse);
 	REQUIRE(tex.has_value());
 	CHECK(tex->width == 2);
 	CHECK(tex->height == 2);
@@ -362,7 +362,7 @@ TEST_CASE("Render_model_non_ascii_folder")
 	std::optional<RmMesh> whole = LoadRenderModelMesh(*model, "");
 	REQUIRE(whole.has_value());
 	CHECK(whole->vertices.size() == 7);
-	std::optional<RmTexture> tex = LoadRenderModelTexture(whole->diffuse);
+	std::optional<Image> tex = LoadRenderModelTexture(whole->diffuse);
 	REQUIRE(tex.has_value());
 	CHECK(tex->width == 2);
 }

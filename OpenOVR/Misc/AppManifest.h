@@ -50,6 +50,8 @@ std::filesystem::path CurrentExecutablePath();
 /** Text as a path, from UTF-8; empty if it isn't UTF-8 */
 std::filesystem::path PathFromUtf8(const std::string& text);
 std::string PathToUtf8(const std::filesystem::path& path);
+/** An absolute path as a file URL: file:///C:/... on Windows, file:///home/... elsewhere (UTF-8, not escaped) */
+std::string FileUrl(const std::filesystem::path& path);
 
 /** A command line's arguments, split as CommandLineToArgvW does: whitespace separates, double quotes group, and
  * backslashes escape only before a double quote. No shell syntax: & $ ; ` and the like are plain text. */
