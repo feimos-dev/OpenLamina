@@ -195,6 +195,16 @@ static bool IsFinite(const glm::vec3& v)
 	return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
 }
 
+bool BaseOverlay::_AnyVisible()
+{
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	for (const auto& kv : overlays) {
+		if (kv.second && kv.second->visible && (kv.second->texture.handle != nullptr || !kv.second->rawImage.Empty()))
+			return true;
+	}
+	return false;
+}
+
 int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompositionLayerBaseHeader const* const*& layers)
 {
 	// Note that at least on MSVC, this shouldn't be doing any memory allocations

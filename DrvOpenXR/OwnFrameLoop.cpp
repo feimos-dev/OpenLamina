@@ -12,8 +12,8 @@ constexpr milliseconds kRetry{ 11 };
 
 // The constructor without a runner, which runs XrBackend's frames, is in XrBackend.cpp
 
-OwnFrameLoop::OwnFrameLoop(Mode mode, LayerSource source, milliseconds idleAfter, FrameRunner runner)
-    : mode(mode), source(std::move(source)), idleAfter(idleAfter), runner(std::move(runner))
+OwnFrameLoop::OwnFrameLoop(Mode mode, LayerSource source, milliseconds idleAfter, FrameRunner runner, ContentCheck hasContent)
+    : mode(mode), source(std::move(source)), idleAfter(idleAfter), runner(std::move(runner)), hasContent(std::move(hasContent))
 {
 	thread = std::thread([this] { Thread(); });
 }
@@ -86,6 +86,13 @@ void OwnFrameLoop::Thread()
 			continue;
 		}
 		lock.unlock();
+
+		// Checked without stateLock: it reads the overlays, whose holders may report a game frame meanwhile
+		if (mode == Mode::WhenAppIdle && hasContent && !hasContent()) {
+			lock.lock();
+			wake.wait_until(lock, steady_clock::now() + kRetry, [this] { return stopping; });
+			continue;
+		}
 
 		steady_clock::time_point start = steady_clock::now();
 		XrDuration period = !runner ? 0 : runner(source, [this] {

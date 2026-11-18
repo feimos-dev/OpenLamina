@@ -1750,15 +1750,37 @@ std::vector<int64_t> ProjectionFrames(const Json::Value& dump)
 	return frames;
 }
 
-// OpenLamina's own frames while the game stalls (expect/own_frames.json): 10 frames, a second without any call,
-// then 10 more. With the stand-in at 90 Hz, OpenLamina runs at least 60 frames of its own in that second, none
-// with a projection layer (only the game's frames have one), and no frame call comes out of order.
+// An overlay shown from memory (64x64 grey), so OpenLamina has something of its own to show in a stall
+bool ShowGreyOverlay(CaseContext& c)
+{
+	vr::EVRInitError le = vr::VRInitError_None;
+	auto* ov = (vr::IVROverlay_028::IVROverlay*)c.core->GetGenericInterface("IVROverlay_028", &le);
+	vr::VROverlayHandle_t h = vr::k_ulOverlayHandleInvalid;
+	if (!ov || ov->CreateOverlay("oc.test.own", "Own", &h) != 0)
+		return false;
+	std::vector<uint8_t> grey(64 * 64 * 4, 0x80);
+	return ov->SetOverlayRaw(h, grey.data(), 64, 64, 4) == 0 && ov->ShowOverlay(h) == 0;
+}
+
+// The frames in a stall: the longest gap between two of the game's frames (all OpenLamina's own)
+int64_t LongestPause(const std::vector<int64_t>& projections)
+{
+	int64_t pause = 0;
+	for (size_t i = 1; i < projections.size(); i++)
+		pause = std::max<int64_t>(pause, projections[i] - projections[i - 1] - 1);
+	return pause;
+}
+
+// OpenLamina's own frames while the game stalls (expect/own_frames.json): with an overlay shown, 10 frames, a second
+// without any call, then 10 more. With the stand-in at 90 Hz, OpenLamina runs at least 60 frames of its own in that
+// second, none with a projection layer (only the game's frames have one), and no frame call comes out of order.
 void OwnFramesCase(CaseContext& c)
 {
 	Frames f;
 	if (!OpenFrames(c, f))
 		return;
 	callers::Texture tex(ArgSet::Valid, *c.call);
+	bool shown = ShowGreyOverlay(c);
 	for (int frame = 0; frame < 10; frame++)
 		GameFrame(f, tex.get());
 	std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -1768,17 +1790,38 @@ void OwnFramesCase(CaseContext& c)
 
 	Json::Value r;
 	r["frames"] = 20;
+	r["overlay_shown"] = shown;
 	Json::Value dump = ReadStandInDump();
 	if (!dump.isNull()) {
 		std::vector<int64_t> projections = ProjectionFrames(dump);
 		// Only the game's frames have one (its first may be lost to the session's move onto its device)
 		r["projection_layers_at_most_20"] = projections.size() <= 20;
 		r["frames_ended_at_least_80"] = dump["frames_ended"].asInt64() >= 10 + 10 + 60;
-		// The frames in the pause (the longest gap between two of the game's frames), all OpenLamina's own
-		int64_t pause = 0;
-		for (size_t i = 1; i < projections.size(); i++)
-			pause = std::max<int64_t>(pause, projections[i] - projections[i - 1] - 1);
-		r["own_frames_in_the_pause_at_least_60"] = pause >= 60;
+		r["own_frames_in_the_pause_at_least_60"] = LongestPause(projections) >= 60;
+		r["frame_order_errors"] = dump["frame_order_errors"];
+	}
+	c.Record("frames", r);
+}
+
+// The same stall with nothing of OpenLamina's own to show (expect/own_frames.json): no frames of its own, so the
+// runtime keeps the game's last frame instead of getting empty ones
+void OwnFramesNothingShownCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	for (int frame = 0; frame < 10; frame++)
+		GameFrame(f, tex.get());
+	std::this_thread::sleep_for(std::chrono::milliseconds(500));
+	for (int frame = 0; frame < 10; frame++)
+		GameFrame(f, tex.get());
+	c.core->Cleanup();
+
+	Json::Value r;
+	Json::Value dump = ReadStandInDump();
+	if (!dump.isNull()) {
+		r["own_frames_in_the_pause"] = (Json::Int64)LongestPause(ProjectionFrames(dump));
 		r["frame_order_errors"] = dump["frame_order_errors"];
 	}
 	c.Record("frames", r);
@@ -1793,6 +1836,7 @@ void OwnFramesRaceCase(CaseContext& c)
 	if (!OpenFrames(c, f))
 		return;
 	callers::Texture tex(ArgSet::Valid, *c.call);
+	ShowGreyOverlay(c);
 	std::atomic<bool> done{ false };
 	std::atomic<int> polls{ 0 };
 	std::thread reader([&] {
@@ -2105,6 +2149,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "observer", ObserverCase },
 		{ "own-frames", OwnFramesCase },
 		{ "own-frames-race", OwnFramesRaceCase },
+		{ "own-frames-nothing-shown", OwnFramesNothingShownCase },
 		{ "gpu-answers", GpuAnswersCase },
 		{ "gpu-other-adapter", GpuOtherAdapterCase },
 		{ "display-frequency", DisplayFrequencyCase },

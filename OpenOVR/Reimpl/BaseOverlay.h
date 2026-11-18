@@ -216,6 +216,9 @@ public:
 	// frame they're in has ended.
 	int _BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompositionLayerBaseHeader const* const*& result);
 
+	// Whether any overlay is shown with an image (as _BuildLayers would draw it, roughly)
+	bool _AnyVisible();
+
 	// Held while the overlays, their compositors or the keyboard are added, replaced or removed, and while a frame
 	// with their layers is built and ended (on the game's thread, or OpenLamina's own frames' thread). Holders take
 	// no other lock while holding it.
