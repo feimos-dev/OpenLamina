@@ -1953,16 +1953,23 @@ EVROverlayError BaseOverlay::GetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 	if (overlay->texture.eType == TextureType_DirectX) {
 		// A shader resource view of the owner's texture, bound on the device of pNativeTextureRef (the texture's own
 		// device without one), which ReleaseNativeOverlayHandle releases
-		auto* texture = (ID3D11Texture2D*)overlay->texture.handle;
+		// A Direct3D 10 game's texture comes as a DirectX one too, and isn't a Direct3D 11 texture
+		ID3D11Texture2D* texture = nullptr;
+		if (FAILED(((IUnknown*)overlay->texture.handle)->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&texture)) || !texture)
+			OC_UNSUPPORTED(VROverlayError_RequestFailed, "GetOverlayTexture: the overlay's texture isn't a Direct3D 11 texture");
 		ID3D11Device* device = nullptr;
 		texture->GetDevice(&device);
 		ID3D11Device* refDevice = nullptr;
-		if (pNativeTextureRef)
-			((ID3D11Resource*)pNativeTextureRef)->GetDevice(&refDevice);
+		ID3D11DeviceChild* ref = nullptr;
+		if (pNativeTextureRef && SUCCEEDED(((IUnknown*)pNativeTextureRef)->QueryInterface(__uuidof(ID3D11DeviceChild), (void**)&ref)) && ref) {
+			ref->GetDevice(&refDevice);
+			ref->Release();
+		}
 		const bool otherDevice = refDevice && refDevice != device;
 		if (refDevice)
 			refDevice->Release();
 		if (otherDevice) {
+			texture->Release();
 			device->Release();
 			OC_UNSUPPORTED(VROverlayError_RequestFailed, "GetOverlayTexture: pNativeTextureRef is on another device than the overlay's texture");
 		}
@@ -1992,6 +1999,8 @@ EVROverlayError BaseOverlay::GetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 		} else {
 			hr = device->CreateShaderResourceView(texture, nullptr, &view);
 		}
+		// The view keeps the texture
+		texture->Release();
 		device->Release();
 		if (FAILED(hr) || !view) {
 			OOVR_SOFT_ABORTF("GetOverlayTexture: no shader resource view of the overlay's texture (format %d, HRESULT 0x%08x)", (int)desc.Format, (unsigned)hr);
