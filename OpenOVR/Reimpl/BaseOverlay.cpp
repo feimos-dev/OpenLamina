@@ -25,7 +25,12 @@
 #include "Misc/Keyboard/KeyboardLayout.h"
 #include "Misc/LaserMouse.h"
 #include "Misc/OverlayMaths.h"
+#include "Misc/Process.h"
+#include "Misc/ProgramEvents.h"
+#include "Misc/RemotePointer.h"
 #include "Misc/ScopeGuard.h"
+#include "Misc/SharedStore.h"
+#include "BaseClientCore.h"
 #include "BaseInput.h"
 #include "convert.h"
 #include "generated/static_bases.gen.h"
@@ -205,8 +210,27 @@ static constexpr uint32_t kOverlayMaxNameLength = 128;
 // The overlay that has gamepad focus (SetGamepadFocusOverlay)
 static VROverlayHandle_t gamepadFocusOverlay = k_ulOverlayHandleInvalid;
 
+struct BaseOverlay::Sharing {
+	RemotePointer remote;
+	uint64_t eventCursor = 0; // the store's event ring, for the pointer's events from other programs
+	std::string appKey;
+	bool appKeyRead = false;
+	Json::Value published{ Json::arrayValue }; // the overlays as last written
+	bool wrote = false;
+	double lastTry = -1;
+};
+
 BaseOverlay::~BaseOverlay()
 {
+	// This program's overlays leave the store with it
+	if (sharing && sharing->wrote) {
+		const std::string self = std::to_string(oc_current_pid());
+		SharedStore::Get().Update(StoreDoc::Overlays, [&](Json::Value& doc) {
+			if (doc.isObject())
+				doc.removeMember(self);
+		});
+	}
+
 	// Freeing a swapchain from memory takes the session lock
 	auto session = xr_session.lock_shared();
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
@@ -398,6 +422,17 @@ bool BaseOverlay::OverlayData::ComputePlacement(vr::ETrackingUniverseOrigin trac
 }
 
 namespace {
+
+// A game (a scene session of a scene application)
+bool IsSceneApp()
+{
+	return CurrentSessionKind() == SessionKind::Scene && BaseClientCore::appType == vr::VRApplication_Scene;
+}
+
+uint32_t PidOf(const Json::Value& v)
+{
+	return v.isUInt() ? v.asUInt() : 0;
+}
 
 // The cursor: a circle on a 2 cm quad
 constexpr int kCursorPixels = 64;
@@ -655,8 +690,188 @@ public:
 };
 
 BaseOverlay::BaseOverlay()
-    : pointing(std::make_unique<Pointing>())
+    : pointing(std::make_unique<Pointing>()), sharing(std::make_unique<Sharing>())
 {
+	// Other programs' pointer events from now on
+	SharedStore::Get().PollEvents(sharing->eventCursor);
+}
+
+bool BaseOverlay::SceneAppPoints() const
+{
+	if (CurrentSessionKind() != SessionKind::Overlay)
+		return false;
+	// A running game whose lasers reach other programs' overlays (laserMouse)
+	Json::Value scene = SharedStore::Get().Read(StoreDoc::Scene);
+	const uint32_t pid = PidOf(scene["pid"]);
+	return pid && pid != oc_current_pid() && scene["points"].isBool() && scene["points"].asBool()
+	    && SharedStore::IsSameProcessAlive(pid, scene["start"].isUInt64() ? scene["start"].asUInt64() : 0);
+}
+
+void BaseOverlay::TakeRemotePointerEvents()
+{
+	const uint32_t self = oc_current_pid();
+	for (const StoreEvent& s : SharedStore::Get().PollEvents(sharing->eventCursor)) {
+		if (s.eventType != OcEvent_RemotePointer)
+			continue;
+		const RemotePointerEvent r = UnpackRemotePointer(s.data);
+		OverlayData* o = (OverlayData*)(uintptr_t)r.handle;
+		if (r.targetPid != self || !validOverlays.count(o))
+			continue;
+		VREvent_t e{};
+		e.eventType = r.eventType;
+		e.trackedDeviceIndex = r.device;
+		if (r.eventType == VREvent_ScrollDiscrete || r.eventType == VREvent_ScrollSmooth) {
+			e.data.scroll.xdelta = r.x;
+			e.data.scroll.ydelta = r.y;
+		} else {
+			// Across and up the overlay, in its own mouse units
+			e.data.mouse.x = r.x * o->mouseScale.v[0];
+			e.data.mouse.y = r.y * o->mouseScale.v[1];
+			e.data.mouse.button = r.button;
+		}
+		o->QueueEvent(e);
+	}
+}
+
+void BaseOverlay::_PublishOverlays()
+{
+	if (!IsHelperSession() && !oovr_global_configuration.LaserMouse())
+		return;
+	Sharing& sh = *sharing;
+	const double now = NowSeconds();
+	if (sh.lastTry >= 0 && now - sh.lastTry < 0.1)
+		return;
+	sh.lastTry = now;
+	if (!sh.appKeyRead) {
+		sh.appKey = CurrentProcessAppKey();
+		sh.appKeyRead = true;
+	}
+
+	// Rounded (a millimetre, a ten-thousandth), so that a still overlay isn't written again for noise
+	auto round = [](float v, float step) { return (double)std::lround(v / step) * step; };
+	// The devices an overlay can be held on, by role, and their poses now (standing)
+	auto roleOf = [](vr::TrackedDeviceIndex_t index) -> const char* {
+		if (index == vr::k_unTrackedDeviceIndex_Hmd)
+			return "hmd";
+		for (int hand = 0; hand < 2; hand++) {
+			std::shared_ptr<ITrackedDevice> dev = BackendManager::Instance().GetDeviceByHand((ITrackedDevice::TrackedDeviceType)hand);
+			if (dev && dev->DeviceIndex() == index)
+				return hand == 0 ? "left" : "right";
+		}
+		return nullptr;
+	};
+	Json::Value list(Json::arrayValue);
+	{
+		auto session = xr_session.lock_shared(); // placing an overlay on a device reads its pose
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		for (const auto& kv : overlays) {
+			const OverlayData* o = kv.second;
+			if (!o)
+				continue;
+			overlay_maths::Placement placement{};
+			const bool placed = o->ComputePlacement(vr::TrackingUniverseStanding, validOverlays, placement);
+			Json::Value e;
+			e["handle"] = (Json::UInt64)(uintptr_t)o;
+			e["key"] = o->key;
+			e["name"] = o->name;
+			// Held as its owner holds it: on the HMD or a hand (through its parent overlays), in that device's space, so
+			// that it doesn't change as the device moves, and the game places it with its own poses of that frame
+			const char* role = nullptr;
+			XrPosef pose = placement.pose;
+			if (placed) {
+				const OverlayData* root = o;
+				for (int depth = 0; depth < 16 && root->overlayRelative && validOverlays.count((OverlayData*)(uintptr_t)root->relativeParent); depth++)
+					root = (const OverlayData*)(uintptr_t)root->relativeParent;
+				const bool onDevice = !root->overlayRelative
+				    && (root->transformType == VROverlayTransform_TrackedDeviceRelative || root->transformType == VROverlayTransform_TrackedComponent);
+				const vr::TrackedDeviceIndex_t device = root->transformType == VROverlayTransform_TrackedComponent ? root->componentDevice
+				                                                                                                  : root->transformData.deviceRelative.device;
+				std::shared_ptr<ITrackedDevice> dev = onDevice ? BackendManager::Instance().GetDevice(device) : nullptr;
+				role = dev ? roleOf(device) : nullptr;
+				TrackedDevicePose_t devicePose{};
+				if (role)
+					dev->GetPose(vr::TrackingUniverseStanding, &devicePose, ETrackingStateType::TrackingStateType_Rendering);
+				if (role && devicePose.bPoseIsValid) {
+					const glm::mat4 m = S2G_m34(devicePose.mDeviceToAbsoluteTracking);
+					const XrPosef deviceInStanding{ G2X_quat(glm::normalize(glm::quat_cast(glm::mat3(m)))), G2X_v3f(glm::vec3(m[3])) };
+					pose = overlay_maths::ComposePoses(overlay_maths::InversePose(deviceInStanding), placement.pose);
+				} else {
+					role = nullptr;
+				}
+			}
+			e["pose"]["p"] = Json::Value(Json::arrayValue);
+			e["pose"]["q"] = Json::Value(Json::arrayValue);
+			for (float v : { pose.position.x, pose.position.y, pose.position.z })
+				e["pose"]["p"].append(placed ? round(v, 0.001f) : 0.0);
+			for (float v : { pose.orientation.x, pose.orientation.y, pose.orientation.z, pose.orientation.w })
+				e["pose"]["q"].append(placed ? round(v, 0.0001f) : 0.0);
+			e["space"] = "standing";
+			if (role)
+				e["relative_to"] = role;
+			// Its intersection mask, in units of its width and height (its mouse scale's)
+			const float sx = o->mouseScale.v[0] > 0 ? o->mouseScale.v[0] : 1.0f, sy = o->mouseScale.v[1] > 0 ? o->mouseScale.v[1] : 1.0f;
+			for (const OOVR_VROverlayIntersectionMaskPrimitive_t& m : o->intersectionMask) {
+				Json::Value shape(Json::arrayValue);
+				if (m.m_nPrimitiveType == OverlayIntersectionPrimitiveType_Rectangle) {
+					const OOVR_IntersectionMaskRectangle_t& r = m.m_Primitive.m_Rectangle;
+					for (float v : { r.m_flTopLeftX / sx, r.m_flTopLeftY / sy, r.m_flWidth / sx, r.m_flHeight / sy })
+						shape.append(round(v, 0.0001f));
+					Json::Value item;
+					item["rect"] = shape;
+					e["mask"].append(item);
+				} else if (m.m_nPrimitiveType == OverlayIntersectionPrimitiveType_Circle) {
+					const OOVR_IntersectionMaskCircle_t& c = m.m_Primitive.m_Circle;
+					for (float v : { c.m_flCenterX / sx, c.m_flCenterY / sy, c.m_flRadius / sx })
+						shape.append(round(v, 0.0001f));
+					Json::Value item;
+					item["circle"] = shape;
+					e["mask"].append(item);
+				}
+			}
+			e["width"] = placed ? round(placement.width, 0.001f) : 0.0;
+			e["height"] = placed ? round(placement.height, 0.001f) : 0.0;
+			e["curvature"] = placed ? round(placement.curvature, 0.0001f) : 0.0;
+			e["input_method"] = (int)o->inputMethod;
+			e["flags"] = (Json::UInt64)o->flags;
+			e["sort_order"] = o->sortOrder;
+			e["visible"] = placed && o->visible && (o->texture.handle != nullptr || !o->rawImage.Empty());
+			e["dashboard"] = false;
+			list.append(e);
+		}
+	}
+
+	// Whether an ended program's entry is left to drop (a pid now another process's is one)
+	const uint32_t self = oc_current_pid();
+	auto ended = [self](const std::string& name, const Json::Value& entry) {
+		const uint32_t pid = (uint32_t)std::strtoul(name.c_str(), nullptr, 10);
+		const uint64_t start = entry["start"].isUInt64() ? entry["start"].asUInt64() : 0;
+		return pid != self && (pid == 0 || !SharedStore::IsSameProcessAlive(pid, start));
+	};
+	bool anyEnded = false;
+	Json::Value doc = SharedStore::Get().Read(StoreDoc::Overlays);
+	if (doc.isObject()) {
+		for (const std::string& name : doc.getMemberNames())
+			anyEnded = anyEnded || ended(name, doc[name]);
+	}
+	if (sh.wrote && list == sh.published && !anyEnded)
+		return;
+
+	const double wallClock = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
+	SharedStore::Get().Update(StoreDoc::Overlays, [&](Json::Value& d) {
+		if (!d.isObject())
+			d = Json::Value(Json::objectValue);
+		for (const std::string& name : d.getMemberNames())
+			if (ended(name, d[name]))
+				d.removeMember(name);
+		Json::Value& mine = d[std::to_string(self)];
+		mine = Json::Value(Json::objectValue);
+		mine["app"] = sh.appKey;
+		mine["start"] = (Json::UInt64)SharedStore::OwnStartTime();
+		mine["updated"] = wallClock;
+		mine["overlays"] = list;
+	});
+	sh.published = list;
+	sh.wrote = true;
 }
 
 void BaseOverlay::_UpdatePointer()
@@ -668,19 +883,28 @@ void BaseOverlay::_UpdatePointer()
 	// Overlays that take mouse input are pointed at only with the laserMouse key (the keyboard and the message box
 	// have their own); the game's own HandleControllerOverlayInteractionAsMouse always
 	const bool laserMouse = oovr_global_configuration.LaserMouse();
+	// An overlay application leaves the pointing to a running scene app's instance: on runtimes that focus every
+	// session at once (Monado), both would otherwise act on the same click
+	// The program's own keyboard is always its own to point at: the game never sees it
+	const bool pointHere = !SceneAppPoints();
+	// The scene app points at other programs' mouse overlays too (laserMouse)
+	const bool pointRemote = laserMouse && IsSceneApp();
+	Json::Value others = pointRemote ? SharedStore::Get().Read(StoreDoc::Overlays) : Json::Value();
+	const bool remoteWanted = pointRemote && others.isObject() && others.size() > (others.isMember(std::to_string(oc_current_pid())) ? 1u : 0u);
 
 	bool wanted = false;
 	{
 		std::lock_guard<std::recursive_mutex> lock(layersLock);
-		wanted = keyboard != nullptr;
+		bool overlaysWanted = remoteWanted;
 		for (const auto& kv : overlays) {
 			const OverlayData* o = kv.second;
 			if (o && o->visible && ((laserMouse && o->inputMethod == VROverlayInputMethod_Mouse) || o->asMouseUpdates > 0)
 			    && (o->texture.handle != nullptr || !o->rawImage.Empty())) {
-				wanted = true;
+				overlaysWanted = true;
 				break;
 			}
 		}
+		wanted = keyboard != nullptr || (overlaysWanted && pointHere);
 		if (!wanted && !pointing->running)
 			return;
 	}
@@ -691,6 +915,7 @@ void BaseOverlay::_UpdatePointer()
 
 	std::unique_ptr<CpuSwapchain> dropped; // a closed keyboard's, destroyed once the lock is let go
 	bool keyboardClosed = false;
+	std::vector<StoreEvent> remoteEvents; // posted once the lock is let go
 	{
 		std::lock_guard<std::recursive_mutex> lock(layersLock);
 		Pointing& p = *pointing;
@@ -713,7 +938,7 @@ void BaseOverlay::_UpdatePointer()
 				t.sortOrder = INT_MAX; // on top of every overlay
 				targets.push_back(t);
 			}
-			if (!(keyboard && p.keyboardModal)) {
+			if (!(keyboard && p.keyboardModal) && pointHere) {
 				for (const auto& kv : overlays) {
 					OverlayData* o = kv.second;
 					if (!o || !o->visible || !((laserMouse && o->inputMethod == VROverlayInputMethod_Mouse) || o->asMouseUpdates > 0))
@@ -740,8 +965,33 @@ void BaseOverlay::_UpdatePointer()
 		// Stopped (nothing to point at, or the session lost focus): the update without rays lets go of a click and
 		// the focus
 		std::vector<PointerEvent> events;
-		p.mouse.Update(rays, targets, NowSeconds(), events);
+		const double now = NowSeconds();
+		p.mouse.Update(rays, targets, now, events);
 		p.running = wanted && focused;
+
+		// Other programs' overlays: not while the keyboard is up, which takes the lasers
+		if (pointRemote) {
+			sharing->remote.SetFrameOrigin(space, SeatedInStanding());
+			// The HMD and the hands now, for overlays other programs hold on them
+			std::array<std::optional<XrPosef>, 3> devices;
+			std::shared_ptr<ITrackedDevice> held[3] = { BackendManager::Instance().GetDevice(vr::k_unTrackedDeviceIndex_Hmd),
+				BackendManager::Instance().GetDeviceByHand(ITrackedDevice::HAND_LEFT), BackendManager::Instance().GetDeviceByHand(ITrackedDevice::HAND_RIGHT) };
+			for (int i = 0; i < 3; i++) {
+				TrackedDevicePose_t pose{};
+				if (held[i])
+					held[i]->GetPose(vr::TrackingUniverseStanding, &pose, ETrackingStateType::TrackingStateType_Rendering);
+				if (pose.bPoseIsValid) {
+					const glm::mat4 m = S2G_m34(pose.mDeviceToAbsoluteTracking);
+					devices[i] = XrPosef{ G2X_quat(glm::normalize(glm::quat_cast(glm::mat3(m)))), G2X_v3f(glm::vec3(m[3])) };
+				}
+			}
+			sharing->remote.SetDevicePoses(devices);
+			const bool remoteRays = wanted && focused && !keyboard;
+			std::array<PointerRay, 2> none{};
+			none[0].hand = 0;
+			none[1].hand = 1;
+			sharing->remote.Update(remoteRays ? rays : none, others, oc_current_pid(), now, remoteEvents);
+		}
 		for (const PointerEvent& e : events) {
 			if (keyboard && e.handle == keyboard->Handle())
 				continue;
@@ -792,9 +1042,14 @@ void BaseOverlay::_UpdatePointer()
 			} else if (!(on->flags & kOverlayFlagHideLaserIntersection)) {
 				p.ShowCursor(point);
 			}
+		} else if (p.running && pointRemote) {
+			// On another program's overlay
+			if (std::optional<XrPosef> point = sharing->remote.CursorPoint())
+				p.ShowCursor(*point);
 		}
 	}
 	dropped.reset();
+	PostRemotePointerEvents(remoteEvents);
 	if (keyboardClosed) {
 		if (BaseSystem* system = GetUnsafeBaseSystem())
 			system->_BlockInputsUntilReleased();
@@ -1531,8 +1786,9 @@ bool BaseOverlay::PollNextOverlayEvent(VROverlayHandle_t ulOverlayHandle, VREven
 
 	memset(pEvent, 0, eventSize);
 
-	// The lasers and the keyboard queue events on the game's thread
+	// The lasers and the keyboard queue events on the game's thread, and another program's pointer through the store
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	TakeRemotePointerEvents();
 	if (overlay->eventQueue.empty())
 		return false;
 

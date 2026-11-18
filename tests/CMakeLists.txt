@@ -118,6 +118,7 @@ add_executable(oc_unit_tests
 	unit/OwnFrameLoopTests.cpp
 	unit/OverlayMathsTests.cpp
 	unit/LaserMouseTests.cpp
+	unit/RemotePointerTests.cpp
 	unit/KeyboardTests.cpp
 	unit/RenderModelTests.cpp
 	${OC_TEST_RESOURCES}

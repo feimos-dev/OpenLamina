@@ -188,6 +188,27 @@ TEST_CASE("Store_process_alive")
 	CHECK_FALSE(SharedStore::IsProcessAlive(0));
 }
 
+TEST_CASE("Store_process_start_tells_a_reused_pid")
+{
+	const uint32_t self = oc_current_pid();
+	const uint64_t start = SharedStore::OwnStartTime();
+	REQUIRE(start != 0);
+	CHECK(SharedStore::ProcessStartTime(self) == start);
+	CHECK(SharedStore::IsSameProcessAlive(self, start));
+	// Another process that had this pid once
+	CHECK(!SharedStore::IsSameProcessAlive(self, start + 1));
+	// An entry written without a start time: any process with the pid
+	CHECK(SharedStore::IsSameProcessAlive(self, 0));
+	CHECK(SharedStore::ProcessStartTime(0) == 0);
+
+	Json::Value doc;
+	doc[std::to_string(self)]["start"] = (Json::UInt64)start;
+	CHECK(!SharedStore::OtherLiveProgram(doc, self));
+	doc["1234567"]["start"] = (Json::UInt64)1; // no such process
+	CHECK(!SharedStore::OtherLiveProgram(doc, self));
+	CHECK(SharedStore::OtherLiveProgram(doc, self + 1)); // this process, seen from another
+}
+
 TEST_CASE("Store_migrates_the_old_folders_documents_once")
 {
 	TempDir t;

@@ -204,9 +204,14 @@ private:
 	// destroyed once the lock is let go.
 	std::unique_ptr<CpuSwapchain> DropKeyboard();
 
-	// Images from memory whose swapchains went with the last session, put into this one: on the program's thread, in
-	// an overlay application on its own device (whose own frames don't fill swapchains). With layersLock held.
-	void UploadLostImages();
+	// Between programs: this program's overlays in the store, other programs' pointed at from here, and the pointer's
+	// events from other programs (BaseOverlay.cpp)
+	struct Sharing;
+	std::unique_ptr<Sharing> sharing;
+	// Other programs' pointer events for this program's overlays, queued on them; with layersLock held
+	void TakeRemotePointerEvents();
+	// An overlay application while a scene app is running: the scene app's instance points, and this one doesn't
+	bool SceneAppPoints() const;
 
 public:
 	BaseOverlay();
@@ -226,6 +231,18 @@ public:
 	// keyboard, while the session is focused: their events, the cursor, and the keyboard's typing and drawing. On the
 	// game's thread before its frame's layers are built (it fills swapchains from memory), not holding _LayersLock().
 	void _UpdatePointer();
+
+	// Whether the keyboard is shown
+	bool _KeyboardShown()
+	{
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		return keyboard != nullptr;
+	}
+
+	// This program's overlays in the store's Overlays document (other programs point at them), at most ten times a second
+	// and when they changed, dropping the entries of programs that have ended: in an overlay or background application,
+	// or with laserMouse. Not holding _LayersLock().
+	void _PublishOverlays();
 
 	// Held while the overlays, their compositors or the keyboard are added, replaced or removed, and while a frame
 	// with their layers is built and ended (on the game's thread, or OpenLamina's own frames' thread). Taken after the

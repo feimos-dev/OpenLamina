@@ -197,6 +197,19 @@ jobs:
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases helper-apps-unsupported --expect tests/conformance/expect/helper_apps_unsupported.json --out conformance/helper-apps-unsupported
           if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases helper-apps-unsupported --script tests/conformance/scripts/helper_apps_fail_instance.json --expect tests/conformance/expect/helper_apps_unsupported.json --out conformance/helper-apps-runtime-fails
+          if ($LASTEXITCODE) { $failed++ }
+          # An overlay app's Vulkan and OpenGL textures through D3D11 (they skip without those drivers)
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases overlay-app-vk,overlay-app-gl --script tests/conformance/scripts/helper_apps.json --expect tests/conformance/expect/helper_apps_gl_vk.json --allow-skip "overlay-app-(vk|gl)" --out conformance/helper-apps-gl-vk
+          if ($LASTEXITCODE) { $failed++ }
+          # Every interface as an overlay and as a background application on their sessions: nothing crashes, ends or hangs
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --apptypes 2,3 --script tests/conformance/scripts/helper_apps.json --out conformance/helper-apps-interfaces
+          if ($LASTEXITCODE) { $failed++ }
+          # The game's pointer on an overlay app's overlay, and an overlay app that ends without shutting down (two programs each)
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases remote-pointer,remote-pointer-overlay --jobs 2 --script tests/conformance/scripts/remote_pointer.json --ini tests/conformance/ini/laser_mouse.ini --expect tests/conformance/expect/remote_pointer.json --out conformance/remote-pointer
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases remote-pointer-peer-dies,remote-pointer-dying-overlay --jobs 2 --script tests/conformance/scripts/remote_pointer.json --ini tests/conformance/ini/laser_mouse.ini --expect tests/conformance/expect/remote_pointer_peer_dies.json --out conformance/remote-pointer-peer-dies
+          if ($LASTEXITCODE) { $failed++ }
           # Skyboxes: equirect layers in OpenLamina's own frames, and the old quad where the runtime has none
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases skybox-1,skybox-2,skybox-6 --script tests/conformance/scripts/skybox.json --ini tests/conformance/ini/own_frames.ini --expect tests/conformance/expect/skybox.json --out conformance/skybox
           if ($LASTEXITCODE) { $failed++ }

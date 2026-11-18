@@ -63,6 +63,17 @@ public:
 
 	static bool IsProcessAlive(uint32_t pid);
 
+	/** When a process started: a number that differs between two processes that had the same pid (pids are reused),
+	 * 0 if it can't be told (the process isn't running, or isn't ours to ask) */
+	static uint64_t ProcessStartTime(uint32_t pid);
+	/** This process's ProcessStartTime */
+	static uint64_t OwnStartTime();
+	/** Whether pid is running and is the process that started at start; with start 0 (an entry written without it),
+	 * whether any process with that pid is running */
+	static bool IsSameProcessAlive(uint32_t pid, uint64_t start);
+	/** Whether a program other than self has an entry in the Overlays document and is still running */
+	static bool OtherLiveProgram(const Json::Value& overlaysDoc, uint32_t self);
+
 	static constexpr uint32_t kFormat = 1;
 	static constexpr uint32_t kRingSize = 256;
 

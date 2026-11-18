@@ -237,6 +237,13 @@ private:
 	// Held through each of its passes
 	std::mutex helperPassLock;
 
+	// The overlays' instance, made for a game without overlays of its own whose lasers point at other programs'
+	// (laserMouse), until OpenLamina shuts down
+	std::shared_ptr<class BaseOverlay> keptOverlay;
+	std::chrono::steady_clock::time_point lastPointerCheck{};
+	// Whether another running program has overlays in the store for the game's lasers; asked at most once a second
+	bool OtherProgramsToPointAt();
+
 	// The views for the two main eye layers
 	XrCompositionLayerProjectionView projectionViews[XruEyeCount];
 

@@ -1,0 +1,47 @@
+{
+  "#": "The game's right laser on the overlay app's mouse overlay (1 m at (0, 1.5, -2)), 0.25 m above its centre: the aim pose at (0, 1.75, -1) looking along -Z, the trigger held from frame 150 to 156; with overlay sessions for the overlay app",
+  "extensions": [
+    "XR_KHR_D3D11_enable",
+    "XR_EXTX_overlay",
+    "XR_MND_headless"
+  ],
+  "interaction_profile": "/interaction_profiles/valve/index_controller",
+  "poses": {
+    "/user/hand/right/input/aim/pose": {
+      "p": [
+        0,
+        1.75,
+        -1
+      ],
+      "q": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "from_frame": 0
+    }
+  },
+  "inputs": [
+    {
+      "frame": 150,
+      "path": "/user/hand/right/input/trigger/click",
+      "value": 1.0
+    },
+    {
+      "frame": 150,
+      "path": "/user/hand/right/input/trigger/value",
+      "value": 1.0
+    },
+    {
+      "frame": 156,
+      "path": "/user/hand/right/input/trigger/click",
+      "value": 0.0
+    },
+    {
+      "frame": 156,
+      "path": "/user/hand/right/input/trigger/value",
+      "value": 0.0
+    }
+  ]
+}

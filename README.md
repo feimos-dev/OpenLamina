@@ -298,7 +298,7 @@ The available options are:
 * `keyboardLayout` - `us` or `uk`, default by the user's locale (`uk` for en-GB, `us` otherwise).
 	* The layout of the keyboard games show to type text on, with the controllers' lasers.
 * `laserMouse` - boolean, default `false`.
-	* The controllers point at overlays that take mouse input (`VROverlayInputMethod_Mouse`) as a mouse: focus and mouse events, clicks with the trigger, a cursor where the laser meets the overlay, and laser haptics. Without it, such an overlay gets no events from the controllers. The keyboard and message boxes are pointed at with the lasers regardless (behind `keyboard` and `ownFrames`).
+	* The controllers point at overlays that take mouse input (`VROverlayInputMethod_Mouse`) as a mouse: focus and mouse events, clicks with the trigger, a cursor where the laser meets the overlay, and laser haptics. Without it, such an overlay gets no events from the controllers. The keyboard and message boxes are pointed at with the lasers regardless (behind `keyboard` and `ownFrames`). The game's lasers also reach the mouse overlays of overlay applications running beside it (`helperApps`), which then don't point at them themselves (their own keyboard they still do). Where a game's own mouse overlay and another program's are both under the laser, both get the click.
 * `steamvrRenderModels` - boolean, default `false`.
 	* Controller and tracker models from the user's SteamVR install, with their moving parts. Without it, OpenLamina's built-in hands and tracker.
 * `helperApps` - boolean, default `true`.

@@ -35,6 +35,7 @@ using glm::vec4;
 #include "Drivers/Backend.h"
 #include "Misc/Process.h"
 #include "Misc/ScopeGuard.h"
+#include "Misc/SharedStore.h"
 
 using namespace vr;
 using namespace IVRCompositor_022;
@@ -252,6 +253,37 @@ std::unique_ptr<Compositor> BaseCompositor::CreateCompositorAPI(const vr::Textur
 	return comp;
 }
 
+// Whether another OpenLamina program than this one is running and has put its overlays in the store
+static bool OtherProgramsAround()
+{
+	return SharedStore::OtherLiveProgram(SharedStore::Get().Read(StoreDoc::Overlays), oc_current_pid());
+}
+
+// The scene app's frame statistics in the Scene document, for other programs' GetCumulativeStats: at most once a
+// second, and only while another OpenLamina program is around to read them
+static void PublishSceneStats()
+{
+	// Called for each eye, maybe from two threads: the compare-exchange lets one of them through each second
+	static std::atomic<int64_t> lastMs{ 0 };
+	const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+	int64_t last = lastMs.load();
+	if (BaseClientCore::appType != vr::VRApplication_Scene || (last != 0 && now - last < 1000) || !lastMs.compare_exchange_strong(last, now))
+		return;
+	if (!OtherProgramsAround())
+		return;
+	OOVR_Compositor_CumulativeStats stats{};
+	FrameStats::Get().Cumulative(oc_current_pid(), &stats, sizeof(stats));
+	const uint32_t self = oc_current_pid();
+	SharedStore::Get().Update(StoreDoc::Scene, [&](Json::Value& scene) {
+		// Only while it's this program's
+		if (!scene.isObject() || scene["pid"].asUInt() != self)
+			return;
+		scene["frame_stats"]["presents"] = stats.m_nNumFramePresents;
+		scene["frame_stats"]["dropped"] = stats.m_nNumDroppedFrames;
+		scene["frame_stats"]["reprojected"] = stats.m_nNumReprojectedFrames;
+	});
+}
+
 ovr_enum_t BaseCompositor::Submit(EVREye eye, const Texture_t* texture, const VRTextureBounds_t* bounds, EVRSubmitFlags submitFlags)
 {
 	if (BaseClientCore::appType == vr::VRApplication_Background || IsHelperSession()) {
@@ -312,6 +344,7 @@ ovr_enum_t BaseCompositor::Submit(EVREye eye, const Texture_t* texture, const VR
 			rightEyeSubmitted = false;
 		}
 	}
+	PublishSceneStats();
 
 	return result;
 }
@@ -406,6 +439,20 @@ void BaseCompositor::GetCumulativeStats(OOVR_Compositor_CumulativeStats* pStats,
 {
 	if (!pStats || nStatsSizeInBytes == 0)
 		return;
+	if (IsHelperSession()) {
+		// An overlay or background application's: the scene app's frames, which it put in the store
+		Json::Value scene = SharedStore::Get().Read(StoreDoc::Scene);
+		OOVR_Compositor_CumulativeStats stats{};
+		const uint32_t pid = scene["pid"].isUInt() ? scene["pid"].asUInt() : 0;
+		if (pid && SharedStore::IsSameProcessAlive(pid, scene["start"].isUInt64() ? scene["start"].asUInt64() : 0)) {
+			stats.m_nPid = pid;
+			stats.m_nNumFramePresents = scene["frame_stats"]["presents"].asUInt();
+			stats.m_nNumDroppedFrames = scene["frame_stats"]["dropped"].asUInt();
+			stats.m_nNumReprojectedFrames = scene["frame_stats"]["reprojected"].asUInt();
+		}
+		memcpy(pStats, &stats, std::min<size_t>(nStatsSizeInBytes, sizeof(stats)));
+		return;
+	}
 	FrameStats::Get().Cumulative(oc_current_pid(), pStats, nStatsSizeInBytes);
 }
 

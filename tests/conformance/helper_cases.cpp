@@ -11,9 +11,24 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
+#include <cstdlib>
+#include <fstream>
 #include <set>
 #include <thread>
 #include <vector>
+
+#ifdef _WIN32
+#ifndef WIN32_LEAN_AND_MEAN
+#define WIN32_LEAN_AND_MEAN
+#endif
+#ifndef NOMINMAX
+#define NOMINMAX
+#endif
+#include <windows.h>
+#else
+#include <unistd.h>
+#endif
 
 using namespace conformance;
 
@@ -54,6 +69,250 @@ Json::Value DumpSummary()
 	for (const std::string& t : types)
 		r["layer_types"].append(t);
 	return r;
+}
+
+uint32_t OwnPid()
+{
+#ifdef _WIN32
+	return (uint32_t)GetCurrentProcessId();
+#else
+	return (uint32_t)getpid();
+#endif
+}
+
+// A document of the store the case runs with (OC_STORE_DIR), as OpenLamina wrote it: its data, null without one
+Json::Value StoreDocument(const char* name)
+{
+	const char* dir = std::getenv("OC_STORE_DIR");
+	if (!dir || !*dir)
+		return Json::Value();
+	std::ifstream in(std::string(dir) + "/" + name + ".json", std::ios::binary);
+	Json::Value root;
+	Json::CharReaderBuilder rb;
+	std::string errors;
+	if (!in || !Json::parseFromStream(rb, in, &root, &errors))
+		return Json::Value();
+	return root["data"];
+}
+
+// Whether the Overlays document has an entry of another program than this one (with an overlay, if withOverlay)
+bool OtherProgramInStore(bool withOverlay)
+{
+	Json::Value doc = StoreDocument("overlays");
+	if (!doc.isObject())
+		return false;
+	for (const std::string& name : doc.getMemberNames())
+		if (name != std::to_string(OwnPid()) && (!withOverlay || doc[name]["overlays"].size() > 0))
+			return true;
+	return false;
+}
+
+// Waits, at most limit, until the Overlays document has another program's overlay
+bool WaitForOtherProgram(std::chrono::milliseconds limit)
+{
+	auto until = std::chrono::steady_clock::now() + limit;
+	while (std::chrono::steady_clock::now() < until) {
+		if (OtherProgramInStore(true))
+			return true;
+		std::this_thread::sleep_for(std::chrono::milliseconds(20));
+	}
+	return false;
+}
+
+std::string EventName(uint32_t type)
+{
+	switch (type) {
+	case vr::VREvent_FocusEnter:
+		return "enter";
+	case vr::VREvent_FocusLeave:
+		return "leave";
+	case vr::VREvent_MouseMove:
+		return "move";
+	case vr::VREvent_MouseButtonDown:
+		return "down";
+	case vr::VREvent_MouseButtonUp:
+		return "up";
+	default:
+		return std::to_string(type);
+	}
+}
+
+struct SceneApp {
+	vr::IVRCompositor_029::IVRCompositor* comp = nullptr;
+	vr::IVRSystem_022::IVRSystem* sys = nullptr;
+};
+
+bool OpenSceneApp(CaseContext& c, SceneApp& app)
+{
+	if (c.core->Init(vr::VRApplication_Scene, nullptr) != vr::VRInitError_None) {
+		c.Record("Init failed");
+		return false;
+	}
+	app.comp = Interface<vr::IVRCompositor_029::IVRCompositor>(c, "IVRCompositor_029");
+	app.sys = Interface<vr::IVRSystem_022::IVRSystem>(c, "IVRSystem_022");
+	if (!app.comp || !app.sys) {
+		c.Record("no compositor or system");
+		c.core->Cleanup();
+		return false;
+	}
+	return true;
+}
+
+// One of the game's frames, reading the old input (which loads the actions the lasers read)
+void SceneFrame(SceneApp& app, const vr::Texture_t* tex)
+{
+	vr::TrackedDevicePose_t poses[16];
+	app.comp->WaitGetPoses(poses, 16, nullptr, 0);
+	vr::VRControllerState_t state{};
+	app.sys->GetControllerState(2, &state, sizeof(state));
+	app.comp->Submit(vr::Eye_Left, tex, nullptr, vr::Submit_Default);
+	app.comp->Submit(vr::Eye_Right, tex, nullptr, vr::Submit_Default);
+}
+
+// An overlay application's mouse overlay, 1 m at (0, 1.5, -2), 200 x 100 in mouse units, from memory
+vr::VROverlayHandle_t MouseOverlay(vr::IVROverlay_028::IVROverlay* ov, Json::Value& r)
+{
+	using namespace vr::IVROverlay_028;
+	vr::VROverlayHandle_t h = vr::k_ulOverlayHandleInvalid;
+	r["create"] = (int)ov->CreateOverlay("oc.helper.mouse", "Mouse", &h);
+	std::vector<uint8_t> grey(64 * 64 * 4, 0x80);
+	r["raw"] = (int)ov->SetOverlayRaw(h, grey.data(), 64, 64, 4);
+	ov->SetOverlayWidthInMeters(h, 1);
+	vr::HmdMatrix34_t m = At(0, 1.5f, -2);
+	ov->SetOverlayTransformAbsolute(h, vr::TrackingUniverseStanding, &m);
+	ov->SetOverlayInputMethod(h, VROverlayInputMethod_Mouse);
+	vr::HmdVector2_t scale{ { 200, 100 } };
+	ov->SetOverlayMouseScale(h, &scale);
+	r["show"] = (int)ov->ShowOverlay(h);
+	return h;
+}
+
+// The game's side of remote-pointer (scripts/remote_pointer.json, with laserMouse): its right laser points at the
+// overlay app's overlay, 0.25 m above its centre, and clicks at frame 150 of 300, counted once the overlay app's overlay
+// is in the store
+void RemotePointerSceneCase(CaseContext& c)
+{
+	SceneApp app;
+	if (!OpenSceneApp(c, app))
+		return;
+	Json::Value r;
+	r["saw_overlay_app"] = WaitForOtherProgram(std::chrono::seconds(5));
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	for (int frame = 1; frame <= 300; frame++)
+		SceneFrame(app, tex.get());
+	c.core->Cleanup();
+	Json::Value dump = DumpSummary();
+	r["frame_order_errors"] = dump["frame_order_errors"];
+	c.Record("frames", r);
+}
+
+// The overlay app's side of remote-pointer: its mouse overlay gets the game's pointer, through the store
+void RemotePointerOverlayCase(CaseContext& c)
+{
+	using namespace vr::IVROverlay_028;
+	Json::Value r;
+	r["init"] = (int)c.core->Init(vr::VRApplication_Overlay, nullptr);
+	auto* ov = r["init"].asInt() == vr::VRInitError_None ? Interface<IVROverlay>(c, "IVROverlay_028") : nullptr;
+	if (!ov) {
+		c.Record("events", r);
+		if (r["init"].asInt() == vr::VRInitError_None)
+			c.core->Cleanup();
+		return;
+	}
+	vr::VROverlayHandle_t h = MouseOverlay(ov, r);
+	std::set<std::string> seen;
+	int downs = 0, ups = 0;
+	Json::Value down;
+	// At most 10 s; done a little after the button comes up
+	const auto start = std::chrono::steady_clock::now();
+	auto doneAt = start + std::chrono::seconds(10);
+	bool upSeen = false;
+	while (std::chrono::steady_clock::now() < doneAt) {
+		vr::VREvent_t ev{};
+		while (ov->PollNextOverlayEvent(h, &ev, sizeof(ev))) {
+			seen.insert(EventName(ev.eventType));
+			downs += ev.eventType == vr::VREvent_MouseButtonDown;
+			ups += ev.eventType == vr::VREvent_MouseButtonUp;
+			if (ev.eventType == vr::VREvent_MouseButtonDown && down.isNull()) {
+				down["x"] = std::round(ev.data.mouse.x);
+				down["y"] = std::round(ev.data.mouse.y);
+				down["button"] = ev.data.mouse.button;
+			}
+			if (ev.eventType == vr::VREvent_MouseButtonUp && !upSeen) {
+				upSeen = true;
+				doneAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
+			}
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	r["move"] = seen.count("move") > 0;
+	r["down"] = down;
+	r["up"] = upSeen;
+	// One click, the game's alone (the overlay app doesn't point while the game does)
+	r["downs"] = downs;
+	r["ups"] = ups;
+	ov->DestroyOverlay(h);
+	c.core->Cleanup();
+	Json::Value dump = DumpSummary();
+	r["frame_order_errors"] = dump["frame_order_errors"];
+	c.Record("events", r);
+}
+
+// The game's side of remote-pointer-peer-dies (with laserMouse): a game with IVROverlay runs 60 frames once the
+// overlay app's overlay is in the store, while the overlay app ends at its 20th frame's time without shutting down.
+// The game carries on, and its next write drops the ended program's entry.
+void RemotePointerPeerDiesCase(CaseContext& c)
+{
+	SceneApp app;
+	if (!OpenSceneApp(c, app))
+		return;
+	Json::Value r;
+	r["overlay_interface"] = Interface<vr::IVROverlay_028::IVROverlay>(c, "IVROverlay_028") != nullptr;
+	r["saw_overlay_app"] = WaitForOtherProgram(std::chrono::seconds(5));
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	int frames = 0;
+	for (int frame = 1; frame <= 60; frame++, frames++)
+		SceneFrame(app, tex.get());
+	// The entry goes at the game's next write after the overlay app has ended: a few more frames, at most 2 s
+	auto until = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+	while (OtherProgramInStore(false) && std::chrono::steady_clock::now() < until)
+		SceneFrame(app, tex.get());
+	r["frames"] = frames;
+	r["ended_program_left_in_store"] = OtherProgramInStore(false);
+	c.core->Cleanup();
+	c.Record("frames", r);
+}
+
+// The overlay app's side of remote-pointer-peer-dies: once its overlay is in the store, it ends 20 frames' time (at
+// 90 Hz) later, as a crash would, without shutting OpenVR down
+void RemotePointerDyingOverlayCase(CaseContext& c)
+{
+	using namespace vr::IVROverlay_028;
+	Json::Value r;
+	r["init"] = (int)c.core->Init(vr::VRApplication_Overlay, nullptr);
+	auto* ov = r["init"].asInt() == vr::VRInitError_None ? Interface<IVROverlay>(c, "IVROverlay_028") : nullptr;
+	if (!ov) {
+		c.Record("ended", r);
+		if (r["init"].asInt() == vr::VRInitError_None)
+			c.core->Cleanup();
+		return;
+	}
+	MouseOverlay(ov, r);
+	auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+	bool published = false;
+	while (!published && std::chrono::steady_clock::now() < until) {
+		Json::Value doc = StoreDocument("overlays");
+		published = doc.isObject() && doc[std::to_string(OwnPid())]["overlays"].size() > 0;
+		std::this_thread::sleep_for(std::chrono::milliseconds(20));
+	}
+	r["published"] = published;
+	std::this_thread::sleep_for(std::chrono::milliseconds(222));
+	c.Record("ended", r);
+#ifdef _WIN32
+	TerminateProcess(GetCurrentProcess(), 0);
+#else
+	_exit(0);
+#endif
 }
 
 // An overlay application with one overlay from memory and nothing else: no WaitGetPoses, so every frame is
@@ -229,6 +488,10 @@ const std::map<std::string, CaseFn>& conformance::HelperCases()
 		{ "overlay-app-gl", [](CaseContext& c) { OverlayAppTexturesCase(c, "textures", { { GfxKind::OpenGL, 0x8C43, "gl" } }); } },
 		{ "background-app", BackgroundAppCase },
 		{ "helper-apps-unsupported", HelperAppsUnsupportedCase },
+		{ "remote-pointer", RemotePointerSceneCase },
+		{ "remote-pointer-overlay", RemotePointerOverlayCase },
+		{ "remote-pointer-peer-dies", RemotePointerPeerDiesCase },
+		{ "remote-pointer-dying-overlay", RemotePointerDyingOverlayCase },
 	};
 	return cases;
 }

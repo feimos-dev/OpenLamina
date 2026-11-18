@@ -8,7 +8,18 @@
 #include <array>
 #include <cstdint>
 
-/** Queues the event for this program (once it has an IVRSystem) and, if alsoToOtherPrograms, for the others */
+// OpenLamina's own events between programs, in the vendor range: never queued for a program's IVRSystem
+constexpr uint32_t OcEvent_First = vr::VREvent_VendorSpecific_Reserved_Start + 1;
+// The pointer on another program's overlay (RemotePointer.h): for that program, which queues it on the overlay
+constexpr uint32_t OcEvent_RemotePointer = OcEvent_First;
+constexpr uint32_t OcEvent_Last = vr::VREvent_VendorSpecific_Reserved_Start + 99;
+inline bool OcIsPrivateEvent(uint32_t eventType)
+{
+	return eventType >= OcEvent_First && eventType <= OcEvent_Last;
+}
+
+/** Queues the event for this program (once it has an IVRSystem; not OpenLamina's own events) and, if
+ * alsoToOtherPrograms, for the others */
 void OcPostEvent(vr::EVREventType type, vr::TrackedDeviceIndex_t device, const vr::VREvent_Data_t& data, bool alsoToOtherPrograms);
 
 /** Where this program's events go: BaseSystem sets it while it lives, nullptr for nowhere */
