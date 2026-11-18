@@ -273,6 +273,49 @@
   "dump:views[1].depth.samples.c": "40404040",
   "dump:views[1].depth.samples.tl": "40404040"
  },
+ "gfx-vk-pose-depth/depth image only/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].pose.p[0]": {
+   "near": -0.5315,
+   "within": 0.001
+  },
+  "dump:views[0].pose.p[1]": {
+   "near": 1.7,
+   "within": 0.001
+  },
+  "dump:views[0].depth.near": {
+   "near": 0.1,
+   "within": 0.0001
+  },
+  "dump:views[0].depth.far": {
+   "near": 100,
+   "within": 0.01
+  },
+  "dump:views[0].depth.samples.c": "40404040",
+  "dump:views[0].depth.samples.tl": "40404040",
+  "dump:views[1].invalid": [],
+  "dump:views[1].pose.p[0]": {
+   "near": -0.4685,
+   "within": 0.001
+  },
+  "dump:views[1].pose.p[1]": {
+   "near": 1.7,
+   "within": 0.001
+  },
+  "dump:views[1].depth.near": {
+   "near": 0.1,
+   "within": 0.0001
+  },
+  "dump:views[1].depth.far": {
+   "near": 100,
+   "within": 0.01
+  },
+  "dump:views[1].depth.samples.c": "40404040",
+  "dump:views[1].depth.samples.tl": "40404040"
+ },
  "gfx-vk-pose-depth/halves/-/-": {
   "left": 0,
   "right": 0,
