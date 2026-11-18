@@ -339,6 +339,8 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/ChaperoneData.cpp
 	OpenOVR/Misc/ProgramEvents.cpp
 	OpenOVR/Misc/LibMonado.cpp
+	OpenOVR/Misc/Canvas.cpp
+	OpenOVR/Misc/Canvas.h
 	OpenOVR/Misc/Equirect.cpp
 	OpenOVR/Misc/FrameStats.cpp
 	OpenOVR/Misc/FrameStats.h
