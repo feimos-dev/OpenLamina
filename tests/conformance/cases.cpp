@@ -839,10 +839,9 @@ Json::Value OldEventRecord(bool polled, const uint8_t* buffer)
 // masks (021 on), the 0.9.x gamma and visibility calls, and 001's texture of the device SetGraphicsDevice named
 void OldOverlay(CaseContext& c)
 {
-	if (c.core->Init(vr::VRApplication_Scene, nullptr) != vr::VRInitError_None) {
-		c.Record("Init failed");
+	Frames f;
+	if (!OpenFrames(c, f))
 		return;
-	}
 	vr::EVRInitError le;
 	auto* ov = (vr::IVROverlay_028::IVROverlay*)c.core->GetGenericInterface("IVROverlay_028", &le);
 	auto* ov007 = (vr::IVROverlay_007::IVROverlay*)c.core->GetGenericInterface("IVROverlay_007", &le);
@@ -857,17 +856,52 @@ void OldOverlay(CaseContext& c)
 	vr::VROverlayHandle_t h = vr::k_ulOverlayHandleInvalid;
 	c.Record("CreateOverlay", Err(ov->CreateOverlay("oc.old", "Old", &h)));
 
-	// The keyboard sends KeyboardDone at once: polled through 007 (the overlay's) and IVRSystem_009 (the system's)
+	// Keyboard events, typed with the laser (scripts/keyboard.json, ini/keyboard_us.ini; the old input read from frame
+	// 2 loads the actions it reads): the first character (H) polled through 007 from the overlay's keyboard, then the
+	// next (i) through IVRSystem_009 from the system's, shown once the first has come. Bounded by 80 frames.
 	alignas(8) uint8_t buffer[64];
-	ov007->ShowKeyboardForOverlay(h, vr::IVROverlay_007::k_EGamepadTextInputModeNormal, vr::IVROverlay_007::k_EGamepadTextInputLineModeSingleLine, "", 8, "",
-	    false, 0x1122334455667788ull);
-	memset(buffer, 0xCD, sizeof(buffer));
-	c.Record("IVROverlay_007 PollNextOverlayEvent", OldEventRecord(ov007->PollNextOverlayEvent(h, (vr::VREvent_t*)buffer), buffer));
+	callers::Texture frameTex(ArgSet::Valid, *c.call);
+	Json::Value overlayEvent, systemEvent;
+	for (int frame = 1; frame <= 80 && systemEvent.isNull(); frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+		f.comp->Submit(vr::Eye_Left, frameTex.get(), nullptr, vr::Submit_Default);
+		f.comp->Submit(vr::Eye_Right, frameTex.get(), nullptr, vr::Submit_Default);
+		if (frame >= 2) {
+			vr::VRControllerState_t state{};
+			f.sys->GetControllerState(2, &state, sizeof(state));
+		}
+		if (frame == 4)
+			ov007->ShowKeyboardForOverlay(h, vr::IVROverlay_007::k_EGamepadTextInputModeNormal, vr::IVROverlay_007::k_EGamepadTextInputLineModeSingleLine,
+			    "", 8, "", false, 0x1122334455667788ull);
+		if (overlayEvent.isNull()) {
+			memset(buffer, 0xCD, sizeof(buffer));
+			if (ov007->PollNextOverlayEvent(h, (vr::VREvent_t*)buffer)) {
+				overlayEvent = OldEventRecord(true, buffer);
+				ov007->HideKeyboard();
+				ov007->ShowKeyboard(vr::IVROverlay_007::k_EGamepadTextInputModeNormal, vr::IVROverlay_007::k_EGamepadTextInputLineModeSingleLine, "", 8, "",
+				    false, 0x55aaull);
+			}
+			continue;
+		}
+		// The system's other events first: the first keyboard one is recorded
+		for (int i = 0; i < 64; i++) {
+			memset(buffer, 0xCD, sizeof(buffer));
+			if (!sys009->PollNextEvent((vr::VREvent_t*)buffer))
+				break;
+			uint32_t type;
+			memcpy(&type, buffer, sizeof(type));
+			if (type >= vr::VREvent_KeyboardClosed && type <= vr::VREvent_KeyboardDone) {
+				systemEvent = OldEventRecord(true, buffer);
+				break;
+			}
+		}
+	}
 	ov007->HideKeyboard();
-	ov007->ShowKeyboard(vr::IVROverlay_007::k_EGamepadTextInputModeNormal, vr::IVROverlay_007::k_EGamepadTextInputLineModeSingleLine, "", 8, "", false, 0x55aaull);
-	memset(buffer, 0xCD, sizeof(buffer));
-	c.Record("IVRSystem_009 PollNextEvent", OldEventRecord(sys009->PollNextEvent((vr::VREvent_t*)buffer), buffer));
-	ov007->HideKeyboard();
+	memset(buffer, 0, sizeof(buffer));
+	memset(buffer + 32, 0xCD, 32);
+	c.Record("IVROverlay_007 PollNextOverlayEvent", overlayEvent.isNull() ? OldEventRecord(false, buffer) : overlayEvent);
+	c.Record("IVRSystem_009 PollNextEvent", systemEvent.isNull() ? OldEventRecord(false, buffer) : systemEvent);
 
 	// Flags: 007 passes NoDashboardTab as 3, 028 as 1 << 3; both are bit 3 of GetOverlayFlags
 	Json::Value flags;
@@ -2354,6 +2388,71 @@ void MessageOverlayCase(CaseContext& c)
 	c.Record("ShowMessageOverlay", r);
 }
 
+// The keyboard typed on with the laser (expect/keyboard.json, with scripts/keyboard.json and ini/keyboard_us.ini):
+// ShowKeyboard at frame 4 (normal, one line); the keyboard (the US layout, 1 m x 0.404 m) is 1 m ahead of the head and
+// 0.4 m below it, at (0, 1.3, -1). The script points the right laser at Shift, H, I and Done in turn, clicking each:
+// two KeyboardCharInput events ("H" and "i"), then KeyboardDone, and GetKeyboardText answers "Hi". The stand-in is
+// sent the keyboard's quad while it's shown.
+void KeyboardCase(CaseContext& c)
+{
+	using namespace vr::IVROverlay_028;
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	vr::EVRInitError le;
+	auto* ov = (IVROverlay*)c.core->GetGenericInterface("IVROverlay_028", &le);
+	if (!ov) {
+		c.Record("no IVROverlay_028", Err(le));
+		c.core->Cleanup();
+		return;
+	}
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	int shown = -1;
+	Json::Value chars(Json::arrayValue);
+	int done = 0, closed = 0;
+	uint64_t userValue = 0;
+	for (int frame = 1; frame <= 80; frame++) {
+		GameFrame(f, tex.get());
+		if (frame >= 2) {
+			vr::VRControllerState_t state{};
+			f.sys->GetControllerState(2, &state, sizeof(state));
+		}
+		if (frame == 4)
+			shown = (int)ov->ShowKeyboard(k_EGamepadTextInputModeNormal, k_EGamepadTextInputLineModeSingleLine, 0, "Name", 0, "", 42);
+		vr::VREvent_t ev{};
+		while (f.sys->PollNextEvent(&ev, sizeof(ev))) {
+			if (ev.eventType == vr::VREvent_KeyboardCharInput) {
+				char text[9] = {};
+				memcpy(text, ev.data.keyboard.cNewInput, 8);
+				chars.append(text);
+				userValue = ev.data.keyboard.uUserValue;
+			} else if (ev.eventType == vr::VREvent_KeyboardDone) {
+				done++;
+			} else if (ev.eventType == vr::VREvent_KeyboardClosed) {
+				closed++;
+			}
+		}
+	}
+	char text[64] = {};
+	const uint32_t length = ov->GetKeyboardText(text, sizeof(text));
+	c.core->Cleanup();
+
+	Json::Value r;
+	r["show"] = shown;
+	r["chars"] = chars;
+	r["user_value"] = (Json::UInt64)userValue;
+	r["done"] = done;
+	r["closed"] = closed;
+	r["text"] = text;
+	r["text_length"] = length;
+	Json::Value dump = ReadStandInDump();
+	if (!dump.isNull()) {
+		r["keyboard_quad"] = QuadsOfSize(dump, 1.0, 0.404) > 0;
+		r["frame_order_errors"] = dump["frame_order_errors"];
+	}
+	c.Record("typed", r);
+}
+
 #ifdef _WIN32
 // The DXGI adapters (DXGI 1.1's list, which DXGI 1.0's EnumAdapters has in the same order): LUIDs as LowPart |
 // HighPart << 32
@@ -2637,6 +2736,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "own-frames-overlay-churn", OwnFramesOverlayChurnCase },
 		{ "laser-mouse", LaserMouseCase },
 		{ "message-overlay", MessageOverlayCase },
+		{ "keyboard", KeyboardCase },
 		{ "compositor-stats", CompositorStatsCase },
 		{ "gpu-answers", GpuAnswersCase },
 		{ "gpu-other-adapter", GpuOtherAdapterCase },

@@ -31,6 +31,8 @@ public:
 	/** How IVRInput evaluates a game's binding files: "direct" (default, each binding turned into OpenXR
 	 * bindings) or "steamvr" (OpenLamina evaluates SteamVR's modes on the controller's raw inputs) */
 	std::string InputEvaluator() const { return inputEvaluator; }
+	/** The keyboard's layout: "us", "uk", or empty to choose by the user's locale (UK for en-GB, else US) */
+	const std::string& KeyboardLayout() const { return keyboardLayout; }
 
 private:
 	static int ini_handler(
@@ -57,6 +59,7 @@ private:
 	bool logAllOpenVRCalls = false;
 	std::string bindingEditor;
 	std::string inputEvaluator = "direct";
+	std::string keyboardLayout;
 };
 
 extern Config oovr_global_configuration;

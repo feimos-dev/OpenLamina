@@ -129,6 +129,17 @@ static string parse_evaluator(string orig, string name, int line)
 	return val;
 }
 
+// keyboardLayout: us or uk
+static string parse_layout(string orig, string name, int line)
+{
+	string val = str_tolower(orig);
+	if (val != "us" && val != "uk") {
+		BAD_VALUE("Value " + orig + " for " + name + " on line " + to_string(line) + " is neither us nor uk");
+	}
+	OOVR_LOGF("Setting config param %s to %s", name.c_str(), val.c_str());
+	return val;
+}
+
 int Config::ini_handler(void* user, const char* pSection,
     const char* pName, const char* pValue,
     int lineno)
@@ -170,6 +181,7 @@ int Config::ini_handler(void* user, const char* pSection,
 		CFGOPT(bool, logAllOpenVRCalls);
 		CFGOPT(string, bindingEditor);
 		CFGOPT(evaluator, inputEvaluator);
+		CFGOPT(layout, keyboardLayout);
 	}
 
 #undef CFGOPT
