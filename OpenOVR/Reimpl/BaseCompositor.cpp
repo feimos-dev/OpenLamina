@@ -205,10 +205,9 @@ std::unique_ptr<Compositor> BaseCompositor::CreateCompositorAPI(const vr::Textur
 #if defined(SUPPORT_DX10)
 		// A Direct3D 10 texture comes as TextureType_DirectX too: told apart by its interface (dx10Mode is ignored)
 		if (ID3D10Texture2D* tex10 = DX10Compositor::AsD3D10Texture(texture)) {
-			if (DX10Compositor::BridgeDevice(tex10))
-				comp = std::make_unique<DX10Compositor>(tex10);
-			else
-				OOVR_LOG_ONCE("A Direct3D 10 texture without a Direct3D 11 device on its adapter: no compositor");
+			comp = DX10Compositor::Create(tex10);
+			if (!comp)
+				OOVR_LOG_ONCE("A Direct3D 10 texture without a Direct3D 11 device to copy it through: no compositor");
 			break;
 		}
 #endif

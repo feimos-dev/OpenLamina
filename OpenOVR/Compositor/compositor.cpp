@@ -139,15 +139,25 @@ const std::vector<int64_t>& Compositor::RuntimeFormats()
 	return xr_gbl ? xr_gbl->SwapchainFormats() : none;
 }
 
-bool Compositor::InvokeDepth(const vr::Texture_t* depth, XrSwapchainSubImage& subImage)
+bool Compositor::InvokeDepth(const vr::Texture_t* depth, const vr::VRTextureBounds_t* bounds, XrSwapchainSubImage& subImage)
 {
 	lastResult = XR_SUCCESS;
 	subImage = {};
-	if (!depth || !depth->handle || !CopyDepth(depth) || !chain || XR_FAILED(lastResult))
+	if (!depth || !depth->handle)
+		return false;
+	// The colour is turned over in its copy; its depth would have to be too, which no copy here does
+	const vr::VRTextureBounds_t b = Bounds(bounds);
+	if (b.uMin > b.uMax || b.vMin > b.vMax)
+		OC_UNSUPPORTED(false, "A depth texture submitted with flipped bounds: depth not sent");
+	if (!CopyDepth(depth) || !chain || XR_FAILED(lastResult))
+		return false;
+	// The whole texture is in the image: the bounds' area of it is shown with the colour
+	TextureRegion region;
+	if (!RegionFromBounds(bounds, createInfo.width, createInfo.height, region))
 		return false;
 	subImage.swapchain = chain;
-	subImage.imageRect.offset = { 0, 0 };
-	subImage.imageRect.extent = { (int32_t)createInfo.width, (int32_t)createInfo.height };
+	subImage.imageRect.offset = { (int32_t)region.x0, (int32_t)region.y0 };
+	subImage.imageRect.extent = { (int32_t)region.Width(), (int32_t)region.Height() };
 	subImage.imageArrayIndex = 0;
 	return true;
 }

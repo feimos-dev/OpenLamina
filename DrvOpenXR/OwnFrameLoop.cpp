@@ -44,7 +44,7 @@ void OwnFrameLoop::OnAppFrameEnd()
 
 bool OwnFrameLoop::IdleNow(steady_clock::time_point now) const
 {
-	if (mode == Mode::Always)
+	if (mode == Mode::EveryFrame)
 		return true;
 	return appStarted && now - lastAppActivity >= idleAfter;
 }

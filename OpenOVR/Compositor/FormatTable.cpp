@@ -163,6 +163,29 @@ bool Offered(const std::vector<int64_t>& formats, int64_t f)
 	return std::find(formats.begin(), formats.end(), f) != formats.end();
 }
 
+// Formats no table knows that can't be shown as colour: depth and stencil formats, and (DXGI, Vulkan) the
+// block-compressed ones beyond BC1, which the compositors have never taken
+bool NeverColour(GfxApiKind api, int64_t format)
+{
+	switch (api) {
+	case GfxApiKind::D3D11:
+	case GfxApiKind::D3D12:
+		// D32_FLOAT_S8X24_UINT and its typeless members, D32_FLOAT, D24_UNORM_S8_UINT and its typeless members, D16_UNORM
+		if ((format >= 19 && format <= 22) || format == 40 || (format >= 44 && format <= 47) || format == 55)
+			return true;
+		// BC2 to BC5 (typeless, UNORM, sRGB, SNORM), BC6H and BC7
+		return (format >= 73 && format <= 84) || (format >= 94 && format <= 99);
+	case GfxApiKind::Vulkan:
+		// D16_UNORM to D32_SFLOAT_S8_UINT (S8_UINT among them); BC2_UNORM_BLOCK to BC7_SRGB_BLOCK
+		return (format >= 124 && format <= 130) || (format >= 135 && format <= 146);
+	default:
+		// GL_DEPTH_COMPONENT, GL_DEPTH_STENCIL, GL_DEPTH_COMPONENT16/24/32, GL_DEPTH24_STENCIL8, GL_DEPTH_COMPONENT32F,
+		// GL_DEPTH32F_STENCIL8, GL_STENCIL_INDEX8
+		return format == 0x1902 || format == 0x84F9 || (format >= 0x81A5 && format <= 0x81A7) || format == 0x88F0 || format == 0x8CAC
+		    || format == 0x8CAD || format == 0x8D48;
+	}
+}
+
 } // namespace
 
 bool WantsSrgb(GfxApiKind api, int64_t format, vr::EColorSpace colourSpace)
@@ -185,8 +208,20 @@ std::optional<FormatChoice> ChooseSwapchainFormat(GfxApiKind api, int64_t gameFo
     const std::vector<int64_t>& runtimeFormats)
 {
 	const FormatInfo* game = Find(api, gameFormat);
-	if (!game)
-		return std::nullopt;
+	if (!game) {
+		if (NeverColour(api, gameFormat))
+			return std::nullopt;
+		// A format the tables don't know: tried as it is, or (OpenGL, whose blit converts what it can) blitted into
+		// the runtime's first 8-bit RGBA or BGRA format where the runtime lacks it
+		if (api == GfxApiKind::OpenGL && !runtimeFormats.empty() && !Offered(runtimeFormats, gameFormat)) {
+			for (int64_t f : runtimeFormats) {
+				const FormatInfo* info = Find(api, f);
+				if (info && info->kind != K::Typeless && (info->family == Family::RGBA8 || info->family == Family::BGRA8))
+					return FormatChoice{ f, true };
+			}
+		}
+		return FormatChoice{ gameFormat, false };
+	}
 
 	// The member of the game's family the colour space asks for (a typeless format has none of its own)
 	const bool srgb = WantsSrgb(api, gameFormat, colourSpace);

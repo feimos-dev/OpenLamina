@@ -70,15 +70,38 @@ TEST_CASE("Vulkan_sfloat_offered_is_kept")
 	CheckChoice(ChooseSwapchainFormat(GfxApiKind::Vulkan, 122, vr::ColorSpace_Auto, { 43 }), 43, true);
 }
 
-TEST_CASE("Unknown_format_is_nullopt")
+TEST_CASE("Unknown_format_is_tried_as_it_is")
 {
-	CHECK_FALSE(ChooseSwapchainFormat(GfxApiKind::D3D11, 9999, vr::ColorSpace_Auto, { 29 }).has_value());
-	// Depth formats as colour: DXGI_FORMAT_D32_FLOAT, VK_FORMAT_D32_SFLOAT, GL_DEPTH_COMPONENT32F
+	// DXGI_FORMAT_R8G8B8A8_SNORM and DXGI_FORMAT_R10G10B10A2_UINT, offered or not
+	CheckChoice(ChooseSwapchainFormat(GfxApiKind::D3D11, 31, vr::ColorSpace_Auto, { 29 }), 31, false);
+	CheckChoice(ChooseSwapchainFormat(GfxApiKind::D3D12, 25, vr::ColorSpace_Auto, { 25, 29 }), 25, false);
+	CheckChoice(ChooseSwapchainFormat(GfxApiKind::D3D11, 9999, vr::ColorSpace_Auto, { 29 }), 9999, false);
+	// VK_FORMAT_A8B8G8R8_UNORM_PACK32
+	CheckChoice(ChooseSwapchainFormat(GfxApiKind::Vulkan, 51, vr::ColorSpace_Auto, { 43 }), 51, false);
+	// The runtime couldn't say what it has
+	CheckChoice(ChooseSwapchainFormat(GfxApiKind::D3D11, 31, vr::ColorSpace_Auto, {}), 31, false);
+	// OpenGL: GL_RGB565 as it is where offered, else blitted into the runtime's first 8-bit RGBA or BGRA format
+	CheckChoice(ChooseSwapchainFormat(GfxApiKind::OpenGL, 0x8D62, vr::ColorSpace_Auto, { 0x8D62, 0x8C43 }), 0x8D62, false);
+	CheckChoice(ChooseSwapchainFormat(GfxApiKind::OpenGL, 0x8D62, vr::ColorSpace_Auto, { 0x881A, 0x8C43, 0x8058 }), 0x8C43, true);
+	CheckChoice(ChooseSwapchainFormat(GfxApiKind::OpenGL, 0x8D62, vr::ColorSpace_Auto, { 0x881A }), 0x8D62, false);
+}
+
+TEST_CASE("Depth_and_compressed_beyond_bc1_are_nullopt")
+{
+	// Depth formats as colour: DXGI_FORMAT_D32_FLOAT, DXGI_FORMAT_R24G8_TYPELESS, VK_FORMAT_D32_SFLOAT,
+	// GL_DEPTH_COMPONENT32F, GL_DEPTH24_STENCIL8
 	CHECK_FALSE(ChooseSwapchainFormat(GfxApiKind::D3D11, 40, vr::ColorSpace_Auto, { 29 }).has_value());
+	CHECK_FALSE(ChooseSwapchainFormat(GfxApiKind::D3D12, 44, vr::ColorSpace_Auto, { 29 }).has_value());
 	CHECK_FALSE(ChooseSwapchainFormat(GfxApiKind::Vulkan, 126, vr::ColorSpace_Auto, { 43 }).has_value());
 	CHECK_FALSE(ChooseSwapchainFormat(GfxApiKind::OpenGL, 0x8CAC, vr::ColorSpace_Auto, { 0x8C43 }).has_value());
-	// Block-compressed other than BC1: DXGI_FORMAT_BC3_UNORM
+	CHECK_FALSE(ChooseSwapchainFormat(GfxApiKind::OpenGL, 0x88F0, vr::ColorSpace_Auto, { 0x8C43 }).has_value());
+	// Block-compressed other than BC1: DXGI_FORMAT_BC3_UNORM, DXGI_FORMAT_BC7_UNORM_SRGB, VK_FORMAT_BC3_UNORM_BLOCK
 	CHECK_FALSE(ChooseSwapchainFormat(GfxApiKind::D3D11, 77, vr::ColorSpace_Auto, { 29 }).has_value());
+	CHECK_FALSE(ChooseSwapchainFormat(GfxApiKind::D3D12, 99, vr::ColorSpace_Auto, { 29 }).has_value());
+	CHECK_FALSE(ChooseSwapchainFormat(GfxApiKind::Vulkan, 137, vr::ColorSpace_Auto, { 43 }).has_value());
+	// Colour formats near them in the enums aren't: DXGI_FORMAT_R32_FLOAT, DXGI_FORMAT_R16_UNORM
+	CheckChoice(ChooseSwapchainFormat(GfxApiKind::D3D11, 41, vr::ColorSpace_Auto, { 29 }), 41, false);
+	CheckChoice(ChooseSwapchainFormat(GfxApiKind::D3D11, 56, vr::ColorSpace_Auto, { 29 }), 56, false);
 	// BC1 is known: converted
 	CheckChoice(ChooseSwapchainFormat(GfxApiKind::D3D11, 71, vr::ColorSpace_Auto, { 29 }), 29, true);
 }
