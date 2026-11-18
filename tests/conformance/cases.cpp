@@ -1359,6 +1359,10 @@ void BindingInfoCase(CaseContext& c)
 	for (uint32_t i = 0; i < returned && i < 4; i++)
 		oddShown = oddShown || std::string(info[i].rchDevicePathName).find("mnd") != std::string::npos || std::string(info[i].rchModeName).find("1419") != std::string::npos;
 	r["odd_source_left_out"] = !oddShown;
+	bool noBlank = true; // every entry counted is filled in
+	for (uint32_t i = 0; i < returned && i < 4; i++)
+		noBlank = noBlank && info[i].rchDevicePathName[0] != 0;
+	r["no_blank_entries"] = noBlank;
 	c.Record("odd source", r);
 	c.core->Cleanup();
 }

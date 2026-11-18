@@ -3219,15 +3219,11 @@ EVRInputError BaseInput::GetActionBindingInfo(VRActionHandle_t actionHandle, OOV
 
 	// TODO should we return an error if there are no sources bound?
 
-	size_t count = boundActionPaths.size();
-	if (count > unBindingInfoCount)
-		count = unBindingInfoCount;
-	if (punReturnedBindingInfoCount)
-		*punReturnedBindingInfoCount = count;
-
-	for (size_t i = 0; i < count; i++) {
-		OOVR_InputBindingInfo_t& info = bindingInfo[i];
-		XrPath path = boundActionPaths.at(i);
+	// The bindings written, in order, without the sources left out
+	uint32_t written = 0;
+	for (size_t i = 0; i < boundActionPaths.size() && written < unBindingInfoCount; i++) {
+		OOVR_InputBindingInfo_t& info = bindingInfo[written];
+		XrPath path = boundActionPaths[i];
 
 		uint32_t pathLen = 0;
 		OC_XR_LOG(xrPathToString(xr_instance, path, 0, &pathLen, nullptr));
@@ -3258,22 +3254,25 @@ EVRInputError BaseInput::GetActionBindingInfo(VRActionHandle_t actionHandle, OOV
 		// FIXME replace this initial hacky thing
 		switch (action->type) {
 		case ActionType::Boolean:
-			strcpy_arr(bindingInfo->rchModeName, "button");
-			strcpy_arr(bindingInfo->rchInputSourceType, "button");
+			strcpy_arr(info.rchModeName, "button");
+			strcpy_arr(info.rchInputSourceType, "button");
 			break;
 		case ActionType::Vector1:
-			strcpy_arr(bindingInfo->rchModeName, "trigger");
-			strcpy_arr(bindingInfo->rchInputSourceType, "trigger");
+			strcpy_arr(info.rchModeName, "trigger");
+			strcpy_arr(info.rchInputSourceType, "trigger");
 			break;
 		case ActionType::Vector2:
-			strcpy_arr(bindingInfo->rchModeName, "joystick");
-			strcpy_arr(bindingInfo->rchInputSourceType, "joystick");
+			strcpy_arr(info.rchModeName, "joystick");
+			strcpy_arr(info.rchInputSourceType, "joystick");
 			break;
 		default:
 			OOVR_LOGF("Unimplemented action type %d for %s: no mode name", static_cast<int>(action->type), pathStr.c_str());
 			break;
 		}
+		written++;
 	}
+	if (punReturnedBindingInfoCount)
+		*punReturnedBindingInfoCount = written;
 
 	return VRInputError_None;
 }
