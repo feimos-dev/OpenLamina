@@ -533,7 +533,7 @@ void DX11Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 		OC_UNSUPPORTED_VOID("A D3D11 array texture of %u slices submitted with slice %u", srcDesc.ArraySize, arrayIndex);
 	}
 
-	// The bounds' area, copied to the origin of an image of the texture's size
+	// The bounds' area, copied to the origin of the swapchain image
 	TextureRegion region;
 	if (!RegionFromBounds(bounds, srcDesc.Width, srcDesc.Height, region)) {
 		// Submit answers InvalidTexture; the eye is left out
@@ -541,7 +541,10 @@ void DX11Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 		OC_UNSUPPORTED_VOID("A D3D11 texture of no size (%u x %u)", srcDesc.Width, srcDesc.Height);
 	}
 
-	CheckCreateSwapChain(texture, 0, 0, false);
+	// The swapchain holds the bounds' area at its origin, and only ever grows: bounds that change don't remake it
+	const uint32_t chainWidth = std::max(region.Width(), chain ? createInfo.width : 0u);
+	const uint32_t chainHeight = std::max(region.Height(), chain ? createInfo.height : 0u);
+	CheckCreateSwapChain(texture, chainWidth, chainHeight, false);
 	if (!chain || XR_FAILED(lastResult))
 		return;
 	copiedArea = { (int32_t)region.Width(), (int32_t)region.Height() };
