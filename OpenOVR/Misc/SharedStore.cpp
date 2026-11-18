@@ -9,6 +9,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <sstream>
+#include <string>
 #include <thread>
 
 #ifdef _WIN32
@@ -275,10 +277,10 @@ struct SharedStore::Platform {
 	}
 
 	// Waits for about two seconds at most: a holder that is suspended (in a debugger, say) leaves the store unwritten
-	// rather than every other program stuck
-	bool Lock()
+	// rather than every other program stuck. Without wait, one try.
+	bool Lock(bool wait)
 	{
-		auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+		auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(wait ? 2 : 0);
 		for (;;) {
 #ifdef _WIN32
 			OVERLAPPED overlapped = {};
@@ -366,8 +368,8 @@ struct SharedStore::Platform {
 // Holds the store's file lock for a scope
 class StoreFileLock {
 public:
-	explicit StoreFileLock(SharedStore::Platform& p)
-	    : platform(p), held(p.Lock())
+	explicit StoreFileLock(SharedStore::Platform& p, bool wait = true)
+	    : platform(p), held(p.Lock(wait))
 	{
 	}
 	~StoreFileLock()
@@ -483,13 +485,19 @@ Json::Value SharedStore::Read(StoreDoc doc)
 	return data;
 }
 
-bool SharedStore::Update(StoreDoc doc, const std::function<void(Json::Value& data)>& edit)
+bool SharedStore::Update(StoreDoc doc, const std::function<void(Json::Value& data)>& edit, Wait wait)
 {
 	if (!Usable())
 		return false;
 	// Not the cache's lock: Read and PollEvents mustn't wait while this waits for another process
-	std::lock_guard<std::mutex> writing(writeLock);
-	StoreFileLock fileLock(*platform);
+	std::unique_lock<std::mutex> writing(writeLock, std::defer_lock);
+	if (wait == Wait::Never) {
+		if (!writing.try_lock())
+			return false;
+	} else {
+		writing.lock();
+	}
+	StoreFileLock fileLock(*platform, wait != Wait::Never);
 	if (!fileLock.held)
 		return false;
 
@@ -543,14 +551,20 @@ bool SharedStore::Update(StoreDoc doc, const std::function<void(Json::Value& dat
 	return true;
 }
 
-void SharedStore::PostEvent(uint32_t eventType, const std::array<uint64_t, 4>& data)
+bool SharedStore::PostEvent(uint32_t eventType, const std::array<uint64_t, 4>& data, Wait wait)
 {
 	if (!Usable())
-		return;
-	std::lock_guard<std::mutex> writing(writeLock);
-	StoreFileLock fileLock(*platform);
+		return false;
+	std::unique_lock<std::mutex> writing(writeLock, std::defer_lock);
+	if (wait == Wait::Never) {
+		if (!writing.try_lock())
+			return false;
+	} else {
+		writing.lock();
+	}
+	StoreFileLock fileLock(*platform, wait != Wait::Never);
 	if (!fileLock.held)
-		return;
+		return false;
 
 	uint64_t seq = Load(header()->head) + 1;
 	{
@@ -574,6 +588,7 @@ void SharedStore::PostEvent(uint32_t eventType, const std::array<uint64_t, 4>& d
 		slot.data[i] = data[i];
 	Store(slot.seq, seq);
 	Store(header()->head, seq);
+	return true;
 }
 
 std::vector<StoreEvent> SharedStore::PollEvents(uint64_t& cursor, uint32_t* lost)
@@ -621,6 +636,87 @@ std::vector<StoreEvent> SharedStore::PollEvents(uint64_t& cursor, uint32_t* lost
 	if (lost)
 		*lost = missed;
 	return events;
+}
+
+uint64_t SharedStore::ProcessStartTime(uint32_t pid)
+{
+	if (pid == 0)
+		return 0;
+#ifdef _WIN32
+	// Limited query rights: what another user's or an elevated process still grants
+	HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+	if (!process)
+		return 0;
+	FILETIME created{}, exited{}, kernel{}, user{};
+	DWORD code = 0;
+	const bool running = GetExitCodeProcess(process, &code) && code == STILL_ACTIVE;
+	const bool known = GetProcessTimes(process, &created, &exited, &kernel, &user);
+	CloseHandle(process);
+	if (!running || !known)
+		return 0;
+	return ((uint64_t)created.dwHighDateTime << 32) | created.dwLowDateTime;
+#else
+	// Field 22 of /proc/<pid>/stat (clock ticks after boot), after the command name in parentheses
+	std::ifstream in("/proc/" + std::to_string(pid) + "/stat");
+	std::string stat;
+	if (!in || !std::getline(in, stat))
+		return 0;
+	const size_t close = stat.rfind(')');
+	if (close == std::string::npos)
+		return 0;
+	std::istringstream fields(stat.substr(close + 1));
+	std::string field;
+	// Fields 3 to 22
+	for (int i = 3; i <= 22; i++) {
+		if (!(fields >> field))
+			return 0;
+	}
+	char* end = nullptr;
+	const unsigned long long ticks = std::strtoull(field.c_str(), &end, 10);
+	return end && *end == 0 ? (uint64_t)ticks + 1 : 0; // + 1: a process started at tick 0 is still told apart from none
+#endif
+}
+
+uint64_t SharedStore::OwnStartTime()
+{
+	static const uint64_t start = ProcessStartTime(oc_current_pid());
+	return start;
+}
+
+bool SharedStore::IsSameProcessAlive(uint32_t pid, uint64_t start)
+{
+	if (start == 0)
+		return IsProcessAlive(pid);
+	return ProcessStartTime(pid) == start;
+}
+
+bool SharedStore::OtherLiveProgram(const Json::Value& overlaysDoc, uint32_t self)
+{
+	if (!overlaysDoc.isObject())
+		return false;
+	for (const std::string& name : overlaysDoc.getMemberNames()) {
+		const unsigned long long pid = std::strtoull(name.c_str(), nullptr, 10);
+		if (!pid || pid > 0xffffffffULL || pid == self)
+			continue;
+		const Json::Value& entry = overlaysDoc[name];
+		if (!entry.isObject())
+			continue;
+		const Json::Value& start = entry["start"];
+		if (IsSameProcessAlive((uint32_t)pid, start.isUInt64() ? start.asUInt64() : 0))
+			return true;
+	}
+	return false;
+}
+
+bool SharedStore::OtherLiveProgram(const Json::Value& sceneDoc, const Json::Value& overlaysDoc, uint32_t self)
+{
+	if (sceneDoc.isObject() && sceneDoc["pid"].isUInt()) {
+		const uint32_t pid = sceneDoc["pid"].asUInt();
+		const Json::Value& start = sceneDoc["start"];
+		if (pid && pid != self && IsSameProcessAlive(pid, start.isUInt64() ? start.asUInt64() : 0))
+			return true;
+	}
+	return OtherLiveProgram(overlaysDoc, self);
 }
 
 bool SharedStore::IsProcessAlive(uint32_t pid)

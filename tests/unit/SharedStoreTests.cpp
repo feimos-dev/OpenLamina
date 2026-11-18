@@ -99,6 +99,28 @@ TEST_CASE("Store_concurrent_updates_lose_nothing")
 	CHECK(b.Read(StoreDoc::Scene)["count"].asInt() == 8000);
 }
 
+TEST_CASE("Store_writer_that_does_not_wait_gives_up_while_another_holds_it")
+{
+	TempDir dir;
+	SharedStore holder(dir.path), other(dir.path);
+	bool updated = true, posted = true;
+	std::chrono::steady_clock::duration took{};
+	holder.Update(StoreDoc::Settings, [&](Json::Value&) {
+		// While the holder is in its update, with the store's lock
+		auto start = std::chrono::steady_clock::now();
+		updated = other.Update(StoreDoc::Settings, [](Json::Value& d) { d["x"] = 1; }, SharedStore::Wait::Never);
+		posted = other.PostEvent(1, { 0, 0, 0, 0 }, SharedStore::Wait::Never);
+		took = std::chrono::steady_clock::now() - start;
+	});
+	CHECK_FALSE(updated);
+	CHECK_FALSE(posted);
+	CHECK(took < std::chrono::seconds(1));
+	// Let go: both go through at once
+	CHECK(other.Update(StoreDoc::Settings, [](Json::Value& d) { d["x"] = 1; }, SharedStore::Wait::Never));
+	CHECK(other.PostEvent(1, { 0, 0, 0, 0 }, SharedStore::Wait::Never));
+	CHECK(other.Read(StoreDoc::Settings)["x"].asInt() == 1);
+}
+
 TEST_CASE("Store_survives_corrupt_document")
 {
 	TempDir dir;
@@ -186,6 +208,46 @@ TEST_CASE("Store_process_alive")
 {
 	CHECK(SharedStore::IsProcessAlive(oc_current_pid()));
 	CHECK_FALSE(SharedStore::IsProcessAlive(0));
+}
+
+TEST_CASE("Store_process_start_tells_a_reused_pid")
+{
+	const uint32_t self = oc_current_pid();
+	const uint64_t start = SharedStore::OwnStartTime();
+	REQUIRE(start != 0);
+	CHECK(SharedStore::ProcessStartTime(self) == start);
+	CHECK(SharedStore::IsSameProcessAlive(self, start));
+	// Another process that had this pid once
+	CHECK(!SharedStore::IsSameProcessAlive(self, start + 1));
+	// An entry written without a start time: any process with the pid
+	CHECK(SharedStore::IsSameProcessAlive(self, 0));
+	CHECK(SharedStore::ProcessStartTime(0) == 0);
+
+	Json::Value doc;
+	doc[std::to_string(self)]["start"] = (Json::UInt64)start;
+	CHECK(!SharedStore::OtherLiveProgram(doc, self));
+	doc["1234567"]["start"] = (Json::UInt64)1; // no such process
+	CHECK(!SharedStore::OtherLiveProgram(doc, self));
+	CHECK(SharedStore::OtherLiveProgram(doc, self + 1)); // this process, seen from another
+}
+
+TEST_CASE("Store_live_program_from_scene_or_overlays")
+{
+	const uint32_t self = oc_current_pid();
+	const uint64_t start = SharedStore::OwnStartTime();
+	Json::Value scene(Json::objectValue), overlays(Json::objectValue);
+	CHECK(!SharedStore::OtherLiveProgram(scene, overlays, self + 1));
+	// The scene application: this process, seen from another
+	scene["pid"] = self;
+	scene["start"] = (Json::UInt64)start;
+	CHECK(SharedStore::OtherLiveProgram(scene, overlays, self + 1));
+	CHECK(!SharedStore::OtherLiveProgram(scene, overlays, self));
+	// One that has gone, its pid since reused
+	scene["start"] = (Json::UInt64)(start + 1);
+	CHECK(!SharedStore::OtherLiveProgram(scene, overlays, self + 1));
+	// An overlay application
+	overlays[std::to_string(self)]["start"] = (Json::UInt64)start;
+	CHECK(SharedStore::OtherLiveProgram(scene, overlays, self + 1));
 }
 
 TEST_CASE("Store_migrates_the_old_folders_documents_once")

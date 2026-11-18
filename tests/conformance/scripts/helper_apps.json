@@ -1,0 +1,10 @@
+{
+  "#": "A runtime with overlay and headless sessions (XR_EXTX_overlay, XR_MND_headless), D3D11 and D3D12, and the system clock's conversion to XrTime",
+  "extensions": [
+    "XR_KHR_D3D11_enable",
+    "XR_KHR_D3D12_enable",
+    "XR_EXTX_overlay",
+    "XR_MND_headless",
+    "XR_KHR_win32_convert_performance_counter_time"
+  ]
+}

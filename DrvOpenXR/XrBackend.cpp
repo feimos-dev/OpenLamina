@@ -4,6 +4,8 @@
 
 #include "XrBackend.h"
 #include "CpuSwapchain.h"
+#include "HelperSession.h"
+#include "OverlayTextureCopy.h"
 #include "XrGenericTracker.h"
 #include "generated/interfaces/vrtypes.h"
 
@@ -41,6 +43,10 @@
 #include "../OpenOVR/Misc/Config.h"
 #include "../OpenOVR/Misc/FrameStats.h"
 #include "../OpenOVR/Misc/MirrorWindow.h"
+#include "../OpenOVR/Misc/Process.h"
+#include "../OpenOVR/Misc/ProgramEvents.h"
+#include "../OpenOVR/Misc/SharedStore.h"
+#include "../OpenOVR/Reimpl/BaseSettings.h"
 #include "../OpenOVR/convert.h"
 #include "generated/static_bases.gen.h"
 
@@ -70,6 +76,18 @@ using namespace vr;
 
 std::mutex inputRestartMutex;
 std::unique_ptr<TemporaryGraphics> XrBackend::temporaryGraphics = nullptr;
+
+// Runs a step that reads the store's documents. They are files that another program, or another build, wrote: a value
+// of a type or size this build doesn't expect makes jsoncpp throw, and that mustn't reach the game's frame.
+template <typename Step>
+static void WithStoreDocuments(Step&& step)
+{
+	try {
+		step();
+	} catch (const Json::Exception& e) {
+		OOVR_LOG_ONCEF("A store document couldn't be read, and its step is left out: %s", e.what());
+	}
+}
 XrBackend::XrBackend(bool useVulkanTmpGfx, bool useD3D11TmpGfx)
 {
 	memset(projectionViews, 0, sizeof(projectionViews));
@@ -1111,8 +1129,11 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 	BaseOverlay* overlay = GetUnsafeBaseOverlay();
 	std::unique_lock<std::recursive_mutex> overlayLock;
 	if (overlay) {
-		// The controllers' lasers on the overlays and the keyboard, on this thread: it fills their swapchains
-		overlay->_UpdatePointer();
+		// The dashboard, then the controllers' lasers on the overlays and the keyboard, on this thread: it fills their
+		// swapchains
+		WithStoreDocuments([&] { overlay->_UpdateDashboard(); });
+		WithStoreDocuments([&] { overlay->_UpdateBounds(); });
+		WithStoreDocuments([&] { overlay->_UpdatePointer(); });
 		overlayLock = std::unique_lock(overlay->_LayersLock());
 		layer_count = overlay->_BuildLayers(app_layer, headers, true);
 	} else if (app_layer) {
@@ -1136,6 +1157,11 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 	if (ownFrames)
 		ownFrames->OnAppFrameEnd();
 	owner.unlock();
+
+	// The game's own dashboard overlays, for its dashboard's tabs (dashboardButton), once its frame has ended
+	if (overlay)
+		WithStoreDocuments([&] { overlay->_PublishOverlays(); });
+	NoticeRenderScale();
 
 	BaseSystem* sys = GetUnsafeBaseSystem();
 	if (sys) {
@@ -1805,6 +1831,13 @@ void XrBackend::OnSessionCreated()
 		return;
 	}
 
+	// A helper program's session has its own loop, whatever ownFrames says: an overlay session's frames are all
+	// OpenLamina's, and a headless one's events come from nowhere else
+	if (IsHelperSession()) {
+		StartHelperLoop();
+		return;
+	}
+
 	// A scene application's session makes it the scene application for every program
 	if (BaseClientCore::appType == vr::VRApplication_Scene)
 		BaseApplications::SetSceneProcess(true);
@@ -1843,6 +1876,118 @@ void XrBackend::OnSessionCreated()
 	    });
 }
 
+void XrBackend::StartHelperLoop()
+{
+	StopOwnFrames();
+	if (ownFramesStopped)
+		return;
+	const bool overlaySession = CurrentSessionKind() == SessionKind::Overlay;
+	ownFrames = std::make_unique<OwnFrameLoop>(
+	    OwnFrameLoop::Mode::EveryFrame,
+	    [this](XrTime, std::vector<const XrCompositionLayerBaseHeader*>& layers) {
+		    // The overlays alone: an overlay session has no projection layer. RunOwnFrame holds the overlays' lock until
+		    // the frame has ended.
+		    BaseOverlay* overlay = GetUnsafeBaseOverlay();
+		    if (!overlay)
+			    return;
+		    XrCompositionLayerBaseHeader const* const* headers = nullptr;
+		    int count = overlay->_BuildLayers(nullptr, headers, OwnFramesFillSwapchains());
+		    layers.insert(layers.end(), headers, headers + count);
+	    },
+	    std::chrono::milliseconds(0),
+	    [this, overlaySession](const OwnFrameLoop::LayerSource& source, const std::function<bool()>& wanted) -> XrDuration {
+		    // The session lock (shared) through the frame, if it's free: a session restart holds it while it stops this
+		    // loop. RunOwnFrame's own try then finds it held.
+		    SessionLock lock(xr_session, SessionLock::TryShared{});
+		    if (!lock.IsHeld())
+			    return 0;
+		    // One pass at a time: RunWhile (a message box) runs passes on the program's thread while this loop's thread
+		    // may be in one
+		    std::lock_guard<std::mutex> pass(helperPassLock);
+		    PumpEvents();
+		    BaseOverlay* overlay = GetUnsafeBaseOverlay();
+		    // The program's overlays for the scene app to point at, and its dashboard overlays as the dashboard shows them
+		    if (overlay) {
+			    WithStoreDocuments([&] { overlay->_UpdateDashboard(); });
+			    WithStoreDocuments([&] { overlay->_PublishOverlays(); });
+		    }
+		    if (!overlaySession)
+			    return 0; // a headless session runs no frames
+		    // The lasers, the keyboard and the cursor, on the session's device, which only OpenLamina's threads use. While
+		    // the keyboard is up the program waits for its text: the lasers' actions are synced here.
+		    if (overlay && OwnFramesFillSwapchains()) {
+			    BaseInput* input = GetUnsafeBaseInput();
+			    if (input && overlay->_KeyboardShown() && IsInputAvailable())
+				    input->SyncPointerActions();
+			    WithStoreDocuments([&] { overlay->_UpdatePointer(); });
+		    }
+		    return RunOwnFrame(source, wanted);
+	    });
+}
+
+bool XrBackend::EnsureOverlaySession()
+{
+	if (CurrentSessionKind() != SessionKind::Overlay)
+		return true;
+	{
+		auto shared = xr_session.lock_shared();
+		if (xr_session.get() || sessionLost)
+			return xr_session.get() != XR_NULL_HANDLE;
+	}
+	// SetupSession takes the session lock itself, and checks nothing: checked again under it
+	auto lock = xr_session.lock();
+	if (xr_session.get())
+		return true;
+	if (sessionLost)
+		return false;
+	const auto* binding = (const XrBaseInStructure*)GetCurrentGraphicsBinding();
+	if (!binding) {
+		OOVR_LOG("No device for the overlay session: the OpenXR runtime has neither D3D11 nor Vulkan");
+		return false;
+	}
+	OOVR_LOG("Starting the overlay session on OpenLamina's own device");
+	if (XR_FAILED(DrvOpenXR::SetupSession())) {
+		OnSessionLost();
+		return false;
+	}
+#if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+	// The program's textures are copied onto the device (D3D11 only)
+	if (binding->type == XR_TYPE_GRAPHICS_BINDING_D3D11_KHR && !overlayCopy)
+		overlayCopy = std::make_unique<OverlayTextureCopy>(((const XrGraphicsBindingD3D11KHR*)binding)->device);
+#endif
+	return true;
+}
+
+void XrBackend::ForgetOverlayTextures(const void* owner)
+{
+	if (overlayCopy)
+		overlayCopy->Forget(owner);
+}
+
+ID3D11Texture2D* XrBackend::CopyOverlayTexture(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, std::string* why, const void* owner)
+{
+	if (!overlayCopy) {
+		if (why)
+			*why = "the overlay session's device isn't a D3D11 one (the OpenXR runtime has no D3D11), so only images from memory can be shown";
+		return nullptr;
+	}
+	return overlayCopy->CopyIn(texture, bounds, why, owner);
+}
+
+std::shared_ptr<Compositor> XrBackend::MakeOverlayCompositor(ID3D11Texture2D* copy)
+{
+#if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+	if (copy)
+		return std::make_shared<DX11Compositor>(copy);
+#endif
+	return nullptr;
+}
+
+bool XrBackend::OwnFramesFillSwapchains() const
+{
+	return CurrentSessionKind() == SessionKind::Overlay;
+}
+
 // Here rather than in OwnFrameLoop.cpp, which then needs nothing of the backend's
 OwnFrameLoop::OwnFrameLoop(Mode mode, LayerSource source, std::chrono::milliseconds idleAfter)
     : OwnFrameLoop(mode, std::move(source), idleAfter, [](const LayerSource& source, const std::function<bool()>& wanted) -> XrDuration {
@@ -1873,6 +2018,41 @@ void XrBackend::StopOwnFrames(bool forGood)
 		ownFramesStopped = true;
 	// Joins its thread, which doesn't wait for the session lock that a session restart here holds
 	ownFrames.reset();
+	// Goes with the interfaces, before them
+	if (forGood)
+		keptOverlay.reset();
+}
+
+void XrBackend::NoticeRenderScale()
+{
+	// Only when the settings changed: reading the generation is cheap, the scale isn't
+	SharedStore& store = SharedStore::Get();
+	const uint64_t generation = store.Generation(StoreDoc::Settings);
+	if (renderScaleRead && generation == settingsGeneration)
+		return;
+	settingsGeneration = generation;
+	renderScaleRead = true;
+	// Against what the game was told: the recommended size it asked for (nothing before it has asked), or the last event
+	const float scale = BaseSettings::RenderScale(store, oovr_global_configuration.SupersampleRatio());
+	const float answered = XrHMD::AnsweredRenderScale();
+	if (answered <= 0 || scale == answered) {
+		// Back at what the game has: a change away from it again is told again
+		notifiedRenderScale = 0;
+		return;
+	}
+	if (scale == notifiedRenderScale)
+		return;
+	notifiedRenderScale = scale;
+	OOVR_LOGF("The render scale is now %.3f: telling the game", scale);
+	OcPostEvent(vr::VREvent_SteamVRSectionSettingChanged, vr::k_unTrackedDeviceIndexInvalid, vr::VREvent_Data_t{}, false);
+}
+
+void XrBackend::KeepOverlaysInstance()
+{
+	if (BaseClientCore::appType != vr::VRApplication_Scene || IsHelperSession())
+		return;
+	if (oovr_global_configuration.DashboardButton() != "off" || oovr_global_configuration.DrawBounds() || oovr_global_configuration.LaserMouse())
+		keptOverlay = GetCreateBaseOverlay();
 }
 
 XrDuration XrBackend::RunOwnFrame(const OwnFrameLoop::LayerSource& source, const std::function<bool()>& wanted)
@@ -2001,6 +2181,9 @@ bool XrBackend::IsGraphicsConfigured()
 
 void XrBackend::OnOverlayTexture(const vr::Texture_t* texture)
 {
+	// A headless session has no graphics, and an overlay session stays on OpenLamina's own device: neither is moved
+	if (IsHelperSession())
+		return;
 	if (!usingApplicationGraphicsAPI)
 		CheckOrInitCompositors(texture);
 }

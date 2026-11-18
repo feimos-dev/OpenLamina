@@ -27,7 +27,7 @@
 //               been reached; an action space takes the pose of the first path its action is bound to that has one,
 //               except a gaze space, which follows "gaze";
 //               the velocities are given as they are, always valid: not corrected for poseInActionSpace, nor for the
-//               base space's own motion),
+//               base space's own motion; "/user/head" places the HMD, at (0, 1.7, 0) without it),
 //   "refresh_rates": [90]   (XR_FB_display_refresh_rate's rates; without it, display_hz alone),
 //   "ipd_change": { "frame": 30, "ipd": 0.07 }   (or a list: the IPD from that frame on)
 //

@@ -18,10 +18,12 @@
 #include <functional>
 #include <memory>
 #include <set>
+#include <string>
 #include <vector>
 #include <mutex>
 
 class XrGenericTracker;
+struct ID3D11Texture2D;
 
 class XrBackend : public IBackend {
 public:
@@ -56,6 +58,9 @@ public:
 	 */
 	void OnSessionCreated();
 
+	// DrvOpenXR::KeepOverlaysInstance
+	void KeepOverlaysInstance();
+
 	/**
 	 * The session is gone or going (LOSS_PENDING, an EXITING OpenComposite didn't ask for, or a session restart
 	 * that failed): VREvent_Quit is queued once, and no more frames are begun. There's no reconnecting.
@@ -78,6 +83,30 @@ public:
 	void PrepareForSessionShutdown();
 
 	const void* GetCurrentGraphicsBinding();
+
+	/**
+	 * An overlay application's session: made at Init, for good, on OpenLamina's own device (D3D11 on the runtime's
+	 * adapter where the runtime has D3D11, else Vulkan), which no thread of the program uses. False if there's no
+	 * session to be had (logged).
+	 */
+	bool EnsureOverlaySession();
+
+	/**
+	 * An overlay application's texture copied onto the overlay session's device, on the program's thread
+	 * (OverlayTextureCopy): nullptr, with why, if it can't be
+	 */
+	ID3D11Texture2D* CopyOverlayTexture(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, std::string* why, const void* owner);
+	// The overlay (CopyOverlayTexture's owner) shows no texture any more: what was kept to copy its textures is let go
+	void ForgetOverlayTextures(const void* owner);
+	/** A compositor for such a copy */
+	std::shared_ptr<Compositor> MakeOverlayCompositor(ID3D11Texture2D* copy);
+
+	/**
+	 * Whether the thread running OpenLamina's frames fills the swapchains drawn from memory (and the pointer's): in an
+	 * overlay application, whose session is on OpenLamina's own device. In a game, the game's thread does, as it uses the
+	 * session's device itself.
+	 */
+	bool OwnFramesFillSwapchains() const;
 
 	void RegisterOverlayCompositor(std::shared_ptr<Compositor> compositor);
 	void UnregisterOverlayCompositor(std::shared_ptr<Compositor> compositor);
@@ -204,6 +233,26 @@ private:
 
 	// Whether we've restarted the session to use the application's rendering API yet
 	std::atomic<bool> usingApplicationGraphicsAPI{ false };
+	// An overlay application's textures, copied onto its session's device
+	std::unique_ptr<class OverlayTextureCopy> overlayCopy;
+
+	// A helper program's frame loop (overlay sessions) or event loop (headless ones), made with each session
+	void StartHelperLoop();
+	// Held through each of its passes
+	std::mutex helperPassLock;
+
+	// The overlays' instance, made at Init for a game whose lasers point at other programs' overlays (laserMouse) or
+	// which has a dashboard (dashboardButton) or the play area's walls (drawBounds), until OpenLamina shuts down
+	std::shared_ptr<class BaseOverlay> keptOverlay;
+
+	// The settings' generation the render scale (supersampleScale, the app's resolutionScale) was last read at, and the
+	// scale the game was last told of
+	bool renderScaleRead = false;
+	uint64_t settingsGeneration = 0;
+	float notifiedRenderScale = 0;
+	// Between the game's frames: a render scale another program set reaches the game, as SteamVR tells it, with
+	// VREvent_SteamVRSectionSettingChanged; its next textures at the new recommended size get swapchains of that size
+	void NoticeRenderScale();
 
 	// The views for the two main eye layers
 	XrCompositionLayerProjectionView projectionViews[XruEyeCount];

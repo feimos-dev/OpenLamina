@@ -37,7 +37,8 @@ vr::VREvent_t OcUnpackEvent(uint32_t eventType, const uint64_t (&packed)[4])
 
 void OcPostEvent(vr::EVREventType type, vr::TrackedDeviceIndex_t device, const vr::VREvent_Data_t& data, bool alsoToOtherPrograms)
 {
-	if (OcLocalEventSink sink = localSink.load()) {
+	OcLocalEventSink sink = OcIsPrivateEvent(type) ? nullptr : localSink.load();
+	if (sink) {
 		vr::VREvent_t e{};
 		e.eventType = type;
 		e.trackedDeviceIndex = device;

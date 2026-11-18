@@ -2,7 +2,9 @@
 
 #include "xrutil.h"
 
+#include <mutex>
 #include <thread>
+#include <time.h>
 
 #include "Drivers/Backend.h"
 #include "convert.h"
@@ -174,7 +176,55 @@ XrSessionGlobals::XrSessionGlobals()
 
 XrTime XrSessionGlobals::GetBestTime()
 {
-	return nextPredictedFrameTime > 1 ? nextPredictedFrameTime : latestTime;
+	if (nextPredictedFrameTime > 1)
+		return nextPredictedFrameTime;
+	// No frames (a headless session): the time now, where the runtime can say it
+	if (XrTime now = xr_time_now(); now > 0)
+		return now;
+	return latestTime;
+}
+
+XrTime xr_time_now()
+{
+	if (!xr_instance)
+		return 0;
+	// Looked up again for each instance; nullptr where the instance hasn't the extension enabled
+	static std::mutex lock;
+	static XrInstance lookedUpFor = XR_NULL_HANDLE;
+	static PFN_xrVoidFunction convert = nullptr;
+	PFN_xrVoidFunction fn = nullptr;
+	{
+		std::lock_guard<std::mutex> g(lock);
+		if (lookedUpFor != xr_instance) {
+			lookedUpFor = xr_instance;
+			convert = nullptr;
+#ifdef _WIN32
+			if (XR_FAILED(xrGetInstanceProcAddr(xr_instance, "xrConvertWin32PerformanceCounterToTimeKHR", &convert)))
+				convert = nullptr;
+#else
+			if (XR_FAILED(xrGetInstanceProcAddr(xr_instance, "xrConvertTimespecTimeToTimeKHR", &convert)))
+				convert = nullptr;
+#endif
+		}
+		fn = convert;
+	}
+	if (!fn)
+		return 0;
+	XrTime time = 0;
+#ifdef _WIN32
+	LARGE_INTEGER counter;
+	QueryPerformanceCounter(&counter);
+	using Convert = XrResult(XRAPI_PTR*)(XrInstance, const LARGE_INTEGER*, XrTime*);
+	if (XR_FAILED(((Convert)fn)(xr_instance, &counter, &time)))
+		return 0;
+#else
+	struct timespec ts;
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	using Convert = XrResult(XRAPI_PTR*)(XrInstance, const struct timespec*, XrTime*);
+	if (XR_FAILED(((Convert)fn)(xr_instance, &ts, &time)))
+		return 0;
+#endif
+	return time;
 }
 
 XruCachedViews XrSessionGlobals::GetCachedViews(XrSpace space)

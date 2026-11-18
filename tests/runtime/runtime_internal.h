@@ -88,6 +88,8 @@ inline XrPosef Inverse(const XrPosef& a)
 
 inline const XrPosef kIdentity{ { 0, 0, 0, 1 }, { 0, 0, 0 } };
 inline const XrPosef kHead{ { 0, 0, 0, 1 }, { 0, 1.7f, 0 } };
+// The HMD in STAGE: the script's "/user/head" pose at the current frame, else kHead
+XrPosef RtHeadPose();
 
 // Grip and aim pose of a hand in STAGE (both the same), 0 = left, 1 = right
 inline XrPosef HandPose(int hand) { return { { 0, 0, 0, 1 }, { hand == 0 ? -0.2f : 0.2f, 1.4f, -0.3f } }; }
@@ -259,3 +261,7 @@ bool RtRuntimeAdapterLuid(LUID* out);
 // The display's refresh rate changes to rate (XR_FB_display_refresh_rate's event, if it changed); with St().lock held
 void RtChangeRefreshRate(RtSession* s, float rate);
 bool RtExtensionsSessionInfo(const XrSessionCreateInfo* info, RtSession* session); // headless / overlay chains
+// The system clock as XrTime (XR_KHR_win32_convert_performance_counter_time's conversion): QueryPerformanceCounter in
+// nanoseconds
+XrTime RtCounterTime(const LARGE_INTEGER& counter);
+XrTime RtNowTime();

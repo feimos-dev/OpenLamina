@@ -1,0 +1,23 @@
+{
+  "#": "A 2 x 3 m play area with the HMD 0.2 m from its +X edge (at (0.8, 1.7, 0))",
+  "stage_bounds": [
+    2,
+    3
+  ],
+  "poses": {
+    "/user/head": {
+      "p": [
+        0.8,
+        1.7,
+        0
+      ],
+      "q": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "from_frame": 0
+    }
+  }
+}

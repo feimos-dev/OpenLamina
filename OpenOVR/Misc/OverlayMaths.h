@@ -103,4 +103,8 @@ struct ChainLink {
 // Resolves an overlay's transform through its parents, the farthest first; transforms are ordinary glm matrices
 Chain ResolveChain(const void* overlay, const std::function<ChainLink(const void*)>& link, glm::mat4& out);
 
+// a then b (b given in a's space), and a's inverse
+XrPosef ComposePoses(const XrPosef& a, const XrPosef& b);
+XrPosef InversePose(const XrPosef& a);
+
 } // namespace overlay_maths

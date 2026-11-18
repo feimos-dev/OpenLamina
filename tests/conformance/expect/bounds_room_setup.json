@@ -1,0 +1,13 @@
+{
+ "#": "The play area's walls without stage bounds (scripts/bounds_room_setup.json), with drawBounds (ini/draw_bounds.ini): the committed 2 x 3 m room setup's play area, so one 3 m wide wall on the +X edge, where the HMD is 0.2 m from it",
+ "bounds-room-setup/walls/-/-": {
+  "walls": 1,
+  "positions": [
+   [
+    1.0,
+    1.25,
+    0.0
+   ]
+  ]
+ }
+}

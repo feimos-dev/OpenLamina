@@ -45,6 +45,8 @@ public:
 	// from BaseSystem
 
 	void GetRecommendedRenderTargetSize(uint32_t* width, uint32_t* height) override;
+	// The render scale GetRecommendedRenderTargetSize last answered with, 0 before it has
+	static float AnsweredRenderScale();
 
 	/** The projection matrix for the specified eye */
 	vr::HmdMatrix44_t GetProjectionMatrix(vr::EVREye eEye, float fNearZ, float fFarZ, EGraphicsAPIConvention convention) override;

@@ -206,4 +206,14 @@ Chain ResolveChain(const void* overlay, const std::function<ChainLink(const void
 	return Chain::TooDeep;
 }
 
+XrPosef ComposePoses(const XrPosef& a, const XrPosef& b)
+{
+	return Compose(a, b);
+}
+
+XrPosef InversePose(const XrPosef& a)
+{
+	return Inverse(a);
+}
+
 } // namespace overlay_maths

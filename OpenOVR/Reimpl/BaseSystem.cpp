@@ -735,8 +735,11 @@ bool BaseSystem::PollNextEventWithPose(ETrackingUniverseOrigin eOrigin, VREvent_
 	std::vector<StoreEvent> others = SharedStore::Get().PollEvents(storeEventCursor);
 
 	std::unique_lock lock(events_mutex);
-	for (const StoreEvent& s : others)
-		events.push(OcUnpackEvent(s.eventType, s.data));
+	for (const StoreEvent& s : others) {
+		// OpenLamina's own (a pointer on an overlay) are taken by those they're for, never the game
+		if (!OcIsPrivateEvent(s.eventType))
+			events.push(OcUnpackEvent(s.eventType, s.data));
+	}
 
 	if (events.empty()) {
 		return false;
@@ -797,7 +800,14 @@ bool BaseSystem::GetControllerState(vr::TrackedDeviceIndex_t controllerDeviceInd
 	if (frameNumber > 0)
 		inputSystem->LoadEmptyManifestIfRequired();
 
-	return inputSystem->GetLegacyControllerState(controllerDeviceIndex, controllerState);
+	const bool result = inputSystem->GetLegacyControllerState(controllerDeviceIndex, controllerState);
+	// Held by OpenLamina's dashboard: read (the dashboard's button is in it) and zeroed
+	if (BaseInput::HeldByDashboard()) {
+		const uint32_t packet = controllerState->unPacketNum;
+		memset(controllerState, 0, controllerStateSize);
+		controllerState->unPacketNum = packet;
+	}
+	return result;
 }
 
 bool BaseSystem::GetControllerStateWithPose(ETrackingUniverseOrigin eOrigin, vr::TrackedDeviceIndex_t unControllerDeviceIndex,

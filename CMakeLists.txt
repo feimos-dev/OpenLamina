@@ -248,9 +248,13 @@ add_library(DrvOpenXR STATIC
 	DrvOpenXR/CpuSwapchain_GL.cpp
 	DrvOpenXR/OwnFrameLoop.cpp
 	DrvOpenXR/OwnFrameLoop.h
+	DrvOpenXR/HelperSession.cpp
+	DrvOpenXR/HelperSession.h
 
 	DrvOpenXR/GfxInterop.cpp
 	DrvOpenXR/GfxInterop.h
+	DrvOpenXR/OverlayTextureCopy.cpp
+	DrvOpenXR/OverlayTextureCopy.h
 
 	DrvOpenXR/tmp_gfx/TemporaryGraphics.cpp
 	DrvOpenXR/tmp_gfx/TemporaryGraphics.h
@@ -346,6 +350,12 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/Canvas.h
 	OpenOVR/Misc/LaserMouse.cpp
 	OpenOVR/Misc/LaserMouse.h
+	OpenOVR/Misc/RemotePointer.cpp
+	OpenOVR/Misc/RemotePointer.h
+	OpenOVR/Misc/Dashboard.cpp
+	OpenOVR/Misc/Dashboard.h
+	OpenOVR/Misc/Bounds.cpp
+	OpenOVR/Misc/Bounds.h
 	OpenOVR/Misc/Equirect.cpp
 	OpenOVR/Misc/FrameStats.cpp
 	OpenOVR/Misc/FrameStats.h

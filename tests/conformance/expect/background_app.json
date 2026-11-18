@@ -1,0 +1,20 @@
+{
+ "#": "A background application while a game runs (scripts/helper_apps.json, --jobs 2, one store): once the game is the scene application, it gets a headless session, which has poses but runs no frames and can't submit (IsNotSceneApplication, 103)",
+ "background-app/session/-/-": {
+  "init": 0,
+  "system": true,
+  "compositor": true,
+  "hmd_pose_valid": true,
+  "hmd_connected": true,
+  "wait_get_poses": 103,
+  "submit": 103,
+  "binding": "headless",
+  "session_overlay": false,
+  "frame_calls": 0,
+  "frame_order_errors": 0,
+  "stale_locates": 0
+ },
+ "background-app-game/frames/-/-": {
+  "background_joined": true
+ }
+}

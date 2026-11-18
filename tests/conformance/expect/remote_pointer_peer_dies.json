@@ -1,0 +1,5 @@
+{
+ "#": "An overlay app that ends without shutting down while the game points (ini/laser_mouse.ini, --jobs 2): the game runs its 60 frames, and its next write drops the ended program's entry from the store",
+ "remote-pointer-peer-dies/frames/-/-": {"overlay_interface": true, "saw_overlay_app": true, "frames": 60, "ended_program_left_in_store": false},
+ "remote-pointer-dying-overlay/ended/-/-": {"init": 0, "raw": 0, "show": 0, "published": true}
+}

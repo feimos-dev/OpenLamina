@@ -1,0 +1,19 @@
+{
+ "#": "An overlay app's Vulkan and OpenGL textures, copied onto OpenLamina's D3D11 device through D3D11 interop (scripts/helper_apps.json); they skip without a Vulkan or OpenGL driver",
+ "overlay-app-vk/textures/-/-": {
+  "init": 0,
+  "vulkan": 0,
+  "again": 0,
+  "binding": "d3d11",
+  "frame_order_errors": 0,
+  "quads_with_pattern": 1
+ },
+ "overlay-app-gl/textures/-/-": {
+  "init": 0,
+  "gl": 0,
+  "again": 0,
+  "binding": "d3d11",
+  "frame_order_errors": 0,
+  "quads_with_pattern": 1
+ }
+}

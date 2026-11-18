@@ -1,0 +1,26 @@
+{
+ "#": "Overlay applications on overlay sessions (scripts/helper_apps.json): an overlay app's session is on OpenLamina's own D3D11 device and its frames carry its overlays alone; its D3D11 and D3D12 textures are copied onto that device and shown",
+ "overlay-app/frames/-/-": {
+  "init": 0,
+  "overlay_interface": true,
+  "create": 0,
+  "raw": 0,
+  "show": 0,
+  "session_overlay": true,
+  "layer_types": [
+   "quad"
+  ],
+  "frame_order_errors": 0,
+  "frames_at_least_40": true
+ },
+ "overlay-app-two-apis/textures/-/-": {
+  "init": 0,
+  "d3d11": 0,
+  "d3d12": 0,
+  "again": 0,
+  "binding": "d3d11",
+  "session_overlay": true,
+  "frame_order_errors": 0,
+  "quads_with_pattern": 2
+ }
+}

@@ -54,6 +54,7 @@ add_executable(oc_conformance
 	conformance/oc_conformance.cpp
 	conformance/cases.cpp
 	conformance/gfx_cases.cpp
+	conformance/helper_cases.cpp
 	conformance/gfx/GfxApi.h
 	conformance/crash_report.cpp
 )
@@ -117,6 +118,9 @@ add_executable(oc_unit_tests
 	unit/OwnFrameLoopTests.cpp
 	unit/OverlayMathsTests.cpp
 	unit/LaserMouseTests.cpp
+	unit/RemotePointerTests.cpp
+	unit/DashboardTests.cpp
+	unit/BoundsTests.cpp
 	unit/KeyboardTests.cpp
 	unit/RenderModelTests.cpp
 	${OC_TEST_RESOURCES}

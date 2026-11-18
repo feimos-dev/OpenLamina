@@ -204,6 +204,28 @@ private:
 	// destroyed once the lock is let go.
 	std::unique_ptr<CpuSwapchain> DropKeyboard();
 
+	// Between programs: this program's overlays in the store, other programs' pointed at from here, and the pointer's
+	// events from other programs (BaseOverlay.cpp)
+	struct Sharing;
+	std::unique_ptr<Sharing> sharing;
+	// Other programs' pointer events for this program's overlays, queued on them; with layersLock held
+	void TakeRemotePointerEvents();
+	// An overlay application while a scene app is running: the scene app's instance points, and this one doesn't
+	bool SceneAppPoints() const;
+
+	// The dashboard: the scene app's (its button, its frame and tabs), and the store's state of it, which every
+	// program's dashboard overlays follow (BaseOverlay.cpp)
+	struct DashboardState;
+	std::unique_ptr<DashboardState> dash;
+	// The play area's walls (drawBounds), drawn by the scene app (BaseOverlay.cpp)
+	struct BoundsState;
+	std::unique_ptr<BoundsState> bounds;
+
+	// The scene app's dashboard opens or closes: the store, the events, the game's input
+	void DashboardChanged(bool open, const char* overlayKey = nullptr);
+	// Where a dashboard overlay is drawn while it's the one shown (false while it isn't); with layersLock held
+	bool DashboardPlacement(const OverlayData& overlay, vr::ETrackingUniverseOrigin origin, overlay_maths::Placement& out) const;
+
 public:
 	BaseOverlay();
 	// Destructor, since we have a map of pointers
@@ -222,6 +244,27 @@ public:
 	// keyboard, while the session is focused: their events, the cursor, and the keyboard's typing and drawing. On the
 	// game's thread before its frame's layers are built (it fills swapchains from memory), not holding _LayersLock().
 	void _UpdatePointer();
+
+	// Whether the keyboard is shown
+	bool _KeyboardShown()
+	{
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		return keyboard != nullptr;
+	}
+
+	// This program's overlays in the store's Overlays document (other programs point at them), at most ten times a second
+	// and when they changed, dropping the entries of programs that have ended: in an overlay or background application,
+	// or with laserMouse. Not holding _LayersLock().
+	void _PublishOverlays();
+
+	// The scene app's dashboard (with dashboardButton): its button read, opening and closing it, and its frame drawn,
+	// on the game's thread before _UpdatePointer; in every program, the store's Dashboard document read for its
+	// dashboard overlays. Not holding _LayersLock().
+	void _UpdateDashboard();
+
+	// The scene app's play area walls (drawBounds) near the HMD and the controllers: placed, and their grids filled, on
+	// the game's thread before the frame's layers are built. Not holding _LayersLock().
+	void _UpdateBounds();
 
 	// Held while the overlays, their compositors or the keyboard are added, replaced or removed, and while a frame
 	// with their layers is built and ended (on the game's thread, or OpenLamina's own frames' thread). Taken after the

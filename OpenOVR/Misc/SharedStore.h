@@ -47,21 +47,39 @@ public:
 	 * re-read from disk only when its generation changed */
 	Json::Value Read(StoreDoc doc);
 
-	/** Locked read-modify-write of the document's data. False if the store can't be used, or the file is a newer
-	 * format (which is read but never written) */
-	bool Update(StoreDoc doc, const std::function<void(Json::Value& data)>& edit);
+	/** How long a writer waits for the store's lock, which another program may hold: about two seconds at most, or
+	 * not at all, for a writer in the game's frame, which tries again later instead */
+	enum class Wait { UpToTwoSeconds, Never };
+
+	/** Locked read-modify-write of the document's data. False if the store can't be used, the file is a newer
+	 * format (which is read but never written), or the lock wasn't had in time */
+	bool Update(StoreDoc doc, const std::function<void(Json::Value& data)>& edit, Wait wait = Wait::UpToTwoSeconds);
 
 	/** Changes with every Update of the document, in any process; 0 if the store can't be used */
 	uint64_t Generation(StoreDoc doc);
 
-	/** Puts an event in the ring for the other processes (and other stores in this one) */
-	void PostEvent(uint32_t eventType, const std::array<uint64_t, 4>& data);
+	/** Puts an event in the ring for the other processes (and other stores in this one). False if it wasn't put there:
+	 * the store can't be used, or the lock wasn't had in time. */
+	bool PostEvent(uint32_t eventType, const std::array<uint64_t, 4>& data, Wait wait = Wait::UpToTwoSeconds);
 
 	/** The events other stores posted after cursor, which moves to the newest. Cursor 0 starts at the current head
 	 * (nothing returned). More than the ring holds since cursor: the oldest are gone, and *lost says how many. */
 	std::vector<StoreEvent> PollEvents(uint64_t& cursor, uint32_t* lost = nullptr);
 
 	static bool IsProcessAlive(uint32_t pid);
+
+	/** When a process started: a number that differs between two processes that had the same pid (pids are reused),
+	 * 0 if it can't be told (the process isn't running, or isn't ours to ask) */
+	static uint64_t ProcessStartTime(uint32_t pid);
+	/** This process's ProcessStartTime */
+	static uint64_t OwnStartTime();
+	/** Whether pid is running and is the process that started at start; with start 0 (an entry written without it),
+	 * whether any process with that pid is running */
+	static bool IsSameProcessAlive(uint32_t pid, uint64_t start);
+	/** Whether a program other than self has an entry in the Overlays document and is still running */
+	static bool OtherLiveProgram(const Json::Value& overlaysDoc, uint32_t self);
+	/** The same, or the Scene document's scene application (other than self) is still running */
+	static bool OtherLiveProgram(const Json::Value& sceneDoc, const Json::Value& overlaysDoc, uint32_t self);
 
 	static constexpr uint32_t kFormat = 1;
 	static constexpr uint32_t kRingSize = 256;

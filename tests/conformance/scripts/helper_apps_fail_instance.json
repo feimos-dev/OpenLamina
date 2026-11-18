@@ -1,0 +1,15 @@
+{
+  "#": "A runtime with overlay and headless sessions whose instance can't be made: overlay and background applications get the refusals they get without a runtime",
+  "extensions": [
+    "XR_KHR_D3D11_enable",
+    "XR_EXTX_overlay",
+    "XR_MND_headless"
+  ],
+  "fail": [
+    {
+      "function": "xrCreateInstance",
+      "result": "XR_ERROR_RUNTIME_FAILURE",
+      "count": 10
+    }
+  ]
+}

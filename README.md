@@ -87,6 +87,14 @@ Upstream merge requests are linked as !*n* with their authors. Everything else w
 - With `keyboard`, the keyboard games show for typing text is back, on every graphics API, in a US or UK layout
   (`keyboardLayout`), typed on with the laser.
 - With `steamvrRenderModels`, controllers and trackers have SteamVR's own models, read from your SteamVR install.
+- Overlay applications (`VRApplication_Overlay`) and background applications (`VRApplication_Background`) run on
+  runtimes with overlay and headless sessions (`XR_EXTX_overlay`, `XR_MND_headless`, as Monado has): an overlay
+  application's overlays are shown over the game, and a background application reads poses and events while another
+  OpenLamina program runs. On Linux a background application gets a scene session.
+- With `dashboardButton`, a dashboard of OpenLamina's own opens over the game: the dashboard overlays of the overlay
+  applications running beside it, a tab for each, and a button to quit the game.
+- A render scale another program sets (`supersampleScale`, the game's `resolutionScale`) reaches the game at its next
+  frame, with the event SteamVR sends for it, so a game that asks for the recommended size again renders at the new one.
 
 **Stability and building**
 - The log opens before anything writes to it (upstream issue #479), and a log that can't be opened no longer crashes
@@ -294,9 +302,17 @@ The available options are:
 * `keyboardLayout` - `us` or `uk`, default by the user's locale (`uk` for en-GB, `us` otherwise).
 	* The layout of the keyboard games show to type text on, with the controllers' lasers.
 * `laserMouse` - boolean, default `false`.
-	* The controllers point at overlays that take mouse input (`VROverlayInputMethod_Mouse`) as a mouse: focus and mouse events, clicks with the trigger, a cursor where the laser meets the overlay, and laser haptics. Without it, such an overlay gets no events from the controllers. The keyboard and message boxes are pointed at with the lasers regardless (behind `keyboard` and `ownFrames`).
+	* The controllers point at overlays that take mouse input (`VROverlayInputMethod_Mouse`) as a mouse: focus and mouse events, clicks with the trigger, a cursor where the laser meets the overlay, and laser haptics. Without it, such an overlay gets no events from the controllers. The keyboard and message boxes are pointed at with the lasers regardless (behind `keyboard` and `ownFrames`). The game's lasers also reach the mouse overlays of overlay applications running beside it (`helperApps`), which then don't point at them themselves (their own keyboard they still do). Where a game's own mouse overlay and another program's are both under the laser, both get the click.
 * `steamvrRenderModels` - boolean, default `false`.
 	* Controller and tracker models from the user's SteamVR install, with their moving parts. Without it, OpenLamina's built-in hands and tracker.
+* `helperApps` - boolean, default `true`.
+	* Overlay and background applications get sessions of their own where the OpenXR runtime has overlay sessions (`XR_EXTX_overlay`) and headless sessions (`XR_MND_headless`). An overlay application's session is on a D3D11 device of OpenLamina's own, on the runtime's adapter, with frames OpenLamina runs for it; its textures are copied onto that device: Direct3D 11 and 12 textures through shared textures, OpenGL ones through `WGL_NV_DX_interop2` and Vulkan ones through `VK_KHR_external_memory_win32` (which the application's device must have enabled). Direct3D 10 textures, textures on another graphics adapter than the runtime's, and every texture on a runtime without D3D11 (Linux) are refused (`VROverlayError_InvalidTexture`, logged); images from memory (`SetOverlayRaw`, `SetOverlayFromFile`) are shown everywhere. A background application joins only while another OpenLamina program runs (a game, or an overlay application), as it would join SteamVR only while SteamVR runs, so it never starts the runtime; until then it gets 121 `NoServerForBackgroundApp`. A native OpenXR game alone doesn't count. Its session has no graphics; it reads poses at the time now where the runtime converts the system's clock (`XR_KHR_win32_convert_performance_counter_time`, `XR_KHR_convert_timespec_time`). On Linux a background application gets a scene session. Without those extensions, with this off, or when the runtime fails to start, `VR_Init` refuses them (130 `InvalidApplicationType`, 121 `NoServerForBackgroundApp`).
+* `overlayLayersPlacement` - whole number, default `1`.
+	* Where an overlay application's layers go among other programs' (`XrSessionCreateInfoOverlayEXTX::sessionLayersPlacement`): higher numbers are drawn over lower ones.
+* `dashboardButton` - `menu_long`, `menu` or `off`, default `off`.
+	* What opens OpenLamina's dashboard over the game: the left controller's menu button held for 0.6 s (`menu_long`), or pressed (`menu`). It shows the dashboard overlays (`CreateDashboardOverlay`) of the overlay applications running beside the game in a panel ahead of you, a tab for each and a "Quit game" button, pointed at with the lasers. While it's open the game gets `VREvent_DashboardActivated`, its input is held (its actions read inactive), and the same button closes it again. With `off` there is no dashboard.
+* `drawBounds` - boolean, default `false`.
+	* A grid wall on the play area's edge (the stage's bounds the runtime reports, else the room setup's play area, as `IVRChaperoneSetup` commits it) when the HMD or a controller comes within 0.4 m of it, fading in as it comes closer. For runtimes that show no boundary of their own.
 * `logAllOpenVRCalls` - boolean, default `false`
 	* Log every OpenVR call a game makes. Similar to `logGetTrackedProperty`, this clutters logs and should not be enabled unless necessary.
 * `inputEvaluator` - `direct` or `steamvr`, default `direct`.

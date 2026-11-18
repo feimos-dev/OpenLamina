@@ -63,8 +63,20 @@ GfxInterop::~GfxInterop()
 		device->Release();
 }
 
+void GfxInterop::UseDevice(ID3D11Device* onDevice)
+{
+	if (!onDevice)
+		return;
+	onDevice->AddRef();
+	if (device)
+		device->Release();
+	device = onDevice;
+}
+
 bool GfxInterop::MakeDevice()
 {
+	if (device)
+		return true; // given
 	uint64_t luid = 0;
 	if (!BaseSystem::_RuntimeAdapterLuid(&luid)) {
 		OOVR_LOG("Graphics interop: the OpenXR runtime names no D3D11 adapter");
@@ -308,13 +320,14 @@ public:
 
 } // namespace
 
-std::unique_ptr<GfxInterop> GfxInterop::ForGL()
+std::unique_ptr<GfxInterop> GfxInterop::ForGL(ID3D11Device* onDevice)
 {
 	if (!wglGetCurrentContext()) {
 		OOVR_LOG("Graphics interop: no current OpenGL context");
 		return nullptr;
 	}
 	auto interop = std::make_unique<GLInterop>();
+	interop->UseDevice(onDevice);
 	if (!interop->Init())
 		return nullptr;
 	OOVR_LOG("Graphics interop: OpenGL frames go through Direct3D 11");
@@ -323,7 +336,7 @@ std::unique_ptr<GfxInterop> GfxInterop::ForGL()
 
 #else
 
-std::unique_ptr<GfxInterop> GfxInterop::ForGL()
+std::unique_ptr<GfxInterop> GfxInterop::ForGL(ID3D11Device*)
 {
 	return nullptr;
 }
@@ -649,11 +662,12 @@ public:
 
 } // namespace
 
-std::unique_ptr<GfxInterop> GfxInterop::ForVulkan(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device, VkQueue queue)
+std::unique_ptr<GfxInterop> GfxInterop::ForVulkan(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device, VkQueue queue, ID3D11Device* onDevice)
 {
 	if (!instance || !physicalDevice || !device || !queue)
 		return nullptr;
 	auto interop = std::make_unique<VkInterop>();
+	interop->UseDevice(onDevice);
 	interop->physicalDevice = physicalDevice;
 	interop->vkDevice = device;
 	interop->queue = queue;
@@ -669,13 +683,13 @@ std::unique_ptr<GfxInterop> GfxInterop::ForVulkan(VkInstance instance, VkPhysica
 
 GfxInterop::~GfxInterop() = default;
 
-std::unique_ptr<GfxInterop> GfxInterop::ForGL()
+std::unique_ptr<GfxInterop> GfxInterop::ForGL(ID3D11Device*)
 {
 	return nullptr;
 }
 
 #ifdef SUPPORT_VK
-std::unique_ptr<GfxInterop> GfxInterop::ForVulkan(VkInstance, VkPhysicalDevice, VkDevice, VkQueue)
+std::unique_ptr<GfxInterop> GfxInterop::ForVulkan(VkInstance, VkPhysicalDevice, VkDevice, VkQueue, ID3D11Device*)
 {
 	return nullptr;
 }
@@ -684,6 +698,10 @@ std::unique_ptr<GfxInterop> GfxInterop::ForVulkan(VkInstance, VkPhysicalDevice, 
 bool GfxInterop::MakeDevice()
 {
 	return false;
+}
+
+void GfxInterop::UseDevice(ID3D11Device*)
+{
 }
 
 #endif
