@@ -304,8 +304,19 @@ void VRKeyboard::Draw(Canvas& canvas) const
 	// A password as stars; a long text shows its end
 	std::wstring shown = mode == Mode::Password ? std::wstring(chars.size(), L'*') : Wide(chars);
 	const int room = box.w - 2 * kPadding;
-	while (!shown.empty() && canvas.TextWidth(shown) > room)
-		shown.erase(shown.begin());
+	// Walked back from the end, adding each advance: the start of what fits
+	{
+		int used = 0;
+		size_t start = shown.size();
+		while (start > 0) {
+			const int advance = canvas.TextWidth(std::wstring_view(shown).substr(start - 1, 1));
+			if (used + advance > room)
+				break;
+			used += advance;
+			start--;
+		}
+		shown.erase(0, start);
+	}
 	canvas.Text(box.x + kPadding, box.y + (box.h - line) / 2, shown, kText);
 
 	const Rect close = CloseRect();
