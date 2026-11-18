@@ -27,8 +27,11 @@ struct PointerRay {
 struct PointerTarget {
 	vr::VROverlayHandle_t handle;
 	overlay_maths::Placement placement;
-	std::vector<OOVR_VROverlayIntersectionMaskPrimitive_t> mask; // in mouse units, from the upper left; empty: all of it
-	vr::HmdVector2_t mouseScale; // the mouse units across and down it
+	std::vector<OOVR_VROverlayIntersectionMaskPrimitive_t> mask; // in mouse units (see yDown); empty: all of it
+	vr::HmdVector2_t mouseScale; // the mouse units across and up it (down it, with yDown)
+	// OpenVR's mouse units start at the lower left of the overlay (y up). What OpenLamina draws itself (the keyboard,
+	// a message box) counts from the upper left, as its canvas does.
+	bool yDown = false;
 	uint32_t flags; // VROverlayFlags, as masks
 	int sortOrder; // the higher is drawn on top
 };

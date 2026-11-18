@@ -147,6 +147,7 @@ TEST_CASE("Keyboard_typed_with_the_laser")
 	target.handle = kb.Handle();
 	target.placement = overlay_maths::Placement{ kb.Placement(), kb.WidthMeters(), kb.HeightMeters(), 0 };
 	target.mouseScale = { { (float)kb.CanvasWidth(), (float)kb.CanvasHeight() } };
+	target.yDown = true; // as the keyboard is pointed at: its canvas's coordinates
 	LaserMouse mouse;
 	// Each key's centre: a click there types it
 	auto click = [&](wchar_t ch) {
