@@ -3,12 +3,20 @@
 //
 
 #include "XrBackend.h"
+#include "CpuSwapchain.h"
 #include "XrGenericTracker.h"
 #include "generated/interfaces/vrtypes.h"
 
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
 #include <Windows.h>
+#endif
+
+#if defined(SUPPORT_DX)
+#include <dxgi.h>
+#endif
+#if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+#include <d3d11_4.h>
 #endif
 
 #if defined(SUPPORT_GL) && !defined(_WIN32)
@@ -28,11 +36,15 @@
 #include "../OpenOVR/Reimpl/BaseInput.h"
 #include "../OpenOVR/Reimpl/BaseOverlay.h"
 #include "../OpenOVR/Reimpl/BaseSystem.h"
+#include "../OpenOVR/Compositor/DepthRange.h"
+#include "../OpenOVR/Misc/Equirect.h"
+#include "../OpenOVR/Misc/Config.h"
 #include "../OpenOVR/convert.h"
 #include "generated/static_bases.gen.h"
 
 #include "generated/interfaces/IVRCompositor_018.h"
 
+#include "GfxInterop.h"
 #include "tmp_gfx/TemporaryGraphics.h"
 
 #if defined(SUPPORT_VK)
@@ -44,9 +56,12 @@
 #endif
 
 #include <algorithm>
+#include <array>
 #include <chrono>
 #include <cinttypes>
 #include <mutex>
+#include <optional>
+#include <string>
 #include <thread>
 
 using namespace vr;
@@ -114,6 +129,10 @@ XrBackend::~XrBackend()
 	// This must happen after session destruction (which occurs in FullShutdown), as runtimes (namely Monado)
 	// may try to access these resources while destroying the session.
 	temporaryGraphics.reset();
+	gfxInterop.reset();
+#if defined(SUPPORT_DX) && defined(SUPPORT_DX10) && defined(SUPPORT_DX11)
+	DX10Compositor::ReleaseBridgeDevice();
+#endif
 }
 
 XrSessionState XrBackend::GetSessionState()
@@ -254,6 +273,55 @@ static bool is_same_gpu(VkInstance instance, VkPhysicalDevice runtimeDevice, VkP
 }
 #endif
 
+#if defined(SUPPORT_DX)
+// The name of the DXGI adapter with luid (LowPart | HighPart << 32), for logs
+static std::string AdapterName(uint64_t luid)
+{
+	std::string name = "an unknown adapter";
+	IDXGIFactory1* factory = nullptr;
+	if (FAILED(CreateDXGIFactory1(IID_PPV_ARGS(&factory))) || !factory)
+		return name;
+	IDXGIAdapter1* adapter = nullptr;
+	// Bounded by the adapter count (EnumAdapters1 ends with DXGI_ERROR_NOT_FOUND)
+	for (UINT i = 0; factory->EnumAdapters1(i, &adapter) != DXGI_ERROR_NOT_FOUND; i++) {
+		DXGI_ADAPTER_DESC1 desc{};
+		bool match = SUCCEEDED(adapter->GetDesc1(&desc))
+		    && ((uint64_t)desc.AdapterLuid.LowPart | ((uint64_t)(uint32_t)desc.AdapterLuid.HighPart << 32)) == luid;
+		adapter->Release();
+		if (match) {
+			char buffer[256] = {};
+			WideCharToMultiByte(CP_UTF8, 0, desc.Description, -1, buffer, sizeof(buffer) - 1, nullptr, nullptr);
+			name = buffer;
+			break;
+		}
+	}
+	factory->Release();
+	char ids[40];
+	snprintf(ids, sizeof(ids), " (LUID %08x:%08x)", (uint32_t)(luid >> 32), (uint32_t)luid);
+	return name + ids;
+}
+
+// Whether the game's device, on the adapter gameLuid, is on the OpenXR runtime's adapter (or the runtime names
+// none). One soft failure if not: the session is still tried, as a runtime may copy across adapters, and Submit answers
+// SharedTexturesNotSupported if it or its swapchains then fail.
+static bool OnRuntimeAdapter(uint64_t gameLuid)
+{
+	uint64_t runtimeLuid = 0;
+	if (!BaseSystem::_RuntimeAdapterLuid(&runtimeLuid) || runtimeLuid == gameLuid)
+		return true;
+	std::string game = AdapterName(gameLuid), runtime = AdapterName(runtimeLuid);
+	OC_SOFT_CHECK(false, false, "The game renders on %s, but the OpenXR runtime on %s: trying the session anyway "
+	                            "(if it or its swapchains fail, Submit answers SharedTexturesNotSupported)",
+	    game.c_str(), runtime.c_str());
+	return false;
+}
+
+static uint64_t PackLuid(const LUID& luid)
+{
+	return (uint64_t)luid.LowPart | ((uint64_t)(uint32_t)luid.HighPart << 32);
+}
+#endif
+
 // VREvent_Quit for the game, as SteamVR sends when its compositor can't go on
 static void EnqueueQuit()
 {
@@ -277,6 +345,13 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 
 		// What can be checked before the session goes down is checked here, so a texture that can't be used
 		// leaves the running session alone
+		// An OpenGL or Vulkan texture where the runtime lacks that API but has D3D11: copied through D3D11 (GfxInterop)
+		std::unique_ptr<GfxInterop> interop;
+#if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+		const bool runtimeHasD3D11 = xr_ext->xrGetD3D11GraphicsRequirementsKHR_Available();
+#else
+		const bool runtimeHasD3D11 = false;
+#endif
 		switch (tex->eType) {
 		case vr::TextureType_DirectX:
 #if !(defined(SUPPORT_DX) && defined(SUPPORT_DX11))
@@ -287,6 +362,29 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 #endif
 			appGraphicsUnusable = true;
 			return false;
+#else
+		{
+			// The game's device's adapter, D3D10's (DX10Compositor) or D3D11's
+			ComPtr<IDXGIDevice> dxgi;
+#if defined(SUPPORT_DX10)
+			if (ID3D10Texture2D* tex10 = DX10Compositor::AsD3D10Texture(tex)) {
+				ComPtr<ID3D10Device> device10;
+				tex10->GetDevice(&device10);
+				if (device10)
+					device10.As(&dxgi);
+			} else
+#endif
+			{
+				ComPtr<ID3D11Device> device11;
+				((ID3D11Texture2D*)tex->handle)->GetDevice(&device11);
+				if (device11)
+					device11.As(&dxgi);
+			}
+			ComPtr<IDXGIAdapter> adapter;
+			DXGI_ADAPTER_DESC desc{};
+			if (dxgi && SUCCEEDED(dxgi->GetAdapter(&adapter)) && SUCCEEDED(adapter->GetDesc(&desc)) && !OnRuntimeAdapter(PackLuid(desc.AdapterLuid)))
+				appOnOtherAdapter = true;
+		}
 #endif
 			break;
 		case vr::TextureType_DirectX12:
@@ -303,6 +401,12 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 				OOVR_LOG_ONCE("D3D12 texture data without a resource");
 				return false;
 			}
+			{
+				ComPtr<ID3D12Device> device12;
+				((D3D12TextureData_t*)tex->handle)->m_pResource->GetDevice(IID_PPV_ARGS(&device12));
+				if (device12 && !OnRuntimeAdapter(PackLuid(device12->GetAdapterLuid())))
+					appOnOtherAdapter = true;
+			}
 #endif
 			break;
 		case vr::TextureType_Vulkan: {
@@ -316,6 +420,14 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 				OOVR_LOG_ONCE("The OpenVR app's Vulkan texture data has no instance, device or queue");
 				return false;
 			}
+			if (!xr_ext->xrGetVulkanGraphicsDeviceKHR_Available() && runtimeHasD3D11) {
+				interop = GfxInterop::ForVulkan(vktex->m_pInstance, vktex->m_pPhysicalDevice, vktex->m_pDevice, vktex->m_pQueue);
+				if (!interop) {
+					OOVR_LOG("The OpenXR runtime has no Vulkan, and the game's Vulkan frames can't go through D3D11");
+					appGraphicsUnusable = true;
+					return false;
+				}
+			}
 #endif
 			break;
 		}
@@ -324,6 +436,14 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 			if (!wglGetCurrentContext() || !wglGetCurrentDC()) {
 				OOVR_LOG_ONCEF("Null OpenGL GLRC or DC: %p,%p", (void*)wglGetCurrentContext(), (void*)wglGetCurrentDC());
 				return false;
+			}
+			if (!xr_ext->xrGetOpenGLGraphicsRequirementsKHR_Available() && runtimeHasD3D11) {
+				interop = GfxInterop::ForGL();
+				if (!interop) {
+					OOVR_LOG("The OpenXR runtime has no OpenGL, and the game's OpenGL frames can't go through D3D11");
+					appGraphicsUnusable = true;
+					return false;
+				}
 			}
 #elif defined(SUPPORT_GL)
 			if (!glXGetCurrentDisplay() || !glXGetCurrentContext()) {
@@ -382,7 +502,22 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 			return false;
 		};
 
-		switch (tex->eType) {
+#if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+		if (interop) {
+			// The session is D3D11, on the interop's device on the runtime's adapter
+			XrGraphicsRequirementsD3D11KHR graphicsRequirements{ XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR };
+			OC_XR_LOG(xr_ext->xrGetD3D11GraphicsRequirementsKHR(xr_instance, xr_system, &graphicsRequirements));
+			XrGraphicsBindingD3D11KHR d3dInfo{ XR_TYPE_GRAPHICS_BINDING_D3D11_KHR };
+			d3dInfo.device = interop->Device();
+			graphicsBinding = std::make_unique<BindingWrapper<XrGraphicsBindingD3D11KHR>>(d3dInfo);
+			// Kept with the binding, for each later session too
+			gfxInterop = std::move(interop);
+			if (XR_FAILED(DrvOpenXR::SetupSession()))
+				return giveUp("the OpenXR runtime refused a D3D11 session for the game's copied frames");
+		}
+#endif
+		// The game's own API's session (none here for frames copied through D3D11, bound above)
+		switch (gfxInterop ? vr::TextureType_Invalid : tex->eType) {
 #if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
 		case vr::TextureType_DirectX: {
 			// The spec requires that we call this before starting a session using D3D. Unfortunately we
@@ -390,9 +525,21 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 			XrGraphicsRequirementsD3D11KHR graphicsRequirements{ XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR };
 			OC_XR_LOG(xr_ext->xrGetD3D11GraphicsRequirementsKHR(xr_instance, xr_system, &graphicsRequirements));
 
-			auto* d3dTex = (ID3D11Texture2D*)tex->handle;
 			ID3D11Device* dev = nullptr;
-			d3dTex->GetDevice(&dev);
+#if defined(SUPPORT_DX10)
+			if (ID3D10Texture2D* tex10 = DX10Compositor::AsD3D10Texture(tex)) {
+				// A Direct3D 10 texture: the session is on a D3D11 device of its device's adapter, and each frame is
+				// copied across (DX10Compositor)
+				dev = DX10Compositor::BridgeDevice(tex10);
+				if (!dev)
+					return giveUp("no Direct3D 11 device on the Direct3D 10 device's adapter");
+				dev->AddRef();
+			} else
+#endif
+			{
+				auto* d3dTex = (ID3D11Texture2D*)tex->handle;
+				d3dTex->GetDevice(&dev);
+			}
 			if (!dev)
 				return giveUp("the D3D11 texture has no device");
 
@@ -441,6 +588,12 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 #if defined(SUPPORT_VK)
 		case vr::TextureType_Vulkan: {
 			const vr::VRVulkanTextureData_t* vktex = (vr::VRVulkanTextureData_t*)tex->handle;
+
+			// The spec requires that we call this before starting a session using Vulkan (a runtime may refuse the
+			// session without it). Unfortunately we can't actually do anything with this information, since the game has
+			// already created the device.
+			XrGraphicsRequirementsVulkanKHR graphicsRequirements{ XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN_KHR };
+			OC_XR_LOG(xr_ext->xrGetVulkanGraphicsRequirementsKHR(xr_instance, xr_system, &graphicsRequirements));
 
 			VkPhysicalDevice xr_desire = VK_NULL_HANDLE;
 			// We have to call this, or we get crazy validation errors
@@ -575,6 +728,10 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 		temporaryGraphics.reset();
 	}
 
+	// Copied textures' compositors are made from their D3D11 copies (StoreEyeTexture)
+	if (gfxInterop && tex->eType == gfxInterop->Type())
+		return true;
+
 	bool ready = true;
 	for (std::unique_ptr<Compositor>& compositor : compositors) {
 		// Skip a compositor if it's already set up
@@ -607,6 +764,11 @@ void XrBackend::WaitForTrackingData()
 		return;
 	}
 
+	// The game's frame from here to its xrEndFrame (SubmitFrames): an own frame in flight is ended first
+	std::unique_lock<std::mutex> owner(frameOwner);
+	if (ownFrames)
+		ownFrames->OnAppFrameStart();
+
 	// A waited frame not yet begun is begun now, with its predicted display time
 	if (!frameAwaitingBegin) {
 		auto waitCall = std::chrono::steady_clock::now();
@@ -635,7 +797,9 @@ void XrBackend::WaitForTrackingData()
 		return;
 	}
 	frameAwaitingBegin = false;
+	frameBegun = true;
 	frameCallFailures = 0;
+	owner.unlock();
 
 	xr_gbl->ClearCachedViews();
 
@@ -660,6 +824,8 @@ void XrBackend::WaitForTrackingData()
 		}
 
 		projectionViews[eye].pose = pose;
+		// No depth until this frame's texture brings some
+		projectionViews[eye].next = nullptr;
 	}
 
 	// If we're not on the game's graphics API yet, don't actually mark us as having started the frame.
@@ -676,6 +842,7 @@ static constexpr IBackend::openvr_enum_t kCompositorNone = 0;
 static constexpr IBackend::openvr_enum_t kCompositorRequestFailed = 1;
 static constexpr IBackend::openvr_enum_t kCompositorInvalidTexture = 102;
 static constexpr IBackend::openvr_enum_t kCompositorUnsupportedFormat = 105;
+static constexpr IBackend::openvr_enum_t kCompositorSharedTexturesNotSupported = 106;
 
 IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
     vr::EVREye eye,
@@ -690,11 +857,37 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 	if (!CheckOrInitCompositors(texture)) {
 		// A texture OpenComposite can't use (logged): this eye is left out of the frame
 		projectionViews[eye].subImage.swapchain = XR_NULL_HANDLE;
-		return kCompositorInvalidTexture;
+		return appOnOtherAdapter && appGraphicsUnusable ? kCompositorSharedTexturesNotSupported : kCompositorInvalidTexture;
 	}
 
 	XrCompositionLayerProjectionView& layer = projectionViews[eye];
 	layer.type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
+
+	// An OpenGL or Vulkan texture copied through D3D11: from here on, its D3D11 copy. The game's own texture stays
+	// what the pose and depth are read from.
+	const vr::Texture_t* submitted = texture;
+#if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+	vr::Texture_t copied;
+	vr::VRTextureBounds_t copiedBounds;
+	if (gfxInterop && texture->eType == gfxInterop->Type()) {
+		ID3D11Texture2D* copy = gfxInterop->CopyIn(texture, bounds);
+		if (!copy) {
+			layer.subImage.swapchain = XR_NULL_HANDLE;
+			return kCompositorRequestFailed;
+		}
+		// An OpenGL texture's rows run bottom-up and its copy's top-down: the bounds' v, which counted from the bottom,
+		// counts from the top of the copy
+		if (bounds && texture->eType == vr::TextureType_OpenGL) {
+			copiedBounds = { bounds->uMin, 1 - bounds->vMax, bounds->uMax, 1 - bounds->vMin };
+			bounds = &copiedBounds;
+		}
+		copied = { copy, vr::TextureType_DirectX, texture->eColorSpace };
+		texture = &copied;
+		// A D3D11 compositor for the interop's texture
+		if (!compositors[eye])
+			compositors[eye] = std::make_unique<DX11Compositor>(copy);
+	}
+#endif
 
 	std::unique_ptr<Compositor>& compPtr = compositors[eye];
 	if (!compPtr) {
@@ -708,11 +901,24 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 	IBackend::openvr_enum_t result = kCompositorNone;
 	if (sessionActive && renderingFrame) {
 		comp.Invoke(texture, bounds, layer.subImage, (XruEye)eye, submitFlags);
+		UseSubmittedPose(eye, submitted, submitFlags);
+		// Depth goes only straight from a game's texture: not through the interop's copy, nor D3D10's bridge
+		bool depthUsable = texture == submitted;
+#if defined(SUPPORT_DX) && defined(SUPPORT_DX10) && defined(SUPPORT_DX11)
+		if (DX10Compositor::AsD3D10Texture(submitted))
+			depthUsable = false;
+#endif
+		if (depthUsable)
+			SubmitDepth(eye, submitted, bounds, submitFlags);
+		else if (submitFlags & vr::Submit_TextureWithDepth)
+			OOVR_LOG_ONCE("Depth isn't sent for textures copied through another graphics API");
 		XrResult res = comp.LastResult();
-		if (res == XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED)
-			result = kCompositorUnsupportedFormat;
-		else if (res == XR_ERROR_VALIDATION_FAILURE)
+		if (res == XR_ERROR_VALIDATION_FAILURE)
 			result = kCompositorInvalidTexture; // the compositor's word for texture data it can't use
+		else if (XR_FAILED(res) && appOnOtherAdapter)
+			result = kCompositorSharedTexturesNotSupported; // a swapchain call failed for a device on another adapter
+		else if (res == XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED)
+			result = kCompositorUnsupportedFormat;
 		else if (XR_FAILED(res))
 			result = kCompositorRequestFailed;
 	}
@@ -734,6 +940,87 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 	return result;
 }
 
+void XrBackend::UseSubmittedPose(vr::EVREye eye, const vr::Texture_t* texture, vr::EVRSubmitFlags submitFlags)
+{
+	if (!oovr_global_configuration.UseSubmittedPose() || !(submitFlags & vr::Submit_TextureWithPose) || !xr_gbl)
+		return;
+	// The head pose the game rendered with, in its tracking space: the projection layer's space
+	const vr::HmdMatrix34_t& m = ((const vr::VRTextureWithPose_t*)texture)->mDeviceToAbsoluteTracking;
+	glm::mat3 rotation(S2G_m34(m));
+	glm::quat q = glm::quat_cast(rotation);
+	const glm::vec3 position(m.m[0][3], m.m[1][3], m.m[2][3]);
+	const float length = glm::length(q);
+	if (!(length > 0.5f && length < 1.5f) || !std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z)) {
+		OOVR_LOG_ONCE("A submitted pose that isn't a pose: the located one is used");
+		return;
+	}
+	q = glm::normalize(q);
+	// The eye's pose in the head, from the frame's views located in the view space
+	const XruCachedViews inHead = xr_gbl->GetCachedViews(xr_gbl->viewSpace);
+	const XrViewStateFlags valid = XR_VIEW_STATE_ORIENTATION_VALID_BIT | XR_VIEW_STATE_POSITION_VALID_BIT;
+	if ((inHead.viewState.viewStateFlags & valid) != valid)
+		return;
+	const XrPosef& eyePose = inHead.views[eye].pose;
+	XrPosef& pose = projectionViews[eye].pose;
+	pose.orientation = G2X_quat(glm::normalize(q * X2G_quat(eyePose.orientation)));
+	pose.position = G2X_v3f(position + q * X2G_v3f(eyePose.position));
+}
+
+void XrBackend::SubmitDepth(vr::EVREye eye, const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, vr::EVRSubmitFlags submitFlags)
+{
+	if (!oovr_global_configuration.SubmitDepth() || !(submitFlags & vr::Submit_TextureWithDepth))
+		return;
+	if (!xr_ext->DepthKHR_Available()) {
+		OOVR_LOG_ONCE("The game sends depth, but the runtime has no XR_KHR_composition_layer_depth: not sent");
+		return;
+	}
+	// With a pose too, the depth comes after it
+	const vr::VRTextureDepthInfo_t& info = (submitFlags & vr::Submit_TextureWithPose) ? ((const vr::VRTextureWithPoseAndDepth_t*)texture)->depth
+	                                                                                 : ((const vr::VRTextureWithDepth_t*)texture)->depth;
+	if (!info.handle)
+		return;
+	float nearZ = 0, farZ = 0;
+	if (!DepthRangeFromProjection(info.mProjection, nearZ, farZ)) {
+		OOVR_LOG_ONCE("A submitted depth's projection isn't a perspective one: depth not sent");
+		return;
+	}
+	vr::Texture_t depth = { info.handle, texture->eType, vr::ColorSpace_Linear };
+#if defined(SUPPORT_VK)
+	// A Vulkan depth image is on the colour image's device: some games fill only the image fields of its struct
+	vr::VRVulkanTextureData_t vkDepth;
+	if (texture->eType == vr::TextureType_Vulkan && texture->handle) {
+		const auto* colour = (const vr::VRVulkanTextureData_t*)texture->handle;
+		vkDepth = *(const vr::VRVulkanTextureData_t*)info.handle;
+		vkDepth.m_pDevice = colour->m_pDevice;
+		vkDepth.m_pPhysicalDevice = colour->m_pPhysicalDevice;
+		vkDepth.m_pInstance = colour->m_pInstance;
+		vkDepth.m_pQueue = colour->m_pQueue;
+		vkDepth.m_nQueueFamilyIndex = colour->m_nQueueFamilyIndex;
+		depth.handle = &vkDepth;
+	}
+#endif
+	std::unique_ptr<Compositor>& comp = depthCompositors[eye];
+	if (!comp)
+		comp = BaseCompositor::CreateCompositorAPI(&depth);
+	XrSwapchainSubImage sub{};
+	if (!comp || !comp->InvokeDepth(&depth, bounds, sub))
+		return;
+	// The range of depth values used: 0..1 unless the game says otherwise
+	float minDepth = info.vRange.v[0], maxDepth = info.vRange.v[1];
+	if (!(minDepth >= 0 && maxDepth <= 1 && minDepth < maxDepth)) {
+		minDepth = 0;
+		maxDepth = 1;
+	}
+	XrCompositionLayerDepthInfoKHR& d = depthInfos[eye];
+	d = { XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR };
+	d.subImage = sub;
+	d.minDepth = minDepth;
+	d.maxDepth = maxDepth;
+	d.nearZ = nearZ;
+	d.farZ = farZ;
+	projectionViews[eye].next = &d;
+}
+
 void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 {
 	// Always pump events, even if the session isn't active - this is what makes the session active
@@ -744,6 +1031,9 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 	//  there will be other data such as GUI layers to be added before ending the frame.
 	bool skipRender = postPresentStatus && !postPresent;
 	postPresentStatus = postPresent;
+
+	// Through this frame's xrEndFrame (see frameOwner)
+	std::unique_lock<std::mutex> owner(frameOwner);
 
 	if (!renderingFrame || skipRender)
 		return;
@@ -783,12 +1073,24 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 				app_layer = nullptr;
 		}
 		submittedEyeTextures = false;
+		if (app_layer) {
+			// Kept for OpenLamina's own frames: its swapchains' last images and its views stay valid to submit again
+			lastProjection = mainLayer;
+			for (uint32_t i = 0; i < 2; i++) {
+				lastProjectionViews[i] = projectionViews[i];
+				lastProjectionViews[i].next = nullptr;
+			}
+			lastProjection.views = lastProjectionViews;
+			haveLastProjection = true;
+		}
 	}
 
-	// If we have an overlay then add
+	// If we have an overlay then add. Its layers stay as they are until the frame has ended.
 	BaseOverlay* overlay = GetUnsafeBaseOverlay();
+	std::unique_lock<std::recursive_mutex> overlayLock;
 	if (overlay) {
-		layer_count = overlay->_BuildLayers(app_layer, headers);
+		overlayLock = std::unique_lock(overlay->_LayersLock());
+		layer_count = overlay->_BuildLayers(app_layer, headers, true);
 	} else if (app_layer) {
 		layer_count = 1;
 		headers = &app_layer;
@@ -800,6 +1102,12 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 	info.layerCount = layer_count;
 
 	OOVR_FAILED_XR_SOFT_ABORT(xrEndFrame(xr_session.get(), &info));
+	frameBegun = false;
+	if (overlayLock.owns_lock())
+		overlayLock.unlock();
+	if (ownFrames)
+		ownFrames->OnAppFrameEnd();
+	owner.unlock();
 
 	BaseSystem* sys = GetUnsafeBaseSystem();
 	if (sys) {
@@ -812,10 +1120,91 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 	nFrameIndex++;
 }
 
+bool XrBackend::SkyboxShown()
+{
+	std::lock_guard<std::mutex> lock(skyboxLock);
+	return skybox.layerCount > 0;
+}
+
+int XrBackend::SetEquirectSkybox(const vr::Texture_t* textures, uint32_t count)
+{
+	// Six faces are read back and turned into one lat-long image first, without any lock: it takes a while
+	Image equirect;
+	if (count == 6) {
+		if (!skyboxReader)
+			skyboxReader = BaseCompositor::CreateCompositorAPI(&textures[0]);
+		if (!skyboxReader)
+			return 1; // VRCompositorError_RequestFailed
+		std::array<Image, 6> faces;
+		for (int i = 0; i < 6; i++) {
+			if (!skyboxReader->ReadbackToCpu(&textures[i], nullptr, faces[i])) {
+				OOVR_LOG_ONCE("SetSkyboxOverride: a cube face couldn't be read back");
+				return 1; // VRCompositorError_RequestFailed
+			}
+		}
+		equirect = CubeFacesToEquirect({ &faces[0], &faces[1], &faces[2], &faces[3], &faces[4], &faces[5] },
+		    std::min<uint32_t>(2048, faces[0].width * 4));
+		if (equirect.Empty())
+			return 1; // VRCompositorError_RequestFailed
+	}
+
+	XrCompositionLayerEquirect2KHR layer{ XR_TYPE_COMPOSITION_LAYER_EQUIRECT2_KHR };
+	layer.space = xr_space_from_ref_space_type(BaseSystem::currentSpace);
+	layer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+	layer.pose = { { 0, 0, 0, 1 }, { 0, 0, 0 } };
+	layer.radius = 0; // a sphere at infinity
+	constexpr float pi = 3.14159265f;
+	layer.centralHorizontalAngle = 2 * pi;
+	layer.upperVerticalAngle = pi / 2;
+	layer.lowerVerticalAngle = -pi / 2;
+
+	// The swapchains are refilled, and maybe remade, while no own frame uses them
+	std::lock_guard<std::mutex> owner(frameOwner);
+	std::lock_guard<std::mutex> lock(skyboxLock);
+	skybox.layerCount = 0;
+	if (count == 6) {
+		if (!skybox.faces)
+			skybox.faces = CpuSwapchain::Create(equirect.width, equirect.height);
+		if (!skybox.faces || !skybox.faces->Upload(equirect))
+			return 1; // VRCompositorError_RequestFailed
+		layer.subImage = skybox.faces->SubImage();
+		skybox.layers[0] = layer;
+		skybox.layerCount = 1;
+		return 0;
+	}
+
+	// One lat-long texture, or a stereo pair: one layer for each eye
+	for (uint32_t i = 0; i < count; i++) {
+		if (!skybox.textures[i])
+			skybox.textures[i] = BaseCompositor::CreateCompositorAPI(&textures[i]);
+		if (!skybox.textures[i])
+			return 1; // VRCompositorError_RequestFailed
+		skybox.layers[i] = layer;
+		skybox.textures[i]->Invoke(&textures[i], nullptr, skybox.layers[i].subImage);
+		if (XR_FAILED(skybox.textures[i]->LastResult()))
+			return 1; // VRCompositorError_RequestFailed
+		if (count == 2)
+			skybox.layers[i].eyeVisibility = i == 0 ? XR_EYE_VISIBILITY_LEFT : XR_EYE_VISIBILITY_RIGHT;
+	}
+	skybox.layerCount = (int)count;
+	return 0;
+}
+
 IBackend::openvr_enum_t XrBackend::SetSkyboxOverride(const vr::Texture_t* pTextures, uint32_t unTextureCount)
 {
-	// Needed for rFactor2 loading screens: one texture (or a stereo pair), shown as a quad. Six faces are a cube
-	// map, which isn't drawn yet: one face as a flat picture would be wrong, so that's RequestFailed.
+	// With equirect layers: one lat-long texture, a stereo pair or six cube faces, held and shown in OpenLamina's own
+	// frames while the game runs none (as SteamVR shows it), until ClearSkyboxOverride
+	if (ownFrames && xr_ext && xr_ext->Equirect2KHR_Available() && pTextures && (unTextureCount == 1 || unTextureCount == 2 || unTextureCount == 6)) {
+		if (!CheckOrInitCompositors(pTextures))
+			return 1; // VRCompositorError_RequestFailed
+		auto lock = xr_session.lock_shared();
+		if (!sessionActive || !usingApplicationGraphicsAPI)
+			return 0;
+		return SetEquirectSkybox(pTextures, unTextureCount);
+	}
+
+	// Otherwise one texture (or the first of a stereo pair), shown at once as a quad (rFactor2's loading screens). Six
+	// faces are a cube map: one face as a flat picture would be wrong, so that's RequestFailed.
 	if (unTextureCount >= 6) {
 		OOVR_LOG_ONCE("SetSkyboxOverride with a cube map: not supported yet");
 		return 1; // VRCompositorError_RequestFailed
@@ -832,6 +1221,11 @@ IBackend::openvr_enum_t XrBackend::SetSkyboxOverride(const vr::Texture_t* pTextu
 		auto lock = xr_session.lock_shared();
 		if (!sessionActive)
 			return 0; // a restart this thread waited behind left no running session
+
+		// This frame is run here, from its xrWaitFrame to its xrEndFrame (see frameOwner)
+		std::unique_lock<std::mutex> owner(frameOwner);
+		if (ownFrames)
+			ownFrames->OnAppFrameStart();
 
 		// Make sure any unfinished frames don't call xrEndFrame after this call
 		renderingFrame = false;
@@ -868,7 +1262,14 @@ IBackend::openvr_enum_t XrBackend::SetSkyboxOverride(const vr::Texture_t* pTextu
 			return 1; // VRCompositorError_RequestFailed
 		}
 		frameAwaitingBegin = false;
+		frameBegun = true;
 		frameCallFailures = 0;
+		// Every way out of here ends the frame
+		auto ended = [this] {
+			frameBegun = false;
+			if (ownFrames)
+				ownFrames->OnAppFrameEnd();
+		};
 
 		if (skybox_compositor == nullptr)
 			skybox_compositor = BaseCompositor::CreateCompositorAPI(pTextures);
@@ -878,6 +1279,7 @@ IBackend::openvr_enum_t XrBackend::SetSkyboxOverride(const vr::Texture_t* pTextu
 			empty.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
 			empty.displayTime = xr_gbl->nextPredictedFrameTime;
 			xrEndFrame(xr_session.get(), &empty);
+			ended();
 			return 1; // VRCompositorError_RequestFailed
 		}
 
@@ -895,6 +1297,7 @@ IBackend::openvr_enum_t XrBackend::SetSkyboxOverride(const vr::Texture_t* pTextu
 			empty.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
 			empty.displayTime = xr_gbl->nextPredictedFrameTime;
 			xrEndFrame(xr_session.get(), &empty);
+			ended();
 			return 1; // VRCompositorError_RequestFailed
 		}
 		layerQuad.type = XR_TYPE_COMPOSITION_LAYER_QUAD;
@@ -915,6 +1318,7 @@ IBackend::openvr_enum_t XrBackend::SetSkyboxOverride(const vr::Texture_t* pTextu
 		info.layerCount = 1;
 
 		OOVR_FAILED_XR_SOFT_ABORT(xrEndFrame(xr_session.get(), &info));
+		ended();
 
 	} else {
 		OOVR_SOFT_ABORT("Unsupported texture count");
@@ -925,7 +1329,8 @@ IBackend::openvr_enum_t XrBackend::SetSkyboxOverride(const vr::Texture_t* pTextu
 
 void XrBackend::ClearSkyboxOverride()
 {
-	OOVR_SOFT_ABORT("No implementation");
+	std::lock_guard<std::mutex> lock(skyboxLock);
+	skybox.layerCount = 0;
 }
 
 /* Misc compositor */
@@ -1021,7 +1426,7 @@ bool XrBackend::GetFrameTiming(OOVR_Compositor_FrameTiming* pTiming, uint32_t un
 
 		// The time spent in xrWaitFrame is headroom only if the frame made its slot; after a miss it includes skipped slots
 		// (and no more than a display period, after a pause)
-		const float idle = displayPeriodMs > 0.0f ? std::min(measuredWaitMs, displayPeriodMs) : measuredWaitMs;
+		const float idle = displayPeriodMs > 0.0f ? std::min(measuredWaitMs, displayPeriodMs.load()) : measuredWaitMs;
 		pTiming->m_flCompositorIdleCpuMs = measuredIntervalMs > 0.0f ? (measuredDropped ? 0.0f : idle) : 0.1f;
 
 		/** Miscellaneous measured intervals. */
@@ -1142,6 +1547,8 @@ void XrBackend::PumpEvents()
 				// Start the session running - this means we're supposed to start submitting frames
 				XrSessionBeginInfo beginInfo{ XR_TYPE_SESSION_BEGIN_INFO };
 				beginInfo.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
+				// Not while a frame of either side's is in flight (see frameOwner)
+				std::lock_guard<std::mutex> owner(frameOwner);
 				if (XrResult begin = xrBeginSession(xr_session.get(), &beginInfo); XR_FAILED(begin)) {
 					// READY doesn't come again: without a running session the game is told to quit
 					OOVR_LOGF("xrBeginSession failed: %d", (int)begin);
@@ -1150,6 +1557,7 @@ void XrBackend::PumpEvents()
 				}
 				sessionActive = true;
 				frameAwaitingBegin = false;
+				frameBegun = false;
 				frameCallFailures = 0;
 				break;
 			}
@@ -1157,10 +1565,14 @@ void XrBackend::PumpEvents()
 				// End the session. The session is still valid and we can still query some information
 				// from it, but we're not allowed to submit frames anymore. This is done when the engagement
 				// sensor detects the user has taken off the headset, for example.
+				// Not while a frame of either side's is in flight (see frameOwner)
+				std::lock_guard<std::mutex> owner(frameOwner);
 				if (sessionActive && XR_FAILED(xrEndSession(xr_session.get()))) // could be inactive if we missed XR_SESSION_STATE_READY
 					OOVR_LOG("xrEndSession failed");
 				sessionActive = false;
 				renderingFrame = false;
+				frameBegun = false;
+				frameAwaitingBegin = false;
 				break;
 			}
 			case XR_SESSION_STATE_EXITING: {
@@ -1183,6 +1595,17 @@ void XrBackend::PumpEvents()
 			}
 		} else if (ev.type == XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED) {
 			UpdateInteractionProfile();
+		} else if (ev.type == OC_XR_TYPE_EVENT_DATA_DISPLAY_REFRESH_RATE_CHANGED_FB) {
+			// Prop_DisplayFrequency_Float asks the runtime again
+			auto* changed = (const OcXrEventDataDisplayRefreshRateChangedFB*)&ev;
+			OOVR_LOGF("The display's refresh rate changed from %.2f to %.2f Hz", changed->fromDisplayRefreshRate, changed->toDisplayRefreshRate);
+			BaseSystem* system = GetUnsafeBaseSystem();
+			if (system) {
+				VREvent_t event = { .eventType = VREvent_PropertyChanged, .trackedDeviceIndex = vr::k_unTrackedDeviceIndex_Hmd };
+				event.data.property.container = vr::k_ulInvalidPropertyContainer;
+				event.data.property.prop = vr::Prop_DisplayFrequency_Float;
+				system->_EnqueueEvent(event);
+			}
 		}
 
 	} // while loop
@@ -1232,6 +1655,46 @@ void XrBackend::OnSessionLost()
 	EnqueueQuit();
 }
 
+// Own frames call xrEndFrame on their own thread, where the runtime may use the session's device while the game's
+// threads use it too. A D3D11 device's immediate context is made safe for that (multithread protection, logged once);
+// a D3D12 queue is free-threaded. A Vulkan queue or an OpenGL context can't be shared with the game's threads that
+// way: false, logged once, and there are no own frames.
+static bool DeviceReadyForOwnFrames(const void* binding)
+{
+	const auto* header = (const XrBaseInStructure*)binding;
+	if (!header)
+		return false;
+	switch (header->type) {
+#if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+	case XR_TYPE_GRAPHICS_BINDING_D3D11_KHR: {
+		ID3D11Device* device = ((const XrGraphicsBindingD3D11KHR*)binding)->device;
+		ComPtr<ID3D11DeviceContext> context;
+		if (device)
+			device->GetImmediateContext(&context);
+		ComPtr<ID3D11Multithread> multithread;
+		if (!context || FAILED(context.As(&multithread)) || !multithread) {
+			OOVR_LOG_ONCE("ownFrames: the D3D11 device has no ID3D11Multithread, so there are no own frames");
+			return false;
+		}
+		if (!multithread->GetMultithreadProtected()) {
+			multithread->SetMultithreadProtected(TRUE);
+			OOVR_LOG_ONCE("ownFrames: the session's D3D11 immediate context is now multithread protected");
+		}
+		return true;
+	}
+#endif
+#if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX12)
+	case XR_TYPE_GRAPHICS_BINDING_D3D12_KHR:
+		return true;
+#endif
+	default:
+		OOVR_LOG_ONCEF("ownFrames: no own frames on a session of graphics binding type %d (a Vulkan queue or an OpenGL context "
+		               "is the game's own)",
+		    (int)header->type);
+		return false;
+	}
+}
+
 void XrBackend::OnSessionCreated()
 {
 	sessionLost = false;
@@ -1243,6 +1706,7 @@ void XrBackend::OnSessionCreated()
 	sessionActive = false;
 	renderingFrame = false;
 	frameAwaitingBegin = false;
+	frameBegun = false;
 	frameCallFailures = 0;
 
 	PumpEvents();
@@ -1274,15 +1738,160 @@ void XrBackend::OnSessionCreated()
 	// A scene application's session makes it the scene application for every program
 	if (BaseClientCore::appType == vr::VRApplication_Scene)
 		BaseApplications::SetSceneProcess(true);
+
+	// Frames of OpenLamina's own while the game runs none and there's a skybox or an overlay to show
+	StopOwnFrames();
+	if (ownFramesStopped || !oovr_global_configuration.OwnFrames() || !DeviceReadyForOwnFrames(GetCurrentGraphicsBinding()))
+		return;
+	ownFrames = std::make_unique<OwnFrameLoop>(
+	    OwnFrameLoop::Mode::WhenAppIdle,
+	    [this](XrTime, std::vector<const XrCompositionLayerBaseHeader*>& layers) {
+		    // RunOwnFrame holds frameOwner, under which the skybox and the game's last frame are replaced: the skybox in
+		    // the game's place, else its last frame again (which the runtime reprojects); then the overlays
+		    {
+			    std::lock_guard<std::mutex> lock(skyboxLock);
+			    for (int i = 0; i < skybox.layerCount; i++)
+				    layers.push_back((const XrCompositionLayerBaseHeader*)&skybox.layers[i]);
+		    }
+		    if (layers.empty() && haveLastProjection)
+			    layers.push_back((const XrCompositionLayerBaseHeader*)&lastProjection);
+		    BaseOverlay* overlay = GetUnsafeBaseOverlay();
+		    if (!overlay)
+			    return;
+		    // RunOwnFrame holds the overlays' lock until the frame has ended
+		    XrCompositionLayerBaseHeader const* const* headers = nullptr;
+		    int count = overlay->_BuildLayers(nullptr, headers, false);
+		    layers.insert(layers.end(), headers, headers + count);
+	    },
+	    std::chrono::milliseconds(100),
+	    [this](const OwnFrameLoop::LayerSource& source, const std::function<bool()>& wanted) {
+		    return RunOwnFrame(source, wanted);
+	    },
+	    [this] {
+		    BaseOverlay* overlay = GetUnsafeBaseOverlay();
+		    return SkyboxShown() || (overlay && overlay->_AnyVisible());
+	    });
+}
+
+// Here rather than in OwnFrameLoop.cpp, which then needs nothing of the backend's
+OwnFrameLoop::OwnFrameLoop(Mode mode, LayerSource source, std::chrono::milliseconds idleAfter)
+    : OwnFrameLoop(mode, std::move(source), idleAfter, [](const LayerSource& source, const std::function<bool()>& wanted) -> XrDuration {
+	    BackendManager* manager = BackendManager::InstancePtr();
+	    auto* backend = manager ? (XrBackend*)manager->GetBackendInstance() : nullptr;
+	    return backend ? backend->RunOwnFrame(source, wanted) : 0;
+    })
+{
+}
+
+void XrBackend::StopOwnFrames(bool forGood)
+{
+	if (forGood)
+		ownFramesStopped = true;
+	// Joins its thread, which doesn't wait for the session lock that a session restart here holds
+	ownFrames.reset();
+}
+
+XrDuration XrBackend::RunOwnFrame(const OwnFrameLoop::LayerSource& source, const std::function<bool()>& wanted)
+{
+	// The session lock (shared) first, as the game's threads take it, but never waited for: a session restart holds
+	// it exclusively while it stops the own frames. Tried until it's free or the frame isn't wanted any more.
+	std::optional<SessionLock> lock;
+	while (true) {
+		if (!wanted())
+			return 0;
+		lock.emplace(xr_session, SessionLock::TryShared{});
+		if (lock->IsHeld())
+			break;
+		lock.reset();
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
+
+	std::unique_lock<std::mutex> owner(frameOwner);
+	// The game's frame is open (it ends it), or the session isn't running: no frame
+	if (!wanted() || !sessionActive || frameBegun || !xr_session.get() || !xr_gbl)
+		return 0;
+
+	XrFrameState state{ XR_TYPE_FRAME_STATE };
+	if (frameAwaitingBegin) {
+		// A frame the game waited for and couldn't begin: this one begins it instead
+		state.predictedDisplayTime = xr_gbl->nextPredictedFrameTime;
+		state.predictedDisplayPeriod = (XrDuration)(displayPeriodMs * 1e6f);
+		state.shouldRender = XR_TRUE;
+	} else {
+		XrFrameWaitInfo waitInfo{ XR_TYPE_FRAME_WAIT_INFO };
+		if (XrResult res = xrWaitFrame(xr_session.get(), &waitInfo, &state); XR_FAILED(res)) {
+			OOVR_LOG_ONCE("xrWaitFrame failed for an own frame: skipping it");
+			OnFrameCallFailed(res);
+			return 0;
+		}
+		if (state.predictedDisplayPeriod > 0)
+			displayPeriodMs = (float)state.predictedDisplayPeriod / 1e6f;
+		xr_gbl->nextPredictedFrameTime = state.predictedDisplayTime;
+		frameAwaitingBegin = true;
+	}
+
+	XrFrameBeginInfo beginInfo{ XR_TYPE_FRAME_BEGIN_INFO };
+	if (XrResult res = xrBeginFrame(xr_session.get(), &beginInfo); XR_FAILED(res)) {
+		OOVR_LOG_ONCE("xrBeginFrame failed for an own frame: dropping it");
+		if (res == XR_ERROR_CALL_ORDER_INVALID)
+			frameAwaitingBegin = false;
+		OnFrameCallFailed(res);
+		return 0;
+	}
+	frameAwaitingBegin = false;
+	frameCallFailures = 0;
+	// Not one of the game's frames, so the time since its last one isn't a frame interval
+	RestartFrameTiming();
+
+	XrFrameEndInfo info{ XR_TYPE_FRAME_END_INFO };
+	info.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+	info.displayTime = state.predictedDisplayTime;
+
+	// The source's layers (the overlays' among them) stay as they are until the frame has ended
+	BaseOverlay* overlay = GetUnsafeBaseOverlay();
+	std::unique_lock<std::recursive_mutex> overlayLock;
+	if (overlay)
+		overlayLock = std::unique_lock(overlay->_LayersLock());
+	std::vector<const XrCompositionLayerBaseHeader*> layers;
+	if (state.shouldRender && source)
+		source(state.predictedDisplayTime, layers);
+	info.layers = layers.data();
+	info.layerCount = (uint32_t)layers.size();
+	XrResult res = xrEndFrame(xr_session.get(), &info);
+	if (XR_FAILED(res) && !layers.empty()) {
+		// Ended without them, so the frame doesn't stay open
+		OOVR_LOG_ONCEF("xrEndFrame failed for an own frame with %u layers (%d): ending it without them", info.layerCount, (int)res);
+		info.layers = nullptr;
+		info.layerCount = 0;
+		res = xrEndFrame(xr_session.get(), &info);
+	}
+	if (XR_FAILED(res))
+		OOVR_LOG_ONCEF("xrEndFrame failed for an own frame: %d", (int)res);
+
+	XrDuration period = state.predictedDisplayPeriod > 0 ? state.predictedDisplayPeriod : (XrDuration)(displayPeriodMs * 1e6f);
+	return period > 0 ? period : (XrDuration)11000000;
 }
 
 void XrBackend::PrepareForSessionShutdown()
 {
+	StopOwnFrames();
 	for (std::unique_ptr<Compositor>& c : compositors) {
 		c.reset();
 	}
 	skybox_compositor.reset();
+	{
+		std::lock_guard<std::mutex> lock(skyboxLock);
+		skybox = Skybox();
+	}
+	skyboxReader.reset();
+	haveLastProjection = false;
+	for (std::unique_ptr<Compositor>& c : depthCompositors)
+		c.reset();
+	for (XrCompositionLayerProjectionView& view : projectionViews)
+		view.next = nullptr;
 	overlay_compositors.clear();
+	// Swapchains filled from memory let go of theirs now, while the session and its device are still there
+	CpuSwapchain::ReleaseAll();
 	if (infoSet != XR_NULL_HANDLE) {
 		OC_XR_LOG(xrDestroyActionSet(infoSet));
 		infoSet = XR_NULL_HANDLE;
@@ -1660,11 +2269,52 @@ const void* XrBackend::GetCurrentGraphicsBinding()
 void XrBackend::VkGetPhysicalDevice(VkInstance instance, VkPhysicalDevice* out)
 {
 	*out = VK_NULL_HANDLE;
+	if (instance == VK_NULL_HANDLE) {
+		OOVR_LOG("VkGetPhysicalDevice: no app instance");
+		return;
+	}
+
+	// The runtime's own answer for the game's instance, whatever the temporary device's API is
+	if (xr_ext && xr_ext->xrGetVulkanGraphicsDeviceKHR_Available()) {
+		// Asked first, as the extension wants (its answer isn't needed)
+		XrGraphicsRequirementsVulkanKHR requirements{ XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN_KHR };
+		OC_XR_LOG(xr_ext->xrGetVulkanGraphicsRequirementsKHR(xr_instance, xr_system, &requirements));
+		VkPhysicalDevice device = VK_NULL_HANDLE;
+		if (XR_SUCCEEDED(xr_ext->xrGetVulkanGraphicsDeviceKHR(xr_instance, xr_system, instance, &device)) && device) {
+			*out = device;
+			return;
+		}
+		OOVR_LOG_ONCE("VkGetPhysicalDevice: xrGetVulkanGraphicsDeviceKHR failed for the game's instance");
+	}
+
+	// Without Vulkan in the runtime: the physical device on the runtime's D3D adapter (frames then go through D3D11)
+	uint64_t luid = 0;
+	if (BaseSystem::_RuntimeAdapterLuid(&luid)) {
+		uint32_t count = 0;
+		if (vkEnumeratePhysicalDevices(instance, &count, nullptr) == VK_SUCCESS) {
+			std::vector<VkPhysicalDevice> devices(count);
+			if (vkEnumeratePhysicalDevices(instance, &count, devices.data()) >= 0) {
+				devices.resize(count);
+				for (VkPhysicalDevice phy : devices) {
+					VkPhysicalDeviceIDProperties id = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES };
+					VkPhysicalDeviceProperties2 props = { VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &id };
+					vkGetPhysicalDeviceProperties2(phy, &props);
+					uint64_t deviceLuid = 0;
+					static_assert(sizeof(deviceLuid) == VK_LUID_SIZE);
+					memcpy(&deviceLuid, id.deviceLUID, VK_LUID_SIZE);
+					if (id.deviceLUIDValid && deviceLuid == luid) {
+						*out = phy;
+						return;
+					}
+				}
+			}
+		}
+	}
 
 	// VK_NULL_HANDLE (logged) if it can't be found: GetOutputDevice then answers 0, which a game takes as "any"
 	TemporaryVk* vk = temporaryGraphics ? temporaryGraphics->GetAsVk() : nullptr;
-	if (vk == nullptr || instance == VK_NULL_HANDLE) {
-		OOVR_LOG("VkGetPhysicalDevice: not using a temporary Vulkan instance (or no app instance)");
+	if (vk == nullptr) {
+		OOVR_LOG("VkGetPhysicalDevice: no runtime answer, and not using a temporary Vulkan instance");
 		return;
 	}
 

@@ -1,0 +1,361 @@
+{
+ "#": "OpenGL and Vulkan frames through Direct3D 11 (run.py --cases gfx-gl-interop,gfx-vk-interop --expect expect/gfx_interop.json, with the stand-in's default script: D3D11 alone): the session is D3D11, and the test pattern of gfx-gl-basic and gfx-vk-basic shows as it does on their own APIs. Skipped without an OpenGL or Vulkan driver (and so on CI). The bounds cases (gfx-gl-interop-bounds, gfx-vk-interop-bounds) show what gfx-gl-bounds and gfx-vk-bounds show: an OpenGL texture's v counts from its bottom row there too.",
+ "gfx-gl-interop/frame/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:views[0].invalid": [],
+  "dump:views[1].invalid": [],
+  "dump:views[0].samples.tl": "ff0000ff",
+  "dump:views[0].samples.tr": "00ff00ff",
+  "dump:views[0].samples.bl": "0000ffff",
+  "dump:views[0].samples.br": "ffffffff",
+  "dump:views[0].samples.c": "808080ff",
+  "dump:views[1].samples.tl": "0000ffff",
+  "dump:views[1].samples.tr": "ff0000ff",
+  "dump:views[1].samples.bl": "ffffffff",
+  "dump:views[1].samples.br": "00ff00ff",
+  "dump:views[1].samples.c": "808080ff"
+ },
+ "gfx-vk-interop/frame/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:views[0].invalid": [],
+  "dump:views[1].invalid": [],
+  "dump:views[0].samples.tl": "ff0000ff",
+  "dump:views[0].samples.tr": "00ff00ff",
+  "dump:views[0].samples.bl": "0000ffff",
+  "dump:views[0].samples.br": "ffffffff",
+  "dump:views[0].samples.c": "808080ff",
+  "dump:views[1].samples.tl": "0000ffff",
+  "dump:views[1].samples.tr": "ff0000ff",
+  "dump:views[1].samples.bl": "ffffffff",
+  "dump:views[1].samples.br": "00ff00ff",
+  "dump:views[1].samples.c": "808080ff"
+ },
+ "gfx-gl-interop-bounds/full/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   768,
+   768
+  ],
+  "dump:views[0].samples.tl": "ff0000ff",
+  "dump:views[0].samples.tr": "00ff00ff",
+  "dump:views[0].samples.bl": "0000ffff",
+  "dump:views[0].samples.br": "ffffffff",
+  "dump:views[1].invalid": [],
+  "dump:views[1].rect": [
+   0,
+   0,
+   768,
+   768
+  ],
+  "dump:views[1].samples.tl": "0000ffff",
+  "dump:views[1].samples.tr": "ff0000ff",
+  "dump:views[1].samples.bl": "ffffffff",
+  "dump:views[1].samples.br": "00ff00ff"
+ },
+ "gfx-gl-interop-bounds/halves/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   1024,
+   1024
+  ],
+  "dump:views[0].image": [
+   1024,
+   1024
+  ],
+  "dump:views[0].samples.tl": "ff0000ff",
+  "dump:views[0].samples.tr": "ff0000ff",
+  "dump:views[0].samples.bl": "0000ffff",
+  "dump:views[0].samples.br": "0000ffff",
+  "dump:views[0].samples.c": "0000ffff",
+  "dump:views[1].invalid": [],
+  "dump:views[1].rect": [
+   0,
+   0,
+   1024,
+   1024
+  ],
+  "dump:views[1].image": [
+   1024,
+   1024
+  ],
+  "dump:views[1].samples.tl": "00ff00ff",
+  "dump:views[1].samples.tr": "00ff00ff",
+  "dump:views[1].samples.bl": "ffffffff",
+  "dump:views[1].samples.br": "ffffffff",
+  "dump:views[1].samples.c": "ffffffff"
+ },
+ "gfx-gl-interop-bounds/flipped/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   640,
+   640
+  ],
+  "dump:views[0].samples.tl": "0000ffff",
+  "dump:views[0].samples.tr": "ffffffff",
+  "dump:views[0].samples.bl": "ff0000ff",
+  "dump:views[0].samples.br": "00ff00ff",
+  "dump:views[1].invalid": [],
+  "dump:views[1].rect": [
+   0,
+   0,
+   640,
+   640
+  ],
+  "dump:views[1].samples.tl": "ffffffff",
+  "dump:views[1].samples.tr": "00ff00ff",
+  "dump:views[1].samples.bl": "0000ffff",
+  "dump:views[1].samples.br": "ff0000ff"
+ },
+ "gfx-gl-interop-bounds/flipped halves/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   600,
+   600
+  ],
+  "dump:views[0].image": [
+   1024,
+   1024
+  ],
+  "dump:views[0].samples.tl": "0000ffff",
+  "dump:views[0].samples.tr": "0000ffff",
+  "dump:views[0].samples.bl": "ff0000ff",
+  "dump:views[0].samples.br": "ff0000ff",
+  "dump:views[1].invalid": [],
+  "dump:views[1].rect": [
+   0,
+   0,
+   600,
+   600
+  ],
+  "dump:views[1].image": [
+   1024,
+   1024
+  ],
+  "dump:views[1].samples.tl": "ffffffff",
+  "dump:views[1].samples.tr": "ffffffff",
+  "dump:views[1].samples.bl": "00ff00ff",
+  "dump:views[1].samples.br": "00ff00ff"
+ },
+ "gfx-gl-interop-bounds/stacked/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   896,
+   896
+  ],
+  "dump:views[0].image": [
+   1024,
+   1024
+  ],
+  "dump:views[0].samples.tl": "0000ffff",
+  "dump:views[0].samples.tr": "ffffffff",
+  "dump:views[0].samples.bl": "0000ffff",
+  "dump:views[0].samples.br": "ffffffff",
+  "dump:views[0].samples.c": "ffffffff",
+  "dump:views[1].invalid": [],
+  "dump:views[1].rect": [
+   0,
+   0,
+   896,
+   896
+  ],
+  "dump:views[1].image": [
+   1024,
+   1024
+  ],
+  "dump:views[1].samples.tl": "ff0000ff",
+  "dump:views[1].samples.tr": "00ff00ff",
+  "dump:views[1].samples.bl": "ff0000ff",
+  "dump:views[1].samples.br": "00ff00ff",
+  "dump:views[1].samples.c": "00ff00ff"
+ },
+ "gfx-vk-interop-bounds/full/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   768,
+   768
+  ],
+  "dump:views[0].samples.tl": "ff0000ff",
+  "dump:views[0].samples.tr": "00ff00ff",
+  "dump:views[0].samples.bl": "0000ffff",
+  "dump:views[0].samples.br": "ffffffff",
+  "dump:views[1].invalid": [],
+  "dump:views[1].rect": [
+   0,
+   0,
+   768,
+   768
+  ],
+  "dump:views[1].samples.tl": "0000ffff",
+  "dump:views[1].samples.tr": "ff0000ff",
+  "dump:views[1].samples.bl": "ffffffff",
+  "dump:views[1].samples.br": "00ff00ff"
+ },
+ "gfx-vk-interop-bounds/halves/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   1024,
+   1024
+  ],
+  "dump:views[0].image": [
+   1024,
+   1024
+  ],
+  "dump:views[0].samples.tl": "ff0000ff",
+  "dump:views[0].samples.tr": "ff0000ff",
+  "dump:views[0].samples.bl": "0000ffff",
+  "dump:views[0].samples.br": "0000ffff",
+  "dump:views[0].samples.c": "0000ffff",
+  "dump:views[1].invalid": [],
+  "dump:views[1].rect": [
+   0,
+   0,
+   1024,
+   1024
+  ],
+  "dump:views[1].image": [
+   1024,
+   1024
+  ],
+  "dump:views[1].samples.tl": "00ff00ff",
+  "dump:views[1].samples.tr": "00ff00ff",
+  "dump:views[1].samples.bl": "ffffffff",
+  "dump:views[1].samples.br": "ffffffff",
+  "dump:views[1].samples.c": "ffffffff"
+ },
+ "gfx-vk-interop-bounds/flipped/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   640,
+   640
+  ],
+  "dump:views[0].samples.tl": "0000ffff",
+  "dump:views[0].samples.tr": "ffffffff",
+  "dump:views[0].samples.bl": "ff0000ff",
+  "dump:views[0].samples.br": "00ff00ff",
+  "dump:views[1].invalid": [],
+  "dump:views[1].rect": [
+   0,
+   0,
+   640,
+   640
+  ],
+  "dump:views[1].samples.tl": "ffffffff",
+  "dump:views[1].samples.tr": "00ff00ff",
+  "dump:views[1].samples.bl": "0000ffff",
+  "dump:views[1].samples.br": "ff0000ff"
+ },
+ "gfx-vk-interop-bounds/flipped halves/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   600,
+   600
+  ],
+  "dump:views[0].image": [
+   1024,
+   1024
+  ],
+  "dump:views[0].samples.tl": "0000ffff",
+  "dump:views[0].samples.tr": "0000ffff",
+  "dump:views[0].samples.bl": "ff0000ff",
+  "dump:views[0].samples.br": "ff0000ff",
+  "dump:views[1].invalid": [],
+  "dump:views[1].rect": [
+   0,
+   0,
+   600,
+   600
+  ],
+  "dump:views[1].image": [
+   1024,
+   1024
+  ],
+  "dump:views[1].samples.tl": "ffffffff",
+  "dump:views[1].samples.tr": "ffffffff",
+  "dump:views[1].samples.bl": "00ff00ff",
+  "dump:views[1].samples.br": "00ff00ff"
+ },
+ "gfx-vk-interop-bounds/stacked/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   896,
+   896
+  ],
+  "dump:views[0].image": [
+   1024,
+   1024
+  ],
+  "dump:views[0].samples.tl": "ff0000ff",
+  "dump:views[0].samples.tr": "00ff00ff",
+  "dump:views[0].samples.bl": "ff0000ff",
+  "dump:views[0].samples.br": "00ff00ff",
+  "dump:views[0].samples.c": "00ff00ff",
+  "dump:views[1].invalid": [],
+  "dump:views[1].rect": [
+   0,
+   0,
+   896,
+   896
+  ],
+  "dump:views[1].image": [
+   1024,
+   1024
+  ],
+  "dump:views[1].samples.tl": "0000ffff",
+  "dump:views[1].samples.tr": "ffffffff",
+  "dump:views[1].samples.bl": "0000ffff",
+  "dump:views[1].samples.br": "ffffffff",
+  "dump:views[1].samples.c": "ffffffff"
+ }
+}

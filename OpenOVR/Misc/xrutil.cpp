@@ -42,6 +42,7 @@ XrExt::XrExt(XrGraphicsApiSupportedFlags apis, const std::vector<const char*>& e
 	bool hasVisMask = false;
 	bool hasHandTracking = false;
 	bool xdevSpace = false;
+	bool refreshRate = false;
 	for (const char* ext : extensions) {
 		if (strcmp(ext, XR_KHR_VISIBILITY_MASK_EXTENSION_NAME) == 0)
 			hasVisMask = true;
@@ -55,6 +56,12 @@ XrExt::XrExt(XrGraphicsApiSupportedFlags apis, const std::vector<const char*>& e
 			supportsCylinderKHR = true;
 		if (strcmp(ext, XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME) == 0)
 			supportsEyeGaze = true;
+		if (strcmp(ext, XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME) == 0)
+			supportsDepthKHR = true;
+		if (strcmp(ext, XR_KHR_COMPOSITION_LAYER_EQUIRECT2_EXTENSION_NAME) == 0)
+			supportsEquirect2KHR = true;
+		if (strcmp(ext, OC_XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME) == 0)
+			refreshRate = true;
 	}
 
 #define XR_BIND(name, function) OOVR_FAILED_XR_ABORT(xrGetInstanceProcAddr(xr_instance, #name, (PFN_xrVoidFunction*)&this->function))
@@ -62,6 +69,10 @@ XrExt::XrExt(XrGraphicsApiSupportedFlags apis, const std::vector<const char*>& e
 
 	if (hasVisMask)
 		XR_BIND_OPT(xrGetVisibilityMaskKHR, pfnXrGetVisibilityMaskKHR);
+
+	// Only the current rate is asked for (Prop_DisplayFrequency_Float); without it, the measured display period
+	if (refreshRate)
+		XR_BIND_OPT(xrGetDisplayRefreshRateFB, pfnXrGetDisplayRefreshRateFB);
 
 	if (hasHandTracking) {
 		XR_BIND(xrCreateHandTrackerEXT, pfnXrCreateHandTrackerExt);
@@ -190,6 +201,26 @@ XruCachedViews XrSessionGlobals::GetCachedViews(XrSpace space)
 	return cws;
 }
 
+const std::vector<int64_t>& XrSessionGlobals::SwapchainFormats()
+{
+	std::lock_guard lock(swapchainFormatsMtx);
+	if (swapchainFormatsKnown)
+		return swapchainFormats;
+	swapchainFormatsKnown = true;
+	uint32_t count = 0;
+	if (XR_FAILED(xrEnumerateSwapchainFormats(xr_session.get(), 0, &count, nullptr))) {
+		OOVR_LOG("xrEnumerateSwapchainFormats failed: no swapchain formats known for this session");
+		return swapchainFormats;
+	}
+	swapchainFormats.resize(count);
+	if (XR_FAILED(xrEnumerateSwapchainFormats(xr_session.get(), count, &count, swapchainFormats.data()))) {
+		OOVR_LOG("xrEnumerateSwapchainFormats failed: no swapchain formats known for this session");
+		count = 0;
+	}
+	swapchainFormats.resize(count);
+	return swapchainFormats;
+}
+
 void XrSessionGlobals::ClearCachedViews()
 {
 	std::lock_guard lock(cachedViewsMtx);
@@ -314,6 +345,11 @@ SessionLock SessionWrapper::lock_for_teardown(std::chrono::milliseconds limit)
 	return SessionLock(*this, limit);
 }
 
+SessionLock SessionWrapper::try_lock_shared()
+{
+	return SessionLock(*this, SessionLock::TryShared{});
+}
+
 void SessionWrapper::reset()
 {
 	session = XR_NULL_HANDLE;
@@ -355,6 +391,18 @@ SessionLock::SessionLock(SessionWrapper& p, std::chrono::milliseconds limit)
 	}
 	lock = std::unique_lock(p.mutex, std::adopt_lock);
 	thread_lock = Held::Exclusive;
+	owner = true;
+}
+
+SessionLock::SessionLock(SessionWrapper& p, TryShared)
+    : parent(p)
+{
+	if (thread_lock != Held::Unlocked)
+		return; // this thread holds it already
+	if (!p.mutex.try_lock_shared())
+		return;
+	shared_lock = std::shared_lock(p.mutex, std::adopt_lock);
+	thread_lock = Held::Shared;
 	owner = true;
 }
 

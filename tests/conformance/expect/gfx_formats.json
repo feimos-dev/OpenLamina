@@ -1,0 +1,787 @@
+{
+ "#": "The format cases (run.py --cases gfx-d3d11-formats,gfx-d3d12-formats,gfx-vk-formats,gfx-gl-formats --script scripts/gfx_rgba8_only.json --expect expect/gfx_formats.json): each API submits the test pattern of gfx/GfxApi.h in four formats it has (16-bit float, 11/11/10-bit float, 10-bit and 8-bit BGRX or BGRA or RGB) under a runtime that offers RGBA8 sRGB only, so OpenLamina converts each into it. Each format's textures have a size of their own (512, 448, 384, 320), by which its projection layer is found in the dump. Samples within 2 per channel. The centre is the pattern's mid-grey block: 0x80 only if the values were decoded and encoded the right number of times.",
+ "gfx-d3d11-formats/format rgba16f/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[0].format": 29,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].format": 29
+ },
+ "gfx-d3d11-formats/format r11g11b10f/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[0].format": 29,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].format": 29
+ },
+ "gfx-d3d11-formats/format rgb10a2/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[0].format": 29,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].format": 29
+ },
+ "gfx-d3d11-formats/format bgrx8/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[0].format": 29,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].format": 29
+ },
+ "gfx-d3d12-formats/format rgba16f/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[0].format": 29,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].format": 29
+ },
+ "gfx-d3d12-formats/format r11g11b10f/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[0].format": 29,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].format": 29
+ },
+ "gfx-d3d12-formats/format rgb10a2/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[0].format": 29,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].format": 29
+ },
+ "gfx-d3d12-formats/format bgrx8/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[0].format": 29,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].format": 29
+ },
+ "gfx-vk-formats/format rgba16f/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[0].format": 43,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].format": 43
+ },
+ "gfx-vk-formats/format r11g11b10f/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[0].format": 43,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].format": 43
+ },
+ "gfx-vk-formats/format rgb10a2/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[0].format": 43,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].format": 43
+ },
+ "gfx-vk-formats/format bgra8/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[0].format": 43,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].format": 43
+ },
+ "gfx-gl-formats/format rgba16f/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[0].format": 35907,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].format": 35907
+ },
+ "gfx-gl-formats/format r11g11b10f/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[0].format": 35907,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].format": 35907
+ },
+ "gfx-gl-formats/format rgb10a2/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[0].format": 35907,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].format": 35907
+ },
+ "gfx-gl-formats/format rgb8/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[0].format": 35907,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].format": 35907
+ }
+}

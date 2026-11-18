@@ -26,6 +26,12 @@ gfx::Texels TexelsOfDxgi(int64_t format)
 	case DXGI_FORMAT_R10G10B10A2_TYPELESS:
 	case DXGI_FORMAT_R10G10B10A2_UNORM:
 		return gfx::Texels::RGB10A2;
+	case DXGI_FORMAT_R11G11B10_FLOAT:
+		return gfx::Texels::RG11B10F;
+	case DXGI_FORMAT_B8G8R8X8_TYPELESS:
+	case DXGI_FORMAT_B8G8R8X8_UNORM:
+	case DXGI_FORMAT_B8G8R8X8_UNORM_SRGB:
+		return gfx::Texels::BGRX8;
 	default:
 		return gfx::Texels::Unknown;
 	}
@@ -45,6 +51,8 @@ DXGI_FORMAT ViewFormat(DXGI_FORMAT f)
 		return DXGI_FORMAT_R16G16B16A16_FLOAT;
 	case DXGI_FORMAT_R10G10B10A2_TYPELESS:
 		return DXGI_FORMAT_R10G10B10A2_UNORM;
+	case DXGI_FORMAT_B8G8R8X8_TYPELESS:
+		return DXGI_FORMAT_B8G8R8X8_UNORM;
 	default:
 		return f;
 	}
@@ -95,8 +103,11 @@ public:
 		ID3D11Texture2D* t = nullptr;
 		if (desc.SampleDesc.Count == 1) {
 			size_t pitch = (size_t)w * gfx::BytesOf(texels);
-			std::vector<uint8_t> data = gfx::PatternTexels(texels, w, h, eye, pitch, false);
-			std::vector<D3D11_SUBRESOURCE_DATA> init(desc.ArraySize, { data.data(), (UINT)pitch, 0 });
+			// Layer i: eye (eye + i) % 2's pattern
+			std::vector<uint8_t> data[2] = { gfx::PatternTexels(texels, w, h, eye, pitch, false), gfx::PatternTexels(texels, w, h, 1 - eye, pitch, false) };
+			std::vector<D3D11_SUBRESOURCE_DATA> init(desc.ArraySize);
+			for (UINT i = 0; i < desc.ArraySize; i++)
+				init[i] = { data[i % 2].data(), (UINT)pitch, 0 };
 			if (FAILED(device->CreateTexture2D(&desc, init.data(), &t)))
 				return Wrap(nullptr);
 			return Wrap(t);
@@ -121,7 +132,8 @@ public:
 		const D3D11_RECT rects[4] = { { 0, 0, (LONG)hw, (LONG)hh }, { (LONG)hw, 0, (LONG)w, (LONG)hh },
 			{ 0, (LONG)hh, (LONG)hw, (LONG)h }, { (LONG)hw, (LONG)hh, (LONG)w, (LONG)h } };
 		for (const D3D11_RECT& r : rects) {
-			uint32_t c = gfx::PatternColour((uint32_t)r.left, (uint32_t)r.top, w, h, eye);
+			// The quadrant's colour, taken at its outer corner: a multisampled pattern has no block in the middle
+			uint32_t c = gfx::PatternColour(r.left ? w - 1 : 0, r.top ? h - 1 : 0, w, h, eye);
 			const float colour[4] = { (c >> 24) / 255.0f, ((c >> 16) & 255) / 255.0f, ((c >> 8) & 255) / 255.0f, (c & 255) / 255.0f };
 			ctx1->ClearView(rtv, colour, &r, 1);
 		}

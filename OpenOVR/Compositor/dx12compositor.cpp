@@ -15,7 +15,10 @@
 
 #include <d3d12.h>
 
+#include "FormatTable.h"
+
 #include "../Misc/Config.h"
+#include "../Misc/SoftFail.h"
 #include "../Misc/xr_ext.h"
 
 #pragma comment(lib, "d3dcompiler.lib")
@@ -46,9 +49,177 @@ DX12Compositor::~DX12Compositor()
 	for (auto event : frameFenceEvents) {
 		CloseHandle(event);
 	}
+	if (oneShotEvent)
+		CloseHandle(oneShotEvent);
 }
 
-void DX12Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, bool cube)
+ID3D12GraphicsCommandList* DX12Compositor::BeginOneShot()
+{
+	if (!oneShotList) {
+		if (FAILED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&oneShotAllocator)))
+		    || FAILED(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, oneShotAllocator.Get(), nullptr, IID_PPV_ARGS(&oneShotList)))
+		    || FAILED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&oneShotFence)))) {
+			oneShotList.Reset();
+			return nullptr;
+		}
+		oneShotList->Close();
+		oneShotEvent = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+	}
+	if (!oneShotEvent || FAILED(oneShotAllocator->Reset()) || FAILED(oneShotList->Reset(oneShotAllocator.Get(), nullptr)))
+		return nullptr;
+	return oneShotList.Get();
+}
+
+bool DX12Compositor::EndOneShot(ID3D12CommandQueue* q)
+{
+	if (FAILED(oneShotList->Close()))
+		return false;
+	ID3D12CommandList* lists[] = { oneShotList.Get() };
+	q->ExecuteCommandLists(1, lists);
+	const UINT64 value = ++oneShotValue;
+	if (FAILED(q->Signal(oneShotFence.Get(), value)))
+		return false;
+	if (oneShotFence->GetCompletedValue() < value) {
+		oneShotFence->SetEventOnCompletion(value, oneShotEvent);
+		if (WaitForSingleObject(oneShotEvent, 5000) != WAIT_OBJECT_0) {
+			// Still running: its allocator and list (and the fence and event it signals) are left to it, not reset or
+			// freed under it. The next one-shot makes new ones.
+			oneShotAllocator.Detach();
+			oneShotList.Detach();
+			oneShotFence.Detach();
+			oneShotEvent = nullptr;
+			return false;
+		}
+	}
+	return true;
+}
+
+D3D12_RESOURCE_BARRIER Dx12Transition(ID3D12Resource* resource, D3D12_RESOURCE_STATES before, D3D12_RESOURCE_STATES after, UINT subresource)
+{
+	D3D12_RESOURCE_BARRIER b{};
+	b.Type = D3D12_RESOURCE_BARRIER_TYPE_TRANSITION;
+	b.Transition.pResource = resource;
+	b.Transition.Subresource = subresource;
+	b.Transition.StateBefore = before;
+	b.Transition.StateAfter = after;
+	return b;
+}
+
+bool DX12Compositor::ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTextureBounds_t* bounds, Image& out)
+{
+	// The game's texture is in PIXEL_SHADER_RESOURCE (as OpenVR's D3D12 textures are given), and is put back there
+	auto* input = tex ? (D3D12TextureData_t*)tex->handle : nullptr;
+	if (!input || !input->m_pResource || !input->m_pCommandQueue)
+		return false;
+	D3D12_RESOURCE_DESC desc = input->m_pResource->GetDesc();
+	const TexelLayout layout = TexelLayoutOfDxgi(desc.Format);
+	if (layout == TexelLayout::Unknown || desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D) {
+		OOVR_LOG_ONCEF("A D3D12 texture of format %d can't be read back into memory", (int)desc.Format);
+		return false;
+	}
+	TextureRegion region;
+	if (!RegionFromBounds(bounds, (uint32_t)desc.Width, desc.Height, region))
+		return false;
+
+	D3D12_HEAP_PROPERTIES defaultHeap{ D3D12_HEAP_TYPE_DEFAULT };
+	D3D12_HEAP_PROPERTIES readbackHeap{ D3D12_HEAP_TYPE_READBACK };
+	const DXGI_FORMAT typed = TypedDxgi(desc.Format);
+
+	// A multisampled texture is resolved first
+	ComPtr<ID3D12Resource> resolved;
+	if (desc.SampleDesc.Count > 1) {
+		D3D12_RESOURCE_DESC rd = desc;
+		rd.Format = typed;
+		rd.DepthOrArraySize = 1;
+		rd.MipLevels = 1;
+		rd.SampleDesc = { 1, 0 };
+		rd.Flags = D3D12_RESOURCE_FLAG_NONE;
+		if (FAILED(device->CreateCommittedResource(&defaultHeap, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_RESOLVE_DEST, nullptr, IID_PPV_ARGS(&resolved))))
+			return false;
+	}
+
+	D3D12_RESOURCE_DESC footprintOf = desc;
+	footprintOf.Width = region.Width();
+	footprintOf.Height = region.Height();
+	footprintOf.DepthOrArraySize = 1;
+	footprintOf.MipLevels = 1;
+	footprintOf.SampleDesc = { 1, 0 };
+	footprintOf.Format = resolved ? typed : desc.Format;
+	D3D12_PLACED_SUBRESOURCE_FOOTPRINT footprint{};
+	UINT64 total = 0;
+	device->GetCopyableFootprints(&footprintOf, 0, 1, 0, &footprint, nullptr, nullptr, &total);
+	D3D12_RESOURCE_DESC bd{};
+	bd.Dimension = D3D12_RESOURCE_DIMENSION_BUFFER;
+	bd.Width = total;
+	bd.Height = 1;
+	bd.DepthOrArraySize = 1;
+	bd.MipLevels = 1;
+	bd.SampleDesc = { 1, 0 };
+	bd.Layout = D3D12_TEXTURE_LAYOUT_ROW_MAJOR;
+	ComPtr<ID3D12Resource> buffer;
+	if (FAILED(device->CreateCommittedResource(&readbackHeap, D3D12_HEAP_FLAG_NONE, &bd, D3D12_RESOURCE_STATE_COPY_DEST, nullptr, IID_PPV_ARGS(&buffer))))
+		return false;
+
+	ID3D12GraphicsCommandList* list = BeginOneShot();
+	if (!list) {
+		OOVR_LOG_ONCE("Couldn't make a D3D12 command list to read a texture back");
+		return false;
+	}
+	const D3D12_RESOURCE_STATES given = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+	ID3D12Resource* from = input->m_pResource;
+	if (resolved) {
+		D3D12_RESOURCE_BARRIER toResolve = Dx12Transition(from, given, D3D12_RESOURCE_STATE_RESOLVE_SOURCE);
+		list->ResourceBarrier(1, &toResolve);
+		list->ResolveSubresource(resolved.Get(), 0, from, 0, typed);
+		D3D12_RESOURCE_BARRIER back[2] = { Dx12Transition(from, D3D12_RESOURCE_STATE_RESOLVE_SOURCE, given),
+			Dx12Transition(resolved.Get(), D3D12_RESOURCE_STATE_RESOLVE_DEST, D3D12_RESOURCE_STATE_COPY_SOURCE) };
+		list->ResourceBarrier(2, back);
+		from = resolved.Get();
+	} else {
+		D3D12_RESOURCE_BARRIER toCopy = Dx12Transition(from, given, D3D12_RESOURCE_STATE_COPY_SOURCE);
+		list->ResourceBarrier(1, &toCopy);
+	}
+	D3D12_TEXTURE_COPY_LOCATION dst{};
+	dst.pResource = buffer.Get();
+	dst.Type = D3D12_TEXTURE_COPY_TYPE_PLACED_FOOTPRINT;
+	dst.PlacedFootprint = footprint;
+	D3D12_TEXTURE_COPY_LOCATION srcLoc{};
+	srcLoc.pResource = from;
+	srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+	srcLoc.SubresourceIndex = 0;
+	D3D12_BOX box{ region.x0, region.y0, 0, region.x1, region.y1, 1 };
+	list->CopyTextureRegion(&dst, 0, 0, 0, &srcLoc, &box);
+	if (!resolved) {
+		D3D12_RESOURCE_BARRIER back = Dx12Transition(from, D3D12_RESOURCE_STATE_COPY_SOURCE, given);
+		list->ResourceBarrier(1, &back);
+	}
+	if (!EndOneShot(input->m_pCommandQueue)) {
+		// The copy may still be running: what it writes into is left to it too
+		OOVR_LOG_ONCE("A D3D12 texture readback didn't finish");
+		buffer.Detach();
+		resolved.Detach();
+		return false;
+	}
+	void* mapped = nullptr;
+	D3D12_RANGE range{ 0, (SIZE_T)total };
+	if (FAILED(buffer->Map(0, &range, &mapped)))
+		return false;
+	out = DecodeTexels(layout, (const uint8_t*)mapped + (size_t)footprint.Offset, region.Width(), region.Height(), footprint.Footprint.RowPitch, false,
+	    TexelsAreLinear(layout, tex->eColorSpace == vr::ColorSpace_Gamma));
+	D3D12_RANGE none{ 0, 0 };
+	buffer->Unmap(0, &none);
+	FlipImage(out, region.flipX, region.flipY);
+	return !out.Empty();
+}
+
+void DX12Compositor::WaitForAllFrames()
+{
+	for (size_t i = 0; i < frameFences.size() && i < fenceValues.size() && i < frameFenceEvents.size(); i++)
+		if (frameFences[i])
+			WaitForFence(frameFences[i].Get(), fenceValues[i], frameFenceEvents[i]);
+}
+
+void DX12Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, uint32_t width, uint32_t height, bool cube)
 {
 	XrSwapchainCreateInfo& desc = createInfo;
 
@@ -57,11 +228,10 @@ void DX12Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, const vr
 	D3D12_RESOURCE_DESC srcDesc;
 	srcDesc = src->m_pResource->GetDesc();
 
-	if (bounds) {
-		if (std::fabs(bounds->uMax - bounds->uMin) > 0.1)
-			srcDesc.Width = uint32_t(float(srcDesc.Width) * std::fabs(bounds->uMax - bounds->uMin));
-		if (std::fabs(bounds->vMax - bounds->vMin) > 0.1)
-			srcDesc.Height = uint32_t(float(srcDesc.Height) * std::fabs(bounds->vMax - bounds->vMin));
+	// The swapchain's size, if not the texture's
+	if (width && height) {
+		srcDesc.Width = width;
+		srcDesc.Height = height;
 	}
 
 	if (cube) {
@@ -77,12 +247,13 @@ void DX12Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, const vr
 	if (!usable) {
 		OOVR_LOG("Generating new swap chain");
 
-		if (bounds)
-			OOVR_LOGF("Bounds: uMin %f uMax %f vMin %f vMax %f", bounds->uMin, bounds->uMax, bounds->vMin, bounds->vMax);
 		OOVR_LOGF("Texture desc format: %d", srcDesc.Format);
 		OOVR_LOGF("Texture desc flags:  %d", srcDesc.Flags);
 		OOVR_LOGF("Texture desc width:  %d", srcDesc.Width);
 		OOVR_LOGF("Texture desc height: %d", srcDesc.Height);
+
+		// Nothing of ours may still be running on the old swapchain's images or descriptors
+		WaitForAllFrames();
 
 		// First, delete the old chain if necessary
 		if (chain) {
@@ -90,39 +261,22 @@ void DX12Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, const vr
 			chain = XR_NULL_HANDLE;
 		}
 
-		// Figure out what format we need to use
-		DxgiFormatInfo info = {};
-		if (!GetFormatInfo(srcDesc.Format, info)) {
+		// The runtime's format for it: its own, or one it's converted into (by the shader pass)
+		std::optional<FormatChoice> choice = ChooseSwapchainFormat(GfxApiKind::D3D12, srcDesc.Format, texture->eColorSpace, RuntimeFormats());
+		if (!choice) {
 			// Submit answers TextureUsesUnsupportedFormat; the eye is left out
-			OOVR_LOGF("Unknown (by OC) DXGI texture format %d", srcDesc.Format);
+			createInfo = {};
 			lastResult = XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
-			return;
+			OC_UNSUPPORTED_VOID("A D3D12 texture of DXGI format %d: no swapchain format can show it", (int)srcDesc.Format);
 		}
-		bool useLinearFormat;
-		switch (texture->eColorSpace) {
-		case vr::ColorSpace_Gamma:
-			useLinearFormat = false;
-			break;
-		case vr::ColorSpace_Linear:
-			useLinearFormat = true;
-			break;
-		default:
-			// As per the docs for the auto mode, at eight bits per channel or less it assumes gamma
-			// (using such small channels for linear colour would result in significant banding)
-			useLinearFormat = info.bpc > 8;
-			break;
-		}
-
-		DXGI_FORMAT type = useLinearFormat ? info.linear : info.srgb;
-
-		if (type == DXGI_FORMAT_UNKNOWN) {
-			OOVR_LOGF("Invalid DXGI target format found: useLinear=%d type=DXGI_FORMAT_UNKNOWN fmt=%d", useLinearFormat, srcDesc.Format);
-			lastResult = XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
-			return;
-		}
+		const DXGI_FORMAT type = (DXGI_FORMAT)choice->swapchainFormat;
+		convertFormat = choice->convert;
+		if (convertFormat)
+			OOVR_LOGF("DXGI format %d goes into swapchain format %d through the shader pass", (int)srcDesc.Format, (int)type);
 
 		// Set aside the old format for checking later
 		createInfoFormat = srcDesc.Format;
+		createColourSpace = texture->eColorSpace;
 
 		// Make eye render buffer
 		desc = { XR_TYPE_SWAPCHAIN_CREATE_INFO };
@@ -131,15 +285,16 @@ void DX12Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, const vr
 		desc.width = static_cast<uint32_t>(srcDesc.Width);
 		desc.height = srcDesc.Height;
 		desc.format = type;
-		desc.mipCount = srcDesc.MipLevels;
+		// One mip: the copy and the pass write mip 0
+		desc.mipCount = 1;
 		desc.sampleCount = 1;
 		desc.arraySize = 1;
 		desc.usageFlags = XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT | XR_SWAPCHAIN_USAGE_SAMPLED_BIT | XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT;
 
 		ForgetAcquiredImage(); // a new swapchain: no image of the old one is pending
 		if (SwapchainCallFailed(xrCreateSwapchain(xr_session.get(), &desc, &chain), "xrCreateSwapchain")) {
-		chain = XR_NULL_HANDLE; // tried again at the next Submit
-		return;
+			chain = XR_NULL_HANDLE; // tried again at the next Submit
+			return;
 		}
 
 		// Go through the images and retrieve them - this will be used later in Invoke, since OpenXR doesn't
@@ -154,56 +309,195 @@ void DX12Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, const vr
 			lastResult = XR_FAILED(lastResult) ? lastResult : XR_ERROR_RUNTIME_FAILURE;
 			imagesHandles.clear();
 			xrDestroySwapchain(chain);
-		chain = XR_NULL_HANDLE; // tried again at the next Submit
-		return;
+			chain = XR_NULL_HANDLE; // tried again at the next Submit
+			return;
 		}
 
-		for (auto event : frameFenceEvents) {
-			CloseHandle(event);
-		}
+		MakeFrameLists(imageCount);
 
-		commandLists.resize(imageCount);
-		commandAllocators.resize(imageCount);
-		frameFenceEvents.resize(imageCount);
-		frameFences.resize(imageCount);
-		fenceValues.resize(imageCount);
-
-		for (uint32_t i = 0; i < imageCount; i++) {
-			frameFenceEvents[i] = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-			fenceValues[i] = 0;
-			device->CreateFence(0, D3D12_FENCE_FLAG_NONE,
-			    IID_PPV_ARGS(&frameFences[i]));
-
-			device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
-			    IID_PPV_ARGS(&commandAllocators[i]));
-			device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
-			    commandAllocators[i].Get(), nullptr,
-			    IID_PPV_ARGS(&commandLists[i]));
-			commandLists[i]->Close();
+		// The shader pass's descriptors: one slot per image (it's made here for a format it converts, and at the first
+		// flipped bounds otherwise)
+		if (convertFormat && !pass)
+			pass = std::make_unique<Dx12Convert>(device.Get());
+		if (pass && pass->Usable() && !pass->EnsureSlots(imageCount))
+			pass.reset();
+		if (convertFormat) {
+			if (!pass || !pass->Usable()) {
+				// Submit answers InvalidTexture; the eye is left out
+				lastResult = XR_ERROR_VALIDATION_FAILURE;
+				OC_UNSUPPORTED_VOID("A D3D12 texture of DXGI format %d needs the shader pass, which couldn't be set up", (int)srcDesc.Format);
+			}
 		}
 		// TODO do we need to release the images at some point, or does the swapchain do that for us?
 	}
 }
 
-void DX12Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, std::optional<XruEye> eye, vr::EVRSubmitFlags submitFlags)
+void DX12Compositor::MakeFrameLists(uint32_t imageCount)
 {
-	// TODO: support array textures
-	D3D12TextureData_t* input = (D3D12TextureData_t*)texture->handle;
-
-	// OpenXR swap chain doesn't support weird formats like DXGI_FORMAT_BC1_TYPELESS
-	D3D12_RESOURCE_DESC srcDesc;
-	srcDesc = input->m_pResource->GetDesc();
-	if (srcDesc.Format == DXGI_FORMAT_BC1_TYPELESS) {
-		if (chain) {
-			xrDestroySwapchain(chain);
-			chain = XR_NULL_HANDLE;
-		}
-		return;
+	for (auto event : frameFenceEvents) {
+		CloseHandle(event);
 	}
 
-	CheckCreateSwapChain(texture, bounds, false);
+	commandLists.resize(imageCount);
+	commandAllocators.resize(imageCount);
+	frameFenceEvents.resize(imageCount);
+	frameFences.resize(imageCount);
+	fenceValues.resize(imageCount);
+
+	for (uint32_t i = 0; i < imageCount; i++) {
+		frameFenceEvents[i] = CreateEvent(nullptr, FALSE, FALSE, nullptr);
+		fenceValues[i] = 0;
+		device->CreateFence(0, D3D12_FENCE_FLAG_NONE,
+		    IID_PPV_ARGS(&frameFences[i]));
+
+		device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
+		    IID_PPV_ARGS(&commandAllocators[i]));
+		device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
+		    commandAllocators[i].Get(), nullptr,
+		    IID_PPV_ARGS(&commandLists[i]));
+		commandLists[i]->Close();
+	}
+}
+
+bool DX12Compositor::CopyDepth(const vr::Texture_t* depth)
+{
+	// The game's depth texture is in PIXEL_SHADER_RESOURCE (as its colour is) and is put back there; the runtime's
+	// depth images are in DEPTH_WRITE whenever it has them
+	auto* input = (D3D12TextureData_t*)depth->handle;
+	if (!input->m_pResource)
+		return false;
+	D3D12_RESOURCE_DESC desc = input->m_pResource->GetDesc();
+	if (desc.SampleDesc.Count > 1) {
+		OOVR_LOG_ONCE("A multisampled D3D12 depth texture: not sent to the runtime");
+		return false;
+	}
+	if (!chain || createInfo.width != desc.Width || createInfo.height != desc.Height || createInfoFormat != (int64_t)desc.Format) {
+		std::optional<int64_t> format = ChooseDepthSwapchainFormat(GfxApiKind::D3D12, desc.Format, RuntimeFormats());
+		if (!format) {
+			OOVR_LOG_ONCEF("No depth swapchain format of the runtime's for a D3D12 depth texture of DXGI format %d: depth not sent", (int)desc.Format);
+			return false;
+		}
+		WaitForAllFrames();
+		if (!MakeDepthChain(*format, (uint32_t)desc.Width, desc.Height))
+			return false;
+		createInfoFormat = desc.Format;
+		uint32_t count = 0;
+		bool listed = !SwapchainCallFailed(xrEnumerateSwapchainImages(chain, 0, &count, nullptr), "xrEnumerateSwapchainImages (depth)");
+		if (listed) {
+			imagesHandles.assign(count, { XR_TYPE_SWAPCHAIN_IMAGE_D3D12_KHR });
+			listed = !SwapchainCallFailed(xrEnumerateSwapchainImages(chain, count, &count, (XrSwapchainImageBaseHeader*)imagesHandles.data()), "xrEnumerateSwapchainImages (depth)");
+		}
+		if (!listed) {
+			imagesHandles.clear();
+			xrDestroySwapchain(chain);
+			chain = XR_NULL_HANDLE;
+			createInfo = {};
+			return false;
+		}
+		MakeFrameLists(count);
+	}
+	uint32_t index = 0;
+	if (!AcquireAndWait((uint32_t)std::min(imagesHandles.size(), frameFences.size()), index))
+		return false;
+	WaitForFence(frameFences[index].Get(), fenceValues[index], frameFenceEvents[index]);
+	commandAllocators[index]->Reset();
+	ID3D12GraphicsCommandList* list = commandLists[index].Get();
+	list->Reset(commandAllocators[index].Get(), nullptr);
+	ID3D12Resource* image = imagesHandles[index].texture;
+	const D3D12_RESOURCE_STATES given = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+	D3D12_RESOURCE_BARRIER in[2] = { Dx12Transition(input->m_pResource, given, D3D12_RESOURCE_STATE_COPY_SOURCE),
+		Dx12Transition(image, D3D12_RESOURCE_STATE_DEPTH_WRITE, D3D12_RESOURCE_STATE_COPY_DEST) };
+	list->ResourceBarrier(2, in);
+	// A depth texture is copied whole: mip 0, slice 0
+	D3D12_TEXTURE_COPY_LOCATION dst{};
+	dst.pResource = image;
+	dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+	dst.SubresourceIndex = 0;
+	D3D12_TEXTURE_COPY_LOCATION srcLoc{};
+	srcLoc.pResource = input->m_pResource;
+	srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+	srcLoc.SubresourceIndex = 0;
+	list->CopyTextureRegion(&dst, 0, 0, 0, &srcLoc, nullptr);
+	D3D12_RESOURCE_BARRIER out[2] = { Dx12Transition(input->m_pResource, D3D12_RESOURCE_STATE_COPY_SOURCE, given),
+		Dx12Transition(image, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_DEPTH_WRITE) };
+	list->ResourceBarrier(2, out);
+	list->Close();
+	ID3D12CommandList* lists[] = { list };
+	queue->ExecuteCommandLists(1, lists);
+	XrSwapchainImageReleaseInfo releaseInfo{ XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
+	bool released = !SwapchainCallFailed(xrReleaseSwapchainImage(chain, &releaseInfo), "xrReleaseSwapchainImage (depth)");
+	const auto fenceValue = ++currentFenceValue;
+	queue->Signal(frameFences[index].Get(), fenceValue);
+	fenceValues[index] = fenceValue;
+	return released;
+}
+
+ID3D12Resource* DX12Compositor::Resolved(const D3D12_RESOURCE_DESC& of, DXGI_FORMAT format)
+{
+	if (resolved) {
+		D3D12_RESOURCE_DESC have = resolved->GetDesc();
+		if (have.Width == of.Width && have.Height == of.Height && have.Format == format)
+			return resolved.Get();
+		WaitForAllFrames();
+		resolved.Reset();
+	}
+	D3D12_RESOURCE_DESC rd = of;
+	rd.Format = format;
+	rd.DepthOrArraySize = 1;
+	rd.MipLevels = 1;
+	rd.SampleDesc = { 1, 0 };
+	rd.Flags = D3D12_RESOURCE_FLAG_NONE;
+	D3D12_HEAP_PROPERTIES heap{ D3D12_HEAP_TYPE_DEFAULT };
+	if (FAILED(device->CreateCommittedResource(&heap, D3D12_HEAP_FLAG_NONE, &rd, D3D12_RESOURCE_STATE_RESOLVE_DEST, nullptr, IID_PPV_ARGS(&resolved))))
+		resolved.Reset();
+	return resolved.Get();
+}
+
+void DX12Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, std::optional<XruEye> eye, vr::EVRSubmitFlags submitFlags)
+{
+	// The game's texture is in PIXEL_SHADER_RESOURCE (as OpenVR's D3D12 textures are given) and is put back there; the
+	// runtime's images are in RENDER_TARGET whenever it has them
+	D3D12TextureData_t* input = (D3D12TextureData_t*)texture->handle;
+
+	D3D12_RESOURCE_DESC srcDesc;
+	srcDesc = input->m_pResource->GetDesc();
+
+	// The slice shown: SubmitWithArrayIndex's, else the first
+	const UINT arrayIndex = submitSlice ? *submitSlice : 0;
+	if (arrayIndex >= srcDesc.DepthOrArraySize) {
+		// Submit answers InvalidTexture; the eye is left out
+		lastResult = XR_ERROR_VALIDATION_FAILURE;
+		OC_UNSUPPORTED_VOID("A D3D12 array texture of %u slices submitted with slice %u", (unsigned)srcDesc.DepthOrArraySize, arrayIndex);
+	}
+
+	// The bounds' area, copied to the origin of the swapchain image
+	TextureRegion region;
+	if (!RegionFromBounds(bounds, (uint32_t)srcDesc.Width, srcDesc.Height, region)) {
+		// Submit answers InvalidTexture; the eye is left out
+		lastResult = XR_ERROR_VALIDATION_FAILURE;
+		OC_UNSUPPORTED_VOID("A D3D12 texture of no size (%llu x %u)", (unsigned long long)srcDesc.Width, srcDesc.Height);
+	}
+
+	// The swapchain holds the bounds' area at its origin, and only ever grows: bounds that change don't remake it
+	const uint32_t chainWidth = std::max(region.Width(), chain ? createInfo.width : 0u);
+	const uint32_t chainHeight = std::max(region.Height(), chain ? createInfo.height : 0u);
+	CheckCreateSwapChain(texture, chainWidth, chainHeight, false);
 	if (!chain || XR_FAILED(lastResult))
 		return;
+	copiedArea = { (int32_t)region.Width(), (int32_t)region.Height() };
+
+	// The shader pass converts and flips (invertUsingShaders: always used); made at its first use
+	const bool flip = region.flipX || region.flipY;
+	bool usePass = convertFormat || flip || oovr_global_configuration.InvertUsingShaders();
+	if (usePass && !pass) {
+		pass = std::make_unique<Dx12Convert>(device.Get());
+		if (pass->Usable() && !pass->EnsureSlots((uint32_t)imagesHandles.size()))
+			pass.reset();
+	}
+	if (usePass && !convertFormat && !(pass && pass->Usable())) {
+		OOVR_LOG_ONCE("A D3D12 texture with flipped bounds couldn't go through the shader pass: shown as it is, not flipped");
+		usePass = false;
+	}
 
 	// Reserve an image from the swapchain and wait until the compositor is done with it
 	uint32_t currentIndex = 0;
@@ -217,40 +511,99 @@ void DX12Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 	auto commandList = commandLists[currentIndex].Get();
 	commandList->Reset(commandAllocators[currentIndex].Get(), nullptr);
 
+	// The area copied: no more than the bounds'
+	D3D12_BOX sourceRegion{ region.x0, region.y0, 0, region.x1, region.y1, 1 };
 
-	// Copy the source to the destination image
-	D3D12_BOX sourceRegion;
-	if (bounds) {
-		sourceRegion.left = bounds->uMin == 0.0f ? 0 : createInfo.width;
-		sourceRegion.right = bounds->uMin == 0.0f ? createInfo.width : createInfo.width * 2;
-	} else {
-		sourceRegion.left = 0;
-		sourceRegion.right = createInfo.width;
+	const D3D12_RESOURCE_STATES given = D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE;
+	const bool typeless = TypedDxgi(srcDesc.Format) != srcDesc.Format;
+	const bool wantSrgb = WantsSrgb(GfxApiKind::D3D12, srcDesc.Format, texture->eColorSpace);
+	const DXGI_FORMAT typedFormat = !typeless ? srcDesc.Format
+	    : convertFormat                       ? (DXGI_FORMAT)FormatWithSrgb(GfxApiKind::D3D12, srcDesc.Format, wantSrgb)
+	                                          : (DXGI_FORMAT)createInfo.format;
+	// Mip 0 of the slice
+	const UINT srcSubresource = arrayIndex * srcDesc.MipLevels;
+	ID3D12Resource* image = imagesHandles[currentIndex].texture;
+
+	// A multisampled texture is resolved first; from then on that's the source, in the state the game's would be
+	ID3D12Resource* from = input->m_pResource;
+	UINT fromSubresource = srcSubresource;
+	UINT fromSlice = arrayIndex;
+	ID3D12Resource* resolvedTex = srcDesc.SampleDesc.Count > 1 ? Resolved(srcDesc, typedFormat) : nullptr;
+	if (srcDesc.SampleDesc.Count > 1 && resolvedTex) {
+		D3D12_RESOURCE_BARRIER in = Dx12Transition(from, given, D3D12_RESOURCE_STATE_RESOLVE_SOURCE);
+		commandList->ResourceBarrier(1, &in);
+		commandList->ResolveSubresource(resolvedTex, 0, from, srcSubresource, typedFormat);
+		D3D12_RESOURCE_BARRIER out[2] = { Dx12Transition(from, D3D12_RESOURCE_STATE_RESOLVE_SOURCE, given),
+			Dx12Transition(resolvedTex, D3D12_RESOURCE_STATE_RESOLVE_DEST, given) };
+		commandList->ResourceBarrier(2, out);
+		from = resolvedTex;
+		fromSubresource = 0;
+		fromSlice = 0;
 	}
-	sourceRegion.top = 0;
-	sourceRegion.bottom = createInfo.height;
-	sourceRegion.front = 0;
-	sourceRegion.back = 1;
 
-	commandList->CopyResource(imagesHandles[currentIndex].texture, input->m_pResource);
+	bool recorded = false;
+	if (usePass) {
+		// The area, backwards where the bounds flip it, in texture coordinates
+		Dx12Convert::Pass p;
+		const float w = (float)srcDesc.Width, h = (float)srcDesc.Height;
+		p.offsetX = (float)(region.flipX ? region.x1 : region.x0) / w;
+		p.offsetY = (float)(region.flipY ? region.y1 : region.y0) / h;
+		p.scaleX = (region.flipX ? -1.0f : 1.0f) * (float)region.Width() / w;
+		p.scaleY = (region.flipY ? -1.0f : 1.0f) * (float)region.Height() / h;
+		const bool viewSrgb = FormatIsSrgb(GfxApiKind::D3D12, typedFormat);
+		const bool targetSrgb = FormatIsSrgb(GfxApiKind::D3D12, createInfo.format);
+		p.decodeSrgb = wantSrgb && !viewSrgb && targetSrgb;
+		p.encodeSrgb = wantSrgb && viewSrgb && !targetSrgb;
+		recorded = pass && pass->Record(commandList, currentIndex, from, typedFormat, fromSlice, image, (DXGI_FORMAT)createInfo.format,
+		                       region.Width(), region.Height(), p);
+	} else {
+		D3D12_RESOURCE_BARRIER in[2] = { Dx12Transition(from, given, D3D12_RESOURCE_STATE_COPY_SOURCE),
+			Dx12Transition(image, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_DEST) };
+		commandList->ResourceBarrier(2, in);
+		D3D12_TEXTURE_COPY_LOCATION dst{};
+		dst.pResource = image;
+		dst.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+		dst.SubresourceIndex = 0;
+		D3D12_TEXTURE_COPY_LOCATION srcLoc{};
+		srcLoc.pResource = from;
+		srcLoc.Type = D3D12_TEXTURE_COPY_TYPE_SUBRESOURCE_INDEX;
+		srcLoc.SubresourceIndex = fromSubresource;
+		commandList->CopyTextureRegion(&dst, 0, 0, 0, &srcLoc, &sourceRegion);
+		D3D12_RESOURCE_BARRIER out[2] = { Dx12Transition(from, D3D12_RESOURCE_STATE_COPY_SOURCE, given),
+			Dx12Transition(image, D3D12_RESOURCE_STATE_COPY_DEST, D3D12_RESOURCE_STATE_RENDER_TARGET) };
+		commandList->ResourceBarrier(2, out);
+		recorded = true;
+	}
+	if (resolvedTex && from == resolvedTex) {
+		D3D12_RESOURCE_BARRIER back = Dx12Transition(resolvedTex, given, D3D12_RESOURCE_STATE_RESOLVE_DEST);
+		commandList->ResourceBarrier(1, &back);
+	}
 
 	commandList->Close();
-	ID3D12CommandList* set[] = { commandList };
-	queue->ExecuteCommandLists(1, set);
+	if (recorded) {
+		ID3D12CommandList* set[] = { commandList };
+		queue->ExecuteCommandLists(1, set);
+	} else {
+		// Nothing written: the eye is left out (Submit answers InvalidTexture), and the image goes back as it was
+		OOVR_LOG_ONCEF("A D3D12 texture of DXGI format %d couldn't be converted into swapchain format %d", (int)srcDesc.Format, (int)createInfo.format);
+		lastResult = XR_ERROR_VALIDATION_FAILURE;
+	}
 
 	// Release the swapchain - OpenXR will use the last-released image in a swapchain
 	XrSwapchainImageReleaseInfo releaseInfo{ XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
-	SwapchainCallFailed(xrReleaseSwapchainImage(chain, &releaseInfo), "xrReleaseSwapchainImage");
+	if (recorded)
+		SwapchainCallFailed(xrReleaseSwapchainImage(chain, &releaseInfo), "xrReleaseSwapchainImage");
+	else
+		xrReleaseSwapchainImage(chain, &releaseInfo);
 
-	const auto fenceValue = currentFenceValue;
+	const auto fenceValue = ++currentFenceValue;
 	queue->Signal(frameFences[currentIndex].Get(), fenceValue);
 	fenceValues[currentIndex] = fenceValue;
-	++currentFenceValue;
 }
 
 void DX12Compositor::InvokeCubemap(const vr::Texture_t* textures)
 {
-	CheckCreateSwapChain(&textures[0], nullptr, true);
+	CheckCreateSwapChain(&textures[0], 0, 0, true);
 
 	OOVR_SOFT_ABORT("TODO cubemap");
 }
@@ -269,10 +622,12 @@ bool DX12Compositor::CheckChainCompatible(D3D12_RESOURCE_DESC& inputDesc, vr::EC
 
 	CHECK(Width, width)
 	CHECK(Height, height)
-	CHECK(MipLevels, mipCount)
 
 	if (inputDesc.Format != createInfoFormat) {
 		FAIL("Format");
+	}
+	if (colourSpace != createColourSpace) {
+		FAIL("Colour space");
 	}
 
 	// CHECK_ADV(SampleDesc.Count, SampleCount);
@@ -281,60 +636,6 @@ bool DX12Compositor::CheckChainCompatible(D3D12_RESOURCE_DESC& inputDesc, vr::EC
 #undef FAIL
 
 	return usable;
-}
-
-bool DX12Compositor::GetFormatInfo(DXGI_FORMAT format, DX12Compositor::DxgiFormatInfo& out)
-{
-#define DEF_FMT_BASE(typeless, linear, srgb, bpp, bpc, channels)            \
-	{                                                                       \
-		out = DxgiFormatInfo{ srgb, linear, typeless, bpp, bpc, channels }; \
-		return true;                                                        \
-	}
-
-#define DEF_FMT_NOSRGB(name, bpp, bpc, channels) \
-	case name##_TYPELESS:                        \
-	case name##_UNORM:                           \
-		DEF_FMT_BASE(name##_TYPELESS, name##_UNORM, DXGI_FORMAT_UNKNOWN, bpp, bpc, channels)
-
-#define DEF_FMT(name, bpp, bpc, channels) \
-	case name##_TYPELESS:                 \
-	case name##_UNORM:                    \
-	case name##_UNORM_SRGB:               \
-		DEF_FMT_BASE(name##_TYPELESS, name##_UNORM, name##_UNORM_SRGB, bpp, bpc, channels)
-
-#define DEF_FMT_UNORM(linear, bpp, bpc, channels) \
-	case linear:                                  \
-		DEF_FMT_BASE(DXGI_FORMAT_UNKNOWN, linear, DXGI_FORMAT_UNKNOWN, bpp, bpc, channels)
-
-	// Note that this *should* have pretty much all the types we'll ever see in games
-	// Filtering out the non-typeless and non-unorm/srgb types, this is all we're left with
-	// (note that types that are only typeless and don't have unorm/srgb variants are dropped too)
-	switch (format) {
-		// The relatively traditional 8bpp 32-bit types
-		DEF_FMT(DXGI_FORMAT_R8G8B8A8, 32, 8, 4)
-		DEF_FMT(DXGI_FORMAT_B8G8R8A8, 32, 8, 4)
-		DEF_FMT(DXGI_FORMAT_B8G8R8X8, 32, 8, 3)
-
-		// Some larger linear-only types
-		DEF_FMT_NOSRGB(DXGI_FORMAT_R16G16B16A16, 64, 16, 4)
-		DEF_FMT_NOSRGB(DXGI_FORMAT_R10G10B10A2, 32, 10, 4)
-
-		// A jumble of other weird types
-		DEF_FMT_UNORM(DXGI_FORMAT_B5G6R5_UNORM, 16, 5, 3)
-		DEF_FMT_UNORM(DXGI_FORMAT_B5G5R5A1_UNORM, 16, 5, 4)
-		DEF_FMT_UNORM(DXGI_FORMAT_R10G10B10_XR_BIAS_A2_UNORM, 32, 10, 4)
-		DEF_FMT_UNORM(DXGI_FORMAT_B4G4R4A4_UNORM, 16, 4, 4)
-		DEF_FMT(DXGI_FORMAT_BC1, 64, 16, 4)
-
-	default:
-		// Unknown type
-		return false;
-	}
-
-#undef DEF_FMT
-#undef DEF_FMT_NOSRGB
-#undef DEF_FMT_BASE
-#undef DEF_FMT_UNORM
 }
 
 #endif

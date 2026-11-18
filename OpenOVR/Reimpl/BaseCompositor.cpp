@@ -202,19 +202,16 @@ std::unique_ptr<Compositor> BaseCompositor::CreateCompositorAPI(const vr::Textur
 #endif
 #if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
 	case TextureType_DirectX: {
-		if (!oovr_global_configuration.DX10Mode())
-			comp = std::make_unique<DX11Compositor>((ID3D11Texture2D*)texture->handle);
-
-#if defined(SUPPORT_DX10) && !defined(OC_XR_PORT)
-		else
-			comp = std::make_unique<DX10Compositor>((ID3D10Texture2D*)texture->handle);
-
-		dxcomp = (DX11Compositor*)comp;
-#else
-		else
-			OOVR_LOG_ONCE("D3D10 textures aren't supported in the OpenXR port yet: no compositor");
+#if defined(SUPPORT_DX10)
+		// A Direct3D 10 texture comes as TextureType_DirectX too: told apart by its interface (dx10Mode is ignored)
+		if (ID3D10Texture2D* tex10 = DX10Compositor::AsD3D10Texture(texture)) {
+			comp = DX10Compositor::Create(tex10);
+			if (!comp)
+				OOVR_LOG_ONCE("A Direct3D 10 texture without a Direct3D 11 device to copy it through: no compositor");
+			break;
+		}
 #endif
-
+		comp = std::make_unique<DX11Compositor>((ID3D11Texture2D*)texture->handle);
 		break;
 	}
 #endif
@@ -305,12 +302,11 @@ ovr_enum_t BaseCompositor::Submit(EVREye eye, const Texture_t* texture, const VR
 
 ovr_enum_t BaseCompositor::SubmitWithArrayIndex(vr::EVREye eye, const vr::Texture_t* texture, uint32_t idx, const vr::VRTextureBounds_t* bounds, vr::EVRSubmitFlags submitFlags)
 {
-	// The texture is one array texture, and idx its slice (not an index into an array of Texture_t); slices beyond
-	// the first aren't supported yet, so the texture is submitted whole
+	// The texture is one array texture, and idx its slice (not an index into an array of Texture_t): the compositors
+	// show that slice (D3D11, D3D12 and OpenGL arrays; Vulkan's say theirs in VRVulkanTextureArrayData_t)
 	if (!texture)
 		return VRCompositorError_InvalidTexture;
-	if (idx != 0)
-		OOVR_LOG_ONCE("SubmitWithArrayIndex: only slice 0 of array textures is used");
+	SubmitArraySlice slice(idx);
 	return Submit(eye, texture, bounds, submitFlags);
 }
 
@@ -467,8 +463,14 @@ bool BaseCompositor::OldDeviceTextureType(ETextureType* pType) const
 	case OOVR_Compositor_DeviceType_OpenGL:
 		*pType = TextureType_OpenGL;
 		return true;
+#if defined(SUPPORT_DX10)
+	case OOVR_Compositor_DeviceType_D3D10:
+		// A D3D10 texture is TextureType_DirectX, told apart from D3D11's by its interface
+		*pType = TextureType_DirectX;
+		return true;
+#endif
 	default:
-		// None (SetGraphicsDevice wasn't called), D3D9, D3D9Ex or D3D10: nothing OpenComposite can show
+		// None (SetGraphicsDevice wasn't called), D3D9 or D3D9Ex: nothing OpenLamina can show
 		return false;
 	}
 }
@@ -478,7 +480,7 @@ BaseCompositor::ovr_enum_t BaseCompositor::SubmitForDevice(EVREye eEye, void* pT
 	Texture_t texture = { pTexture, TextureType_DirectX, ColorSpace_Auto };
 	if (!OldDeviceTextureType(&texture.eType))
 		OC_UNSUPPORTED(VRCompositorError_InvalidTexture, "Submit (IVRCompositor_005/006): a texture of device type %d "
-		                                                 "(only D3D11 and OpenGL can be shown)", (int)oldDeviceType);
+		                                                 "(only D3D10, D3D11 and OpenGL can be shown)", (int)oldDeviceType);
 	return Submit(eEye, &texture, pBounds, Submit_Default);
 }
 

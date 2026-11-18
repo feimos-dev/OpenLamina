@@ -8,6 +8,7 @@
 #include <openxr/openxr.h>
 #include <shared_mutex>
 #include <unordered_map>
+#include <vector>
 // Note: Xru stands for openXR Utilities
 
 /**
@@ -90,7 +91,17 @@ public:
 	 */
 	void ClearCachedViews();
 
+	/**
+	 * What xrEnumerateSwapchainFormats lists for this session, in the runtime's order of preference: asked once, at
+	 * the first call (empty if the runtime can't say).
+	 */
+	const std::vector<int64_t>& SwapchainFormats();
+
 private:
+	std::mutex swapchainFormatsMtx;
+	bool swapchainFormatsKnown = false;
+	std::vector<int64_t> swapchainFormats;
+
 	/**
 	 * Makes sure calls involving the cached views map are guarded, since maps are not thread-safe.
 	 */
@@ -131,6 +142,12 @@ public:
 	[[nodiscard]] SessionLock lock_for_teardown(std::chrono::milliseconds limit);
 
 	/*
+	 * The shared lock if it's free now, without waiting (see SessionLock::IsHeld): for a thread that must not wait while a
+	 * session restart, which holds the lock exclusively, stops it.
+	 */
+	[[nodiscard]] SessionLock try_lock_shared();
+
+	/*
 	 * Resets the underlying XrSession to XR_NULL_HANDLE. Does not actually call xrDestroySession.
 	 */
 	void reset();
@@ -153,10 +170,15 @@ class SessionLock {
 	inline static thread_local Held thread_lock = Held::Unlocked;
 
 public:
+	struct TryShared {};
+
 	SessionLock(SessionWrapper& p, bool exclusive);
 	SessionLock(SessionWrapper& p, std::chrono::milliseconds limit);
+	SessionLock(SessionWrapper& p, TryShared);
 	~SessionLock();
 	operator XrSession&();
+	// Whether this thread holds the lock, through this SessionLock or an outer one
+	bool IsHeld() const { return thread_lock != Held::Unlocked; }
 };
 
 XrSpace xr_space_from_tracking_origin(vr::ETrackingUniverseOrigin origin);

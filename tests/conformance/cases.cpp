@@ -21,6 +21,7 @@
 #include "IVRCompositor_006.h"
 #include "IVRCompositor_008.h"
 #include "IVRCompositor_029.h"
+#include "IVRExtendedDisplay_001.h"
 #include "IVRInput_010.h"
 #include "IVRInput_011.h"
 #include "IVROverlay_001.h"
@@ -33,6 +34,7 @@
 #include "IVRSystem_022.h"
 #include "IVRSystem_026.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
@@ -43,26 +45,30 @@
 #include <sstream>
 #include <atomic>
 #include <set>
+#include <map>
 #include <thread>
 
 #ifndef _WIN32
 #include <unistd.h>
 #endif
 
+#include "gfx/GfxApi.h"
+
+#ifdef _WIN32
+#include <d3d11_4.h>
+#include <d3d9.h>
+#include <dxgi.h>
+#ifndef VK_NO_PROTOTYPES
+#define VK_NO_PROTOTYPES
+#endif
+#include <vulkan/vulkan.h>
+#endif
+
 using namespace conformance;
-
-namespace {
-
-Json::Value Err(int e)
-{
-	Json::Value v;
-	v["ret"] = e;
-	return v;
-}
 
 // The stand-in runtime's dump (OC_TEST_RUNTIME_DUMP), written when OpenLamina destroys its instance: read it after
 // Cleanup. Null without one (another runtime, or none written).
-Json::Value ReadStandInDump()
+Json::Value conformance::ReadStandInDump()
 {
 	const char* path = std::getenv("OC_TEST_RUNTIME_DUMP");
 	if (!path || !*path)
@@ -74,6 +80,15 @@ Json::Value ReadStandInDump()
 	if (!in || !Json::parseFromStream(rb, in, &root, &errors))
 		return Json::Value();
 	return root;
+}
+
+namespace {
+
+Json::Value Err(int e)
+{
+	Json::Value v;
+	v["ret"] = e;
+	return v;
 }
 
 void InitMatrix(CaseContext& c)
@@ -1717,6 +1732,443 @@ void SubmitEdges(CaseContext& c)
 	c.Record("Background submit", bg);
 }
 
+// One frame of the game's: poses, then both eyes
+void GameFrame(Frames& f, const vr::Texture_t* tex)
+{
+	vr::TrackedDevicePose_t poses[16];
+	f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+	f.comp->Submit(vr::Eye_Left, tex, nullptr, vr::Submit_Default);
+	f.comp->Submit(vr::Eye_Right, tex, nullptr, vr::Submit_Default);
+}
+
+// An overlay shown from memory (64x64 grey), so OpenLamina has something of its own to show in a stall
+bool ShowGreyOverlay(CaseContext& c)
+{
+	vr::EVRInitError le = vr::VRInitError_None;
+	auto* ov = (vr::IVROverlay_028::IVROverlay*)c.core->GetGenericInterface("IVROverlay_028", &le);
+	vr::VROverlayHandle_t h = vr::k_ulOverlayHandleInvalid;
+	if (!ov || ov->CreateOverlay("oc.test.own", "Own", &h) != 0)
+		return false;
+	std::vector<uint8_t> grey(64 * 64 * 4, 0x80);
+	return ov->SetOverlayRaw(h, grey.data(), 64, 64, 4) == 0 && ov->ShowOverlay(h) == 0;
+}
+
+// OpenLamina's own frames while the game stalls (expect/own_frames.json, with ownFrames=true): with an overlay shown,
+// 10 frames, a second without any call, then 10 more. With the stand-in at 90 Hz, OpenLamina runs at least 60 frames
+// of its own in that second, each with the game's last frame again under the overlay, and no frame call comes out of
+// order.
+void OwnFramesCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	bool shown = ShowGreyOverlay(c);
+	for (int frame = 0; frame < 10; frame++)
+		GameFrame(f, tex.get());
+	std::this_thread::sleep_for(std::chrono::seconds(1));
+	for (int frame = 0; frame < 10; frame++)
+		GameFrame(f, tex.get());
+
+	Json::Value r;
+#ifdef _WIN32
+	// The game's device, which own frames' xrEndFrame shares with the game's threads, is multithread protected
+	if (c.call->d3d11) {
+		ID3D11DeviceContext* context = nullptr;
+		c.call->d3d11->GetImmediateContext(&context);
+		ID3D11Multithread* multithread = nullptr;
+		if (context && SUCCEEDED(context->QueryInterface(__uuidof(ID3D11Multithread), (void**)&multithread)) && multithread) {
+			r["device_multithread_protected"] = multithread->GetMultithreadProtected() != FALSE;
+			multithread->Release();
+		}
+		if (context)
+			context->Release();
+	}
+#endif
+	c.core->Cleanup();
+
+	r["frames"] = 20;
+	r["overlay_shown"] = shown;
+	Json::Value dump = ReadStandInDump();
+	if (!dump.isNull()) {
+		r["frames_ended_at_least_80"] = dump["frames_ended"].asInt64() >= 10 + 10 + 60;
+		// Every frame recorded with a quad (the overlay) also has the game's frame (its first may be lost to the
+		// session's move onto its device)
+		std::map<int64_t, std::pair<bool, bool>> frames; // frame: quad, projection
+		for (const Json::Value& layer : dump["layers"]) {
+			auto& f = frames[layer["frame"].asInt64()];
+			f.first |= layer["type"].asString() == "quad";
+			f.second |= layer["type"].asString() == "projection";
+		}
+		int withQuad = 0, withBoth = 0;
+		for (auto& [frame, f] : frames) {
+			withQuad += f.first;
+			withBoth += f.first && f.second;
+		}
+		r["own_frames_show_the_game_frame"] = withQuad >= 60 && withBoth >= withQuad - 1;
+		r["frame_order_errors"] = dump["frame_order_errors"];
+	}
+	c.Record("frames", r);
+}
+
+// An overlay's image replaced from another thread, in alternating sizes, while OpenLamina's own frames draw it
+// (expect/own_frames.json, with ownFrames=true): nothing crashes and no frame call comes out of order
+void OwnFramesOverlayChurnCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	vr::EVRInitError le = vr::VRInitError_None;
+	auto* ov = (vr::IVROverlay_028::IVROverlay*)c.core->GetGenericInterface("IVROverlay_028", &le);
+	vr::VROverlayHandle_t h = vr::k_ulOverlayHandleInvalid;
+	if (!ov || ov->CreateOverlay("oc.test.churn", "Churn", &h) != 0) {
+		c.Record("no overlay");
+		c.core->Cleanup();
+		return;
+	}
+	std::vector<uint8_t> grey(128 * 128 * 4, 0x80);
+	ov->SetOverlayRaw(h, grey.data(), 64, 64, 4);
+	ov->ShowOverlay(h);
+	for (int frame = 0; frame < 10; frame++)
+		GameFrame(f, tex.get());
+	std::atomic<int> sets{ 0 };
+	std::thread setter([&] {
+		// 60 images over about a second: the own frames run meanwhile
+		for (int i = 0; i < 60; i++) {
+			uint32_t size = i % 2 ? 128 : 64;
+			if (ov->SetOverlayRaw(h, grey.data(), size, size, 4) == 0)
+				sets++;
+			std::this_thread::sleep_for(std::chrono::milliseconds(15));
+		}
+	});
+	setter.join();
+	for (int frame = 0; frame < 10; frame++)
+		GameFrame(f, tex.get());
+	c.core->Cleanup();
+
+	Json::Value r;
+	r["sets"] = sets.load();
+	Json::Value dump = ReadStandInDump();
+	if (!dump.isNull()) {
+		r["own_frames_ran"] = dump["frames_ended"].asInt64() > 20 + 30;
+		r["frame_order_errors"] = dump["frame_order_errors"];
+	}
+	c.Record("frames", r);
+}
+
+// The same stall with nothing of OpenLamina's own to show (expect/own_frames.json): no frames of its own, so the
+// runtime is left with the game's last frame
+void OwnFramesNothingShownCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	for (int frame = 0; frame < 10; frame++)
+		GameFrame(f, tex.get());
+	std::this_thread::sleep_for(std::chrono::milliseconds(500));
+	for (int frame = 0; frame < 10; frame++)
+		GameFrame(f, tex.get());
+	c.core->Cleanup();
+
+	Json::Value r;
+	Json::Value dump = ReadStandInDump();
+	if (!dump.isNull()) {
+		// The game's 20, or one fewer (its first may be lost to the session's move onto its device)
+		r["only_the_game_frames"] = dump["frames_ended"].asInt64() <= 20;
+		r["frame_order_errors"] = dump["frame_order_errors"];
+	}
+	c.Record("frames", r);
+}
+
+// The game stalling and coming back again and again while another thread reads input (expect/own_frames.json): 20
+// rounds of 5 frames and a 150 ms pause, each pause long enough for OpenLamina's own frames to start, so the game's
+// next frame often meets one of them. No frame call may come out of order, and nothing may crash.
+void OwnFramesRaceCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	ShowGreyOverlay(c);
+	std::atomic<bool> done{ false };
+	std::atomic<int> polls{ 0 };
+	std::thread reader([&] {
+		// Until the game's thread is done, but no more than 100000 passes
+		for (int pass = 0; !done && pass < 100000; pass++) {
+			for (vr::TrackedDeviceIndex_t dev = 1; dev <= 2; dev++) {
+				vr::VRControllerState_t state{};
+				f.sys->GetControllerState(dev, &state, sizeof(state));
+			}
+			polls++;
+			std::this_thread::yield();
+		}
+	});
+	const int rounds = 20, framesPerRound = 5;
+	for (int round = 0; round < rounds; round++) {
+		for (int frame = 0; frame < framesPerRound; frame++)
+			GameFrame(f, tex.get());
+		std::this_thread::sleep_for(std::chrono::milliseconds(150));
+	}
+	done = true;
+	reader.join();
+	c.core->Cleanup();
+
+	Json::Value r;
+	r["frames"] = rounds * framesPerRound;
+	r["polled"] = polls > 0;
+	Json::Value dump = ReadStandInDump();
+	if (!dump.isNull()) {
+		r["own_frames_ran"] = dump["frames_ended"].asInt64() > rounds * framesPerRound;
+		r["frame_order_errors"] = dump["frame_order_errors"];
+	}
+	c.Record("frames", r);
+}
+
+#ifdef _WIN32
+// The DXGI adapters (DXGI 1.1's list, which DXGI 1.0's EnumAdapters has in the same order): LUIDs as LowPart |
+// HighPart << 32
+std::vector<uint64_t> DxgiAdapterLuids()
+{
+	std::vector<uint64_t> luids;
+	IDXGIFactory1* factory = nullptr;
+	if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&factory)))
+		return luids;
+	IDXGIAdapter1* adapter = nullptr;
+	for (UINT i = 0; i < 64 && factory->EnumAdapters1(i, &adapter) == S_OK; i++) {
+		DXGI_ADAPTER_DESC1 desc{};
+		adapter->GetDesc1(&desc);
+		adapter->Release();
+		luids.push_back((uint64_t)desc.AdapterLuid.LowPart | ((uint64_t)(uint32_t)desc.AdapterLuid.HighPart << 32));
+	}
+	factory->Release();
+	return luids;
+}
+
+// Has the stand-in name this adapter in its D3D requirements (read when OpenLamina asks, so set before Init)
+void NameRuntimeAdapter(uint64_t luid)
+{
+	char hex[32];
+	std::snprintf(hex, sizeof(hex), "%016llx", (unsigned long long)luid);
+	SetEnvironmentVariableA("OC_TEST_RUNTIME_GPU_LUID", hex);
+}
+
+// D3D9Ex's index of the adapter with luid, 0 if it has none (as OpenLamina answers then)
+int32_t D3D9AdapterIndexOf(uint64_t luid)
+{
+	HMODULE d3d9 = LoadLibraryW(L"d3d9.dll");
+	if (!d3d9)
+		return 0;
+	using Create9Ex = HRESULT(WINAPI*)(UINT, IDirect3D9Ex**);
+	auto create = (Create9Ex)GetProcAddress(d3d9, "Direct3DCreate9Ex");
+	IDirect3D9Ex* d3d = nullptr;
+	int32_t index = 0;
+	if (create && SUCCEEDED(create(D3D_SDK_VERSION, &d3d)) && d3d) {
+		for (UINT i = 0; i < d3d->GetAdapterCount() && i < 64; i++) {
+			LUID l{};
+			if (SUCCEEDED(d3d->GetAdapterLUID(i, &l)) && ((uint64_t)l.LowPart | ((uint64_t)(uint32_t)l.HighPart << 32)) == luid) {
+				index = (int32_t)i;
+				break;
+			}
+		}
+		d3d->Release();
+	}
+	FreeLibrary(d3d9);
+	return index;
+}
+
+// The last physical device of instance, with its deviceUUID named to the stand-in as the runtime's
+// (OC_TEST_RUNTIME_GPU_UUID); VK_NULL_HANDLE without one
+VkPhysicalDevice NameRuntimeVkDevice(VkInstance instance)
+{
+	HMODULE module = GetModuleHandleA("vulkan-1.dll");
+	auto gipa = module ? (PFN_vkGetInstanceProcAddr)GetProcAddress(module, "vkGetInstanceProcAddr") : nullptr;
+	if (!gipa || !instance)
+		return VK_NULL_HANDLE;
+	auto enumerate = (PFN_vkEnumeratePhysicalDevices)gipa(instance, "vkEnumeratePhysicalDevices");
+	auto props2 = (PFN_vkGetPhysicalDeviceProperties2)gipa(instance, "vkGetPhysicalDeviceProperties2");
+	if (!props2)
+		props2 = (PFN_vkGetPhysicalDeviceProperties2)gipa(instance, "vkGetPhysicalDeviceProperties2KHR");
+	uint32_t count = 0;
+	if (!enumerate || !props2 || enumerate(instance, &count, nullptr) != VK_SUCCESS || count == 0)
+		return VK_NULL_HANDLE;
+	std::vector<VkPhysicalDevice> devices(count);
+	if (enumerate(instance, &count, devices.data()) < 0 || count == 0)
+		return VK_NULL_HANDLE;
+	VkPhysicalDevice last = devices[count - 1];
+	VkPhysicalDeviceIDProperties id{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES };
+	VkPhysicalDeviceProperties2 p{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2 };
+	p.pNext = &id;
+	props2(last, &p);
+	std::string hex;
+	char buf[3];
+	for (uint8_t b : id.deviceUUID) {
+		std::snprintf(buf, sizeof(buf), "%02x", b);
+		hex += buf;
+	}
+	SetEnvironmentVariableA("OC_TEST_RUNTIME_GPU_UUID", hex.c_str());
+	return last;
+}
+#endif
+
+// The runtime's GPU as OpenLamina answers it (expect/gpu.json), on the stand-in with scripts/gfx_all_apis.json: the
+// stand-in's D3D requirements name the last DXGI adapter (WARP's, where there's a GPU as well) and its Vulkan the last
+// physical device. Each answer is recorded as whether it's that adapter's; the Vulkan one (a record of its own) is
+// skipped without a Vulkan driver.
+void GpuAnswersCase(CaseContext& c)
+{
+#ifdef _WIN32
+	std::vector<uint64_t> luids = DxgiAdapterLuids();
+	if (luids.empty()) {
+		Json::Value r;
+		r["skipped"] = "no DXGI adapter";
+		c.Record("answers", r);
+		return;
+	}
+	const uint64_t runtimeLuid = luids.back();
+	const int32_t runtimeIndex = (int32_t)luids.size() - 1;
+	NameRuntimeAdapter(runtimeLuid);
+
+	std::string whyNoVulkan;
+	std::unique_ptr<GfxApi> vk = GfxApi::Create(GfxKind::Vulkan, &whyNoVulkan);
+	GfxTexture vkTex = vk ? vk->Pattern(16, 16, 43, 0) : GfxTexture{}; // VK_FORMAT_R8G8B8A8_SRGB
+	VkInstance vkInstance = vkTex.Made() ? (VkInstance)vkTex.vk.m_pInstance : VK_NULL_HANDLE;
+	VkPhysicalDevice runtimeVk = NameRuntimeVkDevice(vkInstance);
+
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	vr::EVRInitError le;
+	auto* display = (vr::IVRExtendedDisplay_001::IVRExtendedDisplay*)c.core->GetGenericInterface("IVRExtendedDisplay_001", &le);
+
+	Json::Value r;
+	int32_t dxgi = -1;
+	f.sys->GetDXGIOutputInfo(&dxgi);
+	r["dxgi_is_runtime_adapter"] = dxgi == runtimeIndex;
+	r["d3d9_is_runtime_adapter"] = f.sys->GetD3D9AdapterIndex() == D3D9AdapterIndexOf(runtimeLuid);
+	if (display) {
+		int32_t adapter = -1, output = -1;
+		display->GetDXGIOutputInfo(&adapter, &output);
+		r["extended_is_runtime_adapter"] = adapter == runtimeIndex;
+		r["extended_output"] = output;
+	}
+	uint64_t device = 0;
+	f.sys->GetOutputDevice(&device, vr::TextureType_DirectX, nullptr);
+	r["output_device_d3d11_is_runtime_luid"] = device == runtimeLuid;
+	device = 0;
+	f.sys->GetOutputDevice(&device, vr::TextureType_DirectX12, nullptr);
+	r["output_device_d3d12_is_runtime_luid"] = device == runtimeLuid;
+	c.Record("answers", r);
+
+	Json::Value v;
+	if (!runtimeVk) {
+		v["skipped"] = vk ? "no Vulkan physical device" : whyNoVulkan;
+	} else {
+		device = 0;
+		f.sys->GetOutputDevice(&device, vr::TextureType_Vulkan, (VkInstance_T*)vkInstance);
+		v["output_device_is_runtime_device"] = device == (uint64_t)runtimeVk;
+	}
+	c.Record("vulkan", v);
+	c.core->Cleanup();
+#else
+	Json::Value r;
+	r["skipped"] = "the GPU cases are Windows only";
+	c.Record("answers", r);
+#endif
+}
+
+// A game whose device is on another adapter than the runtime's (expect/gpu.json): the stand-in names the last DXGI
+// adapter, the game's D3D11 device is on the first. Submit answers SharedTexturesNotSupported (106) for both eyes.
+// Skipped with one adapter.
+void GpuOtherAdapterCase(CaseContext& c)
+{
+#ifdef _WIN32
+	std::vector<uint64_t> luids = DxgiAdapterLuids();
+	std::string why;
+	std::unique_ptr<GfxApi> gfx = luids.size() >= 2 ? GfxApi::Create(GfxKind::D3D11, &why) : nullptr;
+	if (!gfx) {
+		Json::Value r;
+		r["skipped"] = luids.size() < 2 ? "only one DXGI adapter" : why;
+		c.Record("submit", r);
+		return;
+	}
+	GfxTexture tex = gfx->Pattern(256, 256, 29, 0); // DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
+	ID3D11Device* device = nullptr;
+	if (tex.Made())
+		((ID3D11Texture2D*)tex.keep)->GetDevice(&device);
+	uint64_t gameLuid = 0;
+	if (device) {
+		IDXGIDevice* dxgi = nullptr;
+		IDXGIAdapter* adapter = nullptr;
+		DXGI_ADAPTER_DESC desc{};
+		if (SUCCEEDED(device->QueryInterface(__uuidof(IDXGIDevice), (void**)&dxgi)) && SUCCEEDED(dxgi->GetAdapter(&adapter))
+		    && SUCCEEDED(adapter->GetDesc(&desc)))
+			gameLuid = (uint64_t)desc.AdapterLuid.LowPart | ((uint64_t)(uint32_t)desc.AdapterLuid.HighPart << 32);
+		if (adapter)
+			adapter->Release();
+		if (dxgi)
+			dxgi->Release();
+		device->Release();
+	}
+	// The runtime on another adapter than the game's
+	uint64_t runtimeLuid = luids.back() != gameLuid ? luids.back() : luids.front();
+	NameRuntimeAdapter(runtimeLuid);
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	Json::Value r;
+	for (int frame = 0; frame < 3; frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+		r["left"] = (int)f.comp->Submit(vr::Eye_Left, tex.Texture(), nullptr, vr::Submit_Default);
+		r["right"] = (int)f.comp->Submit(vr::Eye_Right, tex.Texture(), nullptr, vr::Submit_Default);
+	}
+	c.core->Cleanup();
+	c.Record("submit", r);
+#else
+	Json::Value r;
+	r["skipped"] = "the GPU cases are Windows only";
+	c.Record("submit", r);
+#endif
+}
+
+// Prop_DisplayFrequency_Float over 20 frames (expect/display_frequency_*.json): before the first frame, at frame 5 and
+// at the end, rounded to whole hertz, and the first frame whose events had a VREvent_PropertyChanged for it (-1 for
+// none, recorded as is and as whether it's the 10th or 11th). With scripts/refresh_72_120.json the runtime offers XR_FB_display_refresh_rate and changes from 72 to 120 Hz
+// at its 10th frame; with scripts/display_120.json it has no such extension and a 120 Hz display.
+void DisplayFrequencyCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	auto frequency = [&] {
+		vr::ETrackedPropertyError e = vr::TrackedProp_Success;
+		return (int)std::lround(f.sys->GetFloatTrackedDeviceProperty(vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_DisplayFrequency_Float, &e));
+	};
+	Json::Value r;
+	r["before_frames"] = frequency();
+	int changedAt = -1;
+	for (int frame = 1; frame <= 20; frame++) {
+		GameFrame(f, tex.get());
+		vr::VREvent_t ev{};
+		for (int n = 0; n < 64 && f.sys->PollNextEvent(&ev, sizeof(ev)); n++) {
+			if (changedAt < 0 && ev.eventType == vr::VREvent_PropertyChanged && ev.trackedDeviceIndex == vr::k_unTrackedDeviceIndex_Hmd
+			    && ev.data.property.prop == vr::Prop_DisplayFrequency_Float)
+				changedAt = frame;
+		}
+		if (frame == 5)
+			r["at_frame_5"] = frequency();
+	}
+	r["at_frame_20"] = frequency();
+	r["changed_at_frame"] = changedAt;
+	// The runtime's 10th frame is the game's 10th or 11th (its first may be on the session before the game's device)
+	r["changed_at_frame_10_or_11"] = changedAt == 10 || changedAt == 11;
+	c.Record("frequency", r);
+	c.core->Cleanup();
+}
+
 } // namespace
 
 const std::map<std::string, CaseFn>& conformance::Cases()
@@ -1750,6 +2202,13 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "events-commit", EventsCommitCase },
 		{ "submit-edges", SubmitEdges },
 		{ "observer", ObserverCase },
+		{ "own-frames", OwnFramesCase },
+		{ "own-frames-race", OwnFramesRaceCase },
+		{ "own-frames-nothing-shown", OwnFramesNothingShownCase },
+		{ "own-frames-overlay-churn", OwnFramesOverlayChurnCase },
+		{ "gpu-answers", GpuAnswersCase },
+		{ "gpu-other-adapter", GpuOtherAdapterCase },
+		{ "display-frequency", DisplayFrequencyCase },
 	};
 	static const std::map<std::string, CaseFn> all = [] {
 		std::map<std::string, CaseFn> m = cases;

@@ -282,20 +282,25 @@ def monado_running():
 def join_dump(dump, what):
     """What a case record's "dump_join" asks of the stand-in's dump (None without one, as on a real runtime):
       last_projection  the last projection layer: {"frame", "invalid", "views": [{"samples", "samples_error", "rect",
-                       "format", "array_index", "invalid", "depth"}]}
+                       "image", "format", "array_index", "invalid", "depth"}]}
       last_frame       {"frame", "layers": every layer of the last frame that had any, as the dump has them}
       counters         frames_ended, frame_order_errors, refresh_rate_requests, images_left_acquired,
                        swapchain_call_order_errors
+      last_layer:<type>  the last layer of that type (quad, cylinder, ...), as the dump has it
+      projection_rect:<w>x<h>  as last_projection, of the last projection layer whose first view's rect is w x h
     """
     if not dump:
         return None
     layers = dump.get("layers", [])
-    if what == "last_projection":
+    if what == "last_projection" or what.startswith("projection_rect:"):
         proj = [layer for layer in layers if layer.get("type") == "projection"]
+        if what.startswith("projection_rect:"):
+            w, h = (int(v) for v in what[len("projection_rect:"):].split("x"))
+            proj = [layer for layer in proj if layer.get("views") and (layer["views"][0].get("rect") or [])[2:4] == [w, h]]
         if not proj:
             return None
         last = proj[-1]
-        keep = ("samples", "samples_error", "rect", "format", "array_index", "invalid", "depth")
+        keep = ("samples", "samples_error", "rect", "image", "format", "array_index", "invalid", "depth", "pose", "fov")
         return {"frame": last.get("frame"), "invalid": last.get("invalid", []),
                 "views": [{k: v.get(k) for k in keep} for v in last.get("views", [])]}
     if what == "last_frame":
@@ -303,6 +308,9 @@ def join_dump(dump, what):
             return None
         frame = layers[-1].get("frame")
         return {"frame": frame, "layers": [layer for layer in layers if layer.get("frame") == frame]}
+    if what.startswith("last_layer:"):
+        of_type = [layer for layer in layers if layer.get("type") == what[len("last_layer:"):]]
+        return of_type[-1] if of_type else None
     if what == "counters":
         return {k: dump.get(k) for k in ("frames_ended", "frame_order_errors", "refresh_rate_requests",
                                          "images_left_acquired", "swapchain_call_order_errors")}
@@ -325,6 +333,20 @@ def dump_path(value, path):
                 return MISSING
             value = value[part]
     return value
+
+
+def matches(got, want):
+    """An --expect value: equal, or {"near": v, "within": d} for a number within d of v, or an "rrggbbaa" sample whose
+    every channel is within d of v's."""
+    if isinstance(want, dict) and set(want) == {"near", "within"}:
+        near, within = want["near"], want["within"]
+        if isinstance(near, str) and isinstance(got, str) and len(near) == len(got) == 8:
+            try:
+                return all(abs(int(got[i:i + 2], 16) - int(near[i:i + 2], 16)) <= within for i in range(0, 8, 2))
+            except ValueError:
+                return False
+        return isinstance(got, (int, float)) and not isinstance(got, bool) and abs(got - near) <= within
+    return got == want
 
 
 def expect_key(r):
@@ -358,9 +380,11 @@ def compare(results, expected_path, differences_path, arch):
 def check_expect(results, expect_path, allow_skip=None, rounds=None):
     """The mismatches with an --expect file, as (record key, text), in every round of a --repeat run (rounds: their
     numbers). A field "dump:<path>" is looked up in the record's joined dump. A skipped record passes only if its case
-    matches allow_skip (a regex)."""
+    matches allow_skip (a regex), and so do that case's other expected records."""
     expect = json.loads(Path(expect_path).read_text(encoding="utf-8"))
     by_key = {(expect_key(r), r.get("round")): r for r in results}
+    # A case skipped as a whole (its device can't be made here) has one record; its other expected records pass too
+    skipped_cases = {r.get("case") for r in results if r.get("skipped") and allow_skip and re.fullmatch(allow_skip, r.get("case", ""))}
     misses = []
     for k, fields in expect.items():
         if k.startswith("#"):
@@ -370,7 +394,8 @@ def check_expect(results, expect_path, allow_skip=None, rounds=None):
             r = by_key.get((k, n), by_key.get((k, None)))
             where = k if n is None else f"{k} (round {n})"
             if r is None:
-                misses.append((k, f"{where}: no such record"))
+                if k.split("/", 1)[0] not in skipped_cases:
+                    misses.append((k, f"{where}: no such record"))
                 continue
             if r.get("skipped"):
                 if not (allow_skip and re.fullmatch(allow_skip, r.get("case", ""))):
@@ -378,7 +403,7 @@ def check_expect(results, expect_path, allow_skip=None, rounds=None):
                 continue
             for f, v in fields.items():
                 got = dump_path(r.get("dump"), f[len("dump:"):]) if f.startswith("dump:") else r.get(f)
-                if got != v:
+                if got is MISSING or not matches(got, v):
                     shown = "nothing" if got is MISSING else json.dumps(got)
                     misses.append((k, f"{where} {f}: got {shown}, expected {json.dumps(v)}"))
     return misses

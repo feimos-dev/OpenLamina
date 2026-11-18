@@ -4,14 +4,18 @@
 
 #pragma once
 
+#include "CpuSwapchain.h"
+
 #include <chrono>
 
 #include "XrDriverPrivate.h"
 
+#include "OwnFrameLoop.h"
 #include "XrController.h"
 #include "XrHMD.h"
 
 #include <atomic>
+#include <functional>
 #include <memory>
 #include <vector>
 #include <mutex>
@@ -43,6 +47,8 @@ public:
 	std::atomic<bool> exitExpected{ false };
 	// The app's graphics device couldn't be bound: the session stays on the temporary device
 	std::atomic<bool> appGraphicsUnusable{ false };
+	// It's on another adapter than the runtime's: if its session or swapchains fail, Submit answers SharedTexturesNotSupported
+	std::atomic<bool> appOnOtherAdapter{ false };
 
 	/**
 	 * To be called after xrCreateSession. Should only be used by DrvOpenXR.
@@ -76,6 +82,23 @@ public:
 	 */
 	static void MaybeRestartForInputs();
 
+	/**
+	 * One frame of OpenLamina's own (OwnFrameLoop), with source's layers: on the calling thread, which mustn't hold
+	 * the frame (frameOwner) already. Runs none, answering 0, if wanted() turns false first, if the session isn't
+	 * running, or if the game's frame is open (begun and not yet ended: the game ends it). Otherwise answers the frame's
+	 * predicted display period.
+	 */
+	XrDuration RunOwnFrame(const OwnFrameLoop::LayerSource& source, const std::function<bool()>& wanted);
+
+	/** The runtime's last predicted display period (from xrWaitFrame), 0 before the first */
+	float DisplayPeriodMs() const { return displayPeriodMs; }
+
+	/**
+	 * Stops OpenLamina's own frames (and joins their thread) until the next session is created, or for good when
+	 * OpenLamina shuts down (before the interfaces their layers come from are destroyed)
+	 */
+	void StopOwnFrames(bool forGood = false);
+
 #ifdef SUPPORT_VK
 	static void VkGetPhysicalDevice(VkInstance instance, VkPhysicalDevice* out);
 #endif
@@ -99,7 +122,27 @@ private:
 	// False if the texture can't be used (logged): no session switch then, or the switch was undone
 	bool CheckOrInitCompositors(const vr::Texture_t* tex);
 	std::unique_ptr<Compositor> compositors[XruEyeCount];
-	std::unique_ptr<Compositor> skybox_compositor;
+	std::unique_ptr<Compositor> skybox_compositor; // the quad shown without equirect layers
+
+	// The skybox SetSkyboxOverride set, shown in OpenLamina's own frames until ClearSkyboxOverride: one or two equirect
+	// layers. Clearing only stops showing it; its swapchains are refilled under frameOwner (which own frames hold) by the
+	// next skybox, or let go of with the session. Under skyboxLock.
+	struct Skybox {
+		std::unique_ptr<Compositor> textures[2]; // lat-long textures, one per eye for a stereo pair
+		std::unique_ptr<CpuSwapchain> faces; // six faces, as one lat-long image
+		XrCompositionLayerEquirect2KHR layers[2]{};
+		int layerCount = 0;
+	};
+	std::mutex skyboxLock;
+	Skybox skybox;
+	std::unique_ptr<Compositor> skyboxReader; // reads cube faces back
+	// The game's last projection layer, for OpenLamina's own frames; under frameOwner
+	XrCompositionLayerProjection lastProjection{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
+	XrCompositionLayerProjectionView lastProjectionViews[2]{};
+	bool haveLastProjection = false;
+	bool SkyboxShown();
+	// The skybox from lat-long textures or cube faces; an OpenVR compositor error
+	int SetEquirectSkybox(const vr::Texture_t* textures, uint32_t count);
 	std::vector<std::shared_ptr<Compositor>> overlay_compositors;
 
 	/**
@@ -134,8 +177,26 @@ private:
 	// The views for the two main eye layers
 	XrCompositionLayerProjectionView projectionViews[XruEyeCount];
 
+	// The pose a frame was rendered with (useSubmittedPose): the submitted head pose times the eye's pose in the head
+	void UseSubmittedPose(vr::EVREye eye, const vr::Texture_t* texture, vr::EVRSubmitFlags submitFlags);
+	// The depth that goes with a view (submitDepth), the bounds' area of it as of the colour, chained to it for this frame
+	void SubmitDepth(vr::EVREye eye, const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, vr::EVRSubmitFlags submitFlags);
+	XrCompositionLayerDepthInfoKHR depthInfos[XruEyeCount] = {};
+	std::unique_ptr<Compositor> depthCompositors[XruEyeCount];
+
 	// Have we started rendering a frame yet? If not, calling xrEndFrame would result in an error
 	bool renderingFrame = false;
+
+	// Who runs the frame: held from xrWaitFrame to xrEndFrame by OpenLamina's own frames, and around each frame call
+	// of the game's (its xrWaitFrame and xrBeginFrame, its xrEndFrame), whose frame is open in between (frameBegun), so
+	// that no frame of one starts while the other's is open. Taken after the session lock (shared), and never held while
+	// waiting for the session lock or for the own frames' thread.
+	std::mutex frameOwner;
+	// A frame was begun (by the game, or SetSkyboxOverride) and not yet ended; under frameOwner
+	bool frameBegun = false;
+	// OpenLamina's frames while the game runs none; created with each session, stopped before it ends
+	std::unique_ptr<OwnFrameLoop> ownFrames;
+	bool ownFramesStopped = false; // for good: OpenLamina is shutting down
 
 	// A frame xrWaitFrame gave whose xrBeginFrame failed: the next frame begins it again instead of waiting, as a
 	// second xrWaitFrame blocks until xrBeginFrame is called. Repeated failures lose the session.
@@ -167,7 +228,8 @@ private:
 	// busy = time from one xrWaitFrame return to the next xrWaitFrame call (the app's render and submit), smoothed;
 	// interval = time between xrWaitFrame calls, per frame.
 	std::chrono::steady_clock::time_point lastWaitCall{};
-	float measuredIntervalMs = 0.0f, measuredBusyMs = 0.0f, measuredWaitMs = 0.0f, displayPeriodMs = 0.0f;
+	float measuredIntervalMs = 0.0f, measuredBusyMs = 0.0f, measuredWaitMs = 0.0f;
+	std::atomic<float> displayPeriodMs{ 0.0f }; // also written by OpenLamina's own frames' thread
 	uint32_t measuredDropped = 0;
 	XrTime lastPredictedDisplayTime = 0;
 	void RecordFrameTiming(std::chrono::steady_clock::time_point callTime, std::chrono::steady_clock::time_point returnTime,
@@ -214,5 +276,7 @@ private:
 
 	// The current graphics binding, used for restarting the session
 	inline static std::unique_ptr<BindingBase> graphicsBinding = nullptr;
+	// OpenGL or Vulkan frames copied through D3D11, whose device graphicsBinding has (GfxInterop.h)
+	std::unique_ptr<class GfxInterop> gfxInterop;
 	static std::unique_ptr<class TemporaryGraphics> temporaryGraphics;
 };

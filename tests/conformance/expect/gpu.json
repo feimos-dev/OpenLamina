@@ -1,0 +1,18 @@
+{
+ "#": "The runtime's GPU (run.py --cases gpu-answers,gpu-other-adapter --script scripts/gfx_all_apis.json --expect expect/gpu.json --allow-skip \"gpu-.*\"): the stand-in's D3D requirements name the last DXGI adapter, and GetDXGIOutputInfo (IVRSystem and IVRExtendedDisplay), GetD3D9AdapterIndex and GetOutputDevice for D3D11 and D3D12 answer it; GetOutputDevice for Vulkan answers the physical device the runtime wants for the game's instance. A game on another adapter has its session tried, which the stand-in refuses (as Monado does), and then gets SharedTexturesNotSupported from Submit (skipped with one adapter, and the Vulkan record without a Vulkan driver).",
+ "gpu-answers/answers/-/-": {
+  "dxgi_is_runtime_adapter": true,
+  "d3d9_is_runtime_adapter": true,
+  "extended_is_runtime_adapter": true,
+  "extended_output": 0,
+  "output_device_d3d11_is_runtime_luid": true,
+  "output_device_d3d12_is_runtime_luid": true
+ },
+ "gpu-answers/vulkan/-/-": {
+  "output_device_is_runtime_device": true
+ },
+ "gpu-other-adapter/submit/-/-": {
+  "left": 106,
+  "right": 106
+ }
+}

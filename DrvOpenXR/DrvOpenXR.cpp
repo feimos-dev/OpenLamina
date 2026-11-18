@@ -285,6 +285,13 @@ IBackend* DrvOpenXR::CreateOpenXRBackend(const char* startupInfo, vr::EVRInitErr
 	// The gaze for eye-tracked foveation; a runtime may start its eye tracker for it, so only when the user wants it
 	if (oovr_global_configuration.EyeTracking() && availableExtensions.contains(XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME))
 		extensions.push_back(XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME);
+	// Depth with the projection layer (submitDepth), and equirect layers for skyboxes, where the runtime has them
+	for (const char* layerExtension : { XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME, XR_KHR_COMPOSITION_LAYER_EQUIRECT2_EXTENSION_NAME })
+		if (availableExtensions.contains(layerExtension))
+			extensions.push_back(layerExtension);
+	// The display's refresh rate (Prop_DisplayFrequency_Float) and its changes
+	if (availableExtensions.contains(OC_XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME))
+		extensions.push_back(OC_XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME);
 
 	const char* const layers[] = {
 #ifdef XR_VALIDATION_LAYER_PATH
@@ -425,8 +432,18 @@ XrResult DrvOpenXR::SetupSession()
 	return XR_SUCCESS;
 }
 
+void DrvOpenXR::StopOwnFrames()
+{
+	if (currentBackend)
+		currentBackend->StopOwnFrames(true);
+}
+
 void DrvOpenXR::ShutdownSession()
 {
+	// No frames of OpenLamina's own on a session that's ending
+	if (currentBackend)
+		currentBackend->StopOwnFrames();
+
 	BackendManager* instance = BackendManager::InstancePtr();
 	// Is it already being shut down?
 	// Note that this is indirectly called by the XrBackend destructor, which will have

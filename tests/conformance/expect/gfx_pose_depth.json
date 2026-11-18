@@ -1,0 +1,506 @@
+{
+ "#": "The pose and depth cases with both keys on (run.py --cases gfx-d3d11-pose-depth,gfx-d3d12-pose-depth,gfx-vk-pose-depth,gfx-gl-pose-depth --script scripts/gfx_depth.json --ini ini/pose_depth.ini --expect expect/gfx_pose_depth.json): the head pose submitted 0.5 m to the left of the located one (at x 0, eyes 0.0315 m either side) puts both views 0.5 m to the left (within 1 mm), and each view gets the depth texture (0.25 everywhere, read back as 0x40 in every channel) with near 0.1 and far 100 from the submitted projection. With side-by-side halves the depth's rect is the colour's half of the depth texture; with flipped bounds no depth goes with the views.",
+ "gfx-d3d11-pose-depth/pose-depth/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].pose.p[0]": {
+   "near": -0.5315,
+   "within": 0.001
+  },
+  "dump:views[0].pose.p[1]": {
+   "near": 1.7,
+   "within": 0.001
+  },
+  "dump:views[0].depth.near": {
+   "near": 0.1,
+   "within": 0.0001
+  },
+  "dump:views[0].depth.far": {
+   "near": 100,
+   "within": 0.01
+  },
+  "dump:views[0].depth.samples.c": "40404040",
+  "dump:views[0].depth.samples.tl": "40404040",
+  "dump:views[1].invalid": [],
+  "dump:views[1].pose.p[0]": {
+   "near": -0.4685,
+   "within": 0.001
+  },
+  "dump:views[1].pose.p[1]": {
+   "near": 1.7,
+   "within": 0.001
+  },
+  "dump:views[1].depth.near": {
+   "near": 0.1,
+   "within": 0.0001
+  },
+  "dump:views[1].depth.far": {
+   "near": 100,
+   "within": 0.01
+  },
+  "dump:views[1].depth.samples.c": "40404040",
+  "dump:views[1].depth.samples.tl": "40404040"
+ },
+ "gfx-d3d11-pose-depth/halves/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].pose.p[0]": {
+   "near": -0.5315,
+   "within": 0.001
+  },
+  "dump:views[0].pose.p[1]": {
+   "near": 1.7,
+   "within": 0.001
+  },
+  "dump:views[0].depth.near": {
+   "near": 0.1,
+   "within": 0.0001
+  },
+  "dump:views[0].depth.far": {
+   "near": 100,
+   "within": 0.01
+  },
+  "dump:views[0].depth.rect": [
+   0,
+   0,
+   768,
+   768
+  ],
+  "dump:views[0].depth.samples.c": "40404040",
+  "dump:views[0].depth.samples.tl": "40404040",
+  "dump:views[1].invalid": [],
+  "dump:views[1].pose.p[0]": {
+   "near": -0.4685,
+   "within": 0.001
+  },
+  "dump:views[1].pose.p[1]": {
+   "near": 1.7,
+   "within": 0.001
+  },
+  "dump:views[1].depth.near": {
+   "near": 0.1,
+   "within": 0.0001
+  },
+  "dump:views[1].depth.far": {
+   "near": 100,
+   "within": 0.01
+  },
+  "dump:views[1].depth.rect": [
+   768,
+   0,
+   768,
+   768
+  ],
+  "dump:views[1].depth.samples.c": "40404040",
+  "dump:views[1].depth.samples.tl": "40404040"
+ },
+ "gfx-d3d11-pose-depth/flipped/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].pose.p[0]": {
+   "near": -0.5315,
+   "within": 0.001
+  },
+  "dump:views[0].depth": null,
+  "dump:views[1].invalid": [],
+  "dump:views[1].pose.p[0]": {
+   "near": -0.4685,
+   "within": 0.001
+  },
+  "dump:views[1].depth": null
+ },
+ "gfx-d3d12-pose-depth/pose-depth/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].pose.p[0]": {
+   "near": -0.5315,
+   "within": 0.001
+  },
+  "dump:views[0].pose.p[1]": {
+   "near": 1.7,
+   "within": 0.001
+  },
+  "dump:views[0].depth.near": {
+   "near": 0.1,
+   "within": 0.0001
+  },
+  "dump:views[0].depth.far": {
+   "near": 100,
+   "within": 0.01
+  },
+  "dump:views[0].depth.samples.c": "40404040",
+  "dump:views[0].depth.samples.tl": "40404040",
+  "dump:views[1].invalid": [],
+  "dump:views[1].pose.p[0]": {
+   "near": -0.4685,
+   "within": 0.001
+  },
+  "dump:views[1].pose.p[1]": {
+   "near": 1.7,
+   "within": 0.001
+  },
+  "dump:views[1].depth.near": {
+   "near": 0.1,
+   "within": 0.0001
+  },
+  "dump:views[1].depth.far": {
+   "near": 100,
+   "within": 0.01
+  },
+  "dump:views[1].depth.samples.c": "40404040",
+  "dump:views[1].depth.samples.tl": "40404040"
+ },
+ "gfx-d3d12-pose-depth/halves/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].pose.p[0]": {
+   "near": -0.5315,
+   "within": 0.001
+  },
+  "dump:views[0].pose.p[1]": {
+   "near": 1.7,
+   "within": 0.001
+  },
+  "dump:views[0].depth.near": {
+   "near": 0.1,
+   "within": 0.0001
+  },
+  "dump:views[0].depth.far": {
+   "near": 100,
+   "within": 0.01
+  },
+  "dump:views[0].depth.rect": [
+   0,
+   0,
+   768,
+   768
+  ],
+  "dump:views[0].depth.samples.c": "40404040",
+  "dump:views[0].depth.samples.tl": "40404040",
+  "dump:views[1].invalid": [],
+  "dump:views[1].pose.p[0]": {
+   "near": -0.4685,
+   "within": 0.001
+  },
+  "dump:views[1].pose.p[1]": {
+   "near": 1.7,
+   "within": 0.001
+  },
+  "dump:views[1].depth.near": {
+   "near": 0.1,
+   "within": 0.0001
+  },
+  "dump:views[1].depth.far": {
+   "near": 100,
+   "within": 0.01
+  },
+  "dump:views[1].depth.rect": [
+   768,
+   0,
+   768,
+   768
+  ],
+  "dump:views[1].depth.samples.c": "40404040",
+  "dump:views[1].depth.samples.tl": "40404040"
+ },
+ "gfx-d3d12-pose-depth/flipped/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].pose.p[0]": {
+   "near": -0.5315,
+   "within": 0.001
+  },
+  "dump:views[0].depth": null,
+  "dump:views[1].invalid": [],
+  "dump:views[1].pose.p[0]": {
+   "near": -0.4685,
+   "within": 0.001
+  },
+  "dump:views[1].depth": null
+ },
+ "gfx-vk-pose-depth/pose-depth/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].pose.p[0]": {
+   "near": -0.5315,
+   "within": 0.001
+  },
+  "dump:views[0].pose.p[1]": {
+   "near": 1.7,
+   "within": 0.001
+  },
+  "dump:views[0].depth.near": {
+   "near": 0.1,
+   "within": 0.0001
+  },
+  "dump:views[0].depth.far": {
+   "near": 100,
+   "within": 0.01
+  },
+  "dump:views[0].depth.samples.c": "40404040",
+  "dump:views[0].depth.samples.tl": "40404040",
+  "dump:views[1].invalid": [],
+  "dump:views[1].pose.p[0]": {
+   "near": -0.4685,
+   "within": 0.001
+  },
+  "dump:views[1].pose.p[1]": {
+   "near": 1.7,
+   "within": 0.001
+  },
+  "dump:views[1].depth.near": {
+   "near": 0.1,
+   "within": 0.0001
+  },
+  "dump:views[1].depth.far": {
+   "near": 100,
+   "within": 0.01
+  },
+  "dump:views[1].depth.samples.c": "40404040",
+  "dump:views[1].depth.samples.tl": "40404040"
+ },
+ "gfx-vk-pose-depth/depth image only/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].pose.p[0]": {
+   "near": -0.5315,
+   "within": 0.001
+  },
+  "dump:views[0].pose.p[1]": {
+   "near": 1.7,
+   "within": 0.001
+  },
+  "dump:views[0].depth.near": {
+   "near": 0.1,
+   "within": 0.0001
+  },
+  "dump:views[0].depth.far": {
+   "near": 100,
+   "within": 0.01
+  },
+  "dump:views[0].depth.samples.c": "40404040",
+  "dump:views[0].depth.samples.tl": "40404040",
+  "dump:views[1].invalid": [],
+  "dump:views[1].pose.p[0]": {
+   "near": -0.4685,
+   "within": 0.001
+  },
+  "dump:views[1].pose.p[1]": {
+   "near": 1.7,
+   "within": 0.001
+  },
+  "dump:views[1].depth.near": {
+   "near": 0.1,
+   "within": 0.0001
+  },
+  "dump:views[1].depth.far": {
+   "near": 100,
+   "within": 0.01
+  },
+  "dump:views[1].depth.samples.c": "40404040",
+  "dump:views[1].depth.samples.tl": "40404040"
+ },
+ "gfx-vk-pose-depth/halves/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].pose.p[0]": {
+   "near": -0.5315,
+   "within": 0.001
+  },
+  "dump:views[0].pose.p[1]": {
+   "near": 1.7,
+   "within": 0.001
+  },
+  "dump:views[0].depth.near": {
+   "near": 0.1,
+   "within": 0.0001
+  },
+  "dump:views[0].depth.far": {
+   "near": 100,
+   "within": 0.01
+  },
+  "dump:views[0].depth.rect": [
+   0,
+   0,
+   768,
+   768
+  ],
+  "dump:views[0].depth.samples.c": "40404040",
+  "dump:views[0].depth.samples.tl": "40404040",
+  "dump:views[1].invalid": [],
+  "dump:views[1].pose.p[0]": {
+   "near": -0.4685,
+   "within": 0.001
+  },
+  "dump:views[1].pose.p[1]": {
+   "near": 1.7,
+   "within": 0.001
+  },
+  "dump:views[1].depth.near": {
+   "near": 0.1,
+   "within": 0.0001
+  },
+  "dump:views[1].depth.far": {
+   "near": 100,
+   "within": 0.01
+  },
+  "dump:views[1].depth.rect": [
+   768,
+   0,
+   768,
+   768
+  ],
+  "dump:views[1].depth.samples.c": "40404040",
+  "dump:views[1].depth.samples.tl": "40404040"
+ },
+ "gfx-vk-pose-depth/flipped/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].pose.p[0]": {
+   "near": -0.5315,
+   "within": 0.001
+  },
+  "dump:views[0].depth": null,
+  "dump:views[1].invalid": [],
+  "dump:views[1].pose.p[0]": {
+   "near": -0.4685,
+   "within": 0.001
+  },
+  "dump:views[1].depth": null
+ },
+ "gfx-gl-pose-depth/pose-depth/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].pose.p[0]": {
+   "near": -0.5315,
+   "within": 0.001
+  },
+  "dump:views[0].pose.p[1]": {
+   "near": 1.7,
+   "within": 0.001
+  },
+  "dump:views[0].depth.near": {
+   "near": 0.1,
+   "within": 0.0001
+  },
+  "dump:views[0].depth.far": {
+   "near": 100,
+   "within": 0.01
+  },
+  "dump:views[0].depth.samples.c": "40404040",
+  "dump:views[0].depth.samples.tl": "40404040",
+  "dump:views[1].invalid": [],
+  "dump:views[1].pose.p[0]": {
+   "near": -0.4685,
+   "within": 0.001
+  },
+  "dump:views[1].pose.p[1]": {
+   "near": 1.7,
+   "within": 0.001
+  },
+  "dump:views[1].depth.near": {
+   "near": 0.1,
+   "within": 0.0001
+  },
+  "dump:views[1].depth.far": {
+   "near": 100,
+   "within": 0.01
+  },
+  "dump:views[1].depth.samples.c": "40404040",
+  "dump:views[1].depth.samples.tl": "40404040"
+ },
+ "gfx-gl-pose-depth/halves/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].pose.p[0]": {
+   "near": -0.5315,
+   "within": 0.001
+  },
+  "dump:views[0].pose.p[1]": {
+   "near": 1.7,
+   "within": 0.001
+  },
+  "dump:views[0].depth.near": {
+   "near": 0.1,
+   "within": 0.0001
+  },
+  "dump:views[0].depth.far": {
+   "near": 100,
+   "within": 0.01
+  },
+  "dump:views[0].depth.rect": [
+   0,
+   0,
+   768,
+   768
+  ],
+  "dump:views[0].depth.samples.c": "40404040",
+  "dump:views[0].depth.samples.tl": "40404040",
+  "dump:views[1].invalid": [],
+  "dump:views[1].pose.p[0]": {
+   "near": -0.4685,
+   "within": 0.001
+  },
+  "dump:views[1].pose.p[1]": {
+   "near": 1.7,
+   "within": 0.001
+  },
+  "dump:views[1].depth.near": {
+   "near": 0.1,
+   "within": 0.0001
+  },
+  "dump:views[1].depth.far": {
+   "near": 100,
+   "within": 0.01
+  },
+  "dump:views[1].depth.rect": [
+   768,
+   0,
+   768,
+   768
+  ],
+  "dump:views[1].depth.samples.c": "40404040",
+  "dump:views[1].depth.samples.tl": "40404040"
+ },
+ "gfx-gl-pose-depth/flipped/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].pose.p[0]": {
+   "near": -0.5315,
+   "within": 0.001
+  },
+  "dump:views[0].depth": null,
+  "dump:views[1].invalid": [],
+  "dump:views[1].pose.p[0]": {
+   "near": -0.4685,
+   "within": 0.001
+  },
+  "dump:views[1].depth": null
+ }
+}

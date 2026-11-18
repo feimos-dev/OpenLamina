@@ -5,7 +5,7 @@
 // Include compositor backends as indicated by compiler flags
 
 #ifdef SUPPORT_DX
-// Let's really hope noone tries to use DX10
+// Direct3D 10 textures go through the Direct3D 11 path
 #ifdef SUPPORT_DX10
 #include "dx10compositor.h"
 #endif

@@ -2,6 +2,7 @@
 #include <cmath>
 #include <openxr/openxr.h>
 #define BASE_IMPL
+#include "../../DrvOpenXR/CpuSwapchain.h"
 #include "../../DrvOpenXR/XrBackend.h"
 #include "BaseCompositor.h"
 #include "BaseOverlay.h"
@@ -11,6 +12,7 @@
 #include "Compositor/compositor.h"
 #include "Drivers/Backend.h"
 #include "Misc/Config.h"
+#include "Misc/Image.h"
 #include "Misc/ScopeGuard.h"
 #include "convert.h"
 #include "generated/static_bases.gen.h"
@@ -71,6 +73,9 @@ public:
 	} compositionLayer;
 
 	std::weak_ptr<Compositor> compositor;
+	// SetOverlayRaw's image (empty for a texture overlay), shown through a swapchain filled from memory
+	Image rawImage;
+	std::unique_ptr<CpuSwapchain> raw;
 	float distance;
 	uint32_t sortOrder = 0;
 
@@ -128,6 +133,11 @@ public:
 		return VROverlayError_InvalidHandle;                                          \
 	}
 
+// USEH() for a setter of what _BuildLayers reads (on the own frames' thread too): under the layers' lock
+#define USEH_LOCKED()                                                    \
+	std::lock_guard<std::recursive_mutex> layersGuard(layersLock); \
+	USEH()
+
 #define USEHB()                                                                       \
 	OverlayData* overlay = (OverlayData*)ulOverlayHandle;                             \
 	if (!overlay || !validOverlays.count(overlay) || !overlays.count(overlay->key)) { \
@@ -143,6 +153,9 @@ static VROverlayHandle_t gamepadFocusOverlay = k_ulOverlayHandleInvalid;
 
 BaseOverlay::~BaseOverlay()
 {
+	// The session lock before the layers' lock, as everywhere: freeing a swapchain from memory takes it
+	auto session = xr_session.lock_shared();
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	for (const auto& kv : overlays) {
 		if (kv.second) {
 			delete kv.second;
@@ -189,7 +202,17 @@ static bool IsFinite(const glm::vec3& v)
 	return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
 }
 
-int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompositionLayerBaseHeader const* const*& layers)
+bool BaseOverlay::_AnyVisible()
+{
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	for (const auto& kv : overlays) {
+		if (kv.second && kv.second->visible && (kv.second->texture.handle != nullptr || !kv.second->rawImage.Empty()))
+			return true;
+	}
+	return false;
+}
+
+int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompositionLayerBaseHeader const* const*& layers, bool mayUpload)
 {
 	// Note that at least on MSVC, this shouldn't be doing any memory allocations
 	//  unless the list is expanding from new layers.
@@ -232,9 +255,17 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 		if (kv.second) {
 			OverlayData& overlay = *kv.second;
 
-			// Skip hiddden overlays, and those without a valid texture (eg, after calling ClearOverlayTexture).
-			if (!overlay.visible || overlay.texture.handle == nullptr)
+			// Skip hiddden overlays, and those without a valid texture or image (eg, after calling ClearOverlayTexture).
+			if (!overlay.visible || (overlay.texture.handle == nullptr && overlay.rawImage.Empty()))
 				continue;
+
+			// An image from memory whose swapchain went with the last session is put into one on this session, by the
+			// game's thread: the upload uses the device's immediate context or queue, which it uses too
+			if (!overlay.rawImage.Empty()) {
+				if (mayUpload && overlay.raw && !overlay.raw->Live())
+					overlay.raw->Upload(overlay.rawImage);
+				overlay.compositionLayer.quad.subImage = overlay.raw && overlay.raw->Live() ? overlay.raw->SubImage() : XrSwapchainSubImage{};
+			}
 
 			// Quick hack to get around Boneworks creating overlays and setting them to an opacity of
 			// zero to hide them. Leave 1% of margin in case of weird float issues.
@@ -246,7 +277,6 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 			}
 
 			const XrRect2Di& srcSize = overlay.compositionLayer.quad.subImage.imageRect;
-			// (a flipped texture is drawn with a negative height)
 			const int32_t srcHeight = std::abs(srcSize.extent.height);
 			if (srcHeight <= 8 && srcSize.extent.width <= 8) {
 				// Hack for F1 22 which creates a low res texture to fade between scenes
@@ -360,6 +390,7 @@ EVROverlayError BaseOverlay::CreateOverlay(const char* pchOverlayKey, const char
 		return VROverlayError_KeyInUse;
 	}
 
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	OverlayData* data = new OverlayData(pchOverlayKey, pchOverlayName);
 	OVL = data;
 
@@ -385,6 +416,8 @@ EVROverlayError BaseOverlay::DestroyOverlay(VROverlayHandle_t ulOverlayHandle)
 	if (highQualityOverlay == ulOverlayHandle)
 		highQualityOverlay = vr::k_ulOverlayHandleInvalid;
 
+	auto session = xr_session.lock_shared();
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	if (std::shared_ptr<Compositor> comp = overlay->compositor.lock()) {
 		auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
 		backend->UnregisterOverlayCompositor(comp);
@@ -467,7 +500,41 @@ EVROverlayError BaseOverlay::GetOverlayImageData(VROverlayHandle_t ulOverlayHand
 		*punWidth = 0;
 	if (punHeight)
 		*punHeight = 0;
-	OC_UNSUPPORTED(VROverlayError_RequestFailed, "GetOverlayImageData: overlay images can't be read back");
+
+	// The last image from memory, or the texture read back: what's needed is copied under the layers' lock, which
+	// SetOverlayRaw and SetOverlayTexture write them under
+	Image copied;
+	Texture_t texture{};
+	VRTextureBounds_t textureBounds{};
+	std::shared_ptr<Compositor> shared;
+	{
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		copied = overlay->rawImage;
+		texture = overlay->texture;
+		textureBounds = overlay->textureBounds;
+		shared = overlay->compositor.lock();
+	}
+	const Image* image = &copied;
+	if (image->Empty()) {
+		if (!texture.handle)
+			return VROverlayError_InvalidTexture;
+		std::unique_ptr<Compositor> own;
+		Compositor* comp = shared.get();
+		if (!comp) {
+			own = BaseCompositor::CreateCompositorAPI(&texture);
+			comp = own.get();
+		}
+		if (!comp || !comp->ReadbackToCpu(&texture, &textureBounds, copied))
+			OC_UNSUPPORTED(VROverlayError_RequestFailed, "GetOverlayImageData: this overlay's texture (type %d) can't be read back", (int)texture.eType);
+	}
+	if (punWidth)
+		*punWidth = image->width;
+	if (punHeight)
+		*punHeight = image->height;
+	if (!pvBuffer || unBufferSize < image->rgba.size())
+		return VROverlayError_ArrayTooSmall;
+	memcpy(pvBuffer, image->rgba.data(), image->rgba.size());
+	return VROverlayError_None;
 }
 const char* BaseOverlay::GetOverlayErrorNameFromEnum(EVROverlayError error)
 {
@@ -489,7 +556,7 @@ uint32_t BaseOverlay::GetOverlayRenderingPid(VROverlayHandle_t ulOverlayHandle)
 }
 EVROverlayError BaseOverlay::SetOverlayFlag(VROverlayHandle_t ulOverlayHandle, VROverlayFlags eOverlayFlag, bool bEnabled)
 {
-	USEH();
+	USEH_LOCKED();
 
 	if (bEnabled) {
 		overlay->flags |= 1uLL << eOverlayFlag;
@@ -509,7 +576,7 @@ EVROverlayError BaseOverlay::GetOverlayFlag(VROverlayHandle_t ulOverlayHandle, V
 }
 EVROverlayError BaseOverlay::SetOverlayColor(VROverlayHandle_t ulOverlayHandle, float fRed, float fGreen, float fBlue)
 {
-	USEH();
+	USEH_LOCKED();
 
 	overlay->colour.r = fRed;
 	overlay->colour.g = fGreen;
@@ -529,7 +596,7 @@ EVROverlayError BaseOverlay::GetOverlayColor(VROverlayHandle_t ulOverlayHandle, 
 }
 EVROverlayError BaseOverlay::SetOverlayAlpha(VROverlayHandle_t ulOverlayHandle, float fAlpha)
 {
-	USEH();
+	USEH_LOCKED();
 
 	overlay->colour.a = fAlpha;
 
@@ -564,7 +631,7 @@ EVROverlayError BaseOverlay::GetOverlayTexelAspect(VROverlayHandle_t ulOverlayHa
 }
 EVROverlayError BaseOverlay::SetOverlaySortOrder(VROverlayHandle_t ulOverlayHandle, uint32_t unSortOrder)
 {
-	USEH();
+	USEH_LOCKED();
 	overlay->sortOrder = unSortOrder;
 	return VROverlayError_None;
 }
@@ -576,7 +643,7 @@ EVROverlayError BaseOverlay::GetOverlaySortOrder(VROverlayHandle_t ulOverlayHand
 }
 EVROverlayError BaseOverlay::SetOverlayWidthInMeters(VROverlayHandle_t ulOverlayHandle, float fWidthInMeters)
 {
-	USEH();
+	USEH_LOCKED();
 
 	overlay->widthMeters = fWidthInMeters;
 
@@ -592,7 +659,7 @@ EVROverlayError BaseOverlay::GetOverlayWidthInMeters(VROverlayHandle_t ulOverlay
 }
 EVROverlayError BaseOverlay::SetOverlayCurvature(VROverlayHandle_t ulOverlayHandle, float fCurvature)
 {
-	USEH();
+	USEH_LOCKED();
 
 	// _BuildLayers draws it as a cylinder where it can
 	overlay->curvature = fCurvature;
@@ -629,7 +696,7 @@ EVROverlayError BaseOverlay::GetOverlayAutoCurveDistanceRangeInMeters(VROverlayH
 }
 EVROverlayError BaseOverlay::SetOverlayTextureColorSpace(VROverlayHandle_t ulOverlayHandle, EColorSpace eTextureColorSpace)
 {
-	USEH();
+	USEH_LOCKED();
 
 	overlay->colourSpace = eTextureColorSpace;
 
@@ -645,7 +712,7 @@ EVROverlayError BaseOverlay::GetOverlayTextureColorSpace(VROverlayHandle_t ulOve
 }
 EVROverlayError BaseOverlay::SetOverlayTextureBounds(VROverlayHandle_t ulOverlayHandle, const VRTextureBounds_t* pOverlayTextureBounds)
 {
-	USEH();
+	USEH_LOCKED();
 
 	if (pOverlayTextureBounds)
 		overlay->textureBounds = *pOverlayTextureBounds;
@@ -704,7 +771,7 @@ EVROverlayError BaseOverlay::GetOverlayTransformType(VROverlayHandle_t ulOverlay
 }
 EVROverlayError BaseOverlay::SetOverlayTransformAbsolute(VROverlayHandle_t ulOverlayHandle, ETrackingUniverseOrigin eTrackingOrigin, const HmdMatrix34_t* pmatTrackingOriginToOverlayTransform)
 {
-	USEH();
+	USEH_LOCKED();
 
 	// TODO account for the universe origin, and if it doesn't match that currently in use then add or
 	//  subtract the floor position to match it. This shouldn't usually be an issue though, as I can't
@@ -728,7 +795,7 @@ EVROverlayError BaseOverlay::GetOverlayTransformAbsolute(VROverlayHandle_t ulOve
 }
 EVROverlayError BaseOverlay::SetOverlayTransformTrackedDeviceRelative(VROverlayHandle_t ulOverlayHandle, TrackedDeviceIndex_t unTrackedDevice, const HmdMatrix34_t* pmatTrackedDeviceToOverlayTransform)
 {
-	USEH();
+	USEH_LOCKED();
 
 	overlay->transformType = VROverlayTransform_TrackedDeviceRelative;
 	overlay->transformData.deviceRelative.device = unTrackedDevice;
@@ -749,7 +816,7 @@ EVROverlayError BaseOverlay::GetOverlayTransformTrackedDeviceRelative(VROverlayH
 }
 EVROverlayError BaseOverlay::SetOverlayTransformTrackedDeviceComponent(VROverlayHandle_t ulOverlayHandle, TrackedDeviceIndex_t unDeviceIndex, const char* pchComponentName)
 {
-	USEH();
+	USEH_LOCKED();
 	overlay->transformType = VROverlayTransform_TrackedComponent;
 	overlay->componentDevice = unDeviceIndex;
 	overlay->componentName = pchComponentName ? pchComponentName : "";
@@ -811,7 +878,7 @@ EVROverlayError BaseOverlay::SetOverlayTransformProjection(VROverlayHandle_t ulO
     ETrackingUniverseOrigin eTrackingOrigin, const HmdMatrix34_t* pmatTrackingOriginToOverlayTransform,
     const OOVR_VROverlayProjection_t* pProjection, EVREye eEye)
 {
-	USEH();
+	USEH_LOCKED();
 	if (pmatTrackingOriginToOverlayTransform) {
 		overlay->transformType = VROverlayTransform_Absolute;
 		S2O_om44(*pmatTrackingOriginToOverlayTransform, overlay->overlayTransform);
@@ -821,13 +888,13 @@ EVROverlayError BaseOverlay::SetOverlayTransformProjection(VROverlayHandle_t ulO
 }
 EVROverlayError BaseOverlay::ShowOverlay(VROverlayHandle_t ulOverlayHandle)
 {
-	USEH();
+	USEH_LOCKED();
 	overlay->visible = true;
 	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::HideOverlay(VROverlayHandle_t ulOverlayHandle)
 {
-	USEH();
+	USEH_LOCKED();
 	overlay->visible = false;
 	return VROverlayError_None;
 }
@@ -1170,9 +1237,16 @@ EVROverlayError BaseOverlay::SetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 	USEH();
 	if (!pTexture)
 		return VROverlayError_InvalidTexture;
-	overlay->texture = *pTexture;
+	Texture_t texture = *pTexture;
+	BackendManager::Instance().OnOverlayTexture(&texture);
 
-	BackendManager::Instance().OnOverlayTexture(&overlay->texture);
+	// After OnOverlayTexture, which may restart the session; the session lock before the layers' lock, as everywhere
+	auto session = xr_session.lock_shared();
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	overlay->texture = texture;
+	// A texture replaces an image from memory
+	overlay->raw.reset();
+	overlay->rawImage = {};
 
 	if (!BackendManager::Instance().IsGraphicsConfigured())
 		return VROverlayError_None;
@@ -1201,7 +1275,11 @@ EVROverlayError BaseOverlay::SetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 EVROverlayError BaseOverlay::ClearOverlayTexture(VROverlayHandle_t ulOverlayHandle)
 {
 	USEH();
+	auto session = xr_session.lock_shared();
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	overlay->texture = {};
+	overlay->raw.reset();
+	overlay->rawImage = {};
 
 	if (std::shared_ptr<Compositor> comp = overlay->compositor.lock()) {
 		auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
@@ -1213,7 +1291,37 @@ EVROverlayError BaseOverlay::ClearOverlayTexture(VROverlayHandle_t ulOverlayHand
 EVROverlayError BaseOverlay::SetOverlayRaw(VROverlayHandle_t ulOverlayHandle, void* pvBuffer, uint32_t unWidth, uint32_t unHeight, uint32_t unDepth)
 {
 	USEH();
-	OC_UNSUPPORTED(VROverlayError_RequestFailed, "SetOverlayRaw: CPU images on overlays aren't supported yet");
+	// One byte (grey), three (RGB) or four (RGBA) per pixel, rows top to bottom
+	if (!pvBuffer || !unWidth || !unHeight || (unDepth != 1 && unDepth != 3 && unDepth != 4))
+		return VROverlayError_InvalidParameter;
+	Image image = ConvertToRgba8(pvBuffer, unWidth, unHeight, unWidth * unDepth, unDepth);
+	if (image.Empty())
+		return VROverlayError_InvalidParameter;
+
+	// The overlay's image and swapchain are what OpenLamina's own frames draw from
+	auto session = xr_session.lock_shared();
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+
+	// An image replaces a texture: shown as a texture overlay is, through its own swapchain
+	if (std::shared_ptr<Compositor> comp = overlay->compositor.lock()) {
+		auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
+		backend->UnregisterOverlayCompositor(comp);
+	}
+	overlay->compositor.reset();
+	overlay->texture = {};
+	overlay->rawImage = std::move(image);
+	if (!overlay->raw)
+		overlay->raw = CpuSwapchain::Create(unWidth, unHeight);
+	if (!overlay->raw) {
+		// Logged (a soft failure) by Create: no session with a graphics API
+		overlay->rawImage = {};
+		return VROverlayError_RequestFailed;
+	}
+	// A failed upload (logged) is tried again when the frame's layers are built
+	if (overlay->raw->Upload(overlay->rawImage))
+		overlay->compositionLayer.quad.subImage = overlay->raw->SubImage();
+	overlay->compositionLayer.base.space = xr_space_from_ref_space_type(BaseSystem::currentSpace);
+	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::SetOverlayFromFile(VROverlayHandle_t ulOverlayHandle, const char* pchFilePath)
 {
@@ -1390,7 +1498,10 @@ void BaseOverlay::HideKeyboard()
 	}
 
 	// Delete the keyboard instance
-	keyboard.reset();
+	{
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		keyboard.reset();
+	}
 
 	BaseSystem* system = GetUnsafeBaseSystem();
 	if (system) {

@@ -1,5 +1,6 @@
-// Vulkan for the frame cases: an instance, the first physical device and a device with one graphics queue, all
-// through vulkan-1.dll looked up at run time (oc_conformance starts without it). Textures are filled from a staging
+// Vulkan for the frame cases: an instance (Vulkan 1.1 where the loader has it), the first physical device and a device
+// with one graphics queue (and VK_KHR_external_memory_win32 where the driver has it, as a game that shares images with
+// D3D11 enables it), all through vulkan-1.dll looked up at run time (oc_conformance starts without it). Textures are filled from a staging
 // buffer and left in VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, as OpenVR's Vulkan games submit them.
 
 #include "GfxApi.h"
@@ -31,6 +32,8 @@ gfx::Texels TexelsOfVk(int64_t format)
 		return gfx::Texels::RGBA16F;
 	case VK_FORMAT_A2B10G10R10_UNORM_PACK32:
 		return gfx::Texels::RGB10A2;
+	case VK_FORMAT_B10G11R11_UFLOAT_PACK32:
+		return gfx::Texels::RG11B10F;
 	default:
 		return gfx::Texels::Unknown;
 	}
@@ -81,7 +84,12 @@ public:
 		}
 		VkApplicationInfo app{ VK_STRUCTURE_TYPE_APPLICATION_INFO };
 		app.pApplicationName = "oc_conformance";
-		app.apiVersion = VK_API_VERSION_1_1; // the stand-in may read deviceUUIDs (vkGetPhysicalDeviceProperties2)
+		// 1.1 where the loader has it: the stand-in may read deviceUUIDs (vkGetPhysicalDeviceProperties2)
+		app.apiVersion = VK_API_VERSION_1_0;
+		auto version = (PFN_vkEnumerateInstanceVersion)gipa(VK_NULL_HANDLE, "vkEnumerateInstanceVersion");
+		uint32_t loaderVersion = VK_API_VERSION_1_0;
+		if (version && version(&loaderVersion) == VK_SUCCESS && loaderVersion >= VK_API_VERSION_1_1)
+			app.apiVersion = VK_API_VERSION_1_1;
 		VkInstanceCreateInfo ici{ VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
 		ici.pApplicationInfo = &app;
 		VkResult r = ((PFN_vkCreateInstance)gipa(VK_NULL_HANDLE, "vkCreateInstance"))(&ici, nullptr, &instance);
@@ -115,6 +123,21 @@ public:
 		VkDeviceCreateInfo dci{ VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
 		dci.queueCreateInfoCount = 1;
 		dci.pQueueCreateInfos = &qci;
+		// External memory is core in 1.1; its Windows handles are an extension
+		const char* externalMemory = "VK_KHR_external_memory_win32";
+		if (app.apiVersion >= VK_API_VERSION_1_1) {
+			auto enumerateExtensions = I<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
+			uint32_t extensionCount = 0;
+			enumerateExtensions(physical, nullptr, &extensionCount, nullptr);
+			std::vector<VkExtensionProperties> extensions(extensionCount);
+			enumerateExtensions(physical, nullptr, &extensionCount, extensions.data());
+			for (const VkExtensionProperties& e : extensions) {
+				if (!std::strcmp(e.extensionName, externalMemory)) {
+					dci.enabledExtensionCount = 1;
+					dci.ppEnabledExtensionNames = &externalMemory;
+				}
+			}
+		}
 		r = I<PFN_vkCreateDevice>("vkCreateDevice")(physical, &dci, nullptr, &device);
 		if (r != VK_SUCCESS) {
 			device = VK_NULL_HANDLE;
@@ -244,7 +267,13 @@ public:
 		if (!image)
 			return Wrap(VK_NULL_HANDLE, format, w, h, 1);
 		size_t pitch = (size_t)w * gfx::BytesOf(texels);
+		// Layer i: eye (eye + i) % 2's pattern, the two one after the other in the buffer
 		std::vector<uint8_t> data = gfx::PatternTexels(texels, w, h, eye, pitch, false);
+		const VkDeviceSize layerBytes = data.size();
+		if (arraySize > 1) {
+			std::vector<uint8_t> other = gfx::PatternTexels(texels, w, h, 1 - eye, pitch, false);
+			data.insert(data.end(), other.begin(), other.end());
+		}
 
 		VkBufferCreateInfo bci{ VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO };
 		bci.size = data.size();
@@ -274,6 +303,7 @@ public:
 				std::vector<VkBufferImageCopy> regions;
 				for (uint32_t layer = 0; layer < arraySize; layer++) {
 					VkBufferImageCopy r{};
+					r.bufferOffset = (layer % 2) * layerBytes;
 					r.imageSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, layer, 1 };
 					r.imageExtent = { w, h, 1 };
 					regions.push_back(r);

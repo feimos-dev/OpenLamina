@@ -8,7 +8,36 @@
 #include <dxgi1_2.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
+
+bool RtRuntimeAdapterLuid(LUID* out)
+{
+	char want[64] = {};
+	DWORD len = GetEnvironmentVariableA("OC_TEST_RUNTIME_GPU_LUID", want, sizeof(want));
+	unsigned long long wanted = 0;
+	bool named = len > 0 && len < sizeof(want) && sscanf_s(want, "%llx", &wanted) == 1;
+	IDXGIFactory1* factory = nullptr;
+	if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&factory)))
+		return false;
+	bool found = false;
+	IDXGIAdapter1* adapter = nullptr;
+	// Bounded by the adapter count (EnumAdapters1 ends with DXGI_ERROR_NOT_FOUND)
+	for (UINT i = 0; factory->EnumAdapters1(i, &adapter) == S_OK; i++) {
+		DXGI_ADAPTER_DESC1 desc;
+		adapter->GetDesc1(&desc);
+		adapter->Release();
+		unsigned long long luid = ((unsigned long long)(uint32_t)desc.AdapterLuid.HighPart << 32) | desc.AdapterLuid.LowPart;
+		if (i == 0 || (named && luid == wanted)) {
+			*out = desc.AdapterLuid;
+			found = true;
+		}
+		if (named && luid == wanted)
+			break;
+	}
+	factory->Release();
+	return found;
+}
 
 namespace {
 
@@ -21,24 +50,12 @@ XrResult XRAPI_CALL GetD3D11GraphicsRequirements(XrInstance, XrSystemId, XrGraph
 		std::lock_guard<std::recursive_mutex> g(St().lock);
 		St().requirementsQueried.insert(RtApi::D3D11);
 	}
-	IDXGIFactory1* factory = nullptr;
-	if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)&factory)))
+	if (!RtRuntimeAdapterLuid(&reqs->adapterLuid))
 		return XR_ERROR_RUNTIME_FAILURE;
-	IDXGIAdapter1* adapter = nullptr;
-	XrResult result = XR_ERROR_RUNTIME_FAILURE;
-	if (factory->EnumAdapters1(0, &adapter) == S_OK) {
-		DXGI_ADAPTER_DESC1 desc;
-		adapter->GetDesc1(&desc);
-		// The first adapter, as Monado names it
-		reqs->adapterLuid = desc.AdapterLuid;
-		reqs->minFeatureLevel = D3D_FEATURE_LEVEL_11_0;
-		adapter->Release();
-		std::lock_guard<std::recursive_mutex> g(St().lock);
-		St().requiredLuid = desc.AdapterLuid;
-		result = XR_SUCCESS;
-	}
-	factory->Release();
-	return result;
+	reqs->minFeatureLevel = D3D_FEATURE_LEVEL_11_0;
+	std::lock_guard<std::recursive_mutex> g(St().lock);
+	St().requiredLuid = reqs->adapterLuid;
+	return XR_SUCCESS;
 }
 
 XrResult Bind(const XrBaseInStructure* binding, RtSession* s)
@@ -149,6 +166,37 @@ bool Read(RtSession* session, RtSwapchain* sc, uint32_t index, uint32_t arrayInd
 	session->device->GetImmediateContext(&ctx);
 	if (!ctx)
 		return false;
+
+	// A depth image is copied whole (D3D11 copies no part of one) into a staging texture of its typeless family
+	if (LayoutOfDxgi(desc.Format) == PixelLayout::DepthF32) {
+		D3D11_TEXTURE2D_DESC sd = desc;
+		sd.Format = DXGI_FORMAT_R32_TYPELESS;
+		sd.Usage = D3D11_USAGE_STAGING;
+		sd.BindFlags = 0;
+		sd.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+		sd.MiscFlags = 0;
+		ID3D11Texture2D* staging = nullptr;
+		bool ok = desc.SampleDesc.Count == 1 && SUCCEEDED(session->device->CreateTexture2D(&sd, nullptr, &staging));
+		if (ok) {
+			ctx->CopyResource(staging, tex);
+			UINT sub = D3D11CalcSubresource(0, arrayIndex, desc.MipLevels);
+			D3D11_MAPPED_SUBRESOURCE mapped;
+			ok = SUCCEEDED(ctx->Map(staging, sub, D3D11_MAP_READ, 0, &mapped));
+			if (ok) {
+				out.clear();
+				for (const XrOffset2Di& p : points) {
+					UINT x = (UINT)std::min<int32_t>(std::max<int32_t>(p.x, 0), (int32_t)desc.Width - 1);
+					UINT y = (UINT)std::min<int32_t>(std::max<int32_t>(p.y, 0), (int32_t)desc.Height - 1);
+					const uint8_t* at = (const uint8_t*)mapped.pData + (size_t)y * mapped.RowPitch + (size_t)x * bytesPerTexel;
+					out.insert(out.end(), at, at + bytesPerTexel);
+				}
+				ctx->Unmap(staging, sub);
+			}
+			staging->Release();
+		}
+		ctx->Release();
+		return ok;
+	}
 
 	// A multisampled image is resolved first: only single-sampled regions can be copied
 	ID3D11Texture2D* src = tex;

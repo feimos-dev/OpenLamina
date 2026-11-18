@@ -29,7 +29,7 @@ set(GENERATED_DIR ${CMAKE_BINARY_DIR}/generated)
 # Platform-dependent flags
 # Support Vulkan on Linux instead of DirectX
 if (WIN32)
-	set(GRAPHICS_API_SUPPORT_FLAGS -DSUPPORT_DX -DSUPPORT_DX11 -DSUPPORT_DX12 -DSUPPORT_VK -DSUPPORT_GL)
+	set(GRAPHICS_API_SUPPORT_FLAGS -DSUPPORT_DX -DSUPPORT_DX10 -DSUPPORT_DX11 -DSUPPORT_DX12 -DSUPPORT_VK -DSUPPORT_GL)
 elseif (ANDROID)
 	set(GRAPHICS_API_SUPPORT_FLAGS -DSUPPORT_VK -DSUPPORT_GLES)
 else ()
@@ -240,6 +240,18 @@ add_library(DrvOpenXR STATIC
 	DrvOpenXR/XrGenericTracker.cpp
 	DrvOpenXR/XrGenericTracker.h
 
+	DrvOpenXR/CpuSwapchain.cpp
+	DrvOpenXR/CpuSwapchain.h
+	DrvOpenXR/CpuSwapchain_D3D11.cpp
+	DrvOpenXR/CpuSwapchain_D3D12.cpp
+	DrvOpenXR/CpuSwapchain_Vk.cpp
+	DrvOpenXR/CpuSwapchain_GL.cpp
+	DrvOpenXR/OwnFrameLoop.cpp
+	DrvOpenXR/OwnFrameLoop.h
+
+	DrvOpenXR/GfxInterop.cpp
+	DrvOpenXR/GfxInterop.h
+
 	DrvOpenXR/tmp_gfx/TemporaryGraphics.cpp
 	DrvOpenXR/tmp_gfx/TemporaryGraphics.h
 	DrvOpenXR/tmp_gfx/TemporaryD3D11.cpp
@@ -306,6 +318,12 @@ add_library(OCCore STATIC
 	OpenOVR/Compositor/glcompositor.cpp
 	OpenOVR/Compositor/glescompositor.cpp
 	OpenOVR/Compositor/vkcompositor.cpp
+	OpenOVR/Compositor/FormatTable.cpp
+	OpenOVR/Compositor/DepthRange.cpp
+	OpenOVR/Compositor/DepthRange.h
+	OpenOVR/Compositor/dx12convert.cpp
+	OpenOVR/Compositor/dx12convert.h
+	OpenOVR/Compositor/FormatTable.h
 	OpenOVR/convert.cpp
 	OpenOVR/logging.cpp
 	OpenOVR/linux_funcs.cpp
@@ -321,6 +339,11 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/ChaperoneData.cpp
 	OpenOVR/Misc/ProgramEvents.cpp
 	OpenOVR/Misc/LibMonado.cpp
+	OpenOVR/Misc/Equirect.cpp
+	OpenOVR/Misc/Equirect.h
+	OpenOVR/Misc/GlPixelStore.h
+	OpenOVR/Misc/Image.cpp
+	OpenOVR/Misc/Image.h
 	OpenOVR/Misc/JsonFile.h
 	OpenOVR/Misc/SteamVRPaths.h
 	OpenOVR/Misc/SteamClient.h

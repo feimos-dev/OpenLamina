@@ -15,10 +15,15 @@ public:
 	bool AdmitUnknownProps() const { return admitUnknownProps; }
 	inline bool LogGetTrackedProperty() const { return logGetTrackedProperty; }
 	inline bool StopOnSoftAbort() const { return stopOnSoftAbort; }
-	inline bool DX10Mode() const { return dx10Mode; }
 	inline bool EnableHiddenMeshFix() const { return enableHiddenMeshFix; }
 	inline bool InvertUsingShaders() const { return invertUsingShaders; }
 	inline bool InitUsingVulkan() const { return initUsingVulkan; }
+	/** With Submit_TextureWithPose: each eye's view is the submitted head pose times that eye's pose in the head */
+	inline bool UseSubmittedPose() const { return useSubmittedPose; }
+	/** With Submit_TextureWithDepth, where the runtime has XR_KHR_composition_layer_depth: each view gets the depth */
+	inline bool SubmitDepth() const { return submitDepth; }
+	/** Frames of OpenLamina's own while the game runs none: the game's last frame again, its overlays and its skybox */
+	inline bool OwnFrames() const { return ownFrames; }
 	float HiddenMeshVerticalScale() const { return hiddenMeshVerticalScale; }
 	inline bool LogAllOpenVRCalls() const { return logAllOpenVRCalls; }
 	/** The program OpenBindingUI starts; empty for none */
@@ -41,10 +46,13 @@ private:
 	bool admitUnknownProps = false;
 	bool logGetTrackedProperty = false;
 	bool stopOnSoftAbort = false;
-	bool dx10Mode = false;
+	bool dx10Mode = false; // read but not used: Direct3D 10 textures are told apart from Direct3D 11 ones by their interface
 	bool enableHiddenMeshFix = true;
 	bool invertUsingShaders = false;
 	bool initUsingVulkan = false;
+	bool useSubmittedPose = false;
+	bool submitDepth = false;
+	bool ownFrames = false;
 	float hiddenMeshVerticalScale = 1.0f;
 	bool logAllOpenVRCalls = false;
 	std::string bindingEditor;

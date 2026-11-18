@@ -3,6 +3,7 @@
 #include "../Misc/Keyboard/VRKeyboard.h" // TODO don't import from OCOVR, and remove the "../"
 #include <map>
 #include <memory>
+#include <mutex>
 #include <queue>
 #include <set>
 #include <vector>
@@ -199,6 +200,8 @@ private:
 	// True if we're modifying the input in any way
 	bool usingInput;
 
+	std::recursive_mutex layersLock;
+
 	vr::EVROverlayError ShowKeyboardWithDispatch(
 	    EGamepadTextInputMode eInputMode, EGamepadTextInputLineMode eLineInputMode,
 	    const char* pchDescription, uint32_t unCharMax, const char* pchExistingText,
@@ -209,8 +212,18 @@ public:
 	// Destructor, since we have a map of pointers
 	~BaseOverlay();
 
-	// Builds the collection of layers to be submitted to LibOVR
-	int _BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompositionLayerBaseHeader const* const*& result);
+	// Builds the collection of layers to be submitted to LibOVR. The caller holds _LayersLock() from here until the
+	// frame they're in has ended.
+	// mayUpload: on the game's thread, which may fill swapchains from memory (an own frame's thread mayn't).
+	int _BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompositionLayerBaseHeader const* const*& result, bool mayUpload);
+
+	// Whether any overlay is shown with an image (as _BuildLayers would draw it, roughly)
+	bool _AnyVisible();
+
+	// Held while the overlays, their compositors or the keyboard are added, replaced or removed, and while a frame
+	// with their layers is built and ended (on the game's thread, or OpenLamina's own frames' thread). Taken after the
+	// session lock (shared), never before it.
+	std::recursive_mutex& _LayersLock() { return layersLock; }
 
 	// If an overlay needs input, this grabs the input and returns whether the input should preceed to the application
 	bool _HandleOverlayInput(vr::EVREye role, vr::TrackedDeviceIndex_t controllerDeviceIndex, vr::VRControllerState_t state);

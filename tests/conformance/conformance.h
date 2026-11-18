@@ -53,4 +53,8 @@ using CaseFn = void (*)(CaseContext& ctx);
 const std::map<std::string, CaseFn>& Cases();
 const std::map<std::string, CaseFn>& GfxCases(); // gfx_cases.cpp, part of Cases()
 
+// The stand-in runtime's dump (OC_TEST_RUNTIME_DUMP), written when OpenLamina destroys its instance: read it after
+// Cleanup. Null without one (another runtime, or none written).
+Json::Value ReadStandInDump();
+
 } // namespace conformance

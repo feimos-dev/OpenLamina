@@ -7,6 +7,7 @@
 
 #include "../OpenOVR/Misc/Config.h"
 #include "../OpenOVR/Misc/LibMonado.h"
+#include "../OpenOVR/Misc/xr_ext.h"
 #include "../OpenOVR/Misc/xrmoreutils.h"
 #include "../OpenOVR/Reimpl/BaseSystem.h"
 #include "../OpenOVR/Reimpl/BaseSettings.h"
@@ -369,6 +370,23 @@ bool XrHMD::GetBoolTrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::ET
 	return XrTrackedDevice::GetBoolTrackedDeviceProperty(prop, pErrorL);
 }
 
+// The runtime's refresh rate where it says (XR_FB_display_refresh_rate), else the measured display period's, else 90
+static float DisplayFrequency()
+{
+	if (xr_ext && xr_ext->DisplayRefreshRateFB_Available()) {
+		auto lock = xr_session.lock_shared();
+		float rate = 0;
+		if (xr_session.get() && XR_SUCCEEDED(xr_ext->xrGetDisplayRefreshRateFB(xr_session.get(), &rate)) && rate > 0)
+			return rate;
+	}
+	BackendManager* manager = BackendManager::InstancePtr();
+	auto* backend = manager ? (XrBackend*)manager->GetBackendInstance() : nullptr;
+	float periodMs = backend ? backend->DisplayPeriodMs() : 0.0f;
+	if (periodMs > 0.0f)
+		return 1000.0f / periodMs;
+	return 90.0f;
+}
+
 float XrHMD::GetFloatTrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::ETrackedPropertyError* pErrorL)
 {
 	if (pErrorL)
@@ -384,7 +402,7 @@ float XrHMD::GetFloatTrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::
 		break;
 	}
 	case vr::Prop_DisplayFrequency_Float:
-		return 90.0; // TODO use the real value
+		return DisplayFrequency();
 	case vr::Prop_LensCenterLeftU_Float:
 	case vr::Prop_LensCenterLeftV_Float:
 	case vr::Prop_LensCenterRightU_Float:

@@ -14,7 +14,7 @@
 namespace {
 
 constexpr GLenum kTexture2DArray = 0x8C1A, kTextureBinding2DArray = 0x8C1D, kDepthComponent32F = 0x8CAC;
-constexpr int64_t kSRGB8Alpha8 = 0x8C43, kRGBA8 = 0x8058, kRGBA16F = 0x881A, kRGB10A2 = 0x8059;
+constexpr int64_t kSRGB8Alpha8 = 0x8C43, kRGBA8 = 0x8058, kRGBA16F = 0x881A, kRGB10A2 = 0x8059, kR11G11B10F = 0x8C3A, kRGB8 = 0x8051;
 using PFNTexImage3D = void(APIENTRY*)(GLenum, GLint, GLint, GLsizei, GLsizei, GLsizei, GLint, GLenum, GLenum, const void*);
 
 class GLGfx : public GfxApi {
@@ -88,12 +88,15 @@ public:
 
 	GfxTexture Pattern(uint32_t w, uint32_t h, int64_t nativeFormat, int eye, uint32_t samples, uint32_t arraySize) override
 	{
-		bool known = nativeFormat == kSRGB8Alpha8 || nativeFormat == kRGBA8 || nativeFormat == kRGBA16F || nativeFormat == kRGB10A2;
+		bool known = nativeFormat == kSRGB8Alpha8 || nativeFormat == kRGBA8 || nativeFormat == kRGBA16F || nativeFormat == kRGB10A2
+		    || nativeFormat == kR11G11B10F || nativeFormat == kRGB8;
 		arraySize = arraySize ? arraySize : 1;
 		if (!known || !w || !h || samples > 1 || (arraySize > 1 && !texImage3D))
 			return Wrap(0); // multisampled patterns: D3D11 only for now
-		// RGBA8 bytes whatever the internal format: OpenGL converts
-		std::vector<uint8_t> data = gfx::PatternTexels(gfx::Texels::RGBA8, w, h, eye, (size_t)w * 4, true);
+		// RGBA8 bytes whatever the internal format: OpenGL converts. A float or 10-bit format holds linear values, so
+		// the bytes are the colours' linear values for those.
+		const bool linear = nativeFormat == kRGBA16F || nativeFormat == kRGB10A2 || nativeFormat == kR11G11B10F;
+		std::vector<uint8_t> data = gfx::PatternTexels(gfx::Texels::RGBA8, w, h, eye, (size_t)w * 4, true, linear);
 		GLint previous = 0;
 		GLenum target = arraySize > 1 ? kTexture2DArray : GL_TEXTURE_2D;
 		glGetIntegerv(arraySize > 1 ? kTextureBinding2DArray : GL_TEXTURE_BINDING_2D, &previous);
@@ -107,9 +110,11 @@ public:
 		glTexParameteri(target, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 		glTexParameteri(target, 0x813D /* GL_TEXTURE_MAX_LEVEL */, 0);
 		if (arraySize > 1) {
+			// Layer i: eye (eye + i) % 2's pattern
+			std::vector<uint8_t> other = gfx::PatternTexels(gfx::Texels::RGBA8, w, h, 1 - eye, (size_t)w * 4, true, linear);
 			std::vector<uint8_t> layers;
 			for (uint32_t i = 0; i < arraySize; i++)
-				layers.insert(layers.end(), data.begin(), data.end());
+				layers.insert(layers.end(), i % 2 ? other.begin() : data.begin(), i % 2 ? other.end() : data.end());
 			texImage3D(target, 0, (GLint)nativeFormat, (GLsizei)w, (GLsizei)h, (GLsizei)arraySize, 0, GL_RGBA, GL_UNSIGNED_BYTE, layers.data());
 		} else {
 			glTexImage2D(target, 0, (GLint)nativeFormat, (GLsizei)w, (GLsizei)h, 0, GL_RGBA, GL_UNSIGNED_BYTE, data.data());

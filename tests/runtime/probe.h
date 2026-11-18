@@ -24,8 +24,9 @@ struct SwapchainImage {
 PixelLayout LayoutOfDxgi(int64_t format);
 
 // Reads the samples of rect in layer arrayIndex of the image, converted to RGBA8, through the session's API (each
-// API's staging path, RtGfx::read). False when it can't be read (no such image, a depth or unknown format, an empty
-// rect, a multisampled image on D3D12, Vulkan or OpenGL).
+// API's staging path, RtGfx::read; a 32-bit float depth image's value in every channel). False when it can't be read
+// (no such image, another depth format or an unknown one, an empty rect, a multisampled image on D3D12, Vulkan or
+// OpenGL).
 bool ProbeSamples(SwapchainImage& image, XrRect2Di rect, uint32_t arrayIndex, Samples& out, std::string* why = nullptr);
 
 // {"tl": "ff0000ff", "tr": ..., "bl": ..., "br": ..., "c": ...}

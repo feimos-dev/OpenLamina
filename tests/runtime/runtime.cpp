@@ -792,6 +792,8 @@ XrResult XRAPI_CALL WaitFrame(XrSession, const XrFrameWaitInfo*, XrFrameState* f
 	for (const ScriptEvent& ev : GetScript().events) {
 		if (ev.frame == s->framesWaited && ev.type == "session_state")
 			QueueState(s, StateFromName(ev.state));
+		if (ev.frame == s->framesWaited && ev.type == "refresh_rate" && ev.rate > 0)
+			RtChangeRefreshRate(s, ev.rate);
 	}
 	RtActionsOnFrame(s);
 	St().time += Period();
@@ -901,7 +903,7 @@ void RecordPlacement(Json::Value& entry, XrSpace space, const XrQuaternionf* q, 
 		Invalid(invalid, "pose not normalized");
 }
 
-// rect, array_index, format and (when sample) samples of a sub-image, with the spec's checks of it; prefix names
+// rect, array_index, format, image (the swapchain's width and height) and (when sample) samples of a sub-image, with the spec's checks of it; prefix names
 // the image in the checks ("depth " for a depth sub-image)
 void RecordSubImage(RtSession* s, Json::Value& entry, const XrSwapchainSubImage& sub, bool sample,
     std::vector<std::string>& invalid, const std::string& prefix = "")
@@ -919,6 +921,9 @@ void RecordSubImage(RtSession* s, Json::Value& entry, const XrSwapchainSubImage&
 	}
 	RtSwapchain* sc = it->second.get();
 	entry["format"] = (Json::Int64)sc->info.format;
+	entry["image"] = Json::Value(Json::arrayValue);
+	entry["image"].append(sc->info.width);
+	entry["image"].append(sc->info.height);
 	if (r.extent.width < 0 || r.extent.height < 0)
 		Invalid(invalid, prefix + "negative extent");
 	else if (r.extent.width == 0 || r.extent.height == 0)
@@ -972,9 +977,12 @@ Json::Value RecordProjectionView(RtSession* s, const XrCompositionLayerProjectio
 		depth["near"] = di->nearZ;
 		depth["far"] = di->farZ;
 		Json::Value sub;
-		RecordSubImage(s, sub, di->subImage, false, invalid, "depth ");
+		RecordSubImage(s, sub, di->subImage, sample, invalid, "depth ");
 		depth["format"] = sub["format"];
 		depth["rect"] = sub["rect"];
+		depth["range"] = Vec({ di->minDepth, di->maxDepth });
+		if (sub.isMember("samples"))
+			depth["samples"] = sub["samples"];
 		if (!(di->minDepth >= 0 && di->maxDepth <= 1 && di->minDepth <= di->maxDepth))
 			Invalid(invalid, "depth range");
 		if (di->nearZ == di->farZ)

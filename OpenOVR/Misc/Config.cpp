@@ -163,6 +163,9 @@ int Config::ini_handler(void* user, const char* pSection,
 		CFGOPT(bool, enableHiddenMeshFix);
 		CFGOPT(bool, invertUsingShaders);
 		CFGOPT(bool, initUsingVulkan);
+		CFGOPT(bool, useSubmittedPose);
+		CFGOPT(bool, submitDepth);
+		CFGOPT(bool, ownFrames);
 		CFGOPT(float, hiddenMeshVerticalScale);
 		CFGOPT(bool, logAllOpenVRCalls);
 		CFGOPT(string, bindingEditor);
