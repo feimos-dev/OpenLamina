@@ -3,6 +3,7 @@
 
 #include "conformance.h"
 
+#include "IVRChaperoneSetup_006.h"
 #include "IVRCompositor_029.h"
 #include "IVRInput_011.h"
 #include "IVROverlay_028.h"
@@ -332,7 +333,8 @@ Json::Value RoundedPosition(const Json::Value& pose)
 
 // The game's side of dashboard (scripts/dashboard.json, ini/dashboard.ini, the manifest manifest_basic.json): the
 // left menu button held 0.7 s from frame 30 opens the dashboard, whose "Quit game" the right laser clicks at frame
-// 150. 260 frames, at about 90 a second, once the overlay app's dashboard overlay is in the store.
+// 150. 260 frames, at about 90 a second, once the overlay app's dashboard overlay is in the store. At frame 125 the game
+// makes a dashboard overlay of its own and a plain one; only the first is published, for its tab.
 void DashboardSceneCase(CaseContext& c)
 {
 	SceneApp app;
@@ -348,6 +350,8 @@ void DashboardSceneCase(CaseContext& c)
 		in->GetActionHandle("/actions/main/in/trigger", &trigger);
 	}
 	r["saw_overlay_app"] = WaitForOtherProgram(std::chrono::seconds(5));
+	auto* ov = Interface<vr::IVROverlay_028::IVROverlay>(c, "IVROverlay_028");
+	vr::VROverlayHandle_t ownDashboard = vr::k_ulOverlayHandleInvalid, ownThumbnail = vr::k_ulOverlayHandleInvalid, ownPlain = vr::k_ulOverlayHandleInvalid;
 	callers::Texture tex(ArgSet::Valid, *c.call);
 	bool activated = false, deactivated = false, quit = false;
 	for (int frame = 1; frame <= 260; frame++) {
@@ -366,6 +370,27 @@ void DashboardSceneCase(CaseContext& c)
 			activated = activated || ev.eventType == vr::VREvent_DashboardActivated;
 			deactivated = deactivated || ev.eventType == vr::VREvent_DashboardDeactivated;
 			quit = quit || ev.eventType == vr::VREvent_Quit;
+		}
+		if (frame == 125 && ov) {
+			// The game's own dashboard overlay (made once the dashboard shows the overlay app's) and a plain one
+			std::vector<uint8_t> px(16 * 16 * 4, 255);
+			ov->CreateDashboardOverlay("oc.test.game.dashboard", "Game", &ownDashboard, &ownThumbnail);
+			ov->SetOverlayRaw(ownDashboard, px.data(), 16, 16, 4);
+			ov->CreateOverlay("oc.test.game.plain", "Plain", &ownPlain);
+			ov->SetOverlayRaw(ownPlain, px.data(), 16, 16, 4);
+			ov->ShowOverlay(ownPlain);
+		}
+		if (frame == 145) {
+			// The game's entry in the store has its dashboard overlay (and its thumbnail), for its dashboard's tab, and
+			// not its plain overlay
+			bool dashboard = false, plain = false;
+			const Json::Value doc = StoreDocument("overlays");
+			for (const Json::Value& o : doc[std::to_string(OwnPid())]["overlays"]) {
+				dashboard = dashboard || (o["key"].asString() == "oc.test.game.dashboard" && o["dashboard"].asBool() && !o["thumbnail"].asBool());
+				plain = plain || o["key"].asString() == "oc.test.game.plain";
+			}
+			r["own_dashboard_overlay_published"] = dashboard;
+			r["own_plain_overlay_published"] = plain;
 		}
 		if (frame == 120) {
 			Json::Value doc = StoreDocument("dashboard");
@@ -386,6 +411,10 @@ void DashboardSceneCase(CaseContext& c)
 	r["quit"] = quit;
 	r["deactivated"] = deactivated;
 	r["open_at_end"] = StoreDocument("dashboard")["open"];
+	if (ov) {
+		ov->DestroyOverlay(ownPlain);
+		ov->DestroyOverlay(ownDashboard);
+	}
 	c.core->Cleanup();
 	c.Record("dashboard", r);
 }
@@ -545,11 +574,21 @@ void SettingsLiveSetterCase(CaseContext& c)
 
 // The play area's walls (scripts/bounds.json: a 2 x 3 m stage, the HMD 0.2 m from its +X edge): 30 frames, then the
 // last frame's walls (2.5 m tall quads) as the stand-in got them. With drawBounds one, on the +X edge; without, none.
-void BoundsCase(CaseContext& c)
+// With commitRoom (scripts/bounds_room_setup.json: no stage bounds), the play area is a committed 2 x 3 m room setup.
+void BoundsCase(CaseContext& c, bool commitRoom)
 {
 	SceneApp app;
 	if (!OpenSceneApp(c, app))
 		return;
+	if (commitRoom) {
+		// A 2 x 3 m room setup, committed as a room setup tool would
+		vr::EVRInitError le = vr::VRInitError_None;
+		auto* setup = (vr::IVRChaperoneSetup_006::IVRChaperoneSetup*)c.core->GetGenericInterface("IVRChaperoneSetup_006", &le);
+		if (setup) {
+			setup->SetWorkingPlayAreaSize(2, 3);
+			setup->CommitWorkingCopy(vr::IVRChaperoneSetup_006::EChaperoneConfigFile_Live);
+		}
+	}
 	callers::Texture tex(ArgSet::Valid, *c.call);
 	for (int frame = 1; frame <= 30; frame++)
 		SceneFrame(app, tex.get());
@@ -674,12 +713,31 @@ void OverlayAppTexturesCase(CaseContext& c, const char* label, std::vector<Overl
 		api->Flush();
 }
 
-// A background application: a headless session, whose poses and events work, and which can't submit
+// A file in the store's folder that one program of a pair writes for the other
+std::string StoreMarker(const char* name)
+{
+	const char* dir = std::getenv("OC_STORE_DIR");
+	return dir && *dir ? std::string(dir) + "/" + name : std::string();
+}
+
+// A background application, once a game (background-app-game) runs: a headless session, whose poses and events work,
+// and which can't submit. It asks again on 121, as such programs do, for at most 10 s.
 void BackgroundAppCase(CaseContext& c)
 {
 	Json::Value r;
-	r["init"] = (int)c.core->Init(vr::VRApplication_Background, nullptr);
-	if (r["init"].asInt() != vr::VRInitError_None) {
+	vr::EVRInitError init = vr::VRInitError_Init_NoServerForBackgroundApp;
+	const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	while (std::chrono::steady_clock::now() < until) {
+		init = c.core->Init(vr::VRApplication_Background, nullptr);
+		if (init != vr::VRInitError_Init_NoServerForBackgroundApp)
+			break;
+		std::this_thread::sleep_for(std::chrono::milliseconds(50));
+	}
+	r["init"] = (int)init;
+	// The game can go now
+	if (std::string marker = StoreMarker("background-joined"); !marker.empty())
+		std::ofstream(marker) << "1";
+	if (init != vr::VRInitError_None) {
 		c.Record("session", r);
 		return;
 	}
@@ -719,6 +777,38 @@ void BackgroundAppCase(CaseContext& c)
 	c.Record("session", r);
 }
 
+// The game background-app waits for: it runs frames until the background application has joined (at most 15 s)
+void BackgroundAppGameCase(CaseContext& c)
+{
+	SceneApp app;
+	if (!OpenSceneApp(c, app))
+		return;
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	const std::string marker = StoreMarker("background-joined");
+	bool joined = false;
+	const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(15);
+	while (!joined && std::chrono::steady_clock::now() < until) {
+		SceneFrame(app, tex.get());
+		joined = !marker.empty() && std::ifstream(marker).good();
+	}
+	c.core->Cleanup();
+	Json::Value r;
+	r["background_joined"] = joined;
+	c.Record("frames", r);
+}
+
+// A background application with no other OpenLamina program running: 121, without making an OpenXR instance (which
+// would start the runtime)
+void BackgroundAppAloneCase(CaseContext& c)
+{
+	Json::Value r;
+	r["init"] = (int)c.core->Init(vr::VRApplication_Background, nullptr);
+	if (r["init"].asInt() == vr::VRInitError_None)
+		c.core->Cleanup();
+	r["instance_made"] = ReadStandInDump().isMember("instance");
+	c.Record("init", r);
+}
+
 // Without the runtime's overlay and headless extensions (or with a runtime that fails to start): the refusals,
 // 130 InvalidApplicationType and 121 NoServerForBackgroundApp
 void HelperAppsUnsupportedCase(CaseContext& c)
@@ -745,6 +835,8 @@ const std::map<std::string, CaseFn>& conformance::HelperCases()
 		{ "overlay-app-vk", [](CaseContext& c) { OverlayAppTexturesCase(c, "textures", { { GfxKind::Vulkan, 43, "vulkan" } }); } },
 		{ "overlay-app-gl", [](CaseContext& c) { OverlayAppTexturesCase(c, "textures", { { GfxKind::OpenGL, 0x8C43, "gl" } }); } },
 		{ "background-app", BackgroundAppCase },
+		{ "background-app-game", BackgroundAppGameCase },
+		{ "background-app-alone", BackgroundAppAloneCase },
 		{ "helper-apps-unsupported", HelperAppsUnsupportedCase },
 		{ "remote-pointer", RemotePointerSceneCase },
 		{ "remote-pointer-overlay", RemotePointerOverlayCase },
@@ -754,7 +846,8 @@ const std::map<std::string, CaseFn>& conformance::HelperCases()
 		{ "dashboard-overlay", DashboardOverlayCase },
 		{ "settings-live", SettingsLiveCase },
 		{ "settings-live-setter", SettingsLiveSetterCase },
-		{ "bounds", BoundsCase },
+		{ "bounds", [](CaseContext& c) { BoundsCase(c, false); } },
+		{ "bounds-room-setup", [](CaseContext& c) { BoundsCase(c, true); } },
 	};
 	return cases;
 }

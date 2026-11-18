@@ -44,9 +44,9 @@ void PostRemotePointerEvents(const std::vector<StoreEvent>& events);
 
 class RemotePointer {
 public:
-	// The scene app's instance: LaserMouse over its own overlays and every live program's mouse overlays from the store
-	// (its own, selfPid's, are pointed at by its own overlays' pointer, and skipped here). The events for other
-	// programs go into toPost.
+	// The scene app's instance: LaserMouse over every other live program's mouse overlays from the store (its own,
+	// selfPid's, are pointed at by its own overlays' pointer, and skipped here). The events for other programs go into
+	// toPost.
 	void Update(const std::array<PointerRay, 2>& rays, const Json::Value& overlaysDoc, uint32_t selfPid, double now, std::vector<StoreEvent>& toPost);
 
 	// The rays' space: overlays in the document are in the standing space, and are moved into the seated one (by
@@ -59,8 +59,6 @@ public:
 
 	// Whether the last Update saw an entry of a program that isn't running any more (the next write drops it)
 	bool SawDeadEntries() const { return sawDead; }
-	// Whether any live program other than selfPid had an entry at the last Update
-	bool SawOthers() const { return sawOthers; }
 
 	// Where the laser driving the mouse meets another program's overlay, for the cursor
 	std::optional<XrPosef> CursorPoint() const;
@@ -79,5 +77,4 @@ private:
 	XrPosef seatedInStanding{ { 0, 0, 0, 1 }, { 0, 0, 0 } };
 	std::array<std::optional<XrPosef>, 3> devices;
 	bool sawDead = false;
-	bool sawOthers = false;
 };

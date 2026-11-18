@@ -42,13 +42,15 @@ TIMEOUT = 60
 CASE_TIMEOUT = 600  # init-repeat starts OpenLamina 200 times
 MAX_REPEAT = 100  # --repeat's bound: each round is a child process
 # Cases run as separate programs that must see each other's store: events-commit's room setup reaches events-listen,
-# chaperone's play area chaperone-read (run after it, --jobs 1), a game's pointer an overlay app's overlay (--jobs 2).
+# chaperone's play area chaperone-read (run after it, --jobs 1), a game's pointer an overlay app's overlay (--jobs 2),
+# a running game a background app (--jobs 2).
 # Every other child has a store of its own.
 SHARED_STORES = {"events-listen": "events", "events-commit": "events", "chaperone": "chaperone", "chaperone-read": "chaperone",
                  "remote-pointer": "remote-pointer", "remote-pointer-overlay": "remote-pointer",
                  "remote-pointer-peer-dies": "peer-dies", "remote-pointer-dying-overlay": "peer-dies",
                  "dashboard": "dashboard", "dashboard-overlay": "dashboard",
-                 "settings-live": "settings-live", "settings-live-setter": "settings-live"}
+                 "settings-live": "settings-live", "settings-live-setter": "settings-live",
+                 "background-app": "background", "background-app-game": "background"}
 # Cases that read files of SteamVR's install get a fixture of our own as SteamVR (OC_TEST_STEAMVR_DIR, which wins over
 # OC_TEST_NO_STEAMVR); everything else runs without SteamVR
 CASE_ENV = {"render-models": {"OC_TEST_STEAMVR_DIR": str(HERE.parent / "unit" / "data" / "steamvr")}}

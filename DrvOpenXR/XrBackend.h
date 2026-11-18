@@ -58,6 +58,9 @@ public:
 	 */
 	void OnSessionCreated();
 
+	// DrvOpenXR::KeepOverlaysInstance
+	void KeepOverlaysInstance();
+
 	/**
 	 * The session is gone or going (LOSS_PENDING, an EXITING OpenComposite didn't ask for, or a session restart
 	 * that failed): VREvent_Quit is queued once, and no more frames are begun. There's no reconnecting.
@@ -227,7 +230,6 @@ private:
 
 	// Whether we've restarted the session to use the application's rendering API yet
 	std::atomic<bool> usingApplicationGraphicsAPI{ false };
-	// The type of the texture it was restarted for
 	// An overlay application's textures, copied onto its session's device
 	std::unique_ptr<class OverlayTextureCopy> overlayCopy;
 
@@ -236,14 +238,9 @@ private:
 	// Held through each of its passes
 	std::mutex helperPassLock;
 
-	// The overlays' instance, made for a game without overlays of its own whose lasers point at other programs'
-	// (laserMouse) or which has a dashboard (dashboardButton) or the play area's walls (drawBounds), until OpenLamina shuts
-	// down
+	// The overlays' instance, made at Init for a game whose lasers point at other programs' overlays (laserMouse) or
+	// which has a dashboard (dashboardButton) or the play area's walls (drawBounds), until OpenLamina shuts down
 	std::shared_ptr<class BaseOverlay> keptOverlay;
-	std::chrono::steady_clock::time_point lastPointerCheck{};
-	// Whether the game wants the overlays' instance: for its dashboard, or for another running program's overlays in the
-	// store for its lasers (asked at most once a second)
-	bool WantsOverlaysInstance();
 
 	// The settings' generation the render scale (supersampleScale, the app's resolutionScale) was last read at, and the
 	// scale the game was last told of

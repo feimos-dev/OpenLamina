@@ -4,8 +4,8 @@
 
 namespace {
 std::atomic<SessionKind> currentKind{ SessionKind::Scene };
-}
 
+// Whether the runtime offers what this kind needs (XR_EXTX_overlay, XR_MND_headless); Scene: always
 bool HelperSessionsAvailable(SessionKind kind, const std::set<std::string>& runtimeExtensions)
 {
 	switch (kind) {
@@ -18,8 +18,9 @@ bool HelperSessionsAvailable(SessionKind kind, const std::set<std::string>& runt
 		return true;
 	}
 }
+} // namespace
 
-SessionChoice ChooseSessionKind(vr::EVRApplicationType type, const std::set<std::string>& runtimeExtensions, bool helperApps, bool backgroundAsScene)
+SessionChoice ChooseSessionKind(vr::EVRApplicationType type, const std::set<std::string>& runtimeExtensions, bool helperApps, bool backgroundAsScene, bool programRunning)
 {
 	SessionChoice choice;
 	if (type == vr::VRApplication_Scene) {
@@ -39,7 +40,7 @@ SessionChoice ChooseSessionKind(vr::EVRApplicationType type, const std::set<std:
 		// Where background apps already get a scene session (Proton's helper relies on it), they keep it
 		if (backgroundAsScene) {
 			choice.ok = true;
-		} else if (helperApps && HelperSessionsAvailable(SessionKind::Headless, runtimeExtensions)) {
+		} else if (helperApps && programRunning && HelperSessionsAvailable(SessionKind::Headless, runtimeExtensions)) {
 			choice.ok = true;
 			choice.kind = SessionKind::Headless;
 		} else {
@@ -62,7 +63,7 @@ bool BackgroundAppsGetSceneSessions()
 
 vr::EVRInitError RefusalWithoutSession(vr::EVRApplicationType type, bool helperApps, vr::EVRInitError runtimeError)
 {
-	const SessionChoice choice = ChooseSessionKind(type, {}, helperApps, BackgroundAppsGetSceneSessions());
+	const SessionChoice choice = ChooseSessionKind(type, {}, helperApps, BackgroundAppsGetSceneSessions(), true);
 	return choice.ok ? runtimeError : choice.refusal;
 }
 

@@ -1,9 +1,10 @@
 #pragma once
 // The play area's bounds (drawBounds): a grid wall on each edge of the play area that the HMD or a controller comes
 // within kBoundsNear of, fading in as it comes closer. The play area is the stage's bounds rectangle
-// (xrGetReferenceSpaceBoundsRect), centred on the stage's origin.
+// (xrGetReferenceSpaceBoundsRect), else the committed room setup's play area, centred on the stage's origin.
 
 #include "Canvas.h"
+#include "json/json.h"
 
 #include <openxr/openxr.h>
 
@@ -21,6 +22,10 @@ struct BoundsWall {
 	float width, height;
 	float alpha;
 };
+
+// The play area: runtime (the stage's bounds) where the runtime knows them (not null), else the play area of the
+// committed room setup (the store's Chaperone document), else 0 by 0
+XrExtent2Df BoundsPlayArea(const XrExtent2Df* runtime, const Json::Value& chaperoneDoc);
 
 // The walls to draw for a play area width (X) by depth (Z), given the tracked points in the stage
 std::vector<BoundsWall> BoundsWalls(float width, float depth, const std::vector<XrVector3f>& points);

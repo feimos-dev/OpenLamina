@@ -633,6 +633,11 @@ XrResult XRAPI_CALL GetReferenceSpaceBoundsRect(XrSession, XrReferenceSpaceType 
 		return XR_SPACE_BOUNDS_UNAVAILABLE;
 	}
 	*bounds = { GetScript().stageWidth, GetScript().stageDepth };
+	// A stage of no size: the bounds aren't known, as Monado answers
+	if (!(bounds->width > 0) || !(bounds->height > 0)) {
+		*bounds = { 0, 0 };
+		return XR_SPACE_BOUNDS_UNAVAILABLE;
+	}
 	return XR_SUCCESS;
 }
 

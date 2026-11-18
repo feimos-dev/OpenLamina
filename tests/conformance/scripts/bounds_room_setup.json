@@ -1,0 +1,23 @@
+{
+  "#": "No stage bounds (as Monado reports none), with the HMD at (0.8, 1.7, 0)",
+  "stage_bounds": [
+    0,
+    0
+  ],
+  "poses": {
+    "/user/head": {
+      "p": [
+        0.8,
+        1.7,
+        0
+      ],
+      "q": [
+        0,
+        0,
+        0,
+        1
+      ],
+      "from_frame": 0
+    }
+  }
+}

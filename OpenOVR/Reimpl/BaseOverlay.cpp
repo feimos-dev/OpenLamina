@@ -918,15 +918,17 @@ void BaseOverlay::_UpdateBounds()
 	auto session = xr_session.lock_shared(); // the play area and the devices' poses are read from the session
 	if (!xr_session.get())
 		return;
-	// The play area: the stage's bounds, read again at most once a second
+	// The play area: the stage's bounds, else the committed room setup's (Monado reports no stage bounds), read again
+	// at most once a second
 	const double now = NowSeconds();
 	if (b.areaRead < 0 || now - b.areaRead >= 1.0) {
 		b.areaRead = now;
 		XrExtent2Df extent{};
 		XrResult res = xrGetReferenceSpaceBoundsRect(xr_session.get(), XR_REFERENCE_SPACE_TYPE_STAGE, &extent);
-		const bool known = XR_SUCCEEDED(res) && res != XR_SPACE_BOUNDS_UNAVAILABLE;
-		b.width = known ? extent.width : 0;
-		b.depth = known ? extent.height : 0;
+		const bool known = XR_SUCCEEDED(res) && res != XR_SPACE_BOUNDS_UNAVAILABLE && extent.width > 0 && extent.height > 0;
+		const XrExtent2Df area = BoundsPlayArea(known ? &extent : nullptr, known ? Json::Value() : SharedStore::Get().Read(StoreDoc::Chaperone));
+		b.width = area.width;
+		b.depth = area.height;
 	}
 	// The HMD and the controllers, in the standing space (the stage)
 	std::vector<XrVector3f> points;
@@ -1034,7 +1036,11 @@ bool BaseOverlay::DashboardPlacement(const OverlayData& overlay, vr::ETrackingUn
 
 void BaseOverlay::_PublishOverlays()
 {
-	if (!IsHelperSession() && !oovr_global_configuration.LaserMouse())
+	// A helper program's overlays, for the game to point at and for the dashboard's tabs; a game's own dashboard
+	// overlays only, for its dashboard's tabs (dashboardButton): nothing else reads a game's entry. A game whose lasers
+	// point at other programs' overlays (laserMouse) also drops the entries of programs that have ended.
+	const bool helper = IsHelperSession();
+	if (!helper && !SceneDashboard() && !oovr_global_configuration.LaserMouse())
 		return;
 	Sharing& sh = *sharing;
 	const double now = NowSeconds();
@@ -1065,7 +1071,7 @@ void BaseOverlay::_PublishOverlays()
 		std::lock_guard<std::recursive_mutex> lock(layersLock);
 		for (const auto& kv : overlays) {
 			const OverlayData* o = kv.second;
-			if (!o)
+			if (!o || (!helper && !o->dashboard))
 				continue;
 			overlay_maths::Placement placement{};
 			const bool placed = o->dashboard ? DashboardPlacement(*o, vr::TrackingUniverseStanding, placement)
@@ -1155,7 +1161,7 @@ void BaseOverlay::_PublishOverlays()
 		for (const std::string& name : doc.getMemberNames())
 			anyEnded = anyEnded || ended(name, doc[name]);
 	}
-	if (sh.wrote && list == sh.published && !anyEnded)
+	if ((sh.wrote ? list == sh.published : list.empty()) && !anyEnded)
 		return;
 
 	const double wallClock = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
@@ -1165,6 +1171,11 @@ void BaseOverlay::_PublishOverlays()
 		for (const std::string& name : d.getMemberNames())
 			if (ended(name, d[name]))
 				d.removeMember(name);
+		// A game with nothing to publish has no entry
+		if (list.empty() && !helper) {
+			d.removeMember(std::to_string(self));
+			return;
+		}
 		Json::Value& mine = d[std::to_string(self)];
 		mine = Json::Value(Json::objectValue);
 		mine["app"] = sh.appKey;
@@ -1187,7 +1198,6 @@ void BaseOverlay::_UpdatePointer()
 	const bool laserMouse = oovr_global_configuration.LaserMouse();
 	// An overlay application leaves the pointing to a running scene app's instance: on runtimes that focus every
 	// session at once (Monado), both would otherwise act on the same click
-	// The program's own keyboard is always its own to point at: the game never sees it
 	const bool pointHere = !SceneAppPoints();
 	// The scene app points at other programs' mouse overlays too (laserMouse)
 	const bool pointRemote = laserMouse && IsSceneApp();
@@ -1206,6 +1216,7 @@ void BaseOverlay::_UpdatePointer()
 				break;
 			}
 		}
+		// The program's own keyboard is always its own to point at: the game never sees it
 		wanted = keyboard != nullptr || (overlaysWanted && pointHere);
 		if (!wanted && !pointing->running)
 			return;

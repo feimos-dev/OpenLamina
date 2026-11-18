@@ -1,0 +1,7 @@
+{
+ "#": "A background application with no other OpenLamina program running, on a runtime with headless sessions (scripts/helper_apps.json): NoServerForBackgroundApp (121), and no OpenXR instance, which could start the runtime",
+ "background-app-alone/init/-/-": {
+  "init": 121,
+  "instance_made": false
+ }
+}
