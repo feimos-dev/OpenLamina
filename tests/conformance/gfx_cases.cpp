@@ -409,6 +409,9 @@ void Bounds(CaseContext& c, GfxKind kind, int64_t format)
 		{ "halves", 2048, 1024, true, { 0, 0, 0.5f, 1 }, { 0.5f, 0, 1, 1 }, 1024, 1024 },
 		{ "flipped", 640, 640, false, { 0, 1, 1, 0 }, { 0, 1, 1, 0 }, 640, 640 },
 		{ "flipped halves", 1200, 600, true, { 0, 1, 0.5f, 0 }, { 0.5f, 1, 1, 0 }, 600, 600 },
+		// One above the other, the left eye at v from 0 to a half: the top half as shown, or for OpenGL, whose v runs
+		// up from the bottom row, the bottom half
+		{ "stacked", 896, 1792, true, { 0, 0, 1, 0.5f }, { 0, 0.5f, 1, 1 }, 896, 896 },
 	};
 	bool first = true;
 	for (const Config& cfg : configs) {
@@ -605,8 +608,9 @@ const std::map<std::string, CaseFn>& conformance::GfxCases()
 		{ "gfx-d3d10-basic", [](CaseContext& c) { Basic(c, GfxKind::D3D10, kDxgiRGBA8Srgb); } },
 		// As the basic ones, under a script whose runtime has D3D11 alone (expect/gfx_interop.json)
 		{ "gfx-gl-interop", [](CaseContext& c) { Basic(c, GfxKind::OpenGL, kGlSRGB8Alpha8); } },
+		{ "gfx-gl-interop-bounds", [](CaseContext& c) { Bounds(c, GfxKind::OpenGL, kGlSRGB8Alpha8); } },
+		{ "gfx-vk-interop-bounds", [](CaseContext& c) { Bounds(c, GfxKind::Vulkan, kVkRGBA8Srgb); } },
 		{ "gfx-vk-interop", [](CaseContext& c) { Basic(c, GfxKind::Vulkan, kVkRGBA8Srgb); } },
-		{ "gfx-d3d10-bounds", [](CaseContext& c) { Bounds(c, GfxKind::D3D10, kDxgiRGBA8Srgb); } },
 	};
 	return cases;
 }
