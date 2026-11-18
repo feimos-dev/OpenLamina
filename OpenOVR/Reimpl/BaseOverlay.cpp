@@ -1372,7 +1372,10 @@ EVROverlayError BaseOverlay::GetOverlayTransformTrackedDeviceRelative(VROverlayH
 }
 EVROverlayError BaseOverlay::SetOverlayTransformTrackedDeviceComponent(VROverlayHandle_t ulOverlayHandle, TrackedDeviceIndex_t unDeviceIndex, const char* pchComponentName)
 {
-	USEH_LOCKED();
+	// The name is read on the game's thread while the lasers point: the session lock, then the layers' lock
+	auto session = xr_session.lock_shared();
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	USEH();
 	overlay->transformType = VROverlayTransform_TrackedComponent;
 	overlay->overlayRelative = false;
 	overlay->componentDevice = unDeviceIndex;
@@ -1381,6 +1384,7 @@ EVROverlayError BaseOverlay::SetOverlayTransformTrackedDeviceComponent(VROverlay
 }
 EVROverlayError BaseOverlay::GetOverlayTransformTrackedDeviceComponent(VROverlayHandle_t ulOverlayHandle, TrackedDeviceIndex_t* punDeviceIndex, char* pchComponentName, uint32_t unComponentNameSize)
 {
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	USEH();
 	if (overlay->transformType != VROverlayTransform_TrackedComponent)
 		return VROverlayError_WrongTransformType;
@@ -2157,6 +2161,8 @@ void BaseOverlay::HideKeyboard()
 }
 void BaseOverlay::SetKeyboardTransformAbsolute(ETrackingUniverseOrigin eTrackingOrigin, const HmdMatrix34_t* pmatTrackingOriginToKeyboardTransform)
 {
+	// The session lock before the layers' lock, as everywhere
+	auto session = xr_session.lock_shared();
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	if (!keyboard || !pmatTrackingOriginToKeyboardTransform) {
 		OOVR_LOG_ONCE("SetKeyboardTransformAbsolute with no keyboard open: ignored");
@@ -2173,6 +2179,8 @@ void BaseOverlay::SetKeyboardTransformAbsolute(ETrackingUniverseOrigin eTracking
 }
 void BaseOverlay::SetKeyboardPositionForOverlay(VROverlayHandle_t ulOverlayHandle, HmdRect2_t avoidRect)
 {
+	// The session lock before the layers' lock: placing the overlay reads device poses
+	auto session = xr_session.lock_shared();
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	OverlayData* overlay = (OverlayData*)ulOverlayHandle;
 	if (!overlay || !validOverlays.count(overlay) || !keyboard) {
@@ -2202,6 +2210,9 @@ void BaseOverlay::SetKeyboardPositionForOverlay(VROverlayHandle_t ulOverlayHandl
 }
 EVROverlayError BaseOverlay::SetOverlayIntersectionMask(VROverlayHandle_t ulOverlayHandle, OOVR_VROverlayIntersectionMaskPrimitive_t* pMaskPrimitives, uint32_t unNumMaskPrimitives, uint32_t unPrimitiveSize)
 {
+	// The mask is copied on the game's thread while the lasers point: the session lock, then the layers' lock
+	auto session = xr_session.lock_shared();
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	USEH();
 	if (!pMaskPrimitives || unNumMaskPrimitives == 0) {
 		overlay->intersectionMask.clear(); // the whole overlay
