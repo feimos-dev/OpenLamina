@@ -288,6 +288,10 @@ The available options are:
 	* While the game runs no frames (loading, a stall) and has an overlay or a skybox to show, OpenLamina runs frames of its own: the game's last frame again, which the runtime keeps reprojecting, with the overlays on top, or the skybox (`SetSkyboxOverride`) as equirect layers in its place. They start 100 ms after the game's last `WaitGetPoses` and never while its frame is open. On a Direct3D 11 session the device's immediate context is made multithread protected (logged), since these frames end on a thread of their own; a Vulkan or OpenGL session runs none, since its queue or context is the game's (Vulkan and OpenGL games whose frames go through Direct3D 11 have them). Without it, a skybox is shown at once as a quad, and the runtime is left with the game's last frame.
 * `mirrorWindow` - boolean, default `false`.
 	* A window on the desktop with the game's left eye, for games that ask for one (`ShowMirrorWindow`); closing it hides it. Its image is read back from the game's texture at full size, about 30 times a second, which costs frame time on a headset of high resolution. Without it the call does nothing, and the OpenXR runtime may have a mirror of its own. Windows only.
+* `keyboard` - boolean, default `false`.
+	* The keyboard a game asks for (`ShowKeyboard`), typed by pointing at it with the controllers. Without it, the keyboard is answered as done at once.
+* `steamvrRenderModels` - boolean, default `false`.
+	* Controller and tracker models from the user's SteamVR install, with their moving parts. Without it, OpenLamina's built-in hands and tracker.
 * `logAllOpenVRCalls` - boolean, default `false`
 	* Log every OpenVR call a game makes. Similar to `logGetTrackedProperty`, this clutters logs and should not be enabled unless necessary.
 * `inputEvaluator` - `direct` or `steamvr`, default `direct`.
