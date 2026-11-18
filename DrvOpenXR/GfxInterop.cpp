@@ -271,6 +271,9 @@ public:
 			OOVR_LOG_ONCE("Graphics interop: wglDXLockObjectsNV failed: frame left out");
 			return nullptr;
 		}
+		// The game's own earlier errors aren't this copy's (at most 32: the context reports each one once)
+		for (int i = 0; i < 32 && glGetError() != GL_NO_ERROR; i++) {
+		}
 		// The game's state is put back afterwards: its framebuffers, scissor and sRGB conversion (a blit with it on
 		// would convert the texels)
 		GLint read = 0, draw = 0;
@@ -370,6 +373,7 @@ DXGI_FORMAT TypelessOf(DXGI_FORMAT format)
 
 // How long a copy may take on the game's queue: far more than one does, so a longer one is a stuck GPU
 constexpr uint64_t kCopyTimeoutNs = 100'000'000;
+constexpr uint64_t kShutdownTimeoutNs = 5'000'000'000;
 
 class VkInterop : public GfxInterop {
 public:
@@ -381,6 +385,9 @@ public:
 	VkCommandBuffer commands = VK_NULL_HANDLE;
 	VkFence fence = VK_NULL_HANDLE;
 	PFN_vkGetMemoryWin32HandlePropertiesKHR getHandleProperties = nullptr;
+	// A copy was submitted and its fence hasn't been seen signalled: the command buffer, the fence and the images are
+	// in use until it is
+	bool pending = false;
 
 	struct Copy {
 		uint32_t width = 0, height = 0;
@@ -401,10 +408,25 @@ public:
 			vkFreeMemory(vkDevice, copy.memory, nullptr);
 	}
 
+	// Waits up to timeoutNs for the copy submitted last: VK_SUCCESS once it's done (or there was none), VK_TIMEOUT
+	// while it still runs, when nothing it uses may be reset or freed, or the error of a lost device, which ends it.
+	VkResult WaitForCopy(uint64_t timeoutNs)
+	{
+		if (!pending)
+			return VK_SUCCESS;
+		VkResult result = vkWaitForFences(vkDevice, 1, &fence, VK_TRUE, timeoutNs);
+		if (result != VK_TIMEOUT)
+			pending = false;
+		return result;
+	}
+
 	~VkInterop() override
 	{
-		if (fence)
-			vkWaitForFences(vkDevice, 1, &fence, VK_TRUE, kCopyTimeoutNs);
+		if (WaitForCopy(kShutdownTimeoutNs) == VK_TIMEOUT) {
+			// Still running on the game's queue: its objects are left to the device
+			OOVR_LOG("Graphics interop: the last Vulkan copy never finished; its objects aren't freed");
+			return;
+		}
 		for (auto& kv : copies)
 			Drop(kv.second);
 		if (fence)
@@ -554,6 +576,11 @@ public:
 	ID3D11Texture2D* CopyIn(const vr::Texture_t* tex, const vr::VRTextureBounds_t*) override
 	{
 		auto* data = (const vr::VRVulkanTextureData_t*)tex->handle;
+		// A copy that didn't finish in time last frame may still be running behind the game's own work
+		if (WaitForCopy(kCopyTimeoutNs) == VK_TIMEOUT) {
+			OOVR_LOG_ONCE("Graphics interop: the last Vulkan copy is still running: frame left out");
+			return nullptr;
+		}
 		if (!CommandsFor(data->m_nQueueFamilyIndex)) {
 			OOVR_LOG_ONCE("Graphics interop: no Vulkan command buffer for the game's queue family");
 			return nullptr;
@@ -611,7 +638,8 @@ public:
 			return nullptr;
 		}
 		// Done before D3D11 reads it
-		if (vkWaitForFences(vkDevice, 1, &fence, VK_TRUE, kCopyTimeoutNs) != VK_SUCCESS) {
+		pending = true;
+		if (WaitForCopy(kCopyTimeoutNs) != VK_SUCCESS) {
 			OOVR_LOG_ONCE("Graphics interop: the Vulkan copy didn't finish in time: frame left out");
 			return nullptr;
 		}
