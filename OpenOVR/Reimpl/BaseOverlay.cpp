@@ -299,7 +299,12 @@ bool BaseOverlay::OverlayData::OwnTransform(vr::ETrackingUniverseOrigin tracking
 	out = glm::transpose(overlayTransform);
 	if (transformType == VROverlayTransform_Cursor) {
 		if (std::optional<XrPosef> point = CursorPoint(this)) {
-			const XrPosef centre = overlay_maths::CursorPose(*point, widthMeters, widthMeters / AspectRatio(), cursorHotspot);
+			XrPosef centre = overlay_maths::CursorPose(*point, widthMeters, widthMeters / AspectRatio(), cursorHotspot);
+			// The point is in the frame's space (_UpdatePointer); the caller may ask for the other origin
+			BaseCompositor* compositor = GetUnsafeBaseCompositor();
+			const vr::ETrackingUniverseOrigin frameSpace = compositor ? compositor->GetTrackingSpace() : vr::TrackingUniverseStanding;
+			if (frameSpace != trackingSpace)
+				centre = overlay_maths::ChangeOrigin(centre, frameSpace, trackingSpace, SeatedInStanding());
 			out = X2G_om34_pose(centre);
 			return true;
 		}
