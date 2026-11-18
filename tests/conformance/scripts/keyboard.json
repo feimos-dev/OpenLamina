@@ -1,0 +1,22 @@
+{
+  "#": "The keyboard case's keys clicked with the right laser. The US keyboard (1000 x 404 pixels, a millimetre each) is centred at (0, 1.3, -1); its Shift, H, I and Done keys' centres are at (-0.42, 1.201), (-0.013, 1.267), (0.098, 1.333) and (0.379, 1.135). The aim pose points at each in turn (from frames 0, 18, 30 and 42), and the trigger clicks it (held from frames 10, 22, 34 and 46, for three frames).",
+  "interaction_profile": "/interaction_profiles/valve/index_controller",
+  "poses": {
+    "/user/hand/right/input/aim/pose": [
+      { "p": [-0.42, 1.201, -0.5], "q": [0, 0, 0, 1], "from_frame": 0 },
+      { "p": [-0.013, 1.267, -0.5], "q": [0, 0, 0, 1], "from_frame": 18 },
+      { "p": [0.098, 1.333, -0.5], "q": [0, 0, 0, 1], "from_frame": 30 },
+      { "p": [0.379, 1.135, -0.5], "q": [0, 0, 0, 1], "from_frame": 42 }
+    ]
+  },
+  "inputs": [
+    { "frame": 10, "path": "/user/hand/right/input/trigger/value", "value": 1.0 },
+    { "frame": 13, "path": "/user/hand/right/input/trigger/value", "value": 0.0 },
+    { "frame": 22, "path": "/user/hand/right/input/trigger/value", "value": 1.0 },
+    { "frame": 25, "path": "/user/hand/right/input/trigger/value", "value": 0.0 },
+    { "frame": 34, "path": "/user/hand/right/input/trigger/value", "value": 1.0 },
+    { "frame": 37, "path": "/user/hand/right/input/trigger/value", "value": 0.0 },
+    { "frame": 46, "path": "/user/hand/right/input/trigger/value", "value": 1.0 },
+    { "frame": 49, "path": "/user/hand/right/input/trigger/value", "value": 0.0 }
+  ]
+}

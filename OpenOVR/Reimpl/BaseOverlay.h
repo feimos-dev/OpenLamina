@@ -134,6 +134,9 @@ struct OOVR_VROverlayProjection_t {
 	float fBottom;
 };
 
+// A swapchain filled from memory (DrvOpenXR/CpuSwapchain.h)
+class CpuSwapchain;
+
 // Avoid importing LibOVR just for this
 struct ovrLayerHeader_;
 
@@ -177,16 +180,26 @@ private:
 
 	std::recursive_mutex layersLock;
 
-	// The controllers' lasers and what OpenLamina draws for them and itself: the cursor, a message box
-	// (BaseOverlay.cpp). Under layersLock.
+	// The controllers' lasers and what OpenLamina draws for them and itself: the cursor, the keyboard's quad, a message
+	// box (BaseOverlay.cpp). Under layersLock.
 	class Pointing;
 	std::unique_ptr<Pointing> pointing;
 
+	// forOverlay: the overlay the keyboard's events go to, k_ulOverlayHandleInvalid for the system's queue
 	vr::EVROverlayError ShowKeyboardWithDispatch(
-	    EGamepadTextInputMode eInputMode, EGamepadTextInputLineMode eLineInputMode,
-	    const char* pchDescription, uint32_t unCharMax, const char* pchExistingText,
-	    bool bUseMinimalMode, uint64_t uUserValue,
-	    VRKeyboard::eventDispatch_t eventDispatch);
+	    EGamepadTextInputMode eInputMode, EGamepadTextInputLineMode eLineInputMode, uint32_t unFlags,
+	    const char* pchDescription, uint32_t unCharMax, const char* pchExistingText, uint64_t uUserValue,
+	    vr::VROverlayHandle_t forOverlay);
+
+	// A keyboard event, to the overlay it's for (if it still exists) or the system's queue
+	void DispatchKeyboardEvent(vr::VREvent_t event, vr::VROverlayHandle_t forOverlay);
+
+	// Without a keyboard that can be shown: KeyboardDone at once, the text as given
+	void SubmitPlaceholderKeyboardEvent(vr::EVREventType ev, vr::VROverlayHandle_t forOverlay, uint64_t userValue);
+
+	// The keyboard goes (its text kept for GetKeyboardText); with layersLock held. Its swapchain is handed back, to be
+	// destroyed once the lock is let go.
+	std::unique_ptr<CpuSwapchain> DropKeyboard();
 
 public:
 	BaseOverlay();
@@ -198,12 +211,13 @@ public:
 	// mayUpload: on the game's thread, which may fill swapchains from memory (an own frame's thread mayn't).
 	int _BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompositionLayerBaseHeader const* const*& result, bool mayUpload);
 
-	// Whether any overlay is shown with an image (as _BuildLayers would draw it, roughly), or a message box is
+	// Whether any overlay is shown with an image (as _BuildLayers would draw it, roughly), or the keyboard or a message
+	// box is
 	bool _AnyVisible();
 
-	// The controllers' lasers on the visible overlays that take mouse input (VROverlayInputMethod_Mouse), while the
-	// session is focused: their events and the cursor. On the game's thread before its frame's layers are built (it
-	// fills swapchains from memory), not holding _LayersLock().
+	// The controllers' lasers on the visible overlays that take mouse input (VROverlayInputMethod_Mouse) and on the
+	// keyboard, while the session is focused: their events, the cursor, and the keyboard's typing and drawing. On the
+	// game's thread before its frame's layers are built (it fills swapchains from memory), not holding _LayersLock().
 	void _UpdatePointer();
 
 	// Held while the overlays, their compositors or the keyboard are added, replaced or removed, and while a frame
@@ -586,9 +600,6 @@ public:
 
 	/** Show the virtual keyboard to accept input **/
 	vr::EVROverlayError ShowKeyboard(EGamepadTextInputMode eInputMode, EGamepadTextInputLineMode eLineInputMode, const char* pchDescription, uint32_t unCharMax, const char* pchExistingText, bool bUseMinimalMode, uint64_t uUserValue);
-
-	/** Placeholder method for submitting a KeyboardDone event when asked to show the keyboard since it is not implemented yet. **/
-	void SubmitPlaceholderKeyboardEvent(vr::EVREventType ev, VRKeyboard::eventDispatch_t eventDispatch, uint64_t userValue);
 
 	/**
 	 * Show the virtual keyboard to accept input. In most cases, you should pass KeyboardFlag_Modal to enable modal overlay
