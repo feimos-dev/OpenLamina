@@ -20,11 +20,13 @@
  },
  "mirror/mirror/-/-": {
   "visible": true,
-  "not_referenced_before_asked": true,
-  "first_get": 1,
+  "first_get": 0,
+  "first_get_gave_a_view": true,
   "get": 0,
   "left_top_left": "ff0000ff",
+  "left_top_left_after_other_frames": "0000ffff",
   "get_with_resource": 0,
+  "game_textures_never_referenced": true,
   "hidden": true
  }
 }

@@ -825,14 +825,73 @@ bool DX11Compositor::CheckChainCompatible(D3D11_TEXTURE2D_DESC& inputDesc, vr::E
 	return usable;
 }
 
-int DX11Compositor::MirrorView(const vr::Texture_t* texture, IUnknown* deviceOrResource, ID3D11ShaderResourceView** view)
+// A texture a mirror's views show: width x height of the format, for the game to sample
+static ID3D11Texture2D* MakeMirrorTexture(ID3D11Device* device, uint32_t width, uint32_t height, DXGI_FORMAT format)
+{
+	D3D11_TEXTURE2D_DESC desc{};
+	desc.Width = width;
+	desc.Height = height;
+	desc.MipLevels = 1;
+	desc.ArraySize = 1;
+	desc.Format = format;
+	desc.SampleDesc = { 1, 0 };
+	desc.Usage = D3D11_USAGE_DEFAULT;
+	desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	ID3D11Texture2D* texture = nullptr;
+	return SUCCEEDED(device->CreateTexture2D(&desc, nullptr, &texture)) ? texture : nullptr;
+}
+
+void DX11Compositor::MirrorUpdate(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, ID3D11Texture2D** mirror)
+{
+	ComPtr<ID3D11Texture2D> src;
+	if (!texture || !texture->handle || FAILED(((IUnknown*)texture->handle)->QueryInterface(IID_PPV_ARGS(&src))))
+		return;
+	ComPtr<ID3D11Device> device;
+	src->GetDevice(&device);
+	D3D11_TEXTURE2D_DESC desc;
+	src->GetDesc(&desc);
+	// The bounds' area, as it lies in the texture (bounds that run backwards aren't turned round here)
+	const bool multisampled = desc.SampleDesc.Count > 1;
+	TextureRegion area;
+	if (!RegionFromBounds(multisampled ? nullptr : bounds, desc.Width, desc.Height, area))
+		return;
+	const DXGI_FORMAT typed = (DXGI_FORMAT)FormatWithSrgb(GfxApiKind::D3D11, desc.Format, WantsSrgb(GfxApiKind::D3D11, desc.Format, texture->eColorSpace));
+
+	bool fits = false;
+	if (*mirror) {
+		ComPtr<ID3D11Device> mirrorDevice;
+		(*mirror)->GetDevice(&mirrorDevice);
+		D3D11_TEXTURE2D_DESC made;
+		(*mirror)->GetDesc(&made);
+		fits = mirrorDevice == device && made.Width == area.Width() && made.Height == area.Height() && made.Format == typed;
+	}
+	if (!fits) {
+		if (*mirror) {
+			OOVR_LOG_ONCE("The game's frames aren't of its mirror texture's device, size or format: a new mirror texture is made, which the views handed out so far don't show");
+			(*mirror)->Release();
+		}
+		*mirror = MakeMirrorTexture(device.Get(), area.Width(), area.Height(), typed);
+		if (!*mirror)
+			return;
+	}
+	ComPtr<ID3D11DeviceContext> ctx;
+	device->GetImmediateContext(&ctx);
+	if (multisampled) {
+		ctx->ResolveSubresource(*mirror, 0, src.Get(), 0, typed);
+	} else {
+		const D3D11_BOX box{ area.x0, area.y0, 0, area.x1, area.y1, 1 };
+		ctx->CopySubresourceRegion(*mirror, 0, 0, 0, 0, src.Get(), 0, &box);
+	}
+}
+
+int DX11Compositor::MirrorView(ID3D11Texture2D** mirror, IUnknown* deviceOrResource, uint32_t width, uint32_t height, ID3D11ShaderResourceView** view)
 {
 	constexpr int kNone = 0, kRequestFailed = 1, kSharedTexturesNotSupported = 106;
 	if (!view)
 		return kRequestFailed;
 	*view = nullptr;
-	if (!texture || texture->eType != vr::TextureType_DirectX || !texture->handle)
-		return kRequestFailed; // no D3D11 frame of the game's kept yet
+	if (!deviceOrResource)
+		return kRequestFailed;
 	// The game's device: given, or a resource's (any D3D11 device child)
 	ComPtr<ID3D11Device> device;
 	if (deviceOrResource && FAILED(deviceOrResource->QueryInterface(IID_PPV_ARGS(&device)))) {
@@ -842,40 +901,19 @@ int DX11Compositor::MirrorView(const vr::Texture_t* texture, IUnknown* deviceOrR
 	}
 	if (!device)
 		return kSharedTexturesNotSupported; // neither a D3D11 device nor one of its resources
-	ComPtr<ID3D11Texture2D> src;
-	if (FAILED(((IUnknown*)texture->handle)->QueryInterface(IID_PPV_ARGS(&src))))
-		return kSharedTexturesNotSupported;
-	ComPtr<ID3D11Device> srcDevice;
-	src->GetDevice(&srcDevice);
-	if (srcDevice != device)
-		return kSharedTexturesNotSupported;
-
-	D3D11_TEXTURE2D_DESC desc;
-	src->GetDesc(&desc);
-	bool srgb = WantsSrgb(GfxApiKind::D3D11, desc.Format, texture->eColorSpace);
-	DXGI_FORMAT typed = (DXGI_FORMAT)FormatWithSrgb(GfxApiKind::D3D11, desc.Format, srgb);
-	D3D11_TEXTURE2D_DESC copyDesc = desc;
-	copyDesc.Format = typed;
-	copyDesc.MipLevels = 1;
-	copyDesc.ArraySize = 1;
-	copyDesc.SampleDesc = { 1, 0 };
-	copyDesc.Usage = D3D11_USAGE_DEFAULT;
-	copyDesc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-	copyDesc.CPUAccessFlags = 0;
-	copyDesc.MiscFlags = 0;
-	ID3D11Texture2D* copy = nullptr;
-	if (FAILED(device->CreateTexture2D(&copyDesc, nullptr, &copy)))
-		return kRequestFailed;
-	ID3D11DeviceContext* ctx = nullptr;
-	device->GetImmediateContext(&ctx);
-	if (desc.SampleDesc.Count > 1)
-		ctx->ResolveSubresource(copy, 0, src.Get(), 0, typed);
-	else
-		ctx->CopySubresourceRegion(copy, 0, 0, 0, 0, src.Get(), 0, nullptr);
-	ctx->Release();
-	HRESULT hr = device->CreateShaderResourceView(copy, nullptr, view);
-	copy->Release(); // the view keeps it
-	return SUCCEEDED(hr) ? kNone : kRequestFailed;
+	if (*mirror) {
+		ComPtr<ID3D11Device> mirrorDevice;
+		(*mirror)->GetDevice(&mirrorDevice);
+		if (mirrorDevice != device)
+			return kSharedTexturesNotSupported; // the game's frames are on another device
+	} else {
+		if (!width || !height)
+			return kRequestFailed;
+		*mirror = MakeMirrorTexture(device.Get(), width, height, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB);
+		if (!*mirror)
+			return kRequestFailed;
+	}
+	return SUCCEEDED(device->CreateShaderResourceView(*mirror, nullptr, view)) ? kNone : kRequestFailed;
 }
 
 #endif

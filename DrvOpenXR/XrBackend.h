@@ -123,13 +123,14 @@ private:
 	// False if the texture can't be used (logged): no session switch then, or the switch was undone
 	bool CheckOrInitCompositors(const vr::Texture_t* tex);
 	std::unique_ptr<Compositor> compositors[XruEyeCount];
-	// The game's last D3D11 texture of each eye (its ID3D11Texture2D, referenced), for the mirror texture, kept only
-	// once the game has asked for one (mirrorWanted); under mirrorLock
-	vr::Texture_t lastEyeTexture[XruEyeCount]{};
+	// The D3D11 mirror texture of each eye (an ID3D11Texture2D of OpenLamina's own on the game's device), which the
+	// game's frames are copied into once it has asked for one (mirrorWanted); under mirrorLock
+	void* mirrorTexture[XruEyeCount]{};
 	bool mirrorWanted = false;
 	std::mutex mirrorLock;
 	std::set<void*> mirrorViews; // handed out by GetMirrorTextureD3D11 and not yet released
-	void KeepForMirror(vr::EVREye eye, const vr::Texture_t* texture);
+	// A frame's texture of the eye, submitted with these bounds; with none, the eye's mirror texture is let go
+	void KeepForMirror(vr::EVREye eye, const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds);
 	std::unique_ptr<Compositor> skybox_compositor; // the quad shown without equirect layers
 
 	// The skybox SetSkyboxOverride set, shown in OpenLamina's own frames until ClearSkyboxOverride: one or two equirect

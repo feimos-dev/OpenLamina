@@ -623,9 +623,10 @@ ULONG References(IUnknown* object)
 	return object->Release();
 }
 
-// The mirror window and the D3D11 mirror texture (expect/compositor.json): shown and hidden. Until the game first asks
-// for a mirror texture, its textures aren't referenced, and that first call fails (no frame kept yet). After that, the
-// left eye's mirror is the game's last left texture, copied on its device, given the device or one of its resources.
+// The mirror window and the D3D11 mirror texture (expect/compositor.json): shown and hidden. The game's own textures
+// are never referenced. A mirror texture asked for before any frame was copied is given at once. A view of the left
+// eye's, asked for after a frame and held, shows that frame, and then the next one, of another pattern: the texture
+// follows the game's frames. It's given for the device and for one of its resources.
 void Mirror(CaseContext& c)
 {
 	Scene s(c);
@@ -640,23 +641,31 @@ void Mirror(CaseContext& c)
 	auto* leftTex = (ID3D11Texture2D*)left.tex.handle;
 	const ULONG before = References(leftTex);
 	s.Frames(5, left, right, kFull, kFull, r);
-	r["not_referenced_before_asked"] = References(leftTex) == before;
 
 	ID3D11Device* device = nullptr;
 	leftTex->GetDevice(&device);
-	ID3D11ShaderResourceView* view = nullptr;
-	r["first_get"] = (int)s.comp->GetMirrorTextureD3D11(vr::Eye_Left, device, (void**)&view);
-	if (view)
-		s.comp->ReleaseMirrorTextureD3D11(view);
-	view = nullptr;
+	ID3D11ShaderResourceView* early = nullptr;
+	r["first_get"] = (int)s.comp->GetMirrorTextureD3D11(vr::Eye_Left, device, (void**)&early);
+	r["first_get_gave_a_view"] = early != nullptr;
+	if (early)
+		s.comp->ReleaseMirrorTextureD3D11(early);
+
+	// A view asked for after a frame, and held
 	s.Frames(2, left, right, kFull, kFull, r);
+	ID3D11ShaderResourceView* view = nullptr;
+	r["get"] = (int)s.comp->GetMirrorTextureD3D11(vr::Eye_Left, device, (void**)&view);
+	auto topLeft = [&] {
+		char hex[9] = "";
+		if (view)
+			snprintf(hex, sizeof(hex), "%08x", TopLeftOfView(view));
+		return std::string(hex);
+	};
+	r["left_top_left"] = topLeft();
+	// The other eye's pattern as the left eye's frames: the held view shows it
+	s.Frames(2, right, left, kFull, kFull, r);
+	r["left_top_left_after_other_frames"] = topLeft();
 	r.removeMember("left");
 	r.removeMember("right");
-	r["get"] = (int)s.comp->GetMirrorTextureD3D11(vr::Eye_Left, device, (void**)&view);
-	char hex[9] = "";
-	if (view)
-		snprintf(hex, sizeof(hex), "%08x", TopLeftOfView(view));
-	r["left_top_left"] = hex;
 	if (view)
 		s.comp->ReleaseMirrorTextureD3D11(view);
 	view = nullptr;
@@ -664,6 +673,7 @@ void Mirror(CaseContext& c)
 	if (view)
 		s.comp->ReleaseMirrorTextureD3D11(view);
 	device->Release();
+	r["game_textures_never_referenced"] = References(leftTex) == before;
 
 	s.comp->HideMirrorWindow();
 	r["hidden"] = !s.comp->IsMirrorWindowVisible();

@@ -109,8 +109,8 @@ XrBackend::~XrBackend()
 {
 	// Its thread draws from frames this backend reads back
 	MirrorWindow::Get().Hide();
-	KeepForMirror(vr::Eye_Left, nullptr);
-	KeepForMirror(vr::Eye_Right, nullptr);
+	KeepForMirror(vr::Eye_Left, nullptr, nullptr);
+	KeepForMirror(vr::Eye_Right, nullptr, nullptr);
 
 	// The whole teardown under the session lock, as every other change to the session is. VR_Shutdown waits for it
 	// as long as it takes; process exit without VR_Shutdown waits at most a second (see lock_for_teardown).
@@ -937,7 +937,7 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 			result = kCompositorRequestFailed;
 
 		if (result == kCompositorNone) {
-			KeepForMirror(eye, texture);
+			KeepForMirror(eye, texture, bounds);
 			// The mirror window shows the left eye, read back while it's open
 			Image mirror;
 			if (eye == vr::Eye_Left && MirrorWindow::Get().WantsFrame() && comp.ReadbackToCpu(texture, bounds, mirror))
@@ -1479,25 +1479,25 @@ bool XrBackend::GetFrameTiming(OOVR_Compositor_FrameTiming* pTiming, uint32_t un
 
 /* D3D Mirror textures */
 /* #if defined(SUPPORT_DX) */
-void XrBackend::KeepForMirror(vr::EVREye eye, const vr::Texture_t* texture)
+void XrBackend::KeepForMirror(vr::EVREye eye, const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds)
 {
 #if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
-	// Once the game has asked for a mirror texture, its last D3D11 texture of each eye is referenced, so it outlives the
-	// game freeing it until the next one replaces it. A Direct3D 10 texture (or any other) isn't kept.
 	std::lock_guard<std::mutex> lock(mirrorLock);
-	if (!mirrorWanted && texture)
+	auto** mirror = (ID3D11Texture2D**)&mirrorTexture[eye];
+	if (!texture) {
+		if (*mirror)
+			(*mirror)->Release();
+		*mirror = nullptr;
 		return;
-	ID3D11Texture2D* d3d11 = nullptr;
-	if (texture && texture->eType == vr::TextureType_DirectX && texture->handle
+	}
+	// Nothing is copied until the game asks for a mirror texture. A Direct3D 10 texture (or any other) has none.
+	if (!mirrorWanted || texture->eType != vr::TextureType_DirectX || !texture->handle
 #if defined(SUPPORT_DX10)
-	    && !DX10Compositor::AsD3D10Texture(texture)
+	    || DX10Compositor::AsD3D10Texture(texture)
 #endif
 	)
-		((IUnknown*)texture->handle)->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&d3d11);
-	vr::Texture_t& kept = lastEyeTexture[eye];
-	if (kept.handle)
-		((IUnknown*)kept.handle)->Release();
-	kept = d3d11 ? vr::Texture_t{ d3d11, vr::TextureType_DirectX, texture->eColorSpace } : vr::Texture_t{};
+		return;
+	DX11Compositor::MirrorUpdate(texture, bounds, mirror);
 #endif
 }
 
@@ -1506,11 +1506,14 @@ IBackend::openvr_enum_t XrBackend::GetMirrorTextureD3D11(vr::EVREye eEye, void* 
 #if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
 	if (eEye != vr::Eye_Left && eEye != vr::Eye_Right)
 		return 1; // VRCompositorError_RequestFailed
-	// The eye the game submitted last, copied now on its own device. The game's textures are kept from its first call
-	// on, so that one has none yet and fails.
+	// A view of the eye's mirror texture, which every frame from now on is copied into. Asked for before the game's
+	// first frame, the texture has the size the game is told to render at.
+	uint32_t width = 0, height = 0;
+	hmd->GetRecommendedRenderTargetSize(&width, &height);
 	std::lock_guard<std::mutex> lock(mirrorLock);
 	mirrorWanted = true;
-	int result = DX11Compositor::MirrorView(&lastEyeTexture[eEye], (IUnknown*)pD3D11DeviceOrResource, (ID3D11ShaderResourceView**)ppD3D11ShaderResourceView);
+	int result = DX11Compositor::MirrorView((ID3D11Texture2D**)&mirrorTexture[eEye], (IUnknown*)pD3D11DeviceOrResource, width, height,
+	    (ID3D11ShaderResourceView**)ppD3D11ShaderResourceView);
 	if (result == 0)
 		mirrorViews.insert(*ppD3D11ShaderResourceView);
 	return result;
