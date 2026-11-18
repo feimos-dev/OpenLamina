@@ -82,6 +82,8 @@ Upstream merge requests are linked as !*n* with their authors. Everything else w
   ([!130](https://gitlab.com/znixian/OpenOVR/-/merge_requests/130), galister)
 - The controllers point at overlays that take mouse input as a mouse: a cursor where the laser meets one, clicks with
   the trigger, scrolling with the thumbstick, and laser haptics.
+- Message boxes (`ShowMessageOverlay`) are shown in front of the player, in frames of OpenLamina's own, and answered
+  with the laser.
 
 **Stability and building**
 - The log opens before anything writes to it (upstream issue #479), and a log that can't be opened no longer crashes

@@ -177,7 +177,8 @@ private:
 
 	std::recursive_mutex layersLock;
 
-	// The controllers' lasers and what OpenLamina draws for them: the cursor (BaseOverlay.cpp). Under layersLock.
+	// The controllers' lasers and what OpenLamina draws for them and itself: the cursor, a message box
+	// (BaseOverlay.cpp). Under layersLock.
 	class Pointing;
 	std::unique_ptr<Pointing> pointing;
 
@@ -197,7 +198,7 @@ public:
 	// mayUpload: on the game's thread, which may fill swapchains from memory (an own frame's thread mayn't).
 	int _BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompositionLayerBaseHeader const* const*& result, bool mayUpload);
 
-	// Whether any overlay is shown with an image (as _BuildLayers would draw it, roughly)
+	// Whether any overlay is shown with an image (as _BuildLayers would draw it, roughly), or a message box is
 	bool _AnyVisible();
 
 	// The controllers' lasers on the visible overlays that take mouse input (VROverlayInputMethod_Mouse), while the
