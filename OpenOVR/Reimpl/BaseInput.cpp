@@ -3732,8 +3732,9 @@ bool BaseInput::GetHandMenu(int hand)
 			getInfo.action = action->second;
 			getInfo.subactionPath = subaction;
 			XrActionStateFloat state = { XR_TYPE_ACTION_STATE_FLOAT };
-			if (XR_SUCCEEDED(xrGetActionStateFloat(xr_session.get(), &getInfo, &state)) && state.isActive)
-				return state.currentState >= 0.5f;
+			// Any of them held: a controller's system button is active but never pressed on runtimes that keep it
+			if (XR_SUCCEEDED(xrGetActionStateFloat(xr_session.get(), &getInfo, &state)) && state.isActive && state.currentState >= 0.5f)
+				return true;
 		}
 		return false;
 	}
