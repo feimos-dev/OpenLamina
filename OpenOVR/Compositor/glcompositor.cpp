@@ -131,10 +131,12 @@ void GLCompositor::ReadSwapchainImages()
 
 namespace {
 // The game's state a blit runs under, put back when this ends: its framebuffer bindings, its scissor test, which would
-// clip the blit, and (OpenGL) its sRGB conversion, which would change the texels. Both are off for the blit.
+// clip the blit, and (OpenGL) its sRGB conversion, which changes the texels. The scissor test is off for the blit. The
+// sRGB conversion is on only with encodeSrgb, for linear values that go into an sRGB image: without it they'd be
+// written as they are, and show too dark. Values that are sRGB already are written as they are.
 class GameBlitState {
 public:
-	GameBlitState()
+	explicit GameBlitState(bool encodeSrgb = false)
 	{
 		glGetIntegerv(GL_DRAW_FRAMEBUFFER_BINDING, &draw);
 		glGetIntegerv(GL_READ_FRAMEBUFFER_BINDING, &read);
@@ -142,7 +144,12 @@ public:
 		glDisable(GL_SCISSOR_TEST);
 #ifdef SUPPORT_GL
 		srgb = glIsEnabled(GL_FRAMEBUFFER_SRGB);
-		glDisable(GL_FRAMEBUFFER_SRGB);
+		if (encodeSrgb)
+			glEnable(GL_FRAMEBUFFER_SRGB);
+		else
+			glDisable(GL_FRAMEBUFFER_SRGB);
+#else
+		(void)encodeSrgb;
 #endif
 	}
 	~GameBlitState()
@@ -154,6 +161,8 @@ public:
 #ifdef SUPPORT_GL
 		if (srgb)
 			glEnable(GL_FRAMEBUFFER_SRGB);
+		else
+			glDisable(GL_FRAMEBUFFER_SRGB);
 #endif
 	}
 	GameBlitState(const GameBlitState&) = delete;
@@ -235,7 +244,11 @@ void GLBaseCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::V
 	// Actually copy the image across
 	GLuint dst = images.at(currentIndex);
 	if (useBlit) {
-		GameBlitState gameState;
+		// A texture of linear values (a float or 10-bit one, or any under ColorSpace_Linear) converted into an sRGB
+		// swapchain is encoded on the way
+		const bool encodeSrgb = convertFormat && FormatIsSrgb(GfxApiKind::OpenGL, createInfo.format)
+		    && !FormatIsSrgb(GfxApiKind::OpenGL, rawFormat) && !WantsSrgb(GfxApiKind::OpenGL, rawFormat, texture->eColorSpace);
+		GameBlitState gameState(encodeSrgb);
 		glBindFramebuffer(GL_FRAMEBUFFER, fboId[1]);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, dst, 0);
 		glBindFramebuffer(GL_READ_FRAMEBUFFER, fboId[0]);
