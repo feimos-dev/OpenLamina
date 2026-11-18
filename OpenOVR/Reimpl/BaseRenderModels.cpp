@@ -174,13 +174,37 @@ static std::set<const void*>& LiveD3D11Textures()
 }
 #endif
 
-// SteamVR's textures, by the id their models give (from 1: OpenLamina's own models have none), each file read once
-// for the process. A file that can't be read gets no id (its model has no texture), and is tried once.
+// SteamVR's textures, by the id their models give (from 1: OpenLamina's own models have none). A file that can't be
+// read gets no id (its model has no texture), and is tried once. The decoded images are kept up to kMaxKeptTextureBytes,
+// the least recently asked for let go first (a program that lists every model would otherwise hold them all); one let
+// go is read from its file again when it's next asked for.
 namespace {
+constexpr size_t kMaxKeptTextureBytes = 128u * 1024 * 1024;
 struct SteamVRTextures {
 	std::mutex lock;
 	std::map<std::filesystem::path, TextureID_t> ids; // -1: couldn't be read
-	std::map<TextureID_t, std::shared_ptr<const Image>> textures;
+	std::map<TextureID_t, std::filesystem::path> files;
+	std::map<TextureID_t, std::shared_ptr<const Image>> kept;
+	std::vector<TextureID_t> recent; // the kept ones, the most recently asked for last
+	size_t keptBytes = 0;
+
+	// Under lock: the image is the id's, asked for now
+	void Keep(TextureID_t id, const std::shared_ptr<const Image>& image)
+	{
+		recent.erase(std::remove(recent.begin(), recent.end(), id), recent.end());
+		recent.push_back(id);
+		if (kept.emplace(id, image).second)
+			keptBytes += image->rgba.size();
+		// The one just asked for stays, whatever its size
+		while (keptBytes > kMaxKeptTextureBytes && recent.size() > 1) {
+			auto old = kept.find(recent.front());
+			if (old != kept.end()) {
+				keptBytes -= old->second->rgba.size();
+				kept.erase(old);
+			}
+			recent.erase(recent.begin());
+		}
+	}
 };
 SteamVRTextures& Textures()
 {
@@ -205,19 +229,40 @@ static TextureID_t SteamVRTextureId(const std::filesystem::path& file)
 	auto it = t.ids.find(file);
 	if (it != t.ids.end())
 		return it->second;
-	TextureID_t id = tex ? (TextureID_t)t.textures.size() + 1 : -1;
+	TextureID_t id = tex ? (TextureID_t)t.files.size() + 1 : -1;
 	t.ids.emplace(file, id);
-	if (tex)
-		t.textures.emplace(id, std::make_shared<const Image>(std::move(*tex)));
+	if (tex) {
+		t.files.emplace(id, file);
+		t.Keep(id, std::make_shared<const Image>(std::move(*tex)));
+	}
 	return id;
 }
 
 static std::shared_ptr<const Image> SteamVRTexture(TextureID_t id)
 {
 	SteamVRTextures& t = Textures();
+	std::filesystem::path file;
+	{
+		std::lock_guard<std::mutex> guard(t.lock);
+		auto it = t.kept.find(id);
+		if (it != t.kept.end()) {
+			std::shared_ptr<const Image> image = it->second;
+			t.Keep(id, image);
+			return image;
+		}
+		auto known = t.files.find(id);
+		if (known == t.files.end())
+			return nullptr;
+		file = known->second;
+	}
+	// Let go since it was read: read again (gone or damaged meanwhile: no texture)
+	std::optional<Image> tex = LoadRenderModelTexture(file);
+	if (!tex)
+		return nullptr;
+	auto image = std::make_shared<const Image>(std::move(*tex));
 	std::lock_guard<std::mutex> guard(t.lock);
-	auto it = t.textures.find(id);
-	return it == t.textures.end() ? nullptr : it->second;
+	t.Keep(id, image);
+	return image;
 }
 
 // A model of SteamVR's install by name: a model ("<name>" or "{<driver>}<name>"), one of its components
