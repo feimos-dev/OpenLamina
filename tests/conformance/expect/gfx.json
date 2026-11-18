@@ -323,6 +323,21 @@
   "dump:views[1].samples.br": "00ff00ff",
   "dump:views[1].format": 28
  },
+ "gfx-d3d11-odd/zero bounds/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": "ff0000ff",
+  "dump:views[0].samples.tr": "00ff00ff",
+  "dump:views[0].samples.bl": "0000ffff",
+  "dump:views[0].samples.br": "ffffffff",
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": "0000ffff",
+  "dump:views[1].samples.tr": "ff0000ff",
+  "dump:views[1].samples.bl": "ffffffff",
+  "dump:views[1].samples.br": "00ff00ff"
+ },
  "gfx-d3d11-bounds/full/-/-": {
   "left": 0,
   "right": 0,

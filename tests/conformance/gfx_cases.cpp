@@ -369,6 +369,22 @@ void D3D11Odd(CaseContext& c)
 		c.Record(o.name, r);
 		first = false;
 	}
+
+	// Bounds left all zero (a mod that never fills them in): the whole texture is shown
+	{
+		const vr::VRTextureBounds_t zero{ 0, 0, 0, 0 };
+		GfxTexture left = s.gfx->Pattern(240, 240, kDxgiRGBA8Srgb, 0);
+		GfxTexture right = s.gfx->Pattern(240, 240, kDxgiRGBA8Srgb, 1);
+		s.gfx->Flush();
+		Json::Value r;
+		if (!left.Made() || !right.Made()) {
+			r["error"] = "the pattern textures couldn't be made";
+		} else {
+			s.Frames(4, left, right, zero, zero, r);
+			r["dump_join"] = RectJoin(240, 240);
+		}
+		c.Record("zero bounds", r);
+	}
 }
 
 // Bounds: the whole texture, side-by-side halves of one texture, the whole flipped (vMin > vMax), and flipped halves.

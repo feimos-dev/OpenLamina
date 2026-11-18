@@ -217,6 +217,16 @@ bool RegionFromBounds(const vr::VRTextureBounds_t* bounds, uint32_t width, uint3
 	};
 	out.x0 = at(u0, width), out.x1 = at(u1, width);
 	out.y0 = at(v0, height), out.y1 = at(v1, height);
+	// An axis with no area (bounds left all zero, as some mods send them) shows the whole texture on that axis, as
+	// OpenComposite always has
+	if (out.x1 <= out.x0) {
+		OOVR_LOG_ONCEF("Texture bounds with no width (u %f to %f): the texture's whole width is shown", (double)b.uMin, (double)b.uMax);
+		out.x0 = 0, out.x1 = width, out.flipX = false;
+	}
+	if (out.y1 <= out.y0) {
+		OOVR_LOG_ONCEF("Texture bounds with no height (v %f to %f): the texture's whole height is shown", (double)b.vMin, (double)b.vMax);
+		out.y0 = 0, out.y1 = height, out.flipY = false;
+	}
 	return out.x1 > out.x0 && out.y1 > out.y0;
 }
 
