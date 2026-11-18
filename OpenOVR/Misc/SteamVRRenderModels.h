@@ -8,6 +8,7 @@
 // frame ("component_local": "origin" and "rotate_xyz" in degrees) and how it moves ("motion"). An OBJ's material
 // library names its texture (map_Kd); textures are read as PNG.
 
+#include "Misc/Image.h"
 #include "generated/interfaces/deleted_types.h"
 #include "json/json.h"
 
@@ -37,12 +38,6 @@ struct RmModel {
 	std::vector<RmComponent> components;
 	std::filesystem::path folder;
 	std::string thumbnail; // the "thumbnail" file, relative to the folder; empty for none
-};
-
-// An RGBA8 texture, rows top to bottom
-struct RmTexture {
-	uint32_t width = 0, height = 0;
-	std::vector<uint8_t> rgba;
 };
 
 // A model's (or one component's) triangles, ready for RenderModel_t
@@ -77,9 +72,8 @@ bool LoadObj(const std::filesystem::path& obj, std::vector<RmVertex>& verts, std
  * none) every component with an OBJ that's visible by default, together. nullopt if there's nothing to draw. */
 std::optional<RmMesh> LoadRenderModelMesh(const RmModel& model, const std::string& component);
 
-/** A PNG file as RGBA8. nullopt (logged) for a file that can't be read, that isn't a PNG, or that is larger than
- * 8192 pixels on a side. */
-std::optional<RmTexture> LoadRenderModelTexture(const std::filesystem::path& file);
+/** A PNG file as RGBA8, through LoadImageFile. nullopt (logged) for a file it refuses. */
+std::optional<Image> LoadRenderModelTexture(const std::filesystem::path& file);
 
 /** Where a component's geometry is moved to for the current input, in the model's space (identity at rest):
  * "rotate" turns it about "axis" through "pivot" by value_mapping's degrees at value (0 to 1), "translate" moves it

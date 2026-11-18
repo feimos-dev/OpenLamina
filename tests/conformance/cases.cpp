@@ -2847,7 +2847,7 @@ void RenderModelsCase(CaseContext& c)
 	r["thumbnail_error"] = (int)pe;
 	std::string url = path;
 	const std::string png = "test_controller.png";
-	r["thumbnail_is_its_png"] = url.rfind("file:///", 0) == 0 && url.size() > png.size()
+	r["thumbnail_is_its_png"] = url.rfind("file:///", 0) == 0 && url.size() > png.size() && url[8] != '/'
 	    && url.compare(url.size() - png.size(), png.size(), png) == 0;
 	r["thumbnail_size_matches"] = thumbSize == url.size() + 1;
 	pe = VRRenderModelError_Loading;

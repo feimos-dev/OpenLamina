@@ -97,7 +97,7 @@ void Canvas::Box(int x, int y, int w, int h, uint32_t rgba)
 int Canvas::LineHeight()
 {
 	const SudoFontMeta* font = Font();
-	return font ? (int)font->LineHeight() : kFallbackLineHeight;
+	return font ? (int)font->GetLineHeight() : kFallbackLineHeight;
 }
 
 int Canvas::TextWidth(std::wstring_view text) const
@@ -135,19 +135,5 @@ void Canvas::Text(int x, int y, std::wstring_view text, uint32_t rgba)
 			}
 		}
 		x += info->XAdvance;
-	}
-}
-
-void Canvas::Draw(const Image& src, int x, int y, int w, int h)
-{
-	if (src.Empty() || w <= 0 || h <= 0)
-		return;
-	for (int iy = 0; iy < h; iy++) {
-		for (int ix = 0; ix < w; ix++) {
-			const uint32_t sx = (uint32_t)((int64_t)ix * src.width / w);
-			const uint32_t sy = (uint32_t)((int64_t)iy * src.height / h);
-			const uint32_t px = src.At(sx, sy);
-			Blend(x + ix, y + iy, px, 255);
-		}
 	}
 }

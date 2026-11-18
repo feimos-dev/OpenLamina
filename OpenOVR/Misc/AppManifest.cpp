@@ -41,6 +41,13 @@ std::string PathToUtf8(const fs::path& path)
 	return std::string(s.begin(), s.end());
 }
 
+std::string FileUrl(const fs::path& path)
+{
+	std::u8string generic = path.generic_u8string();
+	std::string text(generic.begin(), generic.end());
+	return (text.starts_with('/') ? "file://" : "file:///") + text;
+}
+
 namespace {
 
 fs::path ResolveAgainst(const fs::path& manifest, const std::string& path)

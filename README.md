@@ -288,7 +288,9 @@ The available options are:
 * `ownFrames` - boolean, default `false`.
 	* While the game runs no frames (loading, a stall) and has an overlay or a skybox to show, OpenLamina runs frames of its own: the game's last frame again, which the runtime keeps reprojecting, with the overlays on top, or the skybox (`SetSkyboxOverride`) as equirect layers in its place. They start 100 ms after the game's last `WaitGetPoses` and never while its frame is open. On a Direct3D 11 session the device's immediate context is made multithread protected (logged), since these frames end on a thread of their own; a Vulkan or OpenGL session runs none, since its queue or context is the game's (Vulkan and OpenGL games whose frames go through Direct3D 11 have them). Without it, a skybox is shown at once as a quad, and the runtime is left with the game's last frame.
 * `keyboard` - boolean, default `false`.
-	* The keyboard a game asks for (`ShowKeyboard`), typed by pointing at it with the controllers. Without it, the keyboard is answered as done at once.
+	* The keyboard a game asks for (`ShowKeyboard`), typed by pointing at it with the controllers. The game still gets the controllers' input while it's up. Without it, the keyboard is answered as done at once.
+* `keyboardLayout` - `us` or `uk`, default by the user's locale (`uk` for en-GB, `us` otherwise).
+	* The layout of the keyboard games show to type text on, with the controllers' lasers.
 * `laserMouse` - boolean, default `false`.
 	* The controllers point at overlays that take mouse input (`VROverlayInputMethod_Mouse`) as a mouse: focus and mouse events, clicks with the trigger, a cursor where the laser meets the overlay, and laser haptics. Without it, such an overlay gets no events from the controllers. The keyboard and message boxes are pointed at with the lasers regardless (behind `keyboard` and `ownFrames`).
 * `steamvrRenderModels` - boolean, default `false`.
@@ -299,8 +301,6 @@ The available options are:
 	* How a game's SteamVR bindings become input. `direct` turns each binding into OpenXR bindings, as before. `steamvr` has OpenLamina run SteamVR's binding modes (toggles, dpads, chords and the rest) on the controller's raw inputs, and maps legacy input as SteamVR does. `steamvr` hasn't been tried in many games yet; try it when a game's controls don't work under `direct`.
 * `bindingEditor` - string, default empty.
 	* The program a game's "open binding UI" request starts.
-* `keyboardLayout` - `us` or `uk`, default by the user's locale (`uk` for en-GB, `us` otherwise).
-	* The layout of the keyboard games show to type text on, with the controllers' lasers.
 
 The possible types are as follows:
 

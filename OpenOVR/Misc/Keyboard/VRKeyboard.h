@@ -28,6 +28,7 @@ public:
 
 	// EKeyboardFlags
 	static constexpr uint32_t kFlagMinimal = 1;
+	static constexpr uint32_t kFlagModal = 2; // nothing but the keyboard can be pointed at
 
 	// flags: EKeyboardFlags (both overloads of ShowKeyboard give them); maxChars 0 for no limit. The layout is
 	// keyboardLayout's (KeyboardLayout::Current).
