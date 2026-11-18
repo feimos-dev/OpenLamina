@@ -28,6 +28,8 @@ public:
 	inline bool MirrorWindow() const { return mirrorWindow; }
 	/** The keyboard (IVROverlay::ShowKeyboard), pointed at with the controllers; without it, done at once */
 	inline bool Keyboard() const { return keyboard; }
+	/** Overlays that take mouse input (VROverlayInputMethod_Mouse) are pointed at with the controllers as a mouse */
+	inline bool LaserMouse() const { return laserMouse; }
 	/** SteamVR's render models from the user's install; without them, OpenLamina's built-in ones */
 	inline bool SteamVRRenderModels() const { return steamvrRenderModels; }
 	float HiddenMeshVerticalScale() const { return hiddenMeshVerticalScale; }
@@ -63,6 +65,7 @@ private:
 	bool ownFrames = false;
 	bool mirrorWindow = false;
 	bool keyboard = false;
+	bool laserMouse = false;
 	bool steamvrRenderModels = false;
 	float hiddenMeshVerticalScale = 1.0f;
 	bool logAllOpenVRCalls = false;

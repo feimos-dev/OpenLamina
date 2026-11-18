@@ -179,6 +179,7 @@ int Config::ini_handler(void* user, const char* pSection,
 		CFGOPT(bool, ownFrames);
 		CFGOPT(bool, mirrorWindow);
 		CFGOPT(bool, keyboard);
+		CFGOPT(bool, laserMouse);
 		CFGOPT(bool, steamvrRenderModels);
 		CFGOPT(float, hiddenMeshVerticalScale);
 		CFGOPT(bool, logAllOpenVRCalls);
