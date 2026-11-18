@@ -9,6 +9,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <fstream>
+#include <sstream>
+#include <string>
 #include <thread>
 
 #ifdef _WIN32
@@ -621,6 +623,73 @@ std::vector<StoreEvent> SharedStore::PollEvents(uint64_t& cursor, uint32_t* lost
 	if (lost)
 		*lost = missed;
 	return events;
+}
+
+uint64_t SharedStore::ProcessStartTime(uint32_t pid)
+{
+	if (pid == 0)
+		return 0;
+#ifdef _WIN32
+	// Limited query rights: what another user's or an elevated process still grants
+	HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+	if (!process)
+		return 0;
+	FILETIME created{}, exited{}, kernel{}, user{};
+	DWORD code = 0;
+	const bool running = GetExitCodeProcess(process, &code) && code == STILL_ACTIVE;
+	const bool known = GetProcessTimes(process, &created, &exited, &kernel, &user);
+	CloseHandle(process);
+	if (!running || !known)
+		return 0;
+	return ((uint64_t)created.dwHighDateTime << 32) | created.dwLowDateTime;
+#else
+	// Field 22 of /proc/<pid>/stat (clock ticks after boot), after the command name in parentheses
+	std::ifstream in("/proc/" + std::to_string(pid) + "/stat");
+	std::string stat;
+	if (!in || !std::getline(in, stat))
+		return 0;
+	const size_t close = stat.rfind(')');
+	if (close == std::string::npos)
+		return 0;
+	std::istringstream fields(stat.substr(close + 1));
+	std::string field;
+	// Fields 3 to 22
+	for (int i = 3; i <= 22; i++) {
+		if (!(fields >> field))
+			return 0;
+	}
+	char* end = nullptr;
+	const unsigned long long ticks = std::strtoull(field.c_str(), &end, 10);
+	return end && *end == 0 ? (uint64_t)ticks + 1 : 0; // + 1: a process started at tick 0 is still told apart from none
+#endif
+}
+
+uint64_t SharedStore::OwnStartTime()
+{
+	static const uint64_t start = ProcessStartTime(oc_current_pid());
+	return start;
+}
+
+bool SharedStore::IsSameProcessAlive(uint32_t pid, uint64_t start)
+{
+	if (start == 0)
+		return IsProcessAlive(pid);
+	return ProcessStartTime(pid) == start;
+}
+
+bool SharedStore::OtherLiveProgram(const Json::Value& overlaysDoc, uint32_t self)
+{
+	if (!overlaysDoc.isObject())
+		return false;
+	for (const std::string& name : overlaysDoc.getMemberNames()) {
+		const unsigned long long pid = std::strtoull(name.c_str(), nullptr, 10);
+		if (!pid || pid > 0xffffffffULL || pid == self)
+			continue;
+		const Json::Value& start = overlaysDoc[name]["start"];
+		if (IsSameProcessAlive((uint32_t)pid, start.isUInt64() ? start.asUInt64() : 0))
+			return true;
+	}
+	return false;
 }
 
 bool SharedStore::IsProcessAlive(uint32_t pid)

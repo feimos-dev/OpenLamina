@@ -1,0 +1,23 @@
+{
+ "#": "The game's pointer on another program's overlay (scripts/remote_pointer.json, ini/laser_mouse.ini, --jobs 2): the overlay app gets MouseMove, one MouseButtonDown at (100, 75) in its own mouse units (200 x 100, from the lower left: 0.25 m above the centre) and one MouseButtonUp, through the store; neither program's frames go out of order",
+ "remote-pointer/frames/-/-": {
+  "saw_overlay_app": true,
+  "frame_order_errors": 0
+ },
+ "remote-pointer-overlay/events/-/-": {
+  "init": 0,
+  "create": 0,
+  "raw": 0,
+  "show": 0,
+  "move": true,
+  "down": {
+   "x": 100,
+   "y": 75,
+   "button": 1
+  },
+  "up": true,
+  "frame_order_errors": 0,
+  "downs": 1,
+  "ups": 1
+ }
+}

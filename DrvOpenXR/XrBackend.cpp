@@ -43,6 +43,8 @@
 #include "../OpenOVR/Misc/Config.h"
 #include "../OpenOVR/Misc/FrameStats.h"
 #include "../OpenOVR/Misc/MirrorWindow.h"
+#include "../OpenOVR/Misc/Process.h"
+#include "../OpenOVR/Misc/SharedStore.h"
 #include "../OpenOVR/convert.h"
 #include "generated/static_bases.gen.h"
 
@@ -1102,6 +1104,10 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 		}
 	}
 
+	// With laserMouse, the game's lasers reach other programs' overlays even if it has none of its own
+	if (!GetUnsafeBaseOverlay() && !keptOverlay && OtherProgramsToPointAt())
+		keptOverlay = GetCreateBaseOverlay();
+
 	// If we have an overlay then add. Its layers stay as they are until the frame has ended.
 	BaseOverlay* overlay = GetUnsafeBaseOverlay();
 	std::unique_lock<std::recursive_mutex> overlayLock;
@@ -1131,6 +1137,10 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 	if (ownFrames)
 		ownFrames->OnAppFrameEnd();
 	owner.unlock();
+
+	// The game's overlays for other programs to point at (with laserMouse), once its frame has ended
+	if (overlay)
+		overlay->_PublishOverlays();
 
 	BaseSystem* sys = GetUnsafeBaseSystem();
 	if (sys) {
@@ -1871,12 +1881,19 @@ void XrBackend::StartHelperLoop()
 		    // may be in one
 		    std::lock_guard<std::mutex> pass(helperPassLock);
 		    PumpEvents();
+		    BaseOverlay* overlay = GetUnsafeBaseOverlay();
+		    // The program's overlays for the scene app to point at
+		    if (overlay)
+			    overlay->_PublishOverlays();
 		    if (!overlaySession)
 			    return 0; // a headless session runs no frames
-		    // The lasers, the keyboard and the cursor, filled here only where no thread of the program uses the device
-		    if (OwnFramesFillSwapchains()) {
-			    if (BaseOverlay* overlay = GetUnsafeBaseOverlay())
-				    overlay->_UpdatePointer();
+		    // The lasers, the keyboard and the cursor, on the session's device, which only OpenLamina's threads use. While
+		    // the keyboard is up the program waits for its text: the lasers' actions are synced here.
+		    if (overlay && OwnFramesFillSwapchains()) {
+			    BaseInput* input = GetUnsafeBaseInput();
+			    if (input && overlay->_KeyboardShown() && IsInputAvailable())
+				    input->SyncPointerActions();
+			    overlay->_UpdatePointer();
 		    }
 		    return RunOwnFrame(source, wanted);
 	    });
@@ -1969,6 +1986,21 @@ void XrBackend::StopOwnFrames(bool forGood)
 		ownFramesStopped = true;
 	// Joins its thread, which doesn't wait for the session lock that a session restart here holds
 	ownFrames.reset();
+	// Goes with the interfaces, before them
+	if (forGood)
+		keptOverlay.reset();
+}
+
+bool XrBackend::OtherProgramsToPointAt()
+{
+	if (!oovr_global_configuration.LaserMouse() || BaseClientCore::appType != vr::VRApplication_Scene || IsHelperSession())
+		return false;
+	// At most once a second: it reads the store and asks whether its programs are running
+	const auto now = std::chrono::steady_clock::now();
+	if (lastPointerCheck != std::chrono::steady_clock::time_point{} && now - lastPointerCheck < std::chrono::seconds(1))
+		return false;
+	lastPointerCheck = now;
+	return SharedStore::OtherLiveProgram(SharedStore::Get().Read(StoreDoc::Overlays), oc_current_pid());
 }
 
 XrDuration XrBackend::RunOwnFrame(const OwnFrameLoop::LayerSource& source, const std::function<bool()>& wanted)

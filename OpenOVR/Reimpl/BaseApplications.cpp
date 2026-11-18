@@ -5,6 +5,7 @@
 #include "BaseClientCore.h"
 #include "Misc/ProgramEvents.h"
 #include "Misc/AppManifest.h"
+#include "Misc/Config.h"
 #include "Misc/Process.h"
 #include "Misc/SharedStore.h"
 
@@ -176,6 +177,9 @@ void BaseApplications::SetSceneProcess(SharedStore& store, bool running)
 			changed = PidOf(scene["pid"]) != pid;
 			scene = Json::Value(Json::objectValue);
 			scene["pid"] = pid;
+			scene["start"] = (Json::UInt64)SharedStore::OwnStartTime();
+			// Whether its lasers reach other programs' overlays (laserMouse): they then don't point themselves
+			scene["points"] = oovr_global_configuration.LaserMouse();
 			scene["app_key"] = key;
 			scene["since_ms"] = (Json::UInt64)NowMs();
 		} else if (scene.isObject() && PidOf(scene["pid"]) == pid) {
