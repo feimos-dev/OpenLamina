@@ -447,7 +447,7 @@ bool RtGazeSpace(const RtSpace* sp, XrPosef* poseInStage, XrSpaceLocationFlags* 
 	float yaw = -gaze.yawDeg * toRad, pitch = gaze.pitchDeg * toRad;
 	XrQuaternionf qYaw{ 0, std::sin(yaw / 2), 0, std::cos(yaw / 2) };
 	XrQuaternionf qPitch{ std::sin(pitch / 2), 0, 0, std::cos(pitch / 2) };
-	*poseInStage = Compose(kHead, { QMul(qYaw, qPitch), { 0, 0, 0 } });
+	*poseInStage = Compose(RtHeadPose(), { QMul(qYaw, qPitch), { 0, 0, 0 } });
 	if (!gaze.positionValid)
 		poseInStage->position = { 0, 0, 0 };
 	*flags = 0;
@@ -508,11 +508,19 @@ bool RtActionSpaceScripted(const RtSpace* sp, uint64_t frame, ScriptPose* out)
 	return false;
 }
 
+XrPosef RtHeadPose()
+{
+	const uint64_t frame = St().session ? St().session->framesWaited : 0;
+	if (const ScriptPose* head = ScriptPoseAt("/user/head", frame))
+		return head->pose;
+	return kHead;
+}
+
 XrPosef RtSpaceInStage(const RtSpace* sp, ScriptPose* velocity)
 {
 	if (velocity)
 		*velocity = ScriptPose{};
-	XrPosef base = sp->isAction ? sp->actionPose : (sp->type == XR_REFERENCE_SPACE_TYPE_VIEW ? kHead : kIdentity);
+	XrPosef base = sp->isAction ? sp->actionPose : (sp->type == XR_REFERENCE_SPACE_TYPE_VIEW ? RtHeadPose() : kIdentity);
 	ScriptPose scripted;
 	uint64_t frame = St().session ? St().session->framesWaited : 0;
 	XrSpaceLocationFlags gazeFlags;

@@ -49,7 +49,7 @@ XrResult XRAPI_CALL LocateHandJoints(XrHandTrackerEXT tracker, const XrHandJoint
 	int hand = ((RtHandTracker*)tracker)->hand == XR_HAND_LEFT_EXT ? 0 : 1;
 	XrPosef palm = HandPose(hand);
 	XrPosef baseInStage = base->second->isAction ? base->second->actionPose
-	                                             : (base->second->type == XR_REFERENCE_SPACE_TYPE_VIEW ? kHead : kIdentity);
+	                                             : (base->second->type == XR_REFERENCE_SPACE_TYPE_VIEW ? RtHeadPose() : kIdentity);
 	baseInStage = Compose(baseInStage, base->second->offset);
 	XrPosef toBase = Inverse(baseInStage);
 	// A fixed rest pose: joints laid out along -Z from the palm, 1 cm apart

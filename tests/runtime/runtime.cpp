@@ -649,7 +649,7 @@ XrResult XRAPI_CALL LocateViews(XrSession, const XrViewLocateInfo* info, XrViewS
 		return XR_SUCCESS;
 	if (capacity < 2)
 		return XR_ERROR_SIZE_INSUFFICIENT;
-	XrPosef headInBase = Compose(Inverse(SpaceInStage(b->second.get())), kHead);
+	XrPosef headInBase = Compose(Inverse(SpaceInStage(b->second.get())), RtHeadPose());
 	float half = GetScript().fovDeg * 3.14159265f / 180.0f;
 	float inner = GetScript().fovInnerDeg >= 0 ? GetScript().fovInnerDeg * 3.14159265f / 180.0f : half;
 	float ipd = ScriptIpdAt(FramesWaited());

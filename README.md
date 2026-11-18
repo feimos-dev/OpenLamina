@@ -309,6 +309,8 @@ The available options are:
 	* Where an overlay application's layers go among other programs' (`XrSessionCreateInfoOverlayEXTX::sessionLayersPlacement`): higher numbers are drawn over lower ones.
 * `dashboardButton` - `menu_long`, `menu` or `off`, default `off`.
 	* What opens OpenLamina's dashboard over the game: the left controller's menu button held for 0.6 s (`menu_long`), or pressed (`menu`). It shows the dashboard overlays (`CreateDashboardOverlay`) of the overlay applications running beside the game in a panel ahead of you, a tab for each and a "Quit game" button, pointed at with the lasers. While it's open the game gets `VREvent_DashboardActivated`, its input is held (its actions read inactive), and the same button closes it again. With `off` there is no dashboard.
+* `drawBounds` - boolean, default `false`.
+	* A grid wall on the play area's edge (the stage's bounds the runtime reports) when the HMD or a controller comes within 0.4 m of it, fading in as it comes closer. For runtimes that show no boundary of their own.
 * `logAllOpenVRCalls` - boolean, default `false`
 	* Log every OpenVR call a game makes. Similar to `logGetTrackedProperty`, this clutters logs and should not be enabled unless necessary.
 * `inputEvaluator` - `direct` or `steamvr`, default `direct`.

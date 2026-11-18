@@ -211,6 +211,7 @@ int Config::ini_handler(void* user, const char* pSection,
 		CFGOPT(bool, helperApps);
 		CFGOPT(uint32_t, overlayLayersPlacement);
 		CFGOPT(dashboard, dashboardButton);
+		CFGOPT(bool, drawBounds);
 		CFGOPT(float, hiddenMeshVerticalScale);
 		CFGOPT(bool, logAllOpenVRCalls);
 		CFGOPT(string, bindingEditor);

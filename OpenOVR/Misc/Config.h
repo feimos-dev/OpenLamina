@@ -36,6 +36,8 @@ public:
 	inline uint32_t OverlayLayersPlacement() const { return overlayLayersPlacement; }
 	/** What opens OpenLamina's dashboard: "menu_long" (the left menu button held 0.6 s), "menu" (pressed) or "off" */
 	const std::string& DashboardButton() const { return dashboardButton; }
+	/** A grid wall on the play area's edge when the HMD or a controller comes near it */
+	inline bool DrawBounds() const { return drawBounds; }
 	float HiddenMeshVerticalScale() const { return hiddenMeshVerticalScale; }
 	inline bool LogAllOpenVRCalls() const { return logAllOpenVRCalls; }
 	/** The program OpenBindingUI starts; empty for none */
@@ -73,6 +75,7 @@ private:
 	bool helperApps = true;
 	uint32_t overlayLayersPlacement = 1;
 	std::string dashboardButton = "off";
+	bool drawBounds = false;
 	float hiddenMeshVerticalScale = 1.0f;
 	bool logAllOpenVRCalls = false;
 	std::string bindingEditor;

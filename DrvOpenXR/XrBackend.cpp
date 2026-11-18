@@ -1118,6 +1118,7 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 		// The dashboard, then the controllers' lasers on the overlays and the keyboard, on this thread: it fills their
 		// swapchains
 		overlay->_UpdateDashboard();
+		overlay->_UpdateBounds();
 		overlay->_UpdatePointer();
 		overlayLock = std::unique_lock(overlay->_LayersLock());
 		layer_count = overlay->_BuildLayers(app_layer, headers, true);
@@ -2027,7 +2028,7 @@ bool XrBackend::WantsOverlaysInstance()
 {
 	if (BaseClientCore::appType != vr::VRApplication_Scene || IsHelperSession())
 		return false;
-	if (oovr_global_configuration.DashboardButton() != "off")
+	if (oovr_global_configuration.DashboardButton() != "off" || oovr_global_configuration.DrawBounds())
 		return true;
 	if (!oovr_global_configuration.LaserMouse())
 		return false;
