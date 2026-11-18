@@ -10,7 +10,12 @@
 #include "IVRCompositor_029.h"
 #include "IVROverlay_028.h"
 
+#ifdef _WIN32
+#include <d3d11.h>
+#endif
+
 #include <algorithm>
+#include <cstdio>
 #include <thread>
 #include <map>
 #include <chrono>
@@ -572,6 +577,80 @@ void Skybox(CaseContext& c, uint32_t count)
 	c.Record("skybox", r);
 }
 
+#ifdef _WIN32
+// The top-left pixel of a D3D11 shader resource view's texture, as 0xRRGGBBAA (0 if it can't be read)
+uint32_t TopLeftOfView(ID3D11ShaderResourceView* view)
+{
+	ID3D11Resource* res = nullptr;
+	view->GetResource(&res);
+	ID3D11Texture2D* tex = nullptr;
+	res->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&tex);
+	res->Release();
+	if (!tex)
+		return 0;
+	ID3D11Device* dev = nullptr;
+	tex->GetDevice(&dev);
+	D3D11_TEXTURE2D_DESC desc;
+	tex->GetDesc(&desc);
+	desc.Usage = D3D11_USAGE_STAGING;
+	desc.BindFlags = 0;
+	desc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+	desc.MiscFlags = 0;
+	ID3D11Texture2D* staging = nullptr;
+	uint32_t colour = 0;
+	if (SUCCEEDED(dev->CreateTexture2D(&desc, nullptr, &staging))) {
+		ID3D11DeviceContext* ctx = nullptr;
+		dev->GetImmediateContext(&ctx);
+		ctx->CopyResource(staging, tex);
+		D3D11_MAPPED_SUBRESOURCE map;
+		if (SUCCEEDED(ctx->Map(staging, 0, D3D11_MAP_READ, 0, &map))) {
+			const uint8_t* px = (const uint8_t*)map.pData + map.RowPitch * 2 + 2 * 4;
+			colour = (uint32_t)px[0] << 24 | (uint32_t)px[1] << 16 | (uint32_t)px[2] << 8 | px[3];
+			ctx->Unmap(staging, 0);
+		}
+		ctx->Release();
+		staging->Release();
+	}
+	dev->Release();
+	tex->Release();
+	return colour;
+}
+
+// The mirror window and the D3D11 mirror texture (expect/gfx.json): shown and hidden; the left eye's mirror is the
+// game's last left texture, copied on its device
+void Mirror(CaseContext& c)
+{
+	Scene s(c);
+	if (!s.Start(GfxKind::D3D11, "mirror"))
+		return;
+	GfxTexture left = s.gfx->Pattern(256, 256, kDxgiRGBA8Srgb, 0);
+	GfxTexture right = s.gfx->Pattern(256, 256, kDxgiRGBA8Srgb, 1);
+	s.gfx->Flush();
+	Json::Value r;
+	s.comp->ShowMirrorWindow();
+	r["visible"] = s.comp->IsMirrorWindowVisible();
+	s.Frames(5, left, right, kFull, kFull, r);
+	r.removeMember("left");
+	r.removeMember("right");
+
+	ID3D11Device* device = nullptr;
+	((ID3D11Texture2D*)left.tex.handle)->GetDevice(&device);
+	ID3D11ShaderResourceView* view = nullptr;
+	r["get"] = (int)s.comp->GetMirrorTextureD3D11(vr::Eye_Left, device, (void**)&view);
+	char hex[9] = "";
+	if (view)
+		snprintf(hex, sizeof(hex), "%08x", TopLeftOfView(view));
+	r["left_top_left"] = hex;
+	if (view)
+		s.comp->ReleaseMirrorTextureD3D11(view);
+	device->Release();
+
+	s.comp->HideMirrorWindow();
+	r["hidden"] = !s.comp->IsMirrorWindowVisible();
+	c.Record("mirror", r);
+}
+#endif
+
 } // namespace
 
 const std::map<std::string, CaseFn>& conformance::GfxCases()
@@ -581,6 +660,9 @@ const std::map<std::string, CaseFn>& conformance::GfxCases()
 		{ "skybox-1", [](CaseContext& c) { Skybox(c, 1); } },
 		{ "skybox-2", [](CaseContext& c) { Skybox(c, 2); } },
 		{ "skybox-6", [](CaseContext& c) { Skybox(c, 6); } },
+#ifdef _WIN32
+		{ "mirror", Mirror },
+#endif
 		{ "gfx-d3d12-basic", [](CaseContext& c) { Basic(c, GfxKind::D3D12, kDxgiRGBA8Srgb); } },
 		{ "gfx-vk-basic", [](CaseContext& c) { Basic(c, GfxKind::Vulkan, kVkRGBA8Srgb); } },
 		{ "gfx-gl-basic", [](CaseContext& c) { Basic(c, GfxKind::OpenGL, kGlSRGB8Alpha8); } },

@@ -5,6 +5,7 @@
 #include "../../DrvOpenXR/CpuSwapchain.h"
 #include "../../DrvOpenXR/XrBackend.h"
 #include "BaseCompositor.h"
+#include "Misc/FrameStats.h"
 #include "BaseOverlay.h"
 
 #include "Misc/EnumNames.h"
@@ -1570,7 +1571,10 @@ EVROverlayError BaseOverlay::GetOverlayPreCurvePitch(vr::VROverlayHandle_t ulOve
 
 EVROverlayError BaseOverlay::WaitFrameSync(uint32_t nTimeoutMs)
 {
-	return VROverlayError_None;
+	// Until the next frame starts, the game's or OpenLamina's own; before any has, there's nothing to wait for
+	if (!FrameStats::Get().AnyFrame())
+		return VROverlayError_None;
+	return FrameStats::Get().WaitForFrame(std::chrono::milliseconds(nTimeoutMs)) ? VROverlayError_None : VROverlayError_TimedOut;
 }
 
 EVROverlayError BaseOverlay::CreateSubviewOverlay(VROverlayHandle_t parentOverlayHandle, const char* pchSubviewOverlayKey,
