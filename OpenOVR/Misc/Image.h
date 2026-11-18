@@ -56,6 +56,7 @@ Image DecodeTexels(TexelLayout layout, const void* data, uint32_t width, uint32_
     bool encodeSrgb);
 
 // A PNG file as an image, at most kMaxImageFileSide pixels on a side; nothing (with why) for a file that can't be read,
-// isn't a PNG, is damaged or is too big
+// isn't a PNG, is damaged or is too big (more than kMaxImageFileBytes, which is checked before it's read)
 constexpr uint32_t kMaxImageFileSide = 8192;
+constexpr uint64_t kMaxImageFileBytes = 64ull * 1024 * 1024;
 std::optional<Image> LoadImageFile(const std::filesystem::path& path, std::string* why);

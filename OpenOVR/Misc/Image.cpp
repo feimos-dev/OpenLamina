@@ -195,20 +195,33 @@ std::optional<Image> LoadImageFile(const std::filesystem::path& path, std::strin
 			*why = reason;
 		return std::nullopt;
 	};
+	// Its size first: a file isn't read whole before it's known to be a size worth reading
+	std::error_code ec;
+	const uintmax_t size = std::filesystem::file_size(path, ec);
+	if (ec)
+		return fail("it can't be opened");
+	if (size > kMaxImageFileBytes)
+		return fail("it's bigger than 64 MiB");
 	std::ifstream in(path, std::ios::binary);
 	if (!in)
 		return fail("it can't be opened");
-	std::vector<unsigned char> bytes((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
-	unsigned width = 0, height = 0;
-	lodepng::State state;
-	if (lodepng_inspect(&width, &height, &state, bytes.data(), bytes.size()) != 0)
-		return fail("it isn't a PNG image");
-	if (width == 0 || height == 0 || width > kMaxImageFileSide || height > kMaxImageFileSide)
-		return fail("it's bigger than 8192 pixels on a side");
-	Image image;
-	if (lodepng::decode(image.rgba, width, height, bytes, LCT_RGBA, 8) != 0)
-		return fail("it's damaged");
-	image.width = width;
-	image.height = height;
-	return image;
+	try {
+		std::vector<unsigned char> bytes((size_t)size);
+		if (size && !in.read((char*)bytes.data(), (std::streamsize)size))
+			return fail("it can't be read");
+		unsigned width = 0, height = 0;
+		lodepng::State state;
+		if (lodepng_inspect(&width, &height, &state, bytes.data(), bytes.size()) != 0)
+			return fail("it isn't a PNG image");
+		if (width == 0 || height == 0 || width > kMaxImageFileSide || height > kMaxImageFileSide)
+			return fail("it's bigger than 8192 pixels on a side");
+		Image image;
+		if (lodepng::decode(image.rgba, width, height, bytes, LCT_RGBA, 8) != 0)
+			return fail("it's damaged");
+		image.width = width;
+		image.height = height;
+		return image;
+	} catch (const std::exception&) {
+		return fail("it's too big for memory");
+	}
 }
