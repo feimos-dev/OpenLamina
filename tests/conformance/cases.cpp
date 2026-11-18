@@ -2297,6 +2297,63 @@ void LaserMouseCase(CaseContext& c)
 	c.Record("events", r);
 }
 
+// A message box answered with the laser (expect/message_overlay.json, with scripts/message_box.json): after 5 frames
+// (reading the old input from frame 2), ShowMessageOverlay with two buttons. Its panel (1 m x 0.5 m) is 1.5 m ahead of
+// the head, at (0, 1.7, -1.5); the right aim pose is on the second button from the start, and the script's trigger
+// clicks it at frame 20. The call returns ButtonPress_1, after frames of OpenLamina's own, in order. Another thread
+// closes the box after 10 s if it's still up, so the case always ends; it's joined before the case does.
+void MessageOverlayCase(CaseContext& c)
+{
+	using namespace vr::IVROverlay_028;
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	vr::EVRInitError le;
+	auto* ov = (IVROverlay*)c.core->GetGenericInterface("IVROverlay_028", &le);
+	if (!ov) {
+		c.Record("no IVROverlay_028", Err(le));
+		c.core->Cleanup();
+		return;
+	}
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	const int gameFrames = 10;
+	for (int frame = 1; frame <= gameFrames / 2; frame++) {
+		GameFrame(f, tex.get());
+		if (frame >= 2) {
+			vr::VRControllerState_t state{};
+			f.sys->GetControllerState(2, &state, sizeof(state));
+		}
+	}
+	std::atomic<bool> answered{ false };
+	std::atomic<bool> closedByWatchdog{ false };
+	std::thread watchdog([&] {
+		// At most 10 s, in 50 ms steps
+		for (int i = 0; i < 200 && !answered; i++)
+			std::this_thread::sleep_for(std::chrono::milliseconds(50));
+		if (!answered) {
+			closedByWatchdog = true;
+			ov->CloseMessageOverlay();
+		}
+	});
+	const int ret = (int)ov->ShowMessageOverlay("Save the game before quitting?", "OpenLamina test", "Cancel", "Save");
+	answered = true;
+	watchdog.join();
+	for (int frame = 0; frame < gameFrames / 2; frame++)
+		GameFrame(f, tex.get());
+	c.core->Cleanup();
+
+	Json::Value r;
+	r["ret"] = ret;
+	r["closed_by_watchdog"] = closedByWatchdog.load();
+	Json::Value dump = ReadStandInDump();
+	if (!dump.isNull()) {
+		r["own_frames_ran"] = dump["frames_ended"].asInt64() > gameFrames;
+		r["panel_quad"] = QuadsOfSize(dump, 1.0, 0.5) > 0;
+		r["frame_order_errors"] = dump["frame_order_errors"];
+	}
+	c.Record("ShowMessageOverlay", r);
+}
+
 #ifdef _WIN32
 // The DXGI adapters (DXGI 1.1's list, which DXGI 1.0's EnumAdapters has in the same order): LUIDs as LowPart |
 // HighPart << 32
@@ -2579,6 +2636,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "own-frames-nothing-shown", OwnFramesNothingShownCase },
 		{ "own-frames-overlay-churn", OwnFramesOverlayChurnCase },
 		{ "laser-mouse", LaserMouseCase },
+		{ "message-overlay", MessageOverlayCase },
 		{ "compositor-stats", CompositorStatsCase },
 		{ "gpu-answers", GpuAnswersCase },
 		{ "gpu-other-adapter", GpuOtherAdapterCase },

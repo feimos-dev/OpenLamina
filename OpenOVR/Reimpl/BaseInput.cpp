@@ -3684,6 +3684,20 @@ bool BaseInput::GetHandPointer(int hand, XrSpace base, XrTime time, HandPointer&
 	return true;
 }
 
+void BaseInput::SyncPointerActions()
+{
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
+	std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
+	if (!hasLoadedActions || legacyInputsSet == XR_NULL_HANDLE || !xr_session.get())
+		return;
+	XrActiveActionSet aas[2] = { { legacyInputsSet }, { rawInputsSet } };
+	XrActionsSyncInfo syncInfo = { XR_TYPE_ACTIONS_SYNC_INFO };
+	syncInfo.activeActionSets = aas;
+	syncInfo.countActiveActionSets = rawInputsSet != XR_NULL_HANDLE ? 2 : 1;
+	OC_XR_LOG(xrSyncActions(xr_session.get(), &syncInfo));
+	syncSerial++;
+}
+
 void BaseInput::TriggerHandHaptic(int hand, float seconds, float frequency, float amplitude)
 {
 	if (hand < 0 || hand > 1 || !oovr_global_configuration.Haptics())
