@@ -374,6 +374,8 @@ XrResult XRAPI_CALL EnumerateBoundSourcesForAction(XrSession session, const XrBo
 	std::vector<XrPath> list;
 	for (const std::string& p : BoundPaths(s, it->second.get(), XR_NULL_PATH))
 		list.push_back(RtPath(p));
+	for (const std::string& p : GetScript().extraBoundSources)
+		list.push_back(RtPath(p));
 	*count = (uint32_t)list.size();
 	if (capacity == 0)
 		return XR_SUCCESS;

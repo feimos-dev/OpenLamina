@@ -103,6 +103,7 @@ struct Script {
 	std::vector<ScriptEvent> events;
 	std::vector<ScriptFailure> failures;
 	std::string interactionProfile;
+	std::vector<std::string> extraBoundSources; // listed after every action's own bound sources
 	std::vector<ScriptInput> inputs;
 	std::vector<ScriptPresence> presence;
 	std::vector<ScriptGaze> gaze;

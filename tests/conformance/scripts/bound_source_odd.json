@@ -1,0 +1,5 @@
+{
+  "#": "The Index profile, and a bound source that isn't an input path (one runtime lists such a source for some actions)",
+  "interaction_profile": "/interaction_profiles/valve/index_controller",
+  "extra_bound_sources": ["/mnd/1419"]
+}

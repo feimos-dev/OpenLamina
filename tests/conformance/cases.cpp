@@ -1318,6 +1318,51 @@ void InputThreadsCase(CaseContext& c)
 	c.Record("threads", r);
 }
 
+// GetActionBindingInfo when the runtime reports a bound source that isn't an input path (expect/binding_info.json), on
+// the stand-in with scripts/bound_source_odd.json and --manifest manifest_toggle.json: the call answers, and the odd
+// source is left out
+void BindingInfoCase(CaseContext& c)
+{
+	using namespace vr::IVRInput_010;
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	vr::EVRInitError le;
+	auto* in = (IVRInput*)c.core->GetGenericInterface("IVRInput_010", &le);
+	if (!in) {
+		c.Record("no IVRInput_010", Err(le));
+		c.core->Cleanup();
+		return;
+	}
+	in->SetActionManifestPath(c.manifest.c_str());
+	vr::VRActionSetHandle_t set = vr::k_ulInvalidActionSetHandle;
+	vr::VRActionHandle_t toggle = 0;
+	in->GetActionSetHandle("/actions/main", &set);
+	in->GetActionHandle("/actions/main/in/toggle", &toggle);
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	for (int frame = 1; frame <= 5; frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+		VRActiveActionSet_t active{};
+		active.ulActionSet = set;
+		in->UpdateActionState(&active, sizeof(active), 1);
+		f.comp->Submit(vr::Eye_Left, tex.get(), nullptr, vr::Submit_Default);
+		f.comp->Submit(vr::Eye_Right, tex.get(), nullptr, vr::Submit_Default);
+	}
+	InputBindingInfo_t info[4]{};
+	uint32_t returned = 99;
+	Json::Value r;
+	r["err"] = (int)in->GetActionBindingInfo(toggle, info, sizeof(info[0]), 4, &returned);
+	// The real bindings come first; the odd source is the last one the stand-in lists
+	r["returned_at_least_one"] = returned >= 1 && returned <= 4;
+	bool oddShown = false;
+	for (uint32_t i = 0; i < returned && i < 4; i++)
+		oddShown = oddShown || std::string(info[i].rchDevicePathName).find("mnd") != std::string::npos || std::string(info[i].rchModeName).find("1419") != std::string::npos;
+	r["odd_source_left_out"] = !oddShown;
+	c.Record("odd source", r);
+	c.core->Cleanup();
+}
+
 // The action manifest's actions read frame by frame (expect/input_evaluator.json), on the stand-in with
 // scripts/input_toggle.json and --manifest manifest_toggle.json: a toggle_button on the right trigger, which the script
 // clicks at frames 10, 30 and 50, and a vector3 action on the left thumbstick, pushed from frame 40. Records where the
@@ -1693,6 +1738,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "chaperone-read", ChaperoneReadCase },
 		{ "events", EventsCase },
 		{ "input-frames", InputFramesCase },
+		{ "binding-info", BindingInfoCase },
 		{ "eye-gaze", EyeGazeCase },
 		{ "eye-tracking", EyeTrackingInputCase },
 		{ "input-threads", InputThreadsCase },
