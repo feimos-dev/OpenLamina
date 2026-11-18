@@ -1,0 +1,60 @@
+{
+ "#": "SteamVR's render models read from its install, on the stand-in (run.py --cases render-models --expect expect/render_models.json; run.py makes tests/unit/data/steamvr, our own fixture, SteamVR's install for this case). The fixture's models are listed with the built-in ones it doesn't have. test_controller has no OBJ of its own, so it is its two components together (a four-cornered plate and a triangle: 7 vertices, 3 triangles) with its 2x2 PNG, also as a D3D11 texture. Each component's render model is <model>/<component>; the trigger (controller_axis 1, so Axis1's button bit) turns -20 degrees about X through its pivot when pulled, its local frame with it; the body is static at its component_local. The thumbnail is the JSON's, as a file URL; the original path is the model's OBJ. vive_tracker's JSON isn't JSON: the built-in tracker (10659 vertices, no texture) is answered.",
+ "render-models/models/-/-": {
+  "count": 4,
+  "names": ["test_controller", "vive_tracker", "renderLeftHand", "renderRightHand"]
+ },
+ "render-models/load test_controller/-/-": {
+  "ret": 0,
+  "vertices": 7,
+  "triangles": 3,
+  "indices_in_range": true,
+  "textured": true,
+  "texture_ret": 0,
+  "texture": "2x2",
+  "first_pixel": "ff0000ff",
+  "d3d11_ret": 0,
+  "d3d11_texture": "2x2"
+ },
+ "render-models/components/-/-": {
+  "count": 2,
+  "components": [
+   {"name_size": 5, "name": "body", "render_model": "test_controller/body", "has": true, "buttons": 0},
+   {"name_size": 8, "name": "trigger", "render_model": "test_controller/trigger", "has": true, "buttons": 8589934592}
+  ],
+  "has_tip": false
+ },
+ "render-models/load component/-/-": {
+  "ret": 0,
+  "vertices": 3,
+  "triangles": 1
+ },
+ "render-models/component state/-/-": {
+  "ret": true,
+  "render_model": [[1, 0, 0, 0], [0, 0.9397, 0.342, -0.0074], [0, -0.342, 0.9397, -0.0022]],
+  "local": [[1, 0, 0, 0], [0, -0.342, 0.9397, -0.016], [0, -0.9397, -0.342, 0.0328]],
+  "properties": 2,
+  "at_rest": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0]],
+  "body_local": [[1, 0, 0, 0], [0, 1, 0, 0], [0, 0, 1, 0.05]],
+  "body_properties": 3
+ },
+ "render-models/paths/-/-": {
+  "thumbnail_error": 0,
+  "thumbnail_is_its_png": true,
+  "thumbnail_size_matches": true,
+  "original_error": 0,
+  "original_is_its_obj": true,
+  "original_size_matches": true
+ },
+ "render-models/fallback/-/-": {
+  "broken_ret": 0,
+  "broken_vertices": 10659,
+  "broken_textured": false,
+  "hand_ret": 0,
+  "hand_has_vertices": true,
+  "unknown_ret": 200,
+  "unknown_null": true,
+  "outside_ret": 200,
+  "outside_null": true
+ }
+}

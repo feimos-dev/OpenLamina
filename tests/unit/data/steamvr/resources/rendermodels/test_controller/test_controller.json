@@ -1,0 +1,27 @@
+{
+	"thumbnail": "test_controller.png",
+	"components": {
+		"body": {
+			"filename": "body.obj",
+			"component_local": {
+				"origin": [0.0, 0.0, 0.05],
+				"rotate_xyz": [0.0, 0.0, 0.0]
+			}
+		},
+		"trigger": {
+			"filename": "trigger.obj",
+			"motion": {
+				"type": "rotate",
+				"controller_axis": 1,
+				"controller_axis_component": 0,
+				"value_mapping": [0.0, -20.0],
+				"pivot": [0.0, -0.01, 0.02],
+				"axis": [1.0, 0.0, 0.0]
+			},
+			"component_local": {
+				"origin": [0.0, -0.02, 0.03],
+				"rotate_xyz": [-90.0, 0.0, 0.0]
+			}
+		}
+	}
+}

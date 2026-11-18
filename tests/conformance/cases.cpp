@@ -18,6 +18,7 @@
 #include "IVRInput_003.h"
 #include "IVRNotifications_001.h"
 #include "IVRRenderModels_001.h"
+#include "IVRRenderModels_006.h"
 #include "IVRCompositor_006.h"
 #include "IVRCompositor_008.h"
 #include "IVRCompositor_029.h"
@@ -2696,6 +2697,194 @@ void DisplayFrequencyCase(CaseContext& c)
 	c.core->Cleanup();
 }
 
+// A 3x4 matrix as rows of numbers to 4 decimals (no -0)
+Json::Value Matrix34Record(const vr::HmdMatrix34_t& m)
+{
+	Json::Value rows(Json::arrayValue);
+	for (int r = 0; r < 3; r++) {
+		Json::Value row(Json::arrayValue);
+		for (int col = 0; col < 4; col++) {
+			double v = std::round((double)m.m[r][col] * 10000) / 10000;
+			row.append(v == 0 ? 0.0 : v);
+		}
+		rows.append(row);
+	}
+	return rows;
+}
+
+// SteamVR's render models from its install (expect/render_models.json). run.py points OC_TEST_STEAMVR_DIR at
+// tests/unit/data/steamvr, a fixture of our own: test_controller (a body and a trigger, one PNG) and vive_tracker,
+// whose JSON isn't JSON, so the built-in tracker is answered.
+void RenderModelsCase(CaseContext& c)
+{
+	using namespace vr::IVRRenderModels_006;
+	if (c.core->Init(vr::VRApplication_Scene, nullptr) != vr::VRInitError_None) {
+		c.Record("Init failed");
+		return;
+	}
+	vr::EVRInitError le;
+	auto* rm = (IVRRenderModels*)c.core->GetGenericInterface("IVRRenderModels_006", &le);
+	if (!rm) {
+		c.Record("no IVRRenderModels_006", Err(le));
+		c.core->Cleanup();
+		return;
+	}
+	// A model or texture is answered at once or within 100 tries, 10 ms apart
+	auto untilLoaded = [](auto call) {
+		EVRRenderModelError e = VRRenderModelError_Loading;
+		for (int i = 0; i < 100 && e == VRRenderModelError_Loading; i++) {
+			e = call();
+			if (e == VRRenderModelError_Loading)
+				std::this_thread::sleep_for(std::chrono::milliseconds(10));
+		}
+		return e;
+	};
+	auto load = [&](const char* name, RenderModel_t** out) {
+		return (int)untilLoaded([&] { return rm->LoadRenderModel_Async(name, out); });
+	};
+
+	Json::Value r;
+	uint32_t count = rm->GetRenderModelCount();
+	r["count"] = count;
+	Json::Value names(Json::arrayValue);
+	for (uint32_t i = 0; i < count && i < 64; i++) {
+		char name[256] = {};
+		rm->GetRenderModelName(i, name, sizeof(name));
+		names.append(name);
+	}
+	r["names"] = names;
+	c.Record("models", r);
+
+	r = Json::Value();
+	RenderModel_t* model = nullptr;
+	r["ret"] = load("test_controller", &model);
+	if (model) {
+		r["vertices"] = model->unVertexCount;
+		r["triangles"] = model->unTriangleCount;
+		bool inRange = true;
+		for (uint32_t i = 0; i < model->unTriangleCount * 3; i++)
+			inRange = inRange && model->rIndexData[i] < model->unVertexCount;
+		r["indices_in_range"] = inRange;
+		r["textured"] = model->diffuseTextureId >= 0;
+		RenderModel_TextureMap_t* tex = nullptr;
+		TextureID_t id = model->diffuseTextureId;
+		r["texture_ret"] = (int)untilLoaded([&] { return rm->LoadTexture_Async(id, &tex); });
+		if (tex) {
+			r["texture"] = std::to_string(tex->unWidth) + "x" + std::to_string(tex->unHeight);
+			char px[16];
+			std::snprintf(px, sizeof(px), "%02x%02x%02x%02x", tex->rubTextureMapData[0], tex->rubTextureMapData[1],
+			    tex->rubTextureMapData[2], tex->rubTextureMapData[3]);
+			r["first_pixel"] = px;
+			rm->FreeTexture(tex);
+		}
+#ifdef _WIN32
+		// The same texture made on the game's D3D11 device
+		if (c.call->d3d11) {
+			void* d3dTex = nullptr;
+			r["d3d11_ret"] = (int)untilLoaded([&] { return rm->LoadTextureD3D11_Async(id, c.call->d3d11, &d3dTex); });
+			if (d3dTex) {
+				D3D11_TEXTURE2D_DESC desc{};
+				((ID3D11Texture2D*)d3dTex)->GetDesc(&desc);
+				r["d3d11_texture"] = std::to_string(desc.Width) + "x" + std::to_string(desc.Height);
+				rm->FreeTextureD3D11(d3dTex);
+			}
+		}
+#endif
+		rm->FreeRenderModel(model);
+	}
+	c.Record("load test_controller", r);
+
+	r = Json::Value();
+	uint32_t components = rm->GetComponentCount("test_controller");
+	r["count"] = components;
+	Json::Value list(Json::arrayValue);
+	for (uint32_t i = 0; i < components && i < 16; i++) {
+		Json::Value one;
+		char name[128] = {}, modelName[256] = {};
+		one["name_size"] = rm->GetComponentName("test_controller", i, name, sizeof(name));
+		one["name"] = name;
+		rm->GetComponentRenderModelName("test_controller", name, modelName, sizeof(modelName));
+		one["render_model"] = modelName;
+		one["has"] = rm->RenderModelHasComponent("test_controller", name);
+		one["buttons"] = (Json::UInt64)rm->GetComponentButtonMask("test_controller", name);
+		list.append(one);
+	}
+	r["components"] = list;
+	r["has_tip"] = rm->RenderModelHasComponent("test_controller", "tip");
+	c.Record("components", r);
+
+	r = Json::Value();
+	model = nullptr;
+	r["ret"] = load("test_controller/trigger", &model);
+	if (model) {
+		r["vertices"] = model->unVertexCount;
+		r["triangles"] = model->unTriangleCount;
+		rm->FreeRenderModel(model);
+	}
+	c.Record("load component", r);
+
+	r = Json::Value();
+	vr::VRControllerState_t state{};
+	RenderModel_ControllerMode_State_t mode{};
+	vr::RenderModel_ComponentState_t cs{};
+	state.rAxis[1].x = 1.0f; // the trigger pulled
+	r["ret"] = rm->GetComponentState("test_controller", "trigger", &state, &mode, &cs);
+	r["render_model"] = Matrix34Record(cs.mTrackingToComponentRenderModel);
+	r["local"] = Matrix34Record(cs.mTrackingToComponentLocal);
+	r["properties"] = cs.uProperties;
+	state.rAxis[1].x = 0.0f;
+	rm->GetComponentState("test_controller", "trigger", &state, &mode, &cs);
+	r["at_rest"] = Matrix34Record(cs.mTrackingToComponentRenderModel);
+	rm->GetComponentState("test_controller", "body", &state, &mode, &cs);
+	r["body_local"] = Matrix34Record(cs.mTrackingToComponentLocal);
+	r["body_properties"] = cs.uProperties;
+	c.Record("component state", r);
+
+	r = Json::Value();
+	char path[1024] = {};
+	EVRRenderModelError pe = VRRenderModelError_Loading;
+	uint32_t thumbSize = rm->GetRenderModelThumbnailURL("test_controller", path, sizeof(path), &pe);
+	r["thumbnail_error"] = (int)pe;
+	std::string url = path;
+	const std::string png = "test_controller.png";
+	r["thumbnail_is_its_png"] = url.rfind("file:///", 0) == 0 && url.size() > png.size()
+	    && url.compare(url.size() - png.size(), png.size(), png) == 0;
+	r["thumbnail_size_matches"] = thumbSize == url.size() + 1;
+	pe = VRRenderModelError_Loading;
+	uint32_t originalSize = rm->GetRenderModelOriginalPath("test_controller", path, sizeof(path), &pe);
+	r["original_error"] = (int)pe;
+	std::string original = path;
+	std::replace(original.begin(), original.end(), '\\', '/');
+	const std::string obj = "rendermodels/test_controller/test_controller.obj";
+	r["original_is_its_obj"] = original.size() > obj.size() && original.compare(original.size() - obj.size(), obj.size(), obj) == 0;
+	r["original_size_matches"] = originalSize == std::string(path).size() + 1;
+	c.Record("paths", r);
+
+	r = Json::Value();
+	model = nullptr;
+	r["broken_ret"] = load("vive_tracker", &model);
+	if (model) {
+		r["broken_vertices"] = model->unVertexCount;
+		r["broken_textured"] = model->diffuseTextureId >= 0;
+		rm->FreeRenderModel(model);
+	}
+	model = nullptr;
+	r["hand_ret"] = load("renderLeftHand", &model);
+	if (model) {
+		r["hand_has_vertices"] = model->unVertexCount > 0;
+		rm->FreeRenderModel(model);
+	}
+	model = nullptr;
+	r["unknown_ret"] = load("no_such_model", &model);
+	r["unknown_null"] = model == nullptr;
+	model = nullptr;
+	r["outside_ret"] = load("../../bin", &model);
+	r["outside_null"] = model == nullptr;
+	c.Record("fallback", r);
+
+	c.core->Cleanup();
+}
+
 } // namespace
 
 const std::map<std::string, CaseFn>& conformance::Cases()
@@ -2741,6 +2930,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "gpu-answers", GpuAnswersCase },
 		{ "gpu-other-adapter", GpuOtherAdapterCase },
 		{ "display-frequency", DisplayFrequencyCase },
+		{ "render-models", RenderModelsCase },
 	};
 	static const std::map<std::string, CaseFn> all = [] {
 		std::map<std::string, CaseFn> m = cases;
