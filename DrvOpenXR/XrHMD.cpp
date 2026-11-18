@@ -354,6 +354,7 @@ bool XrHMD::SetUserPresent(bool present)
 
 bool XrHMD::HasProximitySensor()
 {
+	auto lock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	return xr_gbl && xr_gbl->supportsUserPresence;
 }
 
@@ -399,8 +400,8 @@ bool XrHMD::GetBoolTrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::ET
 	case vr::Prop_HasDriverDirectModeComponent_Bool:
 		return true; // Who knows what this is used for? It's in HL:A anyway.
 	case vr::Prop_ContainsProximitySensor_Bool:
-		// The runtime says whether the user wears the headset
-		return HasProximitySensor();
+		// With sessionEvents, the runtime says whether the user wears the headset
+		return oovr_global_configuration.SessionEvents() ? HasProximitySensor() : true;
 	case vr::Prop_HasCameraComponent_Bool:
 		return false;
 	case vr::Prop_HasDisplayComponent_Bool:

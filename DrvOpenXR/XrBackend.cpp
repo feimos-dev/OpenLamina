@@ -1749,12 +1749,13 @@ void XrBackend::PumpEvents()
 
 	} // while loop
 
-	// The IPD, once it has moved more than 0.1 mm from what the game was told
-	if (sessionActive && !exitExpected) {
+	// The IPD, once it has moved more than 0.1 mm from what the game was told (sessionEvents)
+	if (oovr_global_configuration.SessionEvents() && sessionActive && !exitExpected) {
 		if (std::optional<float> ipd = XrHMD::ViewsIpd()) {
-			if (std::isnan(toldIpd)) {
+			const float told = toldIpd;
+			if (std::isnan(told)) {
 				toldIpd = *ipd;
-			} else if (std::fabs(*ipd - toldIpd) > 0.0001f) {
+			} else if (std::fabs(*ipd - told) > 0.0001f) {
 				toldIpd = *ipd;
 				VREvent_Data_t data{};
 				data.ipd.ipdMeters = *ipd;
