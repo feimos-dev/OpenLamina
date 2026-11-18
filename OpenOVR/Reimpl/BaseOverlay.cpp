@@ -1,5 +1,6 @@
 #include "stdafx.h"
 #include <cmath>
+#include <filesystem>
 #include <openxr/openxr.h>
 #define BASE_IMPL
 #include "../../DrvOpenXR/CpuSwapchain.h"
@@ -12,6 +13,7 @@
 #include "BaseSystem.h"
 #include "Compositor/compositor.h"
 #include "Drivers/Backend.h"
+#include "Misc/AppManifest.h"
 #include "Misc/Config.h"
 #include "Misc/Image.h"
 #include "Misc/Input/InteractionProfile.h"
@@ -1433,7 +1435,16 @@ EVROverlayError BaseOverlay::SetOverlayRaw(VROverlayHandle_t ulOverlayHandle, vo
 EVROverlayError BaseOverlay::SetOverlayFromFile(VROverlayHandle_t ulOverlayHandle, const char* pchFilePath)
 {
 	USEH();
-	OC_UNSUPPORTED(VROverlayError_RequestFailed, "SetOverlayFromFile: image files on overlays aren't supported yet");
+	if (!pchFilePath || !*pchFilePath)
+		return VROverlayError_InvalidParameter;
+	// The path is UTF-8, as every OpenVR string
+	std::string why;
+	std::optional<Image> image = LoadImageFile(PathFromUtf8(pchFilePath), &why);
+	if (!image) {
+		OOVR_LOGF("SetOverlayFromFile: '%s' can't be shown: %s", pchFilePath, why.c_str());
+		return VROverlayError_InvalidParameter;
+	}
+	return SetOverlayRaw(ulOverlayHandle, image->rgba.data(), image->width, image->height, 4);
 }
 EVROverlayError BaseOverlay::GetOverlayTexture(VROverlayHandle_t ulOverlayHandle, void** pNativeTextureHandle, void* pNativeTextureRef, uint32_t* pWidth, uint32_t* pHeight, uint32_t* pNativeFormat, ETextureType* pAPIType, EColorSpace* pColorSpace, VRTextureBounds_t* pTextureBounds)
 {
@@ -1446,12 +1457,24 @@ EVROverlayError BaseOverlay::GetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 		*pHeight = 0;
 	if (pNativeFormat)
 		*pNativeFormat = 0;
-	OC_UNSUPPORTED(VROverlayError_RequestFailed, "GetOverlayTexture: overlay textures can't be read back");
+	// The owner's own texture, as SteamVR answers the overlay's owner; an image from memory or a file has none
+	if (!overlay->texture.handle)
+		return VROverlayError_InvalidTexture;
+	if (pNativeTextureHandle)
+		*pNativeTextureHandle = overlay->texture.handle;
+	if (pAPIType)
+		*pAPIType = overlay->texture.eType;
+	if (pColorSpace)
+		*pColorSpace = overlay->texture.eColorSpace;
+	if (pTextureBounds)
+		*pTextureBounds = overlay->textureBounds;
+	return GetOverlayTextureSize(ulOverlayHandle, pWidth, pHeight);
 }
 EVROverlayError BaseOverlay::ReleaseNativeOverlayHandle(VROverlayHandle_t ulOverlayHandle, void* pNativeTextureHandle)
 {
 	USEH();
-	OC_UNSUPPORTED(VROverlayError_RequestFailed, "ReleaseNativeOverlayHandle: GetOverlayTexture hands out no textures");
+	// GetOverlayTexture hands out the owner's own texture, which isn't ours to release
+	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::GetOverlayTextureSize(VROverlayHandle_t ulOverlayHandle, uint32_t* pWidth, uint32_t* pHeight)
 {
@@ -1460,7 +1483,28 @@ EVROverlayError BaseOverlay::GetOverlayTextureSize(VROverlayHandle_t ulOverlayHa
 		*pWidth = 0;
 	if (pHeight)
 		*pHeight = 0;
-	OC_UNSUPPORTED(VROverlayError_RequestFailed, "GetOverlayTextureSize: not known yet");
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	uint32_t width = 0, height = 0;
+	if (!overlay->rawImage.Empty()) {
+		width = overlay->rawImage.width;
+		height = overlay->rawImage.height;
+	} else if (overlay->texture.handle) {
+		// The swapchain holds the bounds' area of the texture
+		const XrExtent2Di& extent = overlay->compositionLayer.quad.subImage.imageRect.extent;
+		const float u = std::abs(overlay->textureBounds.uMax - overlay->textureBounds.uMin);
+		const float v = std::abs(overlay->textureBounds.vMax - overlay->textureBounds.vMin);
+		if (extent.width > 0 && extent.height > 0 && u > 0 && v > 0) {
+			width = (uint32_t)std::lround(extent.width / u);
+			height = (uint32_t)std::lround(std::abs(extent.height) / v);
+		}
+	}
+	if (!width || !height)
+		return VROverlayError_InvalidTexture;
+	if (pWidth)
+		*pWidth = width;
+	if (pHeight)
+		*pHeight = height;
+	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::CreateDashboardOverlay(const char* pchOverlayKey, const char* pchOverlayFriendlyName, VROverlayHandle_t* pMainHandle, VROverlayHandle_t* pThumbnailHandle)
 {
