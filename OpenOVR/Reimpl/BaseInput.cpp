@@ -10,6 +10,7 @@
 #include "Misc/Input/Bindings/LegacyBindings.h"
 #include "Misc/ProgramEvents.h"
 #include "Misc/Config.h"
+#include "Misc/Numbers.h"
 #include <string>
 
 #include <convert.h>
@@ -348,6 +349,16 @@ void BaseInput::Registry<T>::Reset()
 
 const BaseInput::ActionPerProfileData BaseInput::Action::defaultActionData;
 
+static double EvaluatorClock(); // below, with the evaluator
+
+// Whether an input path is a two-axis component (OpenXR's thumbsticks, trackpads and joysticks), which a vector2
+// action can be bound to, rather than one of its float or boolean parts (/x, /value, /click...)
+static bool IsTwoAxisComponent(const std::string& path)
+{
+	std::string last = path.substr(path.find_last_of('/') + 1);
+	return last == "thumbstick" || last == "trackpad" || last == "joystick";
+}
+
 BaseInput::BaseInput()
     : actionSets(XR_MAX_ACTION_SET_NAME_SIZE), actions(XR_MAX_ACTION_NAME_SIZE)
 {
@@ -366,7 +377,7 @@ BaseInput::BaseInput()
 BaseInput::~BaseInput()
 {
 	for (XrHandTrackerEXT& handTracker : handTrackers) {
-		if (handTracker != XR_NULL_HANDLE)
+		if (handTracker != XR_NULL_HANDLE && xr_ext)
 			xr_ext->xrDestroyHandTrackerEXT(handTracker);
 		handTracker = XR_NULL_HANDLE;
 	}
@@ -384,23 +395,31 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 {
 	if (!pchActionManifestPath || !*pchActionManifestPath)
 		return VRInputError_InvalidParam;
+
+	// It stands to reason that nothing would happen if we try to load the same manifest again
+	{
+		std::lock_guard<std::mutex> pathGuard(loadedActionsPathLock);
+		if (hasLoadedActions && loadedActionsPath == pchActionManifestPath)
+			return vr::VRInputError_None;
+	}
 	OOVR_LOGF("Loading manifest file '%s'", pchActionManifestPath);
 
 	//////////////
 	//// Load the actions from the manifest file
 	//////////////
 
-	if (hasLoadedActions && loadedActionsPath == pchActionManifestPath)
-		return vr::VRInputError_None; // It stands to reason that nothing would happen if we try to load the same manifest again
-
-	// Read it first: a manifest that can't be read leaves the game on legacy input (and any manifest it had), and
-	// answers InvalidParam as SteamVR does for a path it can't use
+	// Read it first, while other threads still read input: a manifest that can't be read leaves the game on legacy
+	// input (and any manifest it had), and answers InvalidParam as SteamVR does for a path it can't use
 	Json::Value root;
 	std::string manifestError;
 	if (!ReadJson(pchActionManifestPath, root, manifestError) || !root.isObject()) {
 		OOVR_LOGF("Failed to open or parse input manifest: %s", manifestError.empty() ? "not a JSON object" : manifestError.c_str());
 		return VRInputError_InvalidParam;
 	}
+
+	// Exclusive to the end: the old actions go, and the new ones are made and bound to the restarted session, while
+	// no other thread reads input. Taken before evaluatorLock (see its declaration).
+	auto sessionLock = xr_session.lock();
 
 	bool reloading = hasLoadedActions;
 	if (hasLoadedActions) {
@@ -436,12 +455,14 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 	XrBackend::MaybeRestartForInputs();
 	restartingSession = false;
 
-	// The evaluators' state is filled from here on while the submit thread may read it. Not held over the restart:
-	// Submit takes evaluatorLock under the session's shared lock, which the restart takes exclusively
+	// The evaluators' state is filled from here on, under evaluatorLock as everywhere it's read
 	std::lock_guard<std::recursive_mutex> loadGuard(evaluatorLock);
 
 	hasLoadedActions = true;
-	loadedActionsPath = pchActionManifestPath;
+	{
+		std::lock_guard<std::mutex> pathGuard(loadedActionsPathLock);
+		loadedActionsPath = pchActionManifestPath;
+	}
 
 	// Another manifest in place of the first: its bindings are new
 	if (reloading) {
@@ -466,6 +487,7 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 		}
 		std::unique_ptr<Action> actionPtr = std::make_unique<Action>();
 		Action& action = *actionPtr;
+		action.createdAt = EvaluatorClock();
 
 		action.fullName = actions.ShortenOrLookupName(item["name"].asString());
 		action.manifestName = lowerStr(item["name"].asString());
@@ -795,6 +817,11 @@ void BaseInput::LoadEmptyManifestIfRequired()
 	if (hasLoadedActions)
 		return;
 
+	// As in SetActionManifestPath, exclusive to the end; another thread may have loaded the actions while this waited
+	auto sessionLock = xr_session.lock();
+	if (hasLoadedActions)
+		return;
+
 	restartingSession = true;
 	XrBackend::MaybeRestartForInputs();
 	restartingSession = false;
@@ -837,7 +864,7 @@ void BaseInput::LoadEmptyManifestIfRequired()
 		suggestedBindings.interactionProfile = interactionProfilePath;
 		suggestedBindings.suggestedBindings = bindings.data();
 		suggestedBindings.countSuggestedBindings = bindings.size();
-		OC_XR_LOG(xrSuggestInteractionProfileBindings(xr_instance, &suggestedBindings));
+		OC_XR_LOG(xr_suggest_bindings_logged(suggestedBindings));
 	}
 
 	// Attach everything to the current session
@@ -1022,10 +1049,10 @@ void BaseInput::LoadBindingsSet(const InteractionProfile& profile, const std::st
 					float releaseValue = 0.65f; // These are SteamVR defaults
 
 					if (!srcJson["parameters"]["value_hold_threshold"].empty())
-						activateValue = std::stof(srcJson["parameters"]["value_hold_threshold"].asString().c_str());
+						activateValue = Numbers::ToFloat(srcJson["parameters"]["value_hold_threshold"].asString(), activateValue);
 
 					if (!srcJson["parameters"]["value_release_threshold"].empty())
-						releaseValue = std::stof(srcJson["parameters"]["value_release_threshold"].asString().c_str());
+						releaseValue = Numbers::ToFloat(srcJson["parameters"]["value_release_threshold"].asString(), releaseValue);
 
 					action->perProfileData[&profile].click_activate_threshold = activateValue;
 					action->perProfileData[&profile].click_deactivate_threshold = releaseValue;
@@ -1067,16 +1094,16 @@ void BaseInput::LoadBindingsSet(const InteractionProfile& profile, const std::st
 				for (auto& parameter_name : srcJson["parameters"].getMemberNames()) {
 					OOVR_LOGF("Parameter: %s=%s", parameter_name.c_str(), srcJson["parameters"][parameter_name].asString().c_str());
 					if (parameter_name == "click_activate_threshold") {
-						action->perProfileData[&profile].click_activate_threshold = std::stof(srcJson["parameters"][parameter_name].asString().c_str());
+						action->perProfileData[&profile].click_activate_threshold = Numbers::ToFloat(srcJson["parameters"][parameter_name].asString(), action->perProfileData[&profile].click_activate_threshold);
 					}
 					if (parameter_name == "click_deactivate_threshold") {
-						action->perProfileData[&profile].click_deactivate_threshold = std::stof(srcJson["parameters"][parameter_name].asString().c_str());
+						action->perProfileData[&profile].click_deactivate_threshold = Numbers::ToFloat(srcJson["parameters"][parameter_name].asString(), action->perProfileData[&profile].click_deactivate_threshold);
 					}
 					if (parameter_name == "deadzone_pct") {
-						action->perProfileData[&profile].deadzone = std::stof(srcJson["parameters"][parameter_name].asString().c_str()) / 100.f;
+						action->perProfileData[&profile].deadzone = Numbers::ToFloat(srcJson["parameters"][parameter_name].asString(), action->perProfileData[&profile].deadzone * 100.f) / 100.f;
 					}
 					if (parameter_name == "maxzone_pct") {
-						action->perProfileData[&profile].maxzone = std::stof(srcJson["parameters"][parameter_name].asString().c_str()) / 100.f;
+						action->perProfileData[&profile].maxzone = Numbers::ToFloat(srcJson["parameters"][parameter_name].asString(), action->perProfileData[&profile].maxzone * 100.f) / 100.f;
 					}
 				}
 
@@ -1116,6 +1143,15 @@ void BaseInput::LoadBindingsSet(const InteractionProfile& profile, const std::st
 				if (!profile.IsInputPathValid(pathStr)) {
 					OOVR_LOGF("WARNING: Built invalid input path %s for profile %s from action %s, skipping",
 					    pathStr.c_str(), profile.GetPath().c_str(), actionName.c_str());
+					continue;
+				}
+
+				// A two-axis action (OpenXR's vector2) only on a two-axis component: on a float or boolean one a
+				// runtime may refuse all of this profile's suggestions
+				if ((action->type == ActionType::Vector2 || action->type == ActionType::Vector3) && !IsTwoAxisComponent(pathStr)) {
+					OOVR_LOGF("WARNING: %s is not a two-axis input, for the %s action %s on profile %s: skipping it",
+					    pathStr.c_str(), action->type == ActionType::Vector2 ? "vector2" : "vector3", actionName.c_str(),
+					    profile.GetPath().c_str());
 					continue;
 				}
 
@@ -1242,7 +1278,7 @@ void BaseInput::LoadBindingsSet(const InteractionProfile& profile, const std::st
 	suggestedBindings.interactionProfile = interactionProfilePath;
 	suggestedBindings.suggestedBindings = bindings.data();
 	suggestedBindings.countSuggestedBindings = bindings.size();
-	OC_XR_LOG(xrSuggestInteractionProfileBindings(xr_instance, &suggestedBindings));
+	OC_XR_LOG(xr_suggest_bindings_logged(suggestedBindings));
 }
 
 void BaseInput::LoadDpadAction(const InteractionProfile& profile, const std::string& importBasePath, const std::string& inputName, const std::string& subMode, Action* action, std::vector<XrActionSuggestedBinding>& bindings, bool isKnuckles)
@@ -1472,7 +1508,7 @@ void BaseInput::CreateLegacyActions()
 		suggested.interactionProfile = profile;
 		suggested.suggestedBindings = &binding;
 		suggested.countSuggestedBindings = 1;
-		OC_XR_LOG(xrSuggestInteractionProfileBindings(xr_instance, &suggested));
+		OC_XR_LOG(xr_suggest_bindings_logged(suggested));
 	}
 }
 
@@ -1762,6 +1798,7 @@ EVRInputError BaseInput::GetInputSourceHandle(const char* pchInputSourcePath, VR
 	if (!pchInputSourcePath || !pHandle)
 		return VRInputError_InvalidParam;
 
+	std::lock_guard<std::mutex> registryGuard(inputHandleRegistryLock);
 	const auto iter = inputHandleRegistry.find(pchInputSourcePath);
 	if (iter != inputHandleRegistry.end()) {
 		InputValueHandle* handle = iter->second.get();
@@ -1805,11 +1842,11 @@ EVRInputError BaseInput::GetInputSourceHandle(const char* pchInputSourcePath, VR
 EVRInputError BaseInput::UpdateActionState(VR_ARRAY_COUNT(unSetCount) VRActiveActionSet_t* pSets,
     uint32_t unSizeOfVRSelectedActionSet_t, uint32_t unSetCount)
 {
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	// TODO if the game is using legacy input, call this every frame
 
-	// A null or wrong-sized struct is an argument error, as SteamVR answers (VRInputError_InvalidParam)
-	if (sizeof(*pSets) != unSizeOfVRSelectedActionSet_t || (unSetCount && !pSets))
-		return VRInputError_InvalidParam;
+	if (EVRInputError err = CheckActiveSets(pSets, unSizeOfVRSelectedActionSet_t, unSetCount); err != VRInputError_None)
+		return err;
 
 	// Make sure all the ActionSets have the same priority, since we don't have any way around that right now (the
 	// binding evaluator, inputEvaluator=steamvr, does)
@@ -1873,6 +1910,7 @@ EVRInputError BaseInput::UpdateActionState(VR_ARRAY_COUNT(unSetCount) VRActiveAc
 
 void BaseInput::InternalUpdate()
 {
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	// Always increment this once per frame, and only once per frame
 	syncSerialDigital++;
 
@@ -2113,6 +2151,7 @@ XrResult BaseInput::getBooleanOrDpadData(const InteractionProfile* profile, Acti
 EVRInputError BaseInput::GetDigitalActionData(VRActionHandle_t action, InputDigitalActionData_t* pActionData, uint32_t unActionDataSize,
     VRInputValueHandle_t ulRestrictToDevice)
 {
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	// Zeroed before the handle is looked up: an action left out of the manifest answers InvalidHandle, and inactive
 	if (pActionData && unActionDataSize == sizeof(*pActionData))
 		ZeroMemory(pActionData, unActionDataSize);
@@ -2131,7 +2170,7 @@ EVRInputError BaseInput::GetDigitalActionData(VRActionHandle_t action, InputDigi
 			pActionData->bActive = true;
 			pActionData->bState = d->state;
 			pActionData->bChanged = d->changed;
-			pActionData->fUpdateTime = d->changeTime == 0 ? 0 : (float)(d->changeTime - EvaluatorClock()); // 0: never changed
+			pActionData->fUpdateTime = UpdateTimeFromNow(d->changeTime, act->createdAt, EvaluatorClock());
 			pActionData->activeOrigin = OriginHandle(d->origin);
 		}
 		return VRInputError_None;
@@ -2184,6 +2223,7 @@ EVRInputError BaseInput::GetDigitalActionData(VRActionHandle_t action, InputDigi
 EVRInputError BaseInput::GetAnalogActionData(VRActionHandle_t action, InputAnalogActionData_t* pActionData, uint32_t unActionDataSize,
     VRInputValueHandle_t ulRestrictToDevice)
 {
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	// Zeroed before the handle is looked up: an action left out of the manifest answers InvalidHandle, and inactive
 	if (pActionData && unActionDataSize == sizeof(*pActionData))
 		ZeroMemory(pActionData, unActionDataSize);
@@ -2343,6 +2383,7 @@ EVRInputError BaseInput::GetAnalogActionData(VRActionHandle_t action, InputAnalo
 EVRInputError BaseInput::GetPoseActionData(VRActionHandle_t action, ETrackingUniverseOrigin eOrigin, float fPredictedSecondsFromNow,
     InputPoseActionData_t* pActionData, uint32_t unActionDataSize, VRInputValueHandle_t ulRestrictToDevice)
 {
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	// Zeroed before the handle is looked up: an action left out of the manifest answers InvalidHandle, and inactive
 	if (pActionData && unActionDataSize == sizeof(*pActionData))
 		ZeroMemory(pActionData, unActionDataSize);
@@ -2492,6 +2533,7 @@ EVRInputError BaseInput::GetSkeletalActionData(VRActionHandle_t action, InputSke
 }
 EVRInputError BaseInput::GetSkeletalActionData(VRActionHandle_t actionHandle, InputSkeletalActionData_t* out, uint32_t unActionDataSize)
 {
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	// Make sure the target struct is the right size, in case it grows in the future
 	// Note: CVRInput_004 has a manual override for this in CVRInput.cpp to deal with an old struct version, it
 	// sets unActionDataSize to what we're expecting so we don't have to handle that here.
@@ -2603,6 +2645,7 @@ EVRInputError BaseInput::GetSkeletalReferenceTransforms(VRActionHandle_t actionH
 }
 EVRInputError BaseInput::GetSkeletalTrackingLevel(VRActionHandle_t action, EVRSkeletalTrackingLevel* pSkeletalTrackingLevel)
 {
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	GET_ACTION_FROM_HANDLE(act, action);
 
 	if (act->skeletalHand == ITrackedDevice::HAND_NONE)
@@ -2655,6 +2698,7 @@ EVRInputError BaseInput::GetSkeletalBoneData(VRActionHandle_t action, EVRSkeleta
 EVRInputError BaseInput::GetSkeletalBoneData(VRActionHandle_t actionHandle, EVRSkeletalTransformSpace eTransformSpace,
     EVRSkeletalMotionRange eMotionRange, VR_ARRAY_COUNT(unTransformArrayCount) VRBoneTransform_t* pTransformArray, uint32_t unTransformArrayCount)
 {
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	ZeroMemory(pTransformArray, sizeof(VRBoneTransform_t) * unTransformArrayCount);
 	GET_ACTION_FROM_HANDLE(action, actionHandle);
 
@@ -2730,6 +2774,7 @@ EVRInputError BaseInput::GetSkeletalBoneData(VRActionHandle_t actionHandle, EVRS
 }
 EVRInputError BaseInput::GetSkeletalSummaryData(VRActionHandle_t actionHandle, EVRSummaryType eSummaryType, VRSkeletalSummaryData_t* pSkeletalSummaryData)
 {
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	GET_ACTION_FROM_HANDLE(action, actionHandle);
 
 	if (!pSkeletalSummaryData)
@@ -2745,6 +2790,7 @@ EVRInputError BaseInput::GetSkeletalSummaryData(VRActionHandle_t actionHandle, E
 
 EVRInputError BaseInput::getRealSkeletalSummary(ITrackedDevice::TrackedDeviceType hand, VRSkeletalSummaryData_t* pSkeletalSummaryData)
 {
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	if (!xr_gbl)
 		return getEstimatedSkeletalSummary(hand, pSkeletalSummaryData);
 	XrHandJointsLocateInfoEXT locateInfo = { XR_TYPE_HAND_JOINTS_LOCATE_INFO_EXT };
@@ -2928,6 +2974,7 @@ EVRInputError BaseInput::DecompressSkeletalBoneData(const void* pvCompressedBuff
 EVRInputError BaseInput::TriggerHapticVibrationAction(VRActionHandle_t action, float fStartSecondsFromNow, float fDurationSeconds,
     float fFrequency, float fAmplitude, VRInputValueHandle_t ulRestrictToDevice)
 {
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	GET_ACTION_FROM_HANDLE(act, action);
 
 	if (act->type != ActionType::Vibration) {
@@ -2993,6 +3040,7 @@ EVRInputError BaseInput::TriggerHapticVibrationAction(VRActionHandle_t action, f
 EVRInputError BaseInput::GetActionOrigins(VRActionSetHandle_t actionSetHandle, VRActionHandle_t digitalActionHandle,
     VR_ARRAY_COUNT(originOutCount) VRInputValueHandle_t* originsOut, uint32_t originOutCount)
 {
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	GET_ACTION_SET_FROM_HANDLE(set, actionSetHandle);
 	GET_ACTION_FROM_HANDLE(act, digitalActionHandle);
 
@@ -3068,6 +3116,7 @@ EVRInputError BaseInput::GetOriginLocalizedName(VRInputValueHandle_t origin, VR_
 EVRInputError BaseInput::GetOriginLocalizedName(VRInputValueHandle_t origin, VR_OUT_STRING() char* pchNameArray, uint32_t unNameArraySize,
     uint64_t unStringSectionsToInclude)
 {
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	if (origin == vr::k_ulInvalidInputValueHandle)
 		return vr::VRInputError_InvalidHandle;
 
@@ -3146,6 +3195,7 @@ EVRInputError BaseInput::GetOriginTrackedDeviceInfo(VRInputValueHandle_t origin,
 EVRInputError BaseInput::GetActionBindingInfo(VRActionHandle_t actionHandle, OOVR_InputBindingInfo_t* bindingInfo,
     uint32_t unBindingInfoSize, uint32_t unBindingInfoCount, uint32_t* punReturnedBindingInfoCount)
 {
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	if (punReturnedBindingInfoCount)
 		*punReturnedBindingInfoCount = 0;
 	// A null or wrong-sized struct is an argument error, as SteamVR answers (VRInputError_InvalidParam)
@@ -3169,15 +3219,11 @@ EVRInputError BaseInput::GetActionBindingInfo(VRActionHandle_t actionHandle, OOV
 
 	// TODO should we return an error if there are no sources bound?
 
-	size_t count = boundActionPaths.size();
-	if (count > unBindingInfoCount)
-		count = unBindingInfoCount;
-	if (punReturnedBindingInfoCount)
-		*punReturnedBindingInfoCount = count;
-
-	for (size_t i = 0; i < count; i++) {
-		OOVR_InputBindingInfo_t& info = bindingInfo[i];
-		XrPath path = boundActionPaths.at(i);
+	// The bindings written, in order, without the sources left out
+	uint32_t written = 0;
+	for (size_t i = 0; i < boundActionPaths.size() && written < unBindingInfoCount; i++) {
+		OOVR_InputBindingInfo_t& info = bindingInfo[written];
+		XrPath path = boundActionPaths[i];
 
 		uint32_t pathLen = 0;
 		OC_XR_LOG(xrPathToString(xr_instance, path, 0, &pathLen, nullptr));
@@ -3189,8 +3235,11 @@ EVRInputError BaseInput::GetActionBindingInfo(VRActionHandle_t actionHandle, OOV
 
 		std::vector<std::string> parts;
 		stringSplit(pathStr, parts);
-		if (parts.empty())
+		if (parts.size() < 5) {
+			// Not a /user/<a>/<b>/input/<c> path: this binding is left out
+			OOVR_LOG_ONCEF("A bound source path with fewer than five parts, left out: %s", pathStr.c_str());
 			continue;
+		}
 
 		// The last part of the string - which is something like '/user/hand/right/input/a/click' - is the mode
 		strcpy_arr(info.rchModeName, parts.back().c_str());
@@ -3205,22 +3254,25 @@ EVRInputError BaseInput::GetActionBindingInfo(VRActionHandle_t actionHandle, OOV
 		// FIXME replace this initial hacky thing
 		switch (action->type) {
 		case ActionType::Boolean:
-			strcpy_arr(bindingInfo->rchModeName, "button");
-			strcpy_arr(bindingInfo->rchInputSourceType, "button");
+			strcpy_arr(info.rchModeName, "button");
+			strcpy_arr(info.rchInputSourceType, "button");
 			break;
 		case ActionType::Vector1:
-			strcpy_arr(bindingInfo->rchModeName, "trigger");
-			strcpy_arr(bindingInfo->rchInputSourceType, "trigger");
+			strcpy_arr(info.rchModeName, "trigger");
+			strcpy_arr(info.rchInputSourceType, "trigger");
 			break;
 		case ActionType::Vector2:
-			strcpy_arr(bindingInfo->rchModeName, "joystick");
-			strcpy_arr(bindingInfo->rchInputSourceType, "joystick");
+			strcpy_arr(info.rchModeName, "joystick");
+			strcpy_arr(info.rchInputSourceType, "joystick");
 			break;
 		default:
 			OOVR_LOGF("Unimplemented action type %d for %s: no mode name", static_cast<int>(action->type), pathStr.c_str());
 			break;
 		}
+		written++;
 	}
+	if (punReturnedBindingInfoCount)
+		*punReturnedBindingInfoCount = written;
 
 	return VRInputError_None;
 }
@@ -3392,6 +3444,7 @@ VRInputValueHandle_t BaseInput::activeOriginFromSubaction(Action* action, const 
 
 bool BaseInput::GetLegacyControllerState(vr::TrackedDeviceIndex_t controllerDeviceIndex, vr::VRControllerState_t* state)
 {
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	*state = {};
 
 	// FIXME implement packetNum
@@ -3492,6 +3545,7 @@ bool BaseInput::GetLegacyControllerState(vr::TrackedDeviceIndex_t controllerDevi
 
 void BaseInput::TriggerLegacyHapticPulse(vr::TrackedDeviceIndex_t controllerDeviceIndex, uint64_t durationNanos)
 {
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	int hand = DeviceIndexToHandId(controllerDeviceIndex);
 	if (hand == -1)
 		return;

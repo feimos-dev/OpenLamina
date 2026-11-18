@@ -55,10 +55,15 @@ namespace {
 fs::path BindingsDirOf(const char* folderName)
 {
 #ifdef _WIN32
+	// Wide: the narrow variable is in the ANSI code page, which can't hold every folder name
+	if (const wchar_t* overrideDir = _wgetenv(L"OC_BINDINGS_DIR"); overrideDir && overrideDir[0])
+		return fs::path(overrideDir);
 	if (const wchar_t* local = _wgetenv(L"LOCALAPPDATA"); local && local[0])
 		return fs::path(local) / folderName / "bindings";
 	return {};
 #else
+	if (const char* overrideDir = getenv("OC_BINDINGS_DIR"); overrideDir && overrideDir[0])
+		return PathFromUtf8(overrideDir);
 	const char* xdg = getenv("XDG_STATE_HOME");
 	if (xdg && xdg[0])
 		return fs::path(xdg) / folderName / "bindings";
@@ -72,15 +77,13 @@ fs::path BindingsDirOf(const char* folderName)
 
 fs::path UserBindingsDir()
 {
-	if (const char* overrideDir = getenv("OC_BINDINGS_DIR"); overrideDir && overrideDir[0])
-		return PathFromUtf8(overrideDir);
 	return BindingsDirOf("OpenLamina");
 }
 
 fs::path LegacyUserBindingsDir()
 {
-	// A test that sets OC_BINDINGS_DIR wants that folder alone, not what's on the machine it runs on
-	if (const char* overrideDir = getenv("OC_BINDINGS_DIR"); overrideDir && overrideDir[0])
-		return {};
-	return BindingsDirOf("OpenComposite");
+	// With OC_BINDINGS_DIR set (tests), both are that folder, and the test wants it alone, not what's on the machine
+	// it runs on
+	fs::path legacy = BindingsDirOf("OpenComposite");
+	return legacy == BindingsDirOf("OpenLamina") ? fs::path() : legacy;
 }

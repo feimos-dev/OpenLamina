@@ -680,13 +680,13 @@ uint32_t BaseCompositor::GetVulkanInstanceExtensionsRequired(char* pchValue, uin
 	if (pchValue && unBufferSize)
 		pchValue[0] = 0;
 #if defined(SUPPORT_VK)
+	// Without a buffer, only the size is asked for (a runtime writes into whatever buffer it's given)
 	// Whaddya know, the OpenXR, Oculus and Valve methods work almost identically...
 	uint32_t size = 0;
-	XrResult res = xr_ext->xrGetVulkanInstanceExtensionsKHR(xr_instance, xr_system, unBufferSize, &size, pchValue);
-	if (res == XR_ERROR_SIZE_INSUFFICIENT)
-		return size; // the size needed, as SteamVR answers a buffer too small
-	OC_XR_SOFT(res, 0);
-	return size;
+	XrResult res = xr_ext->xrGetVulkanInstanceExtensionsKHR(xr_instance, xr_system, pchValue ? unBufferSize : 0, &size, pchValue);
+	if (res != XR_ERROR_SIZE_INSUFFICIENT)
+		OC_XR_SOFT(res, 0);
+	return VulkanExtensionsSize(res, size);
 #else
 	OC_UNSUPPORTED(0, "GetVulkanInstanceExtensionsRequired: this build has no Vulkan support");
 #endif
@@ -698,11 +698,10 @@ uint32_t BaseCompositor::GetVulkanDeviceExtensionsRequired(VkPhysicalDevice_T* p
 		pchValue[0] = 0;
 #if defined(SUPPORT_VK)
 	uint32_t size = 0;
-	XrResult res = xr_ext->xrGetVulkanDeviceExtensionsKHR(xr_instance, xr_system, unBufferSize, &size, pchValue);
-	if (res == XR_ERROR_SIZE_INSUFFICIENT)
-		return size; // the size needed, as SteamVR answers a buffer too small
-	OC_XR_SOFT(res, 0);
-	return size;
+	XrResult res = xr_ext->xrGetVulkanDeviceExtensionsKHR(xr_instance, xr_system, pchValue ? unBufferSize : 0, &size, pchValue);
+	if (res != XR_ERROR_SIZE_INSUFFICIENT)
+		OC_XR_SOFT(res, 0);
+	return VulkanExtensionsSize(res, size);
 #else
 	OC_UNSUPPORTED(0, "GetVulkanDeviceExtensionsRequired: this build has no Vulkan support");
 #endif

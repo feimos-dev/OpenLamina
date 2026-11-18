@@ -71,6 +71,8 @@ static Script LoadScript()
 		s.failures.push_back(fail);
 	}
 	s.interactionProfile = root["interaction_profile"].asString();
+	for (const Json::Value& p : root["extra_bound_sources"])
+		s.extraBoundSources.push_back(p.asString());
 	for (const Json::Value& i : root["inputs"]) {
 		ScriptInput in2;
 		in2.frame = i["frame"].asUInt64();

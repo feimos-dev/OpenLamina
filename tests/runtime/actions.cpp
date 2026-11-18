@@ -5,6 +5,7 @@
 #include "runtime_internal.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstring>
 
@@ -59,10 +60,17 @@ float InputValue(RtSession* s, const std::string& path)
 	return it == s->inputValues.end() ? 0.0f : it->second;
 }
 
+// Action calls given a session handle that isn't the live session's (destroyed, or none yet): on a real runtime, a use
+// after free. Dumped as action_calls_without_session.
+std::atomic<uint64_t> callsWithoutSession{ 0 };
+
 RtSession* Session(XrSession session)
 {
 	RtSession* s = St().session.get();
-	return (s && (XrSession)s == session) ? s : nullptr;
+	if (s && (XrSession)s == session)
+		return s;
+	callsWithoutSession++;
+	return nullptr;
 }
 
 XrResult XRAPI_CALL CreateActionSet(XrInstance, const XrActionSetCreateInfo* info, XrActionSet* out)
@@ -366,6 +374,8 @@ XrResult XRAPI_CALL EnumerateBoundSourcesForAction(XrSession session, const XrBo
 	std::vector<XrPath> list;
 	for (const std::string& p : BoundPaths(s, it->second.get(), XR_NULL_PATH))
 		list.push_back(RtPath(p));
+	for (const std::string& p : GetScript().extraBoundSources)
+		list.push_back(RtPath(p));
 	*count = (uint32_t)list.size();
 	if (capacity == 0)
 		return XR_SUCCESS;
@@ -525,6 +535,7 @@ void RtActionsReset()
 
 void RtActionsDump(Json::Value& root)
 {
+	root["action_calls_without_session"] = (Json::UInt64)callsWithoutSession.load();
 	root["actions"] = Json::Value(Json::arrayValue);
 	for (auto& [p, a] : St().actions) {
 		Json::Value entry;
@@ -534,10 +545,21 @@ void RtActionsDump(Json::Value& root)
 		root["actions"].append(entry);
 	}
 	root["suggested_bindings"] = Json::Value(Json::objectValue);
+	// The same with each binding's action and its type (XrActionType): [{ "action", "type", "path" }]
+	root["suggested_actions"] = Json::Value(Json::objectValue);
 	for (auto& [profile, list] : St().suggested) {
-		Json::Value paths(Json::arrayValue);
-		for (auto& [action, path] : list)
+		Json::Value paths(Json::arrayValue), withActions(Json::arrayValue);
+		for (auto& [action, path] : list) {
 			paths.append(RtPathString(path));
+			// An action destroyed since (with its set) is left with no name
+			auto live = St().actions.find(action);
+			Json::Value entry;
+			entry["action"] = live != St().actions.end() ? live->second->name : "";
+			entry["type"] = live != St().actions.end() ? (int)live->second->type : 0;
+			entry["path"] = RtPathString(path);
+			withActions.append(entry);
+		}
 		root["suggested_bindings"][RtPathString(profile)] = paths;
+		root["suggested_actions"][RtPathString(profile)] = withActions;
 	}
 }
