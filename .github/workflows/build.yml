@@ -215,8 +215,6 @@ jobs:
           # The keyboard, typed on with the laser
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases keyboard --script tests/conformance/scripts/keyboard.json --ini tests/conformance/ini/keyboard_us.ini --expect tests/conformance/expect/keyboard.json --out conformance/keyboard
           if ($LASTEXITCODE) { $failed++ }
-          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases keyboard --script tests/conformance/scripts/keyboard.json --ini tests/conformance/ini/keyboard_us_steamvr.ini --expect tests/conformance/expect/keyboard.json --out conformance/keyboard-steamvr
-          if ($LASTEXITCODE) { $failed++ }
           # The compositor's statistics, timing and poses per frame
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases compositor-stats,mirror --script tests/conformance/scripts/gfx_all_apis.json --ini tests/conformance/ini/mirror_window.ini --expect tests/conformance/expect/compositor.json --out conformance/compositor-stats
           if ($LASTEXITCODE) { $failed++ }

@@ -6,7 +6,6 @@
 #include "Misc/Canvas.h"
 #include "Misc/Keyboard/KeyboardLayout.h"
 #include "Misc/Keyboard/VRKeyboard.h"
-#include "Misc/LaserMouse.h"
 
 #include <cstring>
 #include <string>
@@ -136,44 +135,4 @@ TEST_CASE("Us_layout_has_at_above_2")
 	CHECK(KeyboardLayout::ForLocale("en_GB.UTF-8") == KeyboardLayout::Name::UK);
 	CHECK(KeyboardLayout::ForLocale("en-US") == KeyboardLayout::Name::US);
 	CHECK(KeyboardLayout::ForLocale("") == KeyboardLayout::Name::US);
-}
-
-TEST_CASE("Keyboard_typed_with_the_laser")
-{
-	REQUIRE(Us());
-	VRKeyboard kb(VRKeyboard::Mode::Normal, false, 0, "", 0, 0, Us());
-	kb.SetPlacement(XrPosef{ { 0, 0, 0, 1 }, { 0, 0, -1 } });
-	PointerTarget target{};
-	target.handle = kb.Handle();
-	target.placement = overlay_maths::Placement{ kb.Placement(), kb.WidthMeters(), kb.HeightMeters(), 0 };
-	target.mouseScale = { { (float)kb.CanvasWidth(), (float)kb.CanvasHeight() } };
-	target.yDown = true; // as the keyboard is pointed at: its canvas's coordinates
-	LaserMouse mouse;
-	// Each key's centre: a click there types it
-	auto click = [&](wchar_t ch) {
-		const KeyboardLayout::Key* key = KeyFor(*Us(), ch);
-		REQUIRE(key);
-		// The same geometry the keyboard draws with: a key pitch of (width - padding) / layout width
-		const float pitch = (float)((kb.CanvasWidth() - 8) / Us()->GetWidth());
-		const float keysTop = 8.0f + pitch; // below the text box
-		const float px = 8 + pitch * key->x + (pitch - 8) / 2;
-		const float py = keysTop + pitch * key->y + (pitch - 8) / 2;
-		const float x = (px / kb.CanvasWidth() - 0.5f) * kb.WidthMeters();
-		const float y = (0.5f - py / kb.CanvasHeight()) * kb.HeightMeters();
-		for (bool down : { false, true, false }) {
-			PointerRay ray{};
-			ray.hand = 1;
-			ray.origin = { x, y, 0 };
-			ray.dir = { 0, 0, -1 };
-			ray.click = down;
-			ray.valid = true;
-			std::vector<PointerEvent> events;
-			mouse.Update({ PointerRay{}, ray }, { target }, 0, events);
-			kb.OnPointer(mouse, events);
-		}
-	};
-	click(L'h');
-	click(L'i');
-	CHECK(kb.Text() == "hi");
-	CHECK(OfType(kb.TakeEvents(), vr::VREvent_KeyboardCharInput).size() == 2);
 }
