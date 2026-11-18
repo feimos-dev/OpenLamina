@@ -66,7 +66,7 @@ void xr_utils::PoseFromHandTracking(vr::TrackedDevicePose_t* pose, XrHandJointLo
 	XrHandJointLocationEXT palmJoint = locations.jointLocations[boneToUse];
 	XrHandJointVelocityEXT velocity = velocities.jointVelocities[boneToUse];
 
-	// A pose whose orientation is tracked is given, marked valid only when its position is tracked too
+	// A hand whose palm orientation is tracked gives a pose
 	bool orientationTracked = (palmJoint.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0;
 
 	if (!locations.isActive || !orientationTracked) {
