@@ -2181,6 +2181,122 @@ void OwnFramesRaceCase(CaseContext& c)
 	c.Record("frames", r);
 }
 
+// The quads in the stand-in's dump of a size (w x h metres, to the millimetre), counted over the frames it kept
+int QuadsOfSize(const Json::Value& dump, double w, double h)
+{
+	int n = 0;
+	for (const Json::Value& layer : dump["layers"]) {
+		if (layer["type"].asString() != "quad" || layer["size"].size() != 2)
+			continue;
+		if (Milli(layer["size"][0].asDouble()) == Milli(w) && Milli(layer["size"][1].asDouble()) == Milli(h))
+			n++;
+	}
+	return n;
+}
+
+// The overlay events' names, in order, a repeated one once
+std::string EventName(uint32_t type)
+{
+	switch (type) {
+	case vr::VREvent_FocusEnter:
+		return "enter";
+	case vr::VREvent_FocusLeave:
+		return "leave";
+	case vr::VREvent_MouseMove:
+		return "move";
+	case vr::VREvent_MouseButtonDown:
+		return "down";
+	case vr::VREvent_MouseButtonUp:
+		return "up";
+	case vr::VREvent_ScrollDiscrete:
+		return "scroll";
+	case vr::VREvent_ScrollSmooth:
+		return "scroll-smooth";
+	default:
+		return std::to_string(type);
+	}
+}
+
+// The right controller's laser on an overlay that takes mouse input (expect/laser_mouse.json, with
+// scripts/laser.json): a 1 m overlay at (0, 1.5, -2), 200 x 100 in mouse units; the right aim pose at (0, 1.5, -1)
+// looking along -Z from frame 5, its trigger held from frame 10 to 12. The game reads the old input from frame 2,
+// which loads the actions the lasers read. PollNextOverlayEvent gives FocusEnter, MouseMove, MouseButtonDown and Up,
+// all at the overlay's centre, and the stand-in is sent a 2 cm cursor quad.
+void LaserMouseCase(CaseContext& c)
+{
+	using namespace vr::IVROverlay_028;
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	vr::EVRInitError le;
+	auto* ov = (IVROverlay*)c.core->GetGenericInterface("IVROverlay_028", &le);
+	if (!ov) {
+		c.Record("no IVROverlay_028", Err(le));
+		c.core->Cleanup();
+		return;
+	}
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	vr::VROverlayHandle_t h = vr::k_ulOverlayHandleInvalid;
+	Json::Value set;
+	set["create"] = (int)ov->CreateOverlay("oc.laser", "Laser", &h);
+	std::vector<uint8_t> grey(64 * 64 * 4, 0x80);
+	set["raw"] = (int)ov->SetOverlayRaw(h, grey.data(), 64, 64, 4);
+	set["width"] = (int)ov->SetOverlayWidthInMeters(h, 1);
+	vr::HmdMatrix34_t m = Translation(0, 1.5f, -2);
+	set["transform"] = (int)ov->SetOverlayTransformAbsolute(h, vr::TrackingUniverseStanding, &m);
+	set["input_method"] = (int)ov->SetOverlayInputMethod(h, VROverlayInputMethod_Mouse);
+	vr::HmdVector2_t scale{ { 200, 100 } };
+	set["mouse_scale"] = (int)ov->SetOverlayMouseScale(h, &scale);
+	set["show"] = (int)ov->ShowOverlay(h);
+	c.Record("set", set);
+
+	Json::Value order(Json::arrayValue);
+	std::string last;
+	Json::Value down, up;
+	bool hovered = false;
+	int haptic = -1;
+	for (int frame = 1; frame <= 30; frame++) {
+		GameFrame(f, tex.get());
+		if (frame >= 2) {
+			vr::VRControllerState_t state{};
+			f.sys->GetControllerState(2, &state, sizeof(state));
+		}
+		vr::VREvent_t ev{};
+		while (ov->PollNextOverlayEvent(h, &ev, sizeof(ev))) {
+			const std::string name = EventName(ev.eventType);
+			if (name != last)
+				order.append(name);
+			last = name;
+			Json::Value* at = ev.eventType == vr::VREvent_MouseButtonDown ? &down : (ev.eventType == vr::VREvent_MouseButtonUp ? &up : nullptr);
+			if (at && at->isNull()) {
+				(*at)["x"] = Milli(ev.data.mouse.x);
+				(*at)["y"] = Milli(ev.data.mouse.y);
+				(*at)["button"] = ev.data.mouse.button;
+				(*at)["device"] = (int)ev.trackedDeviceIndex;
+			}
+		}
+		if (!order.empty() && order[0].asString() == "enter" && !hovered) {
+			hovered = ov->IsHoverTargetOverlay(h);
+			haptic = (int)ov->TriggerLaserMouseHapticVibration(h, 0.05f, 0, 1);
+		}
+	}
+	ov->DestroyOverlay(h);
+	c.core->Cleanup();
+
+	Json::Value r;
+	r["order"] = order;
+	r["down"] = down;
+	r["up"] = up;
+	r["hover_target"] = hovered;
+	r["haptic"] = haptic;
+	Json::Value dump = ReadStandInDump();
+	if (!dump.isNull()) {
+		r["cursor_quad"] = QuadsOfSize(dump, 0.02, 0.02) > 0;
+		r["frame_order_errors"] = dump["frame_order_errors"];
+	}
+	c.Record("events", r);
+}
+
 #ifdef _WIN32
 // The DXGI adapters (DXGI 1.1's list, which DXGI 1.0's EnumAdapters has in the same order): LUIDs as LowPart |
 // HighPart << 32
@@ -2462,6 +2578,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "own-frames-race", OwnFramesRaceCase },
 		{ "own-frames-nothing-shown", OwnFramesNothingShownCase },
 		{ "own-frames-overlay-churn", OwnFramesOverlayChurnCase },
+		{ "laser-mouse", LaserMouseCase },
 		{ "compositor-stats", CompositorStatsCase },
 		{ "gpu-answers", GpuAnswersCase },
 		{ "gpu-other-adapter", GpuOtherAdapterCase },

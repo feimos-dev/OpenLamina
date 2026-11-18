@@ -116,6 +116,7 @@ add_executable(oc_unit_tests
 	unit/DepthRangeTests.cpp
 	unit/OwnFrameLoopTests.cpp
 	unit/OverlayMathsTests.cpp
+	unit/LaserMouseTests.cpp
 	${OC_TEST_RESOURCES}
 )
 target_include_directories(oc_unit_tests PRIVATE

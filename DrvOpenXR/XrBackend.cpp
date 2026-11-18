@@ -1111,6 +1111,8 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 	BaseOverlay* overlay = GetUnsafeBaseOverlay();
 	std::unique_lock<std::recursive_mutex> overlayLock;
 	if (overlay) {
+		// The controllers' lasers on the overlays, on this thread: it fills their swapchains
+		overlay->_UpdatePointer();
 		overlayLock = std::unique_lock(overlay->_LayersLock());
 		layer_count = overlay->_BuildLayers(app_layer, headers, true);
 	} else if (app_layer) {

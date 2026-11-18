@@ -17,10 +17,16 @@
 #include "Misc/Config.h"
 #include "Misc/Image.h"
 #include "Misc/Input/InteractionProfile.h"
+#include "Misc/Canvas.h"
+#include "Misc/LaserMouse.h"
 #include "Misc/OverlayMaths.h"
 #include "Misc/ScopeGuard.h"
+#include "BaseInput.h"
 #include "convert.h"
 #include "generated/static_bases.gen.h"
+#include <array>
+#include <chrono>
+#include <climits>
 #include <optional>
 #include <string>
 
@@ -43,7 +49,9 @@ public:
 	EColorSpace colourSpace = ColorSpace_Auto;
 	bool visible = false; // TODO check against SteamVR
 	VRTextureBounds_t textureBounds = { 0, 0, 1, 1 };
-	VROverlayInputMethod inputMethod = VROverlayInputMethod_None; // TODO fire events
+	VROverlayInputMethod inputMethod = VROverlayInputMethod_None; // Mouse: the lasers send it mouse events
+	// HandleControllerOverlayInteractionAsMouse: a pointer target for this many more of the lasers' updates
+	int asMouseUpdates = 0;
 	HmdVector2_t mouseScale = { 1.0f, 1.0f };
 	bool highQuality = false;
 	uint64_t flags = 0; // as masks: flag n is 1 << n
@@ -215,16 +223,6 @@ static bool IsFinite(const glm::vec3& v)
 	return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
 }
 
-bool BaseOverlay::_AnyVisible()
-{
-	std::lock_guard<std::recursive_mutex> lock(layersLock);
-	for (const auto& kv : overlays) {
-		if (kv.second && kv.second->visible && (kv.second->texture.handle != nullptr || !kv.second->rawImage.Empty()))
-			return true;
-	}
-	return false;
-}
-
 // The seated origin in the standing one (none if the runtime can't say)
 static XrPosef SeatedInStanding()
 {
@@ -248,10 +246,19 @@ static std::optional<glm::mat4> ComponentInDevice(ITrackedDevice& device, const 
 	return profile->GetComponentTransform(device.GetHand(), component);
 }
 
+// Where each cursor overlay goes: the point where a laser meets the overlay it's the cursor of (SetOverlayCursor), set
+// by _UpdatePointer. Read while overlays are placed, which some calls do without the layers' lock.
+static std::mutex cursorPointsLock;
+static std::map<const void*, XrPosef> cursorPoints;
+
 // Where a cursor overlay's laser pointer meets the overlay it points at; nothing while nothing points at one
-static std::optional<XrPosef> CursorPoint()
+static std::optional<XrPosef> CursorPoint(const void* cursorOverlay)
 {
-	return {};
+	std::lock_guard<std::mutex> lock(cursorPointsLock);
+	auto it = cursorPoints.find(cursorOverlay);
+	if (it == cursorPoints.end())
+		return {};
+	return it->second;
 }
 
 bool BaseOverlay::OverlayData::OwnTransform(vr::ETrackingUniverseOrigin trackingSpace, glm::mat4& out) const
@@ -279,7 +286,7 @@ bool BaseOverlay::OverlayData::OwnTransform(vr::ETrackingUniverseOrigin tracking
 	// Absolute, a projection's eye, or a cursor's own transform: overlayTransform is stored rows first
 	out = glm::transpose(overlayTransform);
 	if (transformType == VROverlayTransform_Cursor) {
-		if (std::optional<XrPosef> point = CursorPoint()) {
+		if (std::optional<XrPosef> point = CursorPoint(this)) {
 			const XrPosef centre = overlay_maths::CursorPose(*point, widthMeters, widthMeters / AspectRatio(), cursorHotspot);
 			out = X2G_om34_pose(centre);
 			return true;
@@ -350,6 +357,206 @@ bool BaseOverlay::OverlayData::ComputePlacement(vr::ETrackingUniverseOrigin trac
 	    && std::isfinite(width) && std::isfinite(height) && width > 0 && height > 0;
 	out = overlay_maths::Placement{ pose, width, height, curved ? curvature : 0.0f };
 	return true;
+}
+
+namespace {
+
+// The cursor: a circle on a 2 cm quad
+constexpr int kCursorPixels = 64;
+constexpr float kCursorMetres = 0.02f;
+
+double NowSeconds()
+{
+	using namespace std::chrono;
+	return duration<double>(steady_clock::now().time_since_epoch()).count();
+}
+
+// A quad of OpenLamina's own, in the frame's space, from a swapchain filled from memory
+XrCompositionLayerQuad OwnQuad(const CpuSwapchain& chain, const XrPosef& pose, float width, float height)
+{
+	XrCompositionLayerQuad quad{ XR_TYPE_COMPOSITION_LAYER_QUAD };
+	quad.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+	quad.space = xr_space_from_ref_space_type(BaseSystem::currentSpace);
+	quad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+	quad.subImage = chain.SubImage();
+	quad.pose = pose;
+	quad.size = { width, height };
+	return quad;
+}
+
+// Each hand's laser, from its aim pose in the frame's space; none while input isn't available
+std::array<PointerRay, 2> ReadRays(bool available)
+{
+	std::array<PointerRay, 2> rays{};
+	rays[0].hand = 0;
+	rays[1].hand = 1;
+	BaseInput* input = GetUnsafeBaseInput();
+	if (!available || !input || !xr_gbl)
+		return rays;
+	const XrSpace base = xr_space_from_ref_space_type(BaseSystem::currentSpace);
+	const XrTime time = xr_gbl->GetBestTime();
+	IBackend* backend = BackendManager::Instance().GetBackendInstance();
+	for (int h = 0; h < 2; h++) {
+		BaseInput::HandPointer hand{};
+		if (!input->GetHandPointer(h, base, time, hand))
+			continue;
+		PointerRay& ray = rays[h];
+		ray.origin = hand.aim.position;
+		ray.dir = G2X_v3f(X2G_quat(hand.aim.orientation) * glm::vec3(0.0f, 0.0f, -1.0f));
+		ray.click = hand.trigger >= 0.5f;
+		ray.scrollX = hand.stickX;
+		ray.scrollY = hand.stickY;
+		ray.valid = true;
+		if (backend) {
+			if (std::shared_ptr<ITrackedDevice> dev = backend->GetDeviceByHand((ITrackedDevice::TrackedDeviceType)h))
+				ray.device = dev->DeviceIndex();
+		}
+	}
+	return rays;
+}
+
+} // namespace
+
+class BaseOverlay::Pointing {
+public:
+	LaserMouse mouse;
+	bool running = false; // the lasers ran at the last update
+
+	// The cursor quad, where the laser driving the mouse meets a target without a cursor overlay of its own
+	std::unique_ptr<CpuSwapchain> cursorChain;
+	bool cursorUnavailable = false; // no swapchain could be made for it
+	bool cursorShown = false;
+	XrPosef cursorPose{ { 0, 0, 0, 1 }, { 0, 0, 0 } };
+
+	// The layers built from them for a frame, valid until it has ended
+	XrCompositionLayerQuad cursorLayer{};
+
+	// The cursor shown at a point on a target, facing out of it: its swapchain made and filled on the game's thread
+	void ShowCursor(const XrPosef& point)
+	{
+		if (!cursorChain && !cursorUnavailable) {
+			cursorChain = CpuSwapchain::Create(kCursorPixels, kCursorPixels);
+			cursorUnavailable = !cursorChain;
+		}
+		if (!cursorChain)
+			return;
+		if (!cursorChain->Live()) {
+			Canvas canvas(kCursorPixels, kCursorPixels);
+			canvas.FillRect(0, 0, kCursorPixels, kCursorPixels, 0x202020c0, kCursorPixels / 2);
+			canvas.FillRect(8, 8, kCursorPixels - 16, kCursorPixels - 16, 0xffffffff, kCursorPixels / 2 - 8);
+			cursorChain->Upload(canvas.Pixels());
+		}
+		// A little in front of the target, so it isn't hidden in it
+		const glm::quat q = X2G_quat(point.orientation);
+		cursorPose = XrPosef{ point.orientation, G2X_v3f(X2G_v3f(point.position) + q * glm::vec3(0.0f, 0.0f, 0.002f)) };
+		cursorShown = cursorChain->Live();
+	}
+};
+
+BaseOverlay::BaseOverlay()
+    : pointing(std::make_unique<Pointing>())
+{
+}
+
+void BaseOverlay::_UpdatePointer()
+{
+	// The session lock before the layers' lock, as everywhere: swapchains are filled and input read under it
+	auto session = xr_session.lock_shared();
+	auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
+
+	// Cheap first: is there anything to point at?
+	bool wanted = false;
+	{
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		for (const auto& kv : overlays) {
+			const OverlayData* o = kv.second;
+			if (o && o->visible && (o->inputMethod == VROverlayInputMethod_Mouse || o->asMouseUpdates > 0)
+			    && (o->texture.handle != nullptr || !o->rawImage.Empty())) {
+				wanted = true;
+				break;
+			}
+		}
+		if (!wanted && !pointing->running)
+			return;
+	}
+	const bool focused = backend && backend->IsInputAvailable();
+	// Outside the layers' lock: reading input takes the input's own lock
+	const std::array<PointerRay, 2> rays = ReadRays(wanted && focused);
+	BaseCompositor* compositor = GetUnsafeBaseCompositor();
+	const vr::ETrackingUniverseOrigin space = compositor ? compositor->GetTrackingSpace() : vr::TrackingUniverseStanding;
+
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	Pointing& p = *pointing;
+
+	std::vector<PointerTarget> targets;
+	if (wanted && focused) {
+		for (const auto& kv : overlays) {
+			OverlayData* o = kv.second;
+			if (!o || !o->visible || !(o->inputMethod == VROverlayInputMethod_Mouse || o->asMouseUpdates > 0))
+				continue;
+			if (o->texture.handle == nullptr && o->rawImage.Empty())
+				continue;
+			PointerTarget t{};
+			if (!o->ComputePlacement(space, validOverlays, t.placement))
+				continue;
+			t.handle = (VROverlayHandle_t)(uintptr_t)o;
+			t.mask = o->intersectionMask;
+			t.mouseScale = o->mouseScale;
+			t.flags = (uint32_t)o->flags;
+			t.sortOrder = (int)std::min<uint32_t>(o->sortOrder, INT_MAX - 1);
+			targets.push_back(std::move(t));
+		}
+	}
+	for (const auto& kv : overlays) {
+		if (kv.second && kv.second->asMouseUpdates > 0)
+			kv.second->asMouseUpdates--;
+	}
+
+	// Stopped (nothing to point at, or the session lost focus): the update without rays lets go of a click and the
+	// focus
+	std::vector<PointerEvent> events;
+	p.mouse.Update(rays, targets, NowSeconds(), events);
+	p.running = wanted && focused;
+	for (const PointerEvent& e : events) {
+		OverlayData* o = (OverlayData*)(uintptr_t)e.handle;
+		if (validOverlays.count(o))
+			o->eventQueue.push(e.event);
+	}
+
+	// The cursor: a cursor overlay the target has, else OpenLamina's own (unless the target hides it)
+	{
+		std::lock_guard<std::mutex> cursors(cursorPointsLock);
+		cursorPoints.clear();
+	}
+	p.cursorShown = false;
+	const int hand = p.mouse.ActiveHand();
+	const std::optional<overlay_maths::Hit> hit = p.mouse.Cursor(hand);
+	const VROverlayHandle_t target = p.mouse.Target(hand);
+	const PointerTarget* on = nullptr;
+	for (const PointerTarget& t : targets)
+		if (t.handle == target)
+			on = &t;
+	if (p.running && hit && on) {
+		const XrPosef point = overlay_maths::PointOn(on->placement, hit->u, hit->v);
+		OverlayData* o = validOverlays.count((OverlayData*)(uintptr_t)target) ? (OverlayData*)(uintptr_t)target : nullptr;
+		OverlayData* cursor = o && validOverlays.count((OverlayData*)(uintptr_t)o->cursor) ? (OverlayData*)(uintptr_t)o->cursor : nullptr;
+		if (cursor && cursor->visible) {
+			std::lock_guard<std::mutex> cursors(cursorPointsLock);
+			cursorPoints[cursor] = point;
+		} else if (!(on->flags & kOverlayFlagHideLaserIntersection)) {
+			p.ShowCursor(point);
+		}
+	}
+}
+
+bool BaseOverlay::_AnyVisible()
+{
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	for (const auto& kv : overlays) {
+		if (kv.second && kv.second->visible && (kv.second->texture.handle != nullptr || !kv.second->rawImage.Empty()))
+			return true;
+	}
+	return false;
 }
 
 int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompositionLayerBaseHeader const* const*& layers, bool mayUpload)
@@ -469,6 +676,14 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 			layerHeaders.insert(layerHeaders.begin() + i, &overlay.compositionLayer.base);
 			layerOverlays.insert(layerOverlays.begin() + (i - firstOverlay), &overlay);
 		}
+	}
+
+	// OpenLamina's own quads on top of the overlays: the cursor. Filled on the game's thread (_UpdatePointer): only
+	// one already in a swapchain is drawn.
+	Pointing& p = *pointing;
+	if (p.cursorShown && p.cursorChain && p.cursorChain->Live()) {
+		p.cursorLayer = OwnQuad(*p.cursorChain, p.cursorPose, kCursorMetres, kCursorMetres);
+		layerHeaders.push_back((XrCompositionLayerBaseHeader*)&p.cursorLayer);
 	}
 
 	usingInput = checkUsingInput;
@@ -1060,6 +1275,8 @@ bool BaseOverlay::PollNextOverlayEvent(VROverlayHandle_t ulOverlayHandle, VREven
 
 	memset(pEvent, 0, eventSize);
 
+	// The lasers queue events on the game's thread
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	if (overlay->eventQueue.empty())
 		return false;
 
@@ -1135,7 +1352,15 @@ bool BaseOverlay::ComputeOverlayIntersection(VROverlayHandle_t ulOverlayHandle, 
 }
 bool BaseOverlay::HandleControllerOverlayInteractionAsMouse(VROverlayHandle_t ulOverlayHandle, TrackedDeviceIndex_t unControllerDeviceIndex)
 {
-	OC_UNSUPPORTED(false, "HandleControllerOverlayInteractionAsMouse: no laser mouse yet");
+	USEHB();
+	// The lasers point at it as at an overlay that takes mouse input, for as long as it's asked (each frame)
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	overlay->asMouseUpdates = 2;
+	std::shared_ptr<ITrackedDevice> dev = BackendManager::Instance().GetDevice(unControllerDeviceIndex);
+	if (!dev || (dev->GetHand() != ITrackedDevice::HAND_LEFT && dev->GetHand() != ITrackedDevice::HAND_RIGHT))
+		return false;
+	const int hand = dev->GetHand() == ITrackedDevice::HAND_LEFT ? 0 : 1;
+	return pointing->mouse.Target(hand) == ulOverlayHandle;
 }
 EVROverlayError BaseOverlay::SetOverlayFlagMask(VROverlayHandle_t ulOverlayHandle, uint32_t flagMask, bool bEnabled)
 {
@@ -1251,7 +1476,10 @@ bool BaseOverlay::IsFocusOverlay(VROverlayHandle_t ulOverlayHandle)
 
 bool BaseOverlay::IsHoverTargetOverlay(VROverlayHandle_t ulOverlayHandle)
 {
-	OC_UNSUPPORTED(false, "IsHoverTargetOverlay: no laser mouse yet");
+	USEHB();
+	// The overlay the laser driving the mouse is on
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	return pointing->mouse.Focus() == ulOverlayHandle;
 }
 VROverlayHandle_t BaseOverlay::GetGamepadFocusOverlay()
 {
@@ -1318,7 +1546,17 @@ EVROverlayError BaseOverlay::SetOverlayDualAnalogTransform(VROverlayHandle_t ulO
 EVROverlayError BaseOverlay::TriggerLaserMouseHapticVibration(VROverlayHandle_t ulOverlayHandle, float fDurationSeconds, float fFrequency, float fAmplitude)
 {
 	USEH();
-	OC_UNSUPPORTED(VROverlayError_None, "TriggerLaserMouseHapticVibration: no laser mouse yet");
+	// The hand whose laser is on the overlay; none is: nothing to pulse
+	int hand;
+	{
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		hand = pointing->mouse.HandOn(ulOverlayHandle);
+	}
+	if (hand < 0)
+		return VROverlayError_None;
+	if (BaseInput* input = GetUnsafeBaseInput())
+		input->TriggerHandHaptic(hand, fDurationSeconds, fFrequency, fAmplitude);
+	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::SetOverlayCursor(VROverlayHandle_t ulOverlayHandle, VROverlayHandle_t ulCursorHandle)
 {
