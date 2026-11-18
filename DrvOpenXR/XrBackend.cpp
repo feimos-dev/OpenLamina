@@ -868,11 +868,18 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 	const vr::Texture_t* submitted = texture;
 #if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX11)
 	vr::Texture_t copied;
+	vr::VRTextureBounds_t copiedBounds;
 	if (gfxInterop && texture->eType == gfxInterop->Type()) {
 		ID3D11Texture2D* copy = gfxInterop->CopyIn(texture, bounds);
 		if (!copy) {
 			layer.subImage.swapchain = XR_NULL_HANDLE;
 			return kCompositorRequestFailed;
+		}
+		// An OpenGL texture's rows run bottom-up and its copy's top-down: the bounds' v, which counted from the bottom,
+		// counts from the top of the copy
+		if (bounds && texture->eType == vr::TextureType_OpenGL) {
+			copiedBounds = { bounds->uMin, 1 - bounds->vMax, bounds->uMax, 1 - bounds->vMin };
+			bounds = &copiedBounds;
 		}
 		copied = { copy, vr::TextureType_DirectX, texture->eColorSpace };
 		texture = &copied;
