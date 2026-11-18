@@ -3,7 +3,7 @@
 # It installs for the current user only: no root. ./install.sh --help says what it does.
 set -eu
 
-REPOSITORY=fzeruhn/OpenLamina
+REPOSITORY=feimos-dev/OpenLamina
 FLATPAK_STEAM=com.valvesoftware.Steam
 ARCHIVE=OpenLamina-linux.tar.gz
 
@@ -23,7 +23,7 @@ Commands (one; with none, install):
                     first. Starting SteamVR from Steam does that too.
   --uninstall       --steamvr, then delete the installed copy.
   --status          Say what OpenVR games use, what is installed, and the OpenXR runtime.
-  --update [--pre]  Download the newest release from github.com/fzeruhn/OpenLamina (--pre: pre-releases too),
+  --update [--pre]  Download the newest release from github.com/feimos-dev/OpenLamina (--pre: pre-releases too),
                     check its SHA-256, and install it if it is newer. The switch is left as it is.
   --launch-options  Print the Steam launch options games in the Steam Runtime (most Proton games) need to reach your
                     OpenXR runtime.

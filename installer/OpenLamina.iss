@@ -40,7 +40,7 @@
   #define TouchTime "current"
 #endif
 
-#define Repository "https://github.com/fzeruhn/OpenLamina"
+#define Repository "https://github.com/feimos-dev/OpenLamina"
 
 [Setup]
 ; Its own AppId: an OpenComposite Setup (the name before OpenLamina) is another app, and stays until it's uninstalled
@@ -48,7 +48,7 @@ AppId={{B7C4E1A2-6D3F-4B8E-9A15-3E0F2C7D4A61}
 AppName=OpenLamina
 AppVersion={#AppVersion}
 AppVerName=OpenLamina {#AppVersion}
-AppPublisher=fzeruhn (a fork of OpenComposite)
+AppPublisher=feimos-dev (a fork of OpenComposite)
 AppPublisherURL={#Repository}
 AppSupportURL={#Repository}/issues
 AppUpdatesURL={#Repository}/releases
