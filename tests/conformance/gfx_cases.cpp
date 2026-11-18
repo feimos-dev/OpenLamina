@@ -230,7 +230,7 @@ void OverlayTextureReadback(CaseContext& c, GfxKind kind, int64_t format)
 	gfx->Flush();
 }
 
-// A scene app on one graphics API: its device, OpenComposite's compositor, and frames of its textures
+// A scene app on one graphics API: its device, OpenLamina's compositor, and frames of its textures
 struct Scene {
 	CaseContext& c;
 	std::unique_ptr<GfxApi> gfx;
@@ -288,7 +288,7 @@ struct Scene {
 
 	~Scene()
 	{
-		// OpenComposite first, then the textures and the device (OpenVR's rule for every API)
+		// OpenLamina first, then the textures and the device (OpenVR's rule for every API)
 		if (started)
 			c.core->Cleanup();
 		if (gfx)

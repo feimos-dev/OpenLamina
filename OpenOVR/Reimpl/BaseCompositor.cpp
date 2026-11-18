@@ -471,7 +471,7 @@ bool BaseCompositor::OldDeviceTextureType(ETextureType* pType) const
 		return true;
 #endif
 	default:
-		// None (SetGraphicsDevice wasn't called), D3D9 or D3D9Ex: nothing OpenComposite can show
+		// None (SetGraphicsDevice wasn't called), D3D9 or D3D9Ex: nothing OpenLamina can show
 		return false;
 	}
 }

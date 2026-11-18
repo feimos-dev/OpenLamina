@@ -80,7 +80,7 @@ VkPhysicalDevice ChoosePhysicalDevice(VkInstance instance)
 	std::vector<VkPhysicalDevice> devices(count);
 	if (enumerate(instance, &count, devices.data()) < 0 || count == 0)
 		return VK_NULL_HANDLE;
-	// From the process's environment as it is now (a case may set it before OpenComposite starts)
+	// From the process's environment as it is now (a case may set it before OpenLamina starts)
 	char wantBuffer[128] = {};
 	DWORD wantLength = GetEnvironmentVariableA("OC_TEST_RUNTIME_GPU_UUID", wantBuffer, sizeof(wantBuffer));
 	const char* want = wantLength > 0 && wantLength < sizeof(wantBuffer) ? wantBuffer : nullptr;

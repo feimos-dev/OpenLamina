@@ -179,7 +179,7 @@ jobs:
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases display-frequency --script tests/conformance/scripts/display_120.json --expect tests/conformance/expect/display_frequency_measured.json --out conformance/display-frequency-measured
           if ($LASTEXITCODE) { $failed++ }
-          # OpenComposite's own frames while the game stalls, also while another thread reads input
+          # OpenLamina's own frames while the game stalls, also while another thread reads input
           python tests/conformance/run.py --runtime build/bin/${{ matrix.dll }} --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases own-frames,own-frames-race --repeat 5 --jobs 2 --expect tests/conformance/expect/own_frames.json --out conformance/own-frames
           if ($LASTEXITCODE) { $failed++ }
           # inputEvaluator=steamvr suggests bindings for the same profiles as direct

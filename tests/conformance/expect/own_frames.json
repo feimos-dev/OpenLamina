@@ -1,5 +1,5 @@
 {
- "#": "OpenComposite's own frames (run.py --cases own-frames,own-frames-race --expect expect/own_frames.json, on the stand-in at 90 Hz). own-frames: 10 game frames, a second without calls, 10 more; OpenComposite keeps frames going in the pause (at least 60 of the about 80 display slots after its 100 ms wait), without a projection layer of its own. own-frames-race: 20 rounds of 5 frames and a 150 ms pause while another thread reads input; the game's frames and OpenComposite's never overlap.",
+ "#": "OpenLamina's own frames (run.py --cases own-frames,own-frames-race --expect expect/own_frames.json, on the stand-in at 90 Hz). own-frames: 10 game frames, a second without calls, 10 more; OpenLamina keeps frames going in the pause (at least 60 of the about 80 display slots after its 100 ms wait), without a projection layer of its own. own-frames-race: 20 rounds of 5 frames and a 150 ms pause while another thread reads input; the game's frames and OpenLamina's never overlap.",
  "own-frames/frames/-/-": {
   "frames": 20,
   "projection_layers_at_most_20": true,

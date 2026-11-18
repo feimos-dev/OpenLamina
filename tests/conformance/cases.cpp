@@ -1750,8 +1750,8 @@ std::vector<int64_t> ProjectionFrames(const Json::Value& dump)
 	return frames;
 }
 
-// OpenComposite's own frames while the game stalls (expect/own_frames.json): 10 frames, a second without any call,
-// then 10 more. With the stand-in at 90 Hz, OpenComposite runs at least 60 frames of its own in that second, none
+// OpenLamina's own frames while the game stalls (expect/own_frames.json): 10 frames, a second without any call,
+// then 10 more. With the stand-in at 90 Hz, OpenLamina runs at least 60 frames of its own in that second, none
 // with a projection layer (only the game's frames have one), and no frame call comes out of order.
 void OwnFramesCase(CaseContext& c)
 {
@@ -1774,7 +1774,7 @@ void OwnFramesCase(CaseContext& c)
 		// Only the game's frames have one (its first may be lost to the session's move onto its device)
 		r["projection_layers_at_most_20"] = projections.size() <= 20;
 		r["frames_ended_at_least_80"] = dump["frames_ended"].asInt64() >= 10 + 10 + 60;
-		// The frames in the pause (the longest gap between two of the game's frames), all OpenComposite's own
+		// The frames in the pause (the longest gap between two of the game's frames), all OpenLamina's own
 		int64_t pause = 0;
 		for (size_t i = 1; i < projections.size(); i++)
 			pause = std::max<int64_t>(pause, projections[i] - projections[i - 1] - 1);
@@ -1785,7 +1785,7 @@ void OwnFramesCase(CaseContext& c)
 }
 
 // The game stalling and coming back again and again while another thread reads input (expect/own_frames.json): 20
-// rounds of 5 frames and a 150 ms pause, each pause long enough for OpenComposite's own frames to start, so the game's
+// rounds of 5 frames and a 150 ms pause, each pause long enough for OpenLamina's own frames to start, so the game's
 // next frame often meets one of them. No frame call may come out of order, and nothing may crash.
 void OwnFramesRaceCase(CaseContext& c)
 {
@@ -1847,7 +1847,7 @@ std::vector<uint64_t> DxgiAdapterLuids()
 	return luids;
 }
 
-// Has the stand-in name this adapter in its D3D requirements (read when OpenComposite asks, so set before Init)
+// Has the stand-in name this adapter in its D3D requirements (read when OpenLamina asks, so set before Init)
 void NameRuntimeAdapter(uint64_t luid)
 {
 	char hex[32];
@@ -1855,7 +1855,7 @@ void NameRuntimeAdapter(uint64_t luid)
 	SetEnvironmentVariableA("OC_TEST_RUNTIME_GPU_LUID", hex);
 }
 
-// D3D9Ex's index of the adapter with luid, 0 if it has none (as OpenComposite answers then)
+// D3D9Ex's index of the adapter with luid, 0 if it has none (as OpenLamina answers then)
 int32_t D3D9AdapterIndexOf(uint64_t luid)
 {
 	HMODULE d3d9 = LoadLibraryW(L"d3d9.dll");
@@ -1913,7 +1913,7 @@ VkPhysicalDevice NameRuntimeVkDevice(VkInstance instance)
 }
 #endif
 
-// The runtime's GPU as OpenComposite answers it (expect/gpu.json), on the stand-in with scripts/gfx_all_apis.json: the
+// The runtime's GPU as OpenLamina answers it (expect/gpu.json), on the stand-in with scripts/gfx_all_apis.json: the
 // stand-in's D3D requirements name the last DXGI adapter (WARP's, where there's a GPU as well) and its Vulkan the last
 // physical device. Each answer is recorded as whether it's that adapter's; the Vulkan one (a record of its own) is
 // skipped without a Vulkan driver.

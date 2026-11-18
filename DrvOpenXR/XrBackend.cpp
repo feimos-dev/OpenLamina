@@ -1572,7 +1572,7 @@ void XrBackend::OnSessionCreated()
 	if (BaseClientCore::appType == vr::VRApplication_Scene)
 		BaseApplications::SetSceneProcess(true);
 
-	// Frames of OpenComposite's own while the game runs none, with the visible overlays
+	// Frames of OpenLamina's own while the game runs none, with the visible overlays
 	StopOwnFrames();
 	if (ownFramesStopped)
 		return;
