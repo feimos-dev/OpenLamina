@@ -103,9 +103,12 @@ struct OverlayTextureCopy::Impl {
 			if (Running() && event && SUCCEEDED(fence->SetEventOnCompletion(fenceValue, event)))
 				WaitForSingleObject(event, kCopyTimeoutMs);
 			if (Running()) {
+				// The fence and its event stay too: the fence still has the event to set
 				allocator.Detach();
 				list.Detach();
 				shared.Detach();
+				fence.Detach();
+				event = nullptr;
 			}
 			if (event)
 				CloseHandle(event);
@@ -403,8 +406,10 @@ struct OverlayTextureCopy::Impl {
 		ID3D12CommandList* lists[] = { list };
 		data->m_pCommandQueue->ExecuteCommandLists(1, lists);
 		const uint64_t value = ++copy->fenceValue;
+		// The event may still be set by an earlier copy's wait that timed out: cleared first, and the fence checked after
+		ResetEvent(copy->event);
 		if (FAILED(data->m_pCommandQueue->Signal(copy->fence.Get(), value)) || FAILED(copy->fence->SetEventOnCompletion(value, copy->event))
-		    || WaitForSingleObject(copy->event, kCopyTimeoutMs) != WAIT_OBJECT_0) {
+		    || WaitForSingleObject(copy->event, kCopyTimeoutMs) != WAIT_OBJECT_0 || copy->fence->GetCompletedValue() < value) {
 			*why = "the D3D12 copy didn't finish in time";
 			// Still running: the next copy is refused until its fence has passed
 			return nullptr;
