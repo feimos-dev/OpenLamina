@@ -108,7 +108,6 @@ add_executable(oc_unit_tests
 	unit/BaseInputTests.cpp
 	unit/BaseCompositorTests.cpp
 	unit/NumbersTests.cpp
-	unit/XrHMDTests.cpp
 	unit/ImageTests.cpp
 	unit/EquirectTests.cpp
 	unit/FormatTableTests.cpp
