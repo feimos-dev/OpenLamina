@@ -47,15 +47,20 @@ public:
 	 * re-read from disk only when its generation changed */
 	Json::Value Read(StoreDoc doc);
 
-	/** Locked read-modify-write of the document's data. False if the store can't be used, or the file is a newer
-	 * format (which is read but never written) */
-	bool Update(StoreDoc doc, const std::function<void(Json::Value& data)>& edit);
+	/** How long a writer waits for the store's lock, which another program may hold: about two seconds at most, or
+	 * not at all, for a writer in the game's frame, which tries again later instead */
+	enum class Wait { UpToTwoSeconds, Never };
+
+	/** Locked read-modify-write of the document's data. False if the store can't be used, the file is a newer
+	 * format (which is read but never written), or the lock wasn't had in time */
+	bool Update(StoreDoc doc, const std::function<void(Json::Value& data)>& edit, Wait wait = Wait::UpToTwoSeconds);
 
 	/** Changes with every Update of the document, in any process; 0 if the store can't be used */
 	uint64_t Generation(StoreDoc doc);
 
-	/** Puts an event in the ring for the other processes (and other stores in this one) */
-	void PostEvent(uint32_t eventType, const std::array<uint64_t, 4>& data);
+	/** Puts an event in the ring for the other processes (and other stores in this one). False if it wasn't put there:
+	 * the store can't be used, or the lock wasn't had in time. */
+	bool PostEvent(uint32_t eventType, const std::array<uint64_t, 4>& data, Wait wait = Wait::UpToTwoSeconds);
 
 	/** The events other stores posted after cursor, which moves to the newest. Cursor 0 starts at the current head
 	 * (nothing returned). More than the ring holds since cursor: the oldest are gone, and *lost says how many. */

@@ -99,6 +99,28 @@ TEST_CASE("Store_concurrent_updates_lose_nothing")
 	CHECK(b.Read(StoreDoc::Scene)["count"].asInt() == 8000);
 }
 
+TEST_CASE("Store_writer_that_does_not_wait_gives_up_while_another_holds_it")
+{
+	TempDir dir;
+	SharedStore holder(dir.path), other(dir.path);
+	bool updated = true, posted = true;
+	std::chrono::steady_clock::duration took{};
+	holder.Update(StoreDoc::Settings, [&](Json::Value&) {
+		// While the holder is in its update, with the store's lock
+		auto start = std::chrono::steady_clock::now();
+		updated = other.Update(StoreDoc::Settings, [](Json::Value& d) { d["x"] = 1; }, SharedStore::Wait::Never);
+		posted = other.PostEvent(1, { 0, 0, 0, 0 }, SharedStore::Wait::Never);
+		took = std::chrono::steady_clock::now() - start;
+	});
+	CHECK_FALSE(updated);
+	CHECK_FALSE(posted);
+	CHECK(took < std::chrono::seconds(1));
+	// Let go: both go through at once
+	CHECK(other.Update(StoreDoc::Settings, [](Json::Value& d) { d["x"] = 1; }, SharedStore::Wait::Never));
+	CHECK(other.PostEvent(1, { 0, 0, 0, 0 }, SharedStore::Wait::Never));
+	CHECK(other.Read(StoreDoc::Settings)["x"].asInt() == 1);
+}
+
 TEST_CASE("Store_survives_corrupt_document")
 {
 	TempDir dir;

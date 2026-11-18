@@ -72,12 +72,17 @@ RemotePointerEvent UnpackRemotePointer(const uint64_t (&data)[4])
 	return e;
 }
 
-void PostRemotePointerEvents(const std::vector<StoreEvent>& events)
+size_t PostRemotePointerEvents(const std::vector<StoreEvent>& events)
 {
+	size_t posted = 0;
 	for (const StoreEvent& s : events) {
+		// One of OpenLamina's own events: for the other programs only
 		vr::VREvent_t e = OcUnpackEvent(s.eventType, s.data);
-		OcPostEvent((vr::EVREventType)e.eventType, e.trackedDeviceIndex, e.data, true);
+		if (!SharedStore::Get().PostEvent((uint32_t)e.eventType, OcPackEvent(e.trackedDeviceIndex, e.data), SharedStore::Wait::Never))
+			break;
+		posted++;
 	}
+	return posted;
 }
 
 void RemotePointer::SetDevicePoses(const std::array<std::optional<XrPosef>, 3>& hmdLeftRight)

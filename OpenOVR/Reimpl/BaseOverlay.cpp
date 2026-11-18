@@ -224,6 +224,9 @@ struct BaseOverlay::Sharing {
 	Json::Value published{ Json::arrayValue }; // the overlays as last written
 	bool wrote = false;
 	double lastTry = -1;
+	// The pointer's events for other programs that the store couldn't take yet (another program held it), posted
+	// first at the next frame; the frame's thread's (_UpdatePointer)
+	std::vector<StoreEvent> unsent;
 };
 
 struct BaseOverlay::DashboardState {
@@ -1406,7 +1409,19 @@ void BaseOverlay::_UpdatePointer()
 		}
 	}
 	dropped.reset();
-	PostRemotePointerEvents(remoteEvents);
+	// To the other programs, after any left from earlier frames. More than a few seconds' worth left: the other
+	// programs miss the oldest, as they would with a full ring.
+	std::vector<StoreEvent>& unsent = sharing->unsent;
+	unsent.insert(unsent.end(), remoteEvents.begin(), remoteEvents.end());
+	if (!unsent.empty()) {
+		const size_t posted = PostRemotePointerEvents(unsent);
+		unsent.erase(unsent.begin(), unsent.begin() + (ptrdiff_t)posted);
+		constexpr size_t kMaxUnsent = 1024;
+		if (unsent.size() > kMaxUnsent) {
+			OOVR_LOG_ONCE("The store stays held by another program: the pointer's oldest events for other programs are let go");
+			unsent.erase(unsent.begin(), unsent.end() - (ptrdiff_t)kMaxUnsent);
+		}
+	}
 	if (dashClick && *dashClick == "quit") {
 		// "Quit game": the game is asked to quit, and the dashboard closes
 		OcPostEvent(VREvent_Quit, k_unTrackedDeviceIndexInvalid, VREvent_Data_t{}, false);

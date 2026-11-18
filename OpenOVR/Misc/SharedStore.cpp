@@ -277,10 +277,10 @@ struct SharedStore::Platform {
 	}
 
 	// Waits for about two seconds at most: a holder that is suspended (in a debugger, say) leaves the store unwritten
-	// rather than every other program stuck
-	bool Lock()
+	// rather than every other program stuck. Without wait, one try.
+	bool Lock(bool wait)
 	{
-		auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(2);
+		auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(wait ? 2 : 0);
 		for (;;) {
 #ifdef _WIN32
 			OVERLAPPED overlapped = {};
@@ -368,8 +368,8 @@ struct SharedStore::Platform {
 // Holds the store's file lock for a scope
 class StoreFileLock {
 public:
-	explicit StoreFileLock(SharedStore::Platform& p)
-	    : platform(p), held(p.Lock())
+	explicit StoreFileLock(SharedStore::Platform& p, bool wait = true)
+	    : platform(p), held(p.Lock(wait))
 	{
 	}
 	~StoreFileLock()
@@ -485,13 +485,19 @@ Json::Value SharedStore::Read(StoreDoc doc)
 	return data;
 }
 
-bool SharedStore::Update(StoreDoc doc, const std::function<void(Json::Value& data)>& edit)
+bool SharedStore::Update(StoreDoc doc, const std::function<void(Json::Value& data)>& edit, Wait wait)
 {
 	if (!Usable())
 		return false;
 	// Not the cache's lock: Read and PollEvents mustn't wait while this waits for another process
-	std::lock_guard<std::mutex> writing(writeLock);
-	StoreFileLock fileLock(*platform);
+	std::unique_lock<std::mutex> writing(writeLock, std::defer_lock);
+	if (wait == Wait::Never) {
+		if (!writing.try_lock())
+			return false;
+	} else {
+		writing.lock();
+	}
+	StoreFileLock fileLock(*platform, wait != Wait::Never);
 	if (!fileLock.held)
 		return false;
 
@@ -545,14 +551,20 @@ bool SharedStore::Update(StoreDoc doc, const std::function<void(Json::Value& dat
 	return true;
 }
 
-void SharedStore::PostEvent(uint32_t eventType, const std::array<uint64_t, 4>& data)
+bool SharedStore::PostEvent(uint32_t eventType, const std::array<uint64_t, 4>& data, Wait wait)
 {
 	if (!Usable())
-		return;
-	std::lock_guard<std::mutex> writing(writeLock);
-	StoreFileLock fileLock(*platform);
+		return false;
+	std::unique_lock<std::mutex> writing(writeLock, std::defer_lock);
+	if (wait == Wait::Never) {
+		if (!writing.try_lock())
+			return false;
+	} else {
+		writing.lock();
+	}
+	StoreFileLock fileLock(*platform, wait != Wait::Never);
 	if (!fileLock.held)
-		return;
+		return false;
 
 	uint64_t seq = Load(header()->head) + 1;
 	{
@@ -576,6 +588,7 @@ void SharedStore::PostEvent(uint32_t eventType, const std::array<uint64_t, 4>& d
 		slot.data[i] = data[i];
 	Store(slot.seq, seq);
 	Store(header()->head, seq);
+	return true;
 }
 
 std::vector<StoreEvent> SharedStore::PollEvents(uint64_t& cursor, uint32_t* lost)
