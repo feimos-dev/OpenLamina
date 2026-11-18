@@ -282,7 +282,7 @@ def monado_running():
 def join_dump(dump, what):
     """What a case record's "dump_join" asks of the stand-in's dump (None without one, as on a real runtime):
       last_projection  the last projection layer: {"frame", "invalid", "views": [{"samples", "samples_error", "rect",
-                       "format", "array_index", "invalid", "depth"}]}
+                       "image", "format", "array_index", "invalid", "depth"}]}
       last_frame       {"frame", "layers": every layer of the last frame that had any, as the dump has them}
       counters         frames_ended, frame_order_errors, refresh_rate_requests, images_left_acquired,
                        swapchain_call_order_errors
@@ -300,7 +300,7 @@ def join_dump(dump, what):
         if not proj:
             return None
         last = proj[-1]
-        keep = ("samples", "samples_error", "rect", "format", "array_index", "invalid", "depth", "pose", "fov")
+        keep = ("samples", "samples_error", "rect", "image", "format", "array_index", "invalid", "depth", "pose", "fov")
         return {"frame": last.get("frame"), "invalid": last.get("invalid", []),
                 "views": [{k: v.get(k) for k in keep} for v in last.get("views", [])]}
     if what == "last_frame":

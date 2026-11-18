@@ -133,6 +133,11 @@ public:
 		return VROverlayError_InvalidHandle;                                          \
 	}
 
+// USEH() for a setter of what _BuildLayers reads (on the own frames' thread too): under the layers' lock
+#define USEH_LOCKED()                                                    \
+	std::lock_guard<std::recursive_mutex> layersGuard(layersLock); \
+	USEH()
+
 #define USEHB()                                                                       \
 	OverlayData* overlay = (OverlayData*)ulOverlayHandle;                             \
 	if (!overlay || !validOverlays.count(overlay) || !overlays.count(overlay->key)) { \
@@ -496,22 +501,31 @@ EVROverlayError BaseOverlay::GetOverlayImageData(VROverlayHandle_t ulOverlayHand
 	if (punHeight)
 		*punHeight = 0;
 
-	// The last image from memory, or the texture read back
-	Image readBack;
-	const Image* image = &overlay->rawImage;
+	// The last image from memory, or the texture read back: what's needed is copied under the layers' lock, which
+	// SetOverlayRaw and SetOverlayTexture write them under
+	Image copied;
+	Texture_t texture{};
+	VRTextureBounds_t textureBounds{};
+	std::shared_ptr<Compositor> shared;
+	{
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		copied = overlay->rawImage;
+		texture = overlay->texture;
+		textureBounds = overlay->textureBounds;
+		shared = overlay->compositor.lock();
+	}
+	const Image* image = &copied;
 	if (image->Empty()) {
-		if (!overlay->texture.handle)
+		if (!texture.handle)
 			return VROverlayError_InvalidTexture;
-		std::shared_ptr<Compositor> shared = overlay->compositor.lock();
 		std::unique_ptr<Compositor> own;
 		Compositor* comp = shared.get();
 		if (!comp) {
-			own = BaseCompositor::CreateCompositorAPI(&overlay->texture);
+			own = BaseCompositor::CreateCompositorAPI(&texture);
 			comp = own.get();
 		}
-		if (!comp || !comp->ReadbackToCpu(&overlay->texture, &overlay->textureBounds, readBack))
-			OC_UNSUPPORTED(VROverlayError_RequestFailed, "GetOverlayImageData: this overlay's texture (type %d) can't be read back", (int)overlay->texture.eType);
-		image = &readBack;
+		if (!comp || !comp->ReadbackToCpu(&texture, &textureBounds, copied))
+			OC_UNSUPPORTED(VROverlayError_RequestFailed, "GetOverlayImageData: this overlay's texture (type %d) can't be read back", (int)texture.eType);
 	}
 	if (punWidth)
 		*punWidth = image->width;
@@ -542,7 +556,7 @@ uint32_t BaseOverlay::GetOverlayRenderingPid(VROverlayHandle_t ulOverlayHandle)
 }
 EVROverlayError BaseOverlay::SetOverlayFlag(VROverlayHandle_t ulOverlayHandle, VROverlayFlags eOverlayFlag, bool bEnabled)
 {
-	USEH();
+	USEH_LOCKED();
 
 	if (bEnabled) {
 		overlay->flags |= 1uLL << eOverlayFlag;
@@ -562,7 +576,7 @@ EVROverlayError BaseOverlay::GetOverlayFlag(VROverlayHandle_t ulOverlayHandle, V
 }
 EVROverlayError BaseOverlay::SetOverlayColor(VROverlayHandle_t ulOverlayHandle, float fRed, float fGreen, float fBlue)
 {
-	USEH();
+	USEH_LOCKED();
 
 	overlay->colour.r = fRed;
 	overlay->colour.g = fGreen;
@@ -582,7 +596,7 @@ EVROverlayError BaseOverlay::GetOverlayColor(VROverlayHandle_t ulOverlayHandle, 
 }
 EVROverlayError BaseOverlay::SetOverlayAlpha(VROverlayHandle_t ulOverlayHandle, float fAlpha)
 {
-	USEH();
+	USEH_LOCKED();
 
 	overlay->colour.a = fAlpha;
 
@@ -617,7 +631,7 @@ EVROverlayError BaseOverlay::GetOverlayTexelAspect(VROverlayHandle_t ulOverlayHa
 }
 EVROverlayError BaseOverlay::SetOverlaySortOrder(VROverlayHandle_t ulOverlayHandle, uint32_t unSortOrder)
 {
-	USEH();
+	USEH_LOCKED();
 	overlay->sortOrder = unSortOrder;
 	return VROverlayError_None;
 }
@@ -629,7 +643,7 @@ EVROverlayError BaseOverlay::GetOverlaySortOrder(VROverlayHandle_t ulOverlayHand
 }
 EVROverlayError BaseOverlay::SetOverlayWidthInMeters(VROverlayHandle_t ulOverlayHandle, float fWidthInMeters)
 {
-	USEH();
+	USEH_LOCKED();
 
 	overlay->widthMeters = fWidthInMeters;
 
@@ -645,7 +659,7 @@ EVROverlayError BaseOverlay::GetOverlayWidthInMeters(VROverlayHandle_t ulOverlay
 }
 EVROverlayError BaseOverlay::SetOverlayCurvature(VROverlayHandle_t ulOverlayHandle, float fCurvature)
 {
-	USEH();
+	USEH_LOCKED();
 
 	// _BuildLayers draws it as a cylinder where it can
 	overlay->curvature = fCurvature;
@@ -682,7 +696,7 @@ EVROverlayError BaseOverlay::GetOverlayAutoCurveDistanceRangeInMeters(VROverlayH
 }
 EVROverlayError BaseOverlay::SetOverlayTextureColorSpace(VROverlayHandle_t ulOverlayHandle, EColorSpace eTextureColorSpace)
 {
-	USEH();
+	USEH_LOCKED();
 
 	overlay->colourSpace = eTextureColorSpace;
 
@@ -698,7 +712,7 @@ EVROverlayError BaseOverlay::GetOverlayTextureColorSpace(VROverlayHandle_t ulOve
 }
 EVROverlayError BaseOverlay::SetOverlayTextureBounds(VROverlayHandle_t ulOverlayHandle, const VRTextureBounds_t* pOverlayTextureBounds)
 {
-	USEH();
+	USEH_LOCKED();
 
 	if (pOverlayTextureBounds)
 		overlay->textureBounds = *pOverlayTextureBounds;
@@ -757,7 +771,7 @@ EVROverlayError BaseOverlay::GetOverlayTransformType(VROverlayHandle_t ulOverlay
 }
 EVROverlayError BaseOverlay::SetOverlayTransformAbsolute(VROverlayHandle_t ulOverlayHandle, ETrackingUniverseOrigin eTrackingOrigin, const HmdMatrix34_t* pmatTrackingOriginToOverlayTransform)
 {
-	USEH();
+	USEH_LOCKED();
 
 	// TODO account for the universe origin, and if it doesn't match that currently in use then add or
 	//  subtract the floor position to match it. This shouldn't usually be an issue though, as I can't
@@ -781,7 +795,7 @@ EVROverlayError BaseOverlay::GetOverlayTransformAbsolute(VROverlayHandle_t ulOve
 }
 EVROverlayError BaseOverlay::SetOverlayTransformTrackedDeviceRelative(VROverlayHandle_t ulOverlayHandle, TrackedDeviceIndex_t unTrackedDevice, const HmdMatrix34_t* pmatTrackedDeviceToOverlayTransform)
 {
-	USEH();
+	USEH_LOCKED();
 
 	overlay->transformType = VROverlayTransform_TrackedDeviceRelative;
 	overlay->transformData.deviceRelative.device = unTrackedDevice;
@@ -802,7 +816,7 @@ EVROverlayError BaseOverlay::GetOverlayTransformTrackedDeviceRelative(VROverlayH
 }
 EVROverlayError BaseOverlay::SetOverlayTransformTrackedDeviceComponent(VROverlayHandle_t ulOverlayHandle, TrackedDeviceIndex_t unDeviceIndex, const char* pchComponentName)
 {
-	USEH();
+	USEH_LOCKED();
 	overlay->transformType = VROverlayTransform_TrackedComponent;
 	overlay->componentDevice = unDeviceIndex;
 	overlay->componentName = pchComponentName ? pchComponentName : "";
@@ -864,7 +878,7 @@ EVROverlayError BaseOverlay::SetOverlayTransformProjection(VROverlayHandle_t ulO
     ETrackingUniverseOrigin eTrackingOrigin, const HmdMatrix34_t* pmatTrackingOriginToOverlayTransform,
     const OOVR_VROverlayProjection_t* pProjection, EVREye eEye)
 {
-	USEH();
+	USEH_LOCKED();
 	if (pmatTrackingOriginToOverlayTransform) {
 		overlay->transformType = VROverlayTransform_Absolute;
 		S2O_om44(*pmatTrackingOriginToOverlayTransform, overlay->overlayTransform);
@@ -874,13 +888,13 @@ EVROverlayError BaseOverlay::SetOverlayTransformProjection(VROverlayHandle_t ulO
 }
 EVROverlayError BaseOverlay::ShowOverlay(VROverlayHandle_t ulOverlayHandle)
 {
-	USEH();
+	USEH_LOCKED();
 	overlay->visible = true;
 	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::HideOverlay(VROverlayHandle_t ulOverlayHandle)
 {
-	USEH();
+	USEH_LOCKED();
 	overlay->visible = false;
 	return VROverlayError_None;
 }

@@ -15,7 +15,6 @@ public:
 	bool AdmitUnknownProps() const { return admitUnknownProps; }
 	inline bool LogGetTrackedProperty() const { return logGetTrackedProperty; }
 	inline bool StopOnSoftAbort() const { return stopOnSoftAbort; }
-	inline bool DX10Mode() const { return dx10Mode; }
 	inline bool EnableHiddenMeshFix() const { return enableHiddenMeshFix; }
 	inline bool InvertUsingShaders() const { return invertUsingShaders; }
 	inline bool InitUsingVulkan() const { return initUsingVulkan; }

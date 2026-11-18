@@ -22,14 +22,14 @@ public:
 	};
 
 	// Records the pass into list: src (in PIXEL_SHADER_RESOURCE, read through a view of srvFormat, slice srcSlice) over
-	// the whole of dst (in RENDER_TARGET, a render target view of dstFormat), with slot's descriptors (one per swapchain
-	// image, so a slot isn't rewritten while the GPU may still read it: below SlotCount). False if it couldn't.
+	// dstWidth x dstHeight from the origin of dst (in RENDER_TARGET, a render target view of dstFormat), with slot's
+	// descriptors (one per swapchain image, so a slot isn't rewritten while the GPU may still read it). False if it
+	// couldn't.
 	bool Record(ID3D12GraphicsCommandList* list, uint32_t slot, ID3D12Resource* src, DXGI_FORMAT srvFormat, uint32_t srcSlice,
 	    ID3D12Resource* dst, DXGI_FORMAT dstFormat, uint32_t dstWidth, uint32_t dstHeight, const Pass& pass);
 
 	// Makes room for slots descriptors: only while none of the pass's work is in flight
 	bool EnsureSlots(uint32_t slots);
-	uint32_t SlotCount() const { return slotCount; }
 
 private:
 	ID3D12PipelineState* PipelineFor(DXGI_FORMAT format);

@@ -15,6 +15,9 @@
 #if defined(SUPPORT_DX)
 #include <dxgi.h>
 #endif
+#if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+#include <d3d11_4.h>
+#endif
 
 #if defined(SUPPORT_GL) && !defined(_WIN32)
 #include <GL/glx.h>
@@ -873,8 +876,7 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 		}
 		copied = { copy, vr::TextureType_DirectX, texture->eColorSpace };
 		texture = &copied;
-		// A D3D11 compositor, which CreateCompositorAPI could take the interop's texture for a D3D10 one (an interop
-		// device answers D3D10's interfaces too)
+		// A D3D11 compositor for the interop's texture
 		if (!compositors[eye])
 			compositors[eye] = std::make_unique<DX11Compositor>(copy);
 	}
@@ -1646,6 +1648,46 @@ void XrBackend::OnSessionLost()
 	EnqueueQuit();
 }
 
+// Own frames call xrEndFrame on their own thread, where the runtime may use the session's device while the game's
+// threads use it too. A D3D11 device's immediate context is made safe for that (multithread protection, logged once);
+// a D3D12 queue is free-threaded. A Vulkan queue or an OpenGL context can't be shared with the game's threads that
+// way: false, logged once, and there are no own frames.
+static bool DeviceReadyForOwnFrames(const void* binding)
+{
+	const auto* header = (const XrBaseInStructure*)binding;
+	if (!header)
+		return false;
+	switch (header->type) {
+#if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+	case XR_TYPE_GRAPHICS_BINDING_D3D11_KHR: {
+		ID3D11Device* device = ((const XrGraphicsBindingD3D11KHR*)binding)->device;
+		ComPtr<ID3D11DeviceContext> context;
+		if (device)
+			device->GetImmediateContext(&context);
+		ComPtr<ID3D11Multithread> multithread;
+		if (!context || FAILED(context.As(&multithread)) || !multithread) {
+			OOVR_LOG_ONCE("ownFrames: the D3D11 device has no ID3D11Multithread, so there are no own frames");
+			return false;
+		}
+		if (!multithread->GetMultithreadProtected()) {
+			multithread->SetMultithreadProtected(TRUE);
+			OOVR_LOG_ONCE("ownFrames: the session's D3D11 immediate context is now multithread protected");
+		}
+		return true;
+	}
+#endif
+#if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX12)
+	case XR_TYPE_GRAPHICS_BINDING_D3D12_KHR:
+		return true;
+#endif
+	default:
+		OOVR_LOG_ONCEF("ownFrames: no own frames on a session of graphics binding type %d (a Vulkan queue or an OpenGL context "
+		               "is the game's own)",
+		    (int)header->type);
+		return false;
+	}
+}
+
 void XrBackend::OnSessionCreated()
 {
 	sessionLost = false;
@@ -1692,7 +1734,7 @@ void XrBackend::OnSessionCreated()
 
 	// Frames of OpenLamina's own while the game runs none and there's a skybox or an overlay to show
 	StopOwnFrames();
-	if (ownFramesStopped || !oovr_global_configuration.OwnFrames())
+	if (ownFramesStopped || !oovr_global_configuration.OwnFrames() || !DeviceReadyForOwnFrames(GetCurrentGraphicsBinding()))
 		return;
 	ownFrames = std::make_unique<OwnFrameLoop>(
 	    OwnFrameLoop::Mode::WhenAppIdle,

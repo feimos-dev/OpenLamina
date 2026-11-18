@@ -33,6 +33,7 @@ void Compositor::Invoke(const vr::Texture_t* texture, const vr::VRTextureBounds_
 	}
 	lastResult = XR_SUCCESS;
 	submitSlice = SubmitArraySlice::Current();
+	copiedArea = {};
 	CopyToSwapchain(texture, bounds, eye, submitFlags);
 	if (XR_FAILED(lastResult)) {
 		lastFailure = lastResult;
@@ -44,9 +45,10 @@ void Compositor::Invoke(const vr::Texture_t* texture, const vr::VRTextureBounds_
 	// A failed swapchain call leaves this eye out of the frame (XrBackend checks the swapchain)
 	subImage.swapchain = XR_FAILED(lastResult) ? XR_NULL_HANDLE : GetSwapChain();
 	subImage.imageArrayIndex = 0; // This is *not* the swapchain index
-	// The swapchain is the size of the bounds' area, which the copy put in it whole (flipped bounds flipped back)
+	// The copy put the bounds' area at the image's origin (flipped bounds flipped back); a compositor that doesn't say
+	// how much it copied filled the whole image
 	subImage.imageRect.offset = { 0, 0 };
-	subImage.imageRect.extent = GetSrcSize();
+	subImage.imageRect.extent = copiedArea.width > 0 && copiedArea.height > 0 ? copiedArea : GetSrcSize();
 }
 
 // Each failing call (and result) is logged the first time only
@@ -217,8 +219,7 @@ bool RegionFromBounds(const vr::VRTextureBounds_t* bounds, uint32_t width, uint3
 	};
 	out.x0 = at(u0, width), out.x1 = at(u1, width);
 	out.y0 = at(v0, height), out.y1 = at(v1, height);
-	// An axis with no area (bounds left all zero, as some mods send them) shows the whole texture on that axis, as
-	// OpenComposite always has
+	// An axis with no area (bounds left all zero, as some mods send them) shows the texture's whole width or height
 	if (out.x1 <= out.x0) {
 		OOVR_LOG_ONCEF("Texture bounds with no width (u %f to %f): the texture's whole width is shown", (double)b.uMin, (double)b.uMax);
 		out.x0 = 0, out.x1 = width, out.flipX = false;
