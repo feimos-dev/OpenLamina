@@ -117,4 +117,16 @@ TEST_CASE("Image file: rejects bad input")
 	auto wide = Scratch(u8"wide.png");
 	std::ofstream(wide, std::ios::binary).write((const char*)png.data(), (std::streamsize)png.size());
 	CHECK_FALSE(LoadImageFile(wide, &why));
+
+	// More than 64 MiB: refused by its size, without being read
+	auto huge = Scratch(u8"huge.png");
+	{
+		std::ofstream out(huge, std::ios::binary);
+		out.write(bytes.data(), (std::streamsize)bytes.size());
+		out.seekp((std::streamoff)kMaxImageFileBytes);
+		out.put('\0');
+	}
+	why.clear();
+	CHECK_FALSE(LoadImageFile(huge, &why));
+	CHECK(why.find("64 MiB") != std::string::npos);
 }
