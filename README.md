@@ -80,6 +80,8 @@ Upstream merge requests are linked as !*n* with their authors. Everything else w
   ([!150](https://gitlab.com/znixian/OpenOVR/-/merge_requests/150), mittorn)
 - Curved overlays, through `XR_KHR_composition_layer_cylinder`, drawn flat where the runtime lacks it.
   ([!130](https://gitlab.com/znixian/OpenOVR/-/merge_requests/130), galister)
+- The controllers point at overlays that take mouse input as a mouse: a cursor where the laser meets one, clicks with
+  the trigger, scrolling with the thumbstick, and laser haptics.
 
 **Stability and building**
 - The log opens before anything writes to it (upstream issue #479), and a log that can't be opened no longer crashes

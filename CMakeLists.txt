@@ -341,6 +341,8 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/LibMonado.cpp
 	OpenOVR/Misc/Canvas.cpp
 	OpenOVR/Misc/Canvas.h
+	OpenOVR/Misc/LaserMouse.cpp
+	OpenOVR/Misc/LaserMouse.h
 	OpenOVR/Misc/Equirect.cpp
 	OpenOVR/Misc/FrameStats.cpp
 	OpenOVR/Misc/FrameStats.h

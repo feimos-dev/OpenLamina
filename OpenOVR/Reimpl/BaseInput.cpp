@@ -3627,6 +3627,81 @@ bool BaseInput::AreActionsLoaded()
 	return hasLoadedActions;
 }
 
+bool BaseInput::GetHandPointer(int hand, XrSpace base, XrTime time, HandPointer& out)
+{
+	out = {};
+	if (hand < 0 || hand > 1)
+		return false;
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
+	// A manifest being loaded replaces the actions and spaces under this lock
+	std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
+	if (!hasLoadedActions || legacyInputsSet == XR_NULL_HANDLE || base == XR_NULL_HANDLE || !xr_session.get())
+		return false;
+	const LegacyControllerActions& ctrl = legacyControllers[hand];
+	if (ctrl.aimPoseSpace == XR_NULL_HANDLE)
+		return false;
+	XrSpaceLocation location{ XR_TYPE_SPACE_LOCATION };
+	if (XR_FAILED(xrLocateSpace(ctrl.aimPoseSpace, base, time, &location)))
+		return false;
+	const XrSpaceLocationFlags valid = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+	if ((location.locationFlags & valid) != valid)
+		return false;
+	out.aim = location.pose;
+
+	// A float action's state (a boolean input reads as 0 or 1 through one); nothing if inactive
+	auto read = [&](XrAction action, XrPath subaction) -> std::optional<float> {
+		if (action == XR_NULL_HANDLE)
+			return {};
+		XrActionStateGetInfo getInfo = { XR_TYPE_ACTION_STATE_GET_INFO };
+		getInfo.action = action;
+		getInfo.subactionPath = subaction;
+		XrActionStateFloat state = { XR_TYPE_ACTION_STATE_FLOAT };
+		if (XR_FAILED(xrGetActionStateFloat(xr_session.get(), &getInfo, &state)) || !state.isActive)
+			return {};
+		return state.currentState;
+	};
+	if (useEvaluator && rawInputsSet != XR_NULL_HANDLE) {
+		// The raw inputs: the first of each a controller has
+		const XrPath subaction = (size_t)hand < allSubactionPaths.size() ? allSubactionPaths[hand] : XR_NULL_PATH;
+		auto first = [&](std::initializer_list<const char*> components) -> float {
+			for (const char* component : components) {
+				auto action = rawActions.find(component);
+				if (action == rawActions.end())
+					continue;
+				if (std::optional<float> v = read(action->second, subaction))
+					return *v;
+			}
+			return 0.0f;
+		};
+		out.trigger = first({ "/input/trigger/value", "/input/trigger/click", "/input/select/click" });
+		out.stickX = first({ "/input/thumbstick/x", "/input/trackpad/x" });
+		out.stickY = first({ "/input/thumbstick/y", "/input/trackpad/y" });
+	} else {
+		out.trigger = read(ctrl.trigger, XR_NULL_PATH).value_or(0.0f);
+		out.stickX = read(ctrl.stickX, XR_NULL_PATH).value_or(0.0f);
+		out.stickY = read(ctrl.stickY, XR_NULL_PATH).value_or(0.0f);
+	}
+	return true;
+}
+
+void BaseInput::TriggerHandHaptic(int hand, float seconds, float frequency, float amplitude)
+{
+	if (hand < 0 || hand > 1 || !oovr_global_configuration.Haptics())
+		return;
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
+	std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
+	const LegacyControllerActions& ctrl = legacyControllers[hand];
+	if (!hasLoadedActions || ctrl.haptic == XR_NULL_HANDLE || !xr_session.get())
+		return;
+	XrHapticActionInfo info = { XR_TYPE_HAPTIC_ACTION_INFO };
+	info.action = ctrl.haptic;
+	XrHapticVibration vibration = { XR_TYPE_HAPTIC_VIBRATION };
+	vibration.duration = seconds > 0 && std::isfinite(seconds) ? (XrDuration)(std::min(seconds, 10.0f) * 1e9) : XR_MIN_HAPTIC_DURATION;
+	vibration.frequency = frequency > 0 && std::isfinite(frequency) ? frequency : XR_FREQUENCY_UNSPECIFIED;
+	vibration.amplitude = std::isfinite(amplitude) ? std::clamp(amplitude, 0.0f, 1.0f) : 1.0f;
+	OC_XR_LOG(xrApplyHapticFeedback(xr_session.get(), &info, (XrHapticBaseHeader*)&vibration));
+}
+
 bool BaseInput::HasEyeGaze()
 {
 	std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
