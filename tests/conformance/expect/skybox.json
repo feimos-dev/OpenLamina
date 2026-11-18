@@ -1,5 +1,5 @@
 {
- "#": "Skyboxes with ownFrames=true (run.py --cases skybox-1,skybox-2,skybox-6 --script scripts/skybox.json --ini ini/own_frames.ini): set while the game stalls, shown in OpenLamina's own frames as equirect layers, upright. 1 texture: one lat-long layer; 2: one per eye; 6 cube faces: one lat-long image made from them (1024x512 from 256x256 faces).",
+ "#": "Skyboxes with ownFrames=true (run.py --cases skybox-1,skybox-2,skybox-6 --script scripts/skybox.json --ini ini/own_frames.ini): set while the game stalls, shown in OpenLamina's own frames as equirect layers, upright. 1 texture: one lat-long layer; 2: one per eye; 6 cube faces: one lat-long image made from them (1024x512 from 256x256 faces), whose top-left is straight up: the middle of the top face, the pattern's mid-grey block, which comes through as it went in.",
  "skybox-1/skybox/-/-": {
   "set": 0,
   "frames_with_skybox_at_least_10": true,
@@ -61,7 +61,7 @@
      1024,
      512
     ],
-    "tl": "ff0000ff",
+    "tl": "808080ff",
     "invalid": []
    }
   ]
