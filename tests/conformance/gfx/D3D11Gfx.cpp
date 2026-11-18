@@ -132,7 +132,8 @@ public:
 		const D3D11_RECT rects[4] = { { 0, 0, (LONG)hw, (LONG)hh }, { (LONG)hw, 0, (LONG)w, (LONG)hh },
 			{ 0, (LONG)hh, (LONG)hw, (LONG)h }, { (LONG)hw, (LONG)hh, (LONG)w, (LONG)h } };
 		for (const D3D11_RECT& r : rects) {
-			uint32_t c = gfx::PatternColour((uint32_t)r.left, (uint32_t)r.top, w, h, eye);
+			// The quadrant's colour, taken at its outer corner: a multisampled pattern has no block in the middle
+			uint32_t c = gfx::PatternColour(r.left ? w - 1 : 0, r.top ? h - 1 : 0, w, h, eye);
 			const float colour[4] = { (c >> 24) / 255.0f, ((c >> 16) & 255) / 255.0f, ((c >> 8) & 255) / 255.0f, (c & 255) / 255.0f };
 			ctx1->ClearView(rtv, colour, &r, 1);
 		}

@@ -93,8 +93,10 @@ public:
 		arraySize = arraySize ? arraySize : 1;
 		if (!known || !w || !h || samples > 1 || (arraySize > 1 && !texImage3D))
 			return Wrap(0); // multisampled patterns: D3D11 only for now
-		// RGBA8 bytes whatever the internal format: OpenGL converts
-		std::vector<uint8_t> data = gfx::PatternTexels(gfx::Texels::RGBA8, w, h, eye, (size_t)w * 4, true);
+		// RGBA8 bytes whatever the internal format: OpenGL converts. A float or 10-bit format holds linear values, so
+		// the bytes are the colours' linear values for those.
+		const bool linear = nativeFormat == kRGBA16F || nativeFormat == kRGB10A2 || nativeFormat == kR11G11B10F;
+		std::vector<uint8_t> data = gfx::PatternTexels(gfx::Texels::RGBA8, w, h, eye, (size_t)w * 4, true, linear);
 		GLint previous = 0;
 		GLenum target = arraySize > 1 ? kTexture2DArray : GL_TEXTURE_2D;
 		glGetIntegerv(arraySize > 1 ? kTextureBinding2DArray : GL_TEXTURE_BINDING_2D, &previous);
@@ -109,7 +111,7 @@ public:
 		glTexParameteri(target, 0x813D /* GL_TEXTURE_MAX_LEVEL */, 0);
 		if (arraySize > 1) {
 			// Layer i: eye (eye + i) % 2's pattern
-			std::vector<uint8_t> other = gfx::PatternTexels(gfx::Texels::RGBA8, w, h, 1 - eye, (size_t)w * 4, true);
+			std::vector<uint8_t> other = gfx::PatternTexels(gfx::Texels::RGBA8, w, h, 1 - eye, (size_t)w * 4, true, linear);
 			std::vector<uint8_t> layers;
 			for (uint32_t i = 0; i < arraySize; i++)
 				layers.insert(layers.end(), i % 2 ? other.begin() : data.begin(), i % 2 ? other.end() : data.end());

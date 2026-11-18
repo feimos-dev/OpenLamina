@@ -9,10 +9,12 @@
   "dump:views[0].samples.tr": "00ff00ff",
   "dump:views[0].samples.bl": "0000ffff",
   "dump:views[0].samples.br": "ffffffff",
+  "dump:views[0].samples.c": "808080ff",
   "dump:views[1].samples.tl": "0000ffff",
   "dump:views[1].samples.tr": "ff0000ff",
   "dump:views[1].samples.bl": "ffffffff",
-  "dump:views[1].samples.br": "00ff00ff"
+  "dump:views[1].samples.br": "00ff00ff",
+  "dump:views[1].samples.c": "808080ff"
  },
  "gfx-d3d12-basic/frame/-/-": {
   "left": 0,
@@ -23,10 +25,12 @@
   "dump:views[0].samples.tr": "00ff00ff",
   "dump:views[0].samples.bl": "0000ffff",
   "dump:views[0].samples.br": "ffffffff",
+  "dump:views[0].samples.c": "808080ff",
   "dump:views[1].samples.tl": "0000ffff",
   "dump:views[1].samples.tr": "ff0000ff",
   "dump:views[1].samples.bl": "ffffffff",
-  "dump:views[1].samples.br": "00ff00ff"
+  "dump:views[1].samples.br": "00ff00ff",
+  "dump:views[1].samples.c": "808080ff"
  },
  "gfx-vk-basic/frame/-/-": {
   "left": 0,
@@ -37,10 +41,12 @@
   "dump:views[0].samples.tr": "00ff00ff",
   "dump:views[0].samples.bl": "0000ffff",
   "dump:views[0].samples.br": "ffffffff",
+  "dump:views[0].samples.c": "808080ff",
   "dump:views[1].samples.tl": "0000ffff",
   "dump:views[1].samples.tr": "ff0000ff",
   "dump:views[1].samples.bl": "ffffffff",
-  "dump:views[1].samples.br": "00ff00ff"
+  "dump:views[1].samples.br": "00ff00ff",
+  "dump:views[1].samples.c": "808080ff"
  },
  "gfx-gl-basic/frame/-/-": {
   "left": 0,
@@ -51,10 +57,12 @@
   "dump:views[0].samples.tr": "00ff00ff",
   "dump:views[0].samples.bl": "0000ffff",
   "dump:views[0].samples.br": "ffffffff",
+  "dump:views[0].samples.c": "808080ff",
   "dump:views[1].samples.tl": "0000ffff",
   "dump:views[1].samples.tr": "ff0000ff",
   "dump:views[1].samples.bl": "ffffffff",
-  "dump:views[1].samples.br": "00ff00ff"
+  "dump:views[1].samples.br": "00ff00ff",
+  "dump:views[1].samples.c": "808080ff"
  },
  "gfx-d3d10-basic/frame/-/-": {
   "left": 0,
@@ -65,10 +73,12 @@
   "dump:views[0].samples.tr": "00ff00ff",
   "dump:views[0].samples.bl": "0000ffff",
   "dump:views[0].samples.br": "ffffffff",
+  "dump:views[0].samples.c": "808080ff",
   "dump:views[1].samples.tl": "0000ffff",
   "dump:views[1].samples.tr": "ff0000ff",
   "dump:views[1].samples.bl": "ffffffff",
-  "dump:views[1].samples.br": "00ff00ff"
+  "dump:views[1].samples.br": "00ff00ff",
+  "dump:views[1].samples.c": "808080ff"
  },
  "overlay-raw-d3d11/overlay/-/-": {
   "create": 0,
