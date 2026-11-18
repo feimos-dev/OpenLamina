@@ -93,6 +93,8 @@ Upstream merge requests are linked as !*n* with their authors. Everything else w
   background application gets a scene session.
 - With `dashboardButton`, a dashboard of OpenLamina's own opens over the game: the dashboard overlays of the overlay
   applications running beside it, a tab for each, and a button to quit the game.
+- A render scale another program sets (`supersampleScale`, the game's `resolutionScale`) reaches the game at its next
+  frame, with the event SteamVR sends for it, so a game that asks for the recommended size again renders at the new one.
 
 **Stability and building**
 - The log opens before anything writes to it (upstream issue #479), and a log that can't be opened no longer crashes

@@ -5,6 +5,8 @@
 #include "XrHMD.h"
 #include "XrBackend.h"
 
+#include <atomic>
+
 #include "../OpenOVR/Misc/Config.h"
 #include "../OpenOVR/Misc/LibMonado.h"
 #include "../OpenOVR/Misc/xr_ext.h"
@@ -35,10 +37,18 @@ static bool WaitForSessionGlobals()
 	return xr_gbl != nullptr;
 }
 
+static std::atomic<float> answeredRenderScale{ 0.0f };
+
+float XrHMD::AnsweredRenderScale()
+{
+	return answeredRenderScale;
+}
+
 void XrHMD::GetRecommendedRenderTargetSize(uint32_t* width, uint32_t* height)
 {
 	// openlamina.ini's supersampleRatio, unless a program or the user's SteamVR settings chose another
 	float scale = BaseSettings::RenderScale(SharedStore::Get(), oovr_global_configuration.SupersampleRatio());
+	answeredRenderScale = scale;
 	if (width)
 		*width = (uint32_t)((float)xr_main_view(XruEyeLeft).recommendedImageRectWidth * scale);
 	if (height)

@@ -47,7 +47,8 @@ MAX_REPEAT = 100  # --repeat's bound: each round is a child process
 SHARED_STORES = {"events-listen": "events", "events-commit": "events", "chaperone": "chaperone", "chaperone-read": "chaperone",
                  "remote-pointer": "remote-pointer", "remote-pointer-overlay": "remote-pointer",
                  "remote-pointer-peer-dies": "peer-dies", "remote-pointer-dying-overlay": "peer-dies",
-                 "dashboard": "dashboard", "dashboard-overlay": "dashboard"}
+                 "dashboard": "dashboard", "dashboard-overlay": "dashboard",
+                 "settings-live": "settings-live", "settings-live-setter": "settings-live"}
 # Cases that read files of SteamVR's install get a fixture of our own as SteamVR (OC_TEST_STEAMVR_DIR, which wins over
 # OC_TEST_NO_STEAMVR); everything else runs without SteamVR
 CASE_ENV = {"render-models": {"OC_TEST_STEAMVR_DIR": str(HERE.parent / "unit" / "data" / "steamvr")}}

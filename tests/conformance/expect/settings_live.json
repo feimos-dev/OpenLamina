@@ -1,0 +1,14 @@
+{
+ "#": "A render scale set by another program (scripts/helper_apps.json, --jobs 2): the game gets VREvent_SteamVRSectionSettingChanged at its next frame, and its textures at the new recommended size (supersampleScale 0.5: half the pixels) reach the runtime within 5 frames, without an invalid layer",
+ "settings-live/render scale/-/-": {
+  "setting_seen": true,
+  "resized_within_5_frames": true,
+  "pixels_ratio": 0.5,
+  "invalid": []
+ },
+ "settings-live-setter/set/-/-": {
+  "init": 0,
+  "saw_game": true,
+  "error": 0
+ }
+}

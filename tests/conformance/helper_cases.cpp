@@ -6,6 +6,7 @@
 #include "IVRCompositor_029.h"
 #include "IVRInput_011.h"
 #include "IVROverlay_028.h"
+#include "IVRSettings_003.h"
 #include "IVRSystem_022.h"
 
 #include "gfx/GfxApi.h"
@@ -441,6 +442,107 @@ void DashboardOverlayCase(CaseContext& c)
 	c.Record("dashboard overlay", r);
 }
 
+// Whether the Scene document names a running program other than this one
+bool SceneAppInStore()
+{
+	Json::Value scene = StoreDocument("scene");
+	return scene["pid"].isUInt() && scene["pid"].asUInt() != OwnPid();
+}
+
+// The game's side of settings-live (scripts/helper_apps.json): frames at about 90 a second, each of the size
+// GetRecommendedRenderTargetSize answers, asked again on VREvent_SteamVRSectionSettingChanged. The overlay app sets
+// supersampleScale 0.5 about 10 frames in: the game's textures, and so its projection views, have half the pixels
+// within 5 frames of the setting reaching the store.
+void SettingsLiveCase(CaseContext& c)
+{
+	std::string why;
+	std::unique_ptr<GfxApi> gfx = GfxApi::Create(GfxKind::D3D11, &why);
+	if (!gfx) {
+		Json::Value r;
+		r["skipped"] = why;
+		c.Record("render scale", r);
+		return;
+	}
+	SceneApp app;
+	if (!OpenSceneApp(c, app))
+		return;
+	auto* settings = Interface<vr::IVRSettings_003::IVRSettings>(c, "IVRSettings_003");
+	uint32_t w = 0, h = 0;
+	app.sys->GetRecommendedRenderTargetSize(&w, &h);
+	const double startPixels = (double)w * h;
+	GfxTexture left = gfx->Pattern(w, h, 29, 0), right = gfx->Pattern(w, h, 29, 1);
+	gfx->Flush();
+	Json::Value r;
+	int seenFrame = -1, resizedFrame = -1;
+	// Until 10 frames after the setting reached the store, at most 600 (the other program may start late)
+	for (int frame = 1; frame <= 600 && !(seenFrame > 0 && frame > seenFrame + 10); frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		app.comp->WaitGetPoses(poses, 16, nullptr, 0);
+		bool changed = false;
+		vr::VREvent_t ev{};
+		while (app.sys->PollNextEvent(&ev, sizeof(ev)))
+			changed = changed || ev.eventType == vr::VREvent_SteamVRSectionSettingChanged;
+		if (seenFrame < 0 && settings && std::fabs(settings->GetFloat("steamvr", "supersampleScale") - 0.5f) < 1e-3f)
+			seenFrame = frame;
+		if (changed) {
+			uint32_t nw = 0, nh = 0;
+			app.sys->GetRecommendedRenderTargetSize(&nw, &nh);
+			if (nw != w || nh != h) {
+				w = nw;
+				h = nh;
+				left = gfx->Pattern(w, h, 29, 0);
+				right = gfx->Pattern(w, h, 29, 1);
+				gfx->Flush();
+				if (resizedFrame < 0)
+					resizedFrame = frame;
+			}
+		}
+		app.comp->Submit(vr::Eye_Left, left.Texture(), nullptr, vr::Submit_Default);
+		app.comp->Submit(vr::Eye_Right, right.Texture(), nullptr, vr::Submit_Default);
+		std::this_thread::sleep_for(std::chrono::milliseconds(11));
+	}
+	c.core->Cleanup();
+	r["setting_seen"] = seenFrame > 0;
+	r["resized_within_5_frames"] = seenFrame > 0 && resizedFrame >= seenFrame && resizedFrame - seenFrame <= 5;
+	// The last projection layer's first view, against the size recommended at the start
+	Json::Value dump = ReadStandInDump();
+	Json::Value last;
+	for (const Json::Value& layer : dump["layers"])
+		if (layer["type"].asString() == "projection")
+			last = layer;
+	const Json::Value& rect = last["views"][0]["rect"];
+	const double lastPixels = rect.size() == 4 ? rect[2].asDouble() * rect[3].asDouble() : 0.0;
+	r["pixels_ratio"] = startPixels > 0 ? std::round(lastPixels / startPixels * 100) / 100 : 0.0;
+	r["invalid"] = last["invalid"].isNull() ? Json::Value(Json::arrayValue) : last["invalid"];
+	c.Record("render scale", r);
+	gfx->Flush();
+}
+
+// The other program of settings-live: an overlay app that sets steamvr/supersampleScale to 0.5 about 10 frames after
+// the game has started
+void SettingsLiveSetterCase(CaseContext& c)
+{
+	Json::Value r;
+	r["init"] = (int)c.core->Init(vr::VRApplication_Overlay, nullptr);
+	auto* settings = r["init"].asInt() == vr::VRInitError_None ? Interface<vr::IVRSettings_003::IVRSettings>(c, "IVRSettings_003") : nullptr;
+	if (!settings) {
+		c.Record("set", r);
+		if (r["init"].asInt() == vr::VRInitError_None)
+			c.core->Cleanup();
+		return;
+	}
+	auto until = std::chrono::steady_clock::now() + std::chrono::seconds(5);
+	while (!SceneAppInStore() && std::chrono::steady_clock::now() < until)
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	r["saw_game"] = SceneAppInStore();
+	std::this_thread::sleep_for(std::chrono::milliseconds(110));
+	vr::IVRSettings_003::EVRSettingsError error = vr::IVRSettings_003::VRSettingsError_None;
+	settings->SetFloat("steamvr", "supersampleScale", 0.5f, &error);
+	r["error"] = (int)error;
+	c.core->Cleanup();
+	c.Record("set", r);
+}
+
 // An overlay application with one overlay from memory and nothing else: no WaitGetPoses, so every frame is
 // OpenLamina's own. About 60 frames' time at 90 Hz.
 void OverlayAppCase(CaseContext& c)
@@ -620,6 +722,8 @@ const std::map<std::string, CaseFn>& conformance::HelperCases()
 		{ "remote-pointer-dying-overlay", RemotePointerDyingOverlayCase },
 		{ "dashboard", DashboardSceneCase },
 		{ "dashboard-overlay", DashboardOverlayCase },
+		{ "settings-live", SettingsLiveCase },
+		{ "settings-live-setter", SettingsLiveSetterCase },
 	};
 	return cases;
 }

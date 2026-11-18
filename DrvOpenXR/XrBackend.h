@@ -245,6 +245,15 @@ private:
 	// store for its lasers (asked at most once a second)
 	bool WantsOverlaysInstance();
 
+	// The settings' generation the render scale (supersampleScale, the app's resolutionScale) was last read at, and the
+	// scale the game was last told of
+	bool renderScaleRead = false;
+	uint64_t settingsGeneration = 0;
+	float notifiedRenderScale = 0;
+	// Between the game's frames: a render scale another program set reaches the game, as SteamVR tells it, with
+	// VREvent_SteamVRSectionSettingChanged; its next textures at the new recommended size get swapchains of that size
+	void NoticeRenderScale();
+
 	// The views for the two main eye layers
 	XrCompositionLayerProjectionView projectionViews[XruEyeCount];
 
