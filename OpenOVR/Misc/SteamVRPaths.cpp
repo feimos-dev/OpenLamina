@@ -147,10 +147,28 @@ static bool NoSteamVRForTests()
 	return v && v[0] && v[0] != '0';
 }
 
+// Tests: OC_TEST_STEAMVR_DIR names a folder to use as SteamVR's install (a fixture of our own files). It wins over
+// OC_TEST_NO_STEAMVR, which the conformance runner sets for every child.
+static std::optional<fs::path> SteamVRDirForTests()
+{
+#ifdef _WIN32
+	const wchar_t* v = _wgetenv(L"OC_TEST_STEAMVR_DIR");
+#else
+	const char* v = getenv("OC_TEST_STEAMVR_DIR");
+#endif
+	if (!v || !v[0])
+		return std::nullopt;
+	return fs::path(v);
+}
+
 std::optional<fs::path> FindSteamVRInstall(const fs::path* pathsFileOverride, const fs::path* steamDirOverride)
 {
-	if (!pathsFileOverride && !steamDirOverride && NoSteamVRForTests())
-		return std::nullopt;
+	if (!pathsFileOverride && !steamDirOverride) {
+		if (std::optional<fs::path> dir = SteamVRDirForTests())
+			return dir;
+		if (NoSteamVRForTests())
+			return std::nullopt;
+	}
 	// Called from games' IVRResources calls: nothing may escape
 	try {
 	std::optional<fs::path> pathsFile = pathsFileOverride ? std::optional<fs::path>(*pathsFileOverride) : DefaultPathsFile();
