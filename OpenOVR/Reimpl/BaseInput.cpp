@@ -864,7 +864,7 @@ void BaseInput::LoadEmptyManifestIfRequired()
 		suggestedBindings.interactionProfile = interactionProfilePath;
 		suggestedBindings.suggestedBindings = bindings.data();
 		suggestedBindings.countSuggestedBindings = bindings.size();
-		OC_XR_LOG(xrSuggestInteractionProfileBindings(xr_instance, &suggestedBindings));
+		OC_XR_LOG(xr_suggest_bindings_logged(suggestedBindings));
 	}
 
 	// Attach everything to the current session
@@ -1278,7 +1278,7 @@ void BaseInput::LoadBindingsSet(const InteractionProfile& profile, const std::st
 	suggestedBindings.interactionProfile = interactionProfilePath;
 	suggestedBindings.suggestedBindings = bindings.data();
 	suggestedBindings.countSuggestedBindings = bindings.size();
-	OC_XR_LOG(xrSuggestInteractionProfileBindings(xr_instance, &suggestedBindings));
+	OC_XR_LOG(xr_suggest_bindings_logged(suggestedBindings));
 }
 
 void BaseInput::LoadDpadAction(const InteractionProfile& profile, const std::string& importBasePath, const std::string& inputName, const std::string& subMode, Action* action, std::vector<XrActionSuggestedBinding>& bindings, bool isKnuckles)
@@ -1508,7 +1508,7 @@ void BaseInput::CreateLegacyActions()
 		suggested.interactionProfile = profile;
 		suggested.suggestedBindings = &binding;
 		suggested.countSuggestedBindings = 1;
-		OC_XR_LOG(xrSuggestInteractionProfileBindings(xr_instance, &suggested));
+		OC_XR_LOG(xr_suggest_bindings_logged(suggested));
 	}
 }
 

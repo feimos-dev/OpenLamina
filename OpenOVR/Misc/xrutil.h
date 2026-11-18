@@ -162,6 +162,10 @@ public:
 XrSpace xr_space_from_tracking_origin(vr::ETrackingUniverseOrigin origin);
 XrSpace xr_space_from_ref_space_type(XrReferenceSpaceType spaceType);
 
+// xrSuggestInteractionProfileBindings, with the runtime's answer for the profile logged: it takes a profile's
+// bindings all or none
+XrResult xr_suggest_bindings_logged(const XrInteractionProfileSuggestedBinding& suggested);
+
 XrQuaternionf yRotation(XrQuaternionf& q, XrQuaternionf& r);
 void rotate_vector_by_quaternion(const XrVector3f& v, const XrQuaternionf& q, XrVector3f& vprime);
 
