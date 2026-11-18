@@ -1,0 +1,6 @@
+{
+ "#": "The session's changes without sessionEvents, on the stand-in (run.py --cases session-events --script scripts/session_events.json --expect expect/session_events_off.json): no focus, presence or IPD events, only the quit (700) at 50. The proximity sensor's state still follows the headset.",
+ "session-events/events/-/-": { "sequence": [700] },
+ "session-events/event 700/-/-": { "frame": 50 },
+ "session-events/proximity/-/-": { "worn at 35": true, "worn at 47": false, "sensor": true }
+}

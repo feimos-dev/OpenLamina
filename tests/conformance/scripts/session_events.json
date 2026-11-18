@@ -1,0 +1,11 @@
+{
+  "#": "Focus lost at frame 10 and back at 20, the IPD from 63 to 70 mm at 30, the headset taken off at 40, the session exiting at 50 (session-events)",
+  "extensions": ["XR_KHR_D3D11_enable", "XR_EXT_user_presence"],
+  "events": [
+    { "frame": 10, "type": "session_state", "state": "VISIBLE" },
+    { "frame": 20, "type": "session_state", "state": "FOCUSED" },
+    { "frame": 50, "type": "session_state", "state": "EXITING" }
+  ],
+  "ipd_change": { "frame": 30, "ipd": 0.07 },
+  "presence": [{ "frame": 40, "worn": false }]
+}

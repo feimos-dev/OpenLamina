@@ -40,6 +40,10 @@ public:
 	const std::string& DashboardButton() const { return dashboardButton; }
 	/** A grid wall on the play area's edge when the HMD or a controller comes near it */
 	inline bool DrawBounds() const { return drawBounds; }
+	/** The events SteamVR sends when the game loses or regains input focus, and when the headset is put on or taken off */
+	inline bool SessionEvents() const { return sessionEvents; }
+	/** On Monado, through libmonado: the room setup's standing zero pose moves the runtime's stage */
+	inline bool ApplyZeroPoses() const { return applyZeroPoses; }
 	float HiddenMeshVerticalScale() const { return hiddenMeshVerticalScale; }
 	inline bool LogAllOpenVRCalls() const { return logAllOpenVRCalls; }
 	/** The program OpenBindingUI starts; empty for none */
@@ -79,6 +83,8 @@ private:
 	uint32_t overlayLayersPlacement = 1;
 	std::string dashboardButton = "off";
 	bool drawBounds = false;
+	bool sessionEvents = false;
+	bool applyZeroPoses = false;
 	float hiddenMeshVerticalScale = 1.0f;
 	bool logAllOpenVRCalls = false;
 	std::string bindingEditor;

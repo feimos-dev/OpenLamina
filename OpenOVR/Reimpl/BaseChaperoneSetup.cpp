@@ -5,21 +5,28 @@
 #include "BaseSystem.h"
 
 #include "Drivers/Backend.h"
+#include "Misc/Config.h"
 #include "Misc/JsonFile.h"
+#include "Misc/LibMonado.h"
 #include "Misc/ProgramEvents.h"
 #include "Misc/SharedStore.h"
 #include "convert.h"
 #include "generated/static_bases.gen.h"
 
+#include <glm/gtc/matrix_inverse.hpp>
+
 #include <algorithm>
+#include <cmath>
 #include <string>
 
 using namespace vr;
 
 // Room setup: a working copy that programs change and commit to the store's Chaperone document, which every
 // OpenComposite program then reads. The OpenXR runtime's stage is the room until something is committed. The zero
-// poses are kept and reported, not applied: the runtime's own stay in use. The live collision bounds and IVRChaperone's
-// play area stay the runtime's: it draws the boundary the user sees.
+// poses are kept and reported; with applyZeroPoses, on Monado, the standing one also moves the runtime's stage through
+// libmonado (ApplyZeroPoses), and elsewhere the runtime's own stay in use. Raw tracking space is the runtime's stage
+// (floorSpace), so it moves with it, where SteamVR's raw space never moves. The live collision bounds and
+// IVRChaperone's play area stay the runtime's: it draws the boundary the user sees.
 
 namespace {
 
@@ -46,7 +53,59 @@ void PostChangedEvents()
 		OcPostEvent(type, k_unTrackedDeviceIndexInvalid, VREvent_Data_t{}, true);
 }
 
+// The same pose, to what a pose loses on its way through libmonado (a quaternion of floats)
+bool Near(const glm::mat4& a, const glm::mat4& b)
+{
+	for (int c = 0; c < 4; c++)
+		for (int r = 0; r < 4; r++)
+			if (!(std::fabs(a[c][r] - b[c][r]) < 1e-4f))
+				return false;
+	return true;
+}
+
+// The Offsets document's record of the stage: the zero pose applied, and the absolute offset that set
+void RecordStage(Json::Value& offsets, const vr::HmdMatrix34_t& zero, const vr::HmdMatrix34_t& offset)
+{
+	Json::Value stage(Json::objectValue);
+	stage["zero"] = ChaperoneData::MatrixToJson(zero);
+	stage["offset"] = ChaperoneData::MatrixToJson(offset);
+	offsets["stage"] = stage;
+}
+
 } // namespace
+
+std::optional<vr::HmdMatrix34_t> BaseChaperoneSetup::ApplyZeroPoses(Json::Value& offsets, const ChaperoneData& committed, LibMonado& monado)
+{
+	if (!monado.Available() || !offsets.isObject())
+		return std::nullopt;
+	const glm::mat4 zero = S2G_m34(committed.standingZero);
+	const Json::Value record = offsets.get("stage", Json::Value());
+	std::optional<vr::HmdMatrix34_t> now = monado.GetReferenceSpaceOffset(LibMonado::kReferenceSpaceStage);
+
+	// Without libmonado's get call: the zero pose as the absolute offset
+	glm::mat4 target = zero;
+	if (now) {
+		// The runtime's own offset: the one now, less the zero pose applied if the offset is still the one that set
+		glm::mat4 base = S2G_m34(*now);
+		if (record.isObject() && record.isMember("zero") && record.isMember("offset")) {
+			const glm::mat4 set = S2G_m34(ChaperoneData::MatrixFromJson(record["offset"]));
+			if (Near(base, set))
+				base = set * glm::affineInverse(S2G_m34(ChaperoneData::MatrixFromJson(record["zero"])));
+		}
+		target = base * zero;
+		if (Near(target, S2G_m34(*now))) {
+			// There already: recorded as applied, unless nothing was ever applied and nothing is
+			if (record.isObject() || !Near(zero, glm::mat4(1.0f)))
+				RecordStage(offsets, committed.standingZero, *now);
+			return std::nullopt;
+		}
+	}
+	// A refusal is logged once, and tried again on the next commit
+	if (!monado.SetReferenceSpaceOffset(LibMonado::kReferenceSpaceStage, G2S_m34(target)))
+		return std::nullopt;
+	RecordStage(offsets, committed.standingZero, G2S_m34(target));
+	return now;
+}
 
 ChaperoneData BaseChaperoneSetup::LiveData(bool* found)
 {
@@ -94,6 +153,16 @@ bool BaseChaperoneSetup::CommitWorkingCopy(EChaperoneConfigFile configFile)
 	Json::Value data = Working().ToJson();
 	if (!SharedStore::Get().Update(StoreDoc::Chaperone, [&](Json::Value& doc) { doc = data; }))
 		return false;
+	// The standing zero pose onto Monado's stage: read, applied and recorded under the store's lock
+	LibMonado& monado = LibMonado::Get();
+	if (oovr_global_configuration.ApplyZeroPoses() && monado.Available()) {
+		const ChaperoneData committed = Working();
+		std::optional<vr::HmdMatrix34_t> before;
+		bool recorded = SharedStore::Get().Update(StoreDoc::Offsets, [&](Json::Value& offsets) { before = ApplyZeroPoses(offsets, committed, monado); });
+		// Moved but not recorded: put back, so that the next commit doesn't apply it on top
+		if (!recorded && before)
+			monado.SetReferenceSpaceOffset(LibMonado::kReferenceSpaceStage, *before);
+	}
 	PostChangedEvents();
 	return true;
 }

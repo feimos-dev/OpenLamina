@@ -60,6 +60,8 @@ public:
 	XrSystemProperties systemProperties = { XR_TYPE_SYSTEM_PROPERTIES };
 	XrSystemHandTrackingPropertiesEXT handTrackingProperties = { XR_TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT };
 	XrSystemEyeGazeInteractionPropertiesEXT eyeGazeProperties = { XR_TYPE_SYSTEM_EYE_GAZE_INTERACTION_PROPERTIES_EXT };
+	// XR_EXT_user_presence's system property: the system tells when the headset is put on or taken off
+	bool supportsUserPresence = false;
 
 	// Set by XrBackend
 	XrTime nextPredictedFrameTime = 1;

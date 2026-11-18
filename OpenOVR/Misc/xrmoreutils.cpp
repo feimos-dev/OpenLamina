@@ -26,8 +26,9 @@ bool xr_utils::PoseFromSpace(vr::TrackedDevicePose_t* pose, XrSpace space, vr::E
 
 	OOVR_FAILED_XR_SOFT_ABORT(xrLocateSpace(space, baseSpace, xr_gbl->GetBestTime(), &info));
 	
-	bool positionTracked = info.locationFlags & (XR_SPACE_LOCATION_POSITION_VALID_BIT != 0);
-	if (!positionTracked)
+	// A pose whose orientation is tracked is given, marked valid only when its position is tracked too
+	bool orientationTracked = (info.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0;
+	if (!orientationTracked)
 		return false;
 
 	glm::mat4 mat = X2G_om34_pose(info.pose);
@@ -42,8 +43,19 @@ bool xr_utils::PoseFromSpace(vr::TrackedDevicePose_t* pose, XrSpace space, vr::E
 	pose->bPoseIsValid = (info.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0;
 	pose->mDeviceToAbsoluteTracking = G2S_m34(mat);
 	pose->eTrackingResult = pose->bPoseIsValid ? vr::TrackingResult_Running_OK : vr::TrackingResult_Running_OutOfRange;
-	pose->vVelocity = X2S_v3f(velocity.linearVelocity); // No offsetting transform - this is in world-space
-	pose->vAngularVelocity = X2S_v3f(velocity.angularVelocity); // TODO find out if this needs a transform
+	// The velocities, in the tracking space, where the runtime gives them (zero otherwise). The angular one is the same
+	// everywhere on the device; the linear one is the space's, and the extra transform moves the pose away from the
+	// space's point, which then also moves with the turn.
+	glm::vec3 linear(0.0f), angular(0.0f);
+	if (velocity.velocityFlags & XR_SPACE_VELOCITY_ANGULAR_VALID_BIT)
+		angular = X2G_v3f(velocity.angularVelocity);
+	if (velocity.velocityFlags & XR_SPACE_VELOCITY_LINEAR_VALID_BIT) {
+		linear = X2G_v3f(velocity.linearVelocity);
+		if (extraTransform)
+			linear += glm::cross(angular, glm::vec3(mat[3]) - X2G_v3f(info.pose.position));
+	}
+	pose->vVelocity = G2S_v3f(linear);
+	pose->vAngularVelocity = G2S_v3f(angular);
 	return true;
 }
 
@@ -54,9 +66,10 @@ void xr_utils::PoseFromHandTracking(vr::TrackedDevicePose_t* pose, XrHandJointLo
 	XrHandJointLocationEXT palmJoint = locations.jointLocations[boneToUse];
 	XrHandJointVelocityEXT velocity = velocities.jointVelocities[boneToUse];
 
-	bool positionTracked = palmJoint.locationFlags & (XR_SPACE_LOCATION_POSITION_VALID_BIT != 0);
+	// A hand whose palm orientation is tracked gives a pose
+	bool orientationTracked = (palmJoint.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0;
 
-	if (!locations.isActive || !positionTracked) {
+	if (!locations.isActive || !orientationTracked) {
 		return;
 	}
 

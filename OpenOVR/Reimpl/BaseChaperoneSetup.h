@@ -3,8 +3,12 @@
 
 #include "Misc/ChaperoneData.h"
 
+#include "json/json.h"
+
 #include <mutex>
 #include <optional>
+
+class LibMonado;
 
 enum OOVR_EChaperoneConfigFile {
 	EChaperoneConfigFile_Live = 1, // The live chaperone config, used by most applications and games
@@ -22,6 +26,14 @@ public:
 
 	/** Saves the current working copy to disk */
 	bool CommitWorkingCopy(EChaperoneConfigFile configFile);
+
+	/** Moves the runtime's stage to a committed room setup's standing zero pose, through libmonado (applyZeroPoses).
+	 * offsets is the store's Offsets document, {"stage": {"zero": Z, "offset": O}}: the zero pose applied last and the
+	 * absolute offset that set. The stage goes to base * zero, where base is the runtime's own offset: the one now
+	 * less Z while it is still O, else the one now (Monado restarted, or another program moved it). Without libmonado's
+	 * get call the zero pose is set as the absolute offset. Returns the offset the stage had before, when it moved it
+	 * and libmonado told it. Without libmonado nothing moves. */
+	static std::optional<vr::HmdMatrix34_t> ApplyZeroPoses(Json::Value& offsets, const ChaperoneData& committed, LibMonado& monado);
 
 	/** Reverts the working copy to match the live chaperone calibration.
 	 * To modify existing data this MUST be do WHILE getting a non-error ChaperoneCalibrationStatus.

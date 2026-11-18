@@ -31,7 +31,7 @@ namespace {
 
 constexpr size_t kStateSize = 16 * 1024;
 constexpr size_t kHeaderSize = 128;
-constexpr const char* kDocNames[] = { "settings", "applications", "chaperone", "scene", "dashboard", "overlays" };
+constexpr const char* kDocNames[] = { "settings", "applications", "chaperone", "scene", "dashboard", "overlays", "offsets" };
 
 uint64_t Load(uint64_t& v)
 {

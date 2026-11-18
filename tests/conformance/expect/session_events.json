@@ -1,0 +1,11 @@
+{
+ "#": "The events SteamVR sends for session changes, on the stand-in with sessionEvents (run.py --cases session-events --script scripts/session_events.json --ini ini/session_events.ini --expect expect/session_events.json): from frame 5 on, focus captured (400) at 10, focus released (401) at 20, the IPD (105) at 30, the headset taken off at 40 (the proximity sensor's unpress, 201 for button 31, and user interaction ended, 104), and the quit (700) at 50, each once.",
+ "session-events/events/-/-": { "sequence": [400, 401, 105, 201, 104, 700] },
+ "session-events/event 400/-/-": { "frame": 10, "device": 4294967295 },
+ "session-events/event 401/-/-": { "frame": 20, "device": 4294967295 },
+ "session-events/event 105/-/-": { "frame": 30, "device": 0, "ipd": 0.07 },
+ "session-events/event 201/-/-": { "frame": 40, "device": 0, "button": 31 },
+ "session-events/event 104/-/-": { "frame": 40, "device": 0 },
+ "session-events/event 700/-/-": { "frame": 50 },
+ "session-events/proximity/-/-": { "worn at 35": true, "worn at 47": false, "sensor": true }
+}

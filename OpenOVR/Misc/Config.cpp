@@ -213,6 +213,8 @@ int Config::ini_handler(void* user, const char* pSection,
 		CFGOPT(uint32_t, overlayLayersPlacement);
 		CFGOPT(dashboard, dashboardButton);
 		CFGOPT(bool, drawBounds);
+		CFGOPT(bool, sessionEvents);
+		CFGOPT(bool, applyZeroPoses);
 		CFGOPT(float, hiddenMeshVerticalScale);
 		CFGOPT(bool, logAllOpenVRCalls);
 		CFGOPT(string, bindingEditor);

@@ -1384,6 +1384,101 @@ void ChaperoneReadCase(CaseContext& c)
 	c.core->Cleanup();
 }
 
+// To a thousandth, so a record compares exactly
+double Thousandths(double v)
+{
+	double r = std::round(v * 1000) / 1000;
+	return r == 0 ? 0.0 : r; // no -0
+}
+
+Json::Value ThousandthsOf(const vr::HmdVector3_t& v)
+{
+	Json::Value out(Json::arrayValue);
+	for (float x : v.v)
+		out.append(Thousandths(x));
+	return out;
+}
+
+// The room setup's standing zero pose moved 1 m forward and committed, then put back (expect/chaperone_offsets.json, on
+// Monado with libmonado and applyZeroPoses: the stage moves, so the head's standing pose moves 1 m back, as does the
+// seated origin in it).
+// A simulated head moves by itself, so the head is measured from its seated pose at the same time (the seated space
+// doesn't move), and its plain move is recorded as well. Each pose after 30 frames; millimetres.
+void ChaperoneOffsetsCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	vr::EVRInitError le;
+	auto* setup = (vr::IVRChaperoneSetup_006::IVRChaperoneSetup*)c.core->GetGenericInterface("IVRChaperoneSetup_006", &le);
+	if (!setup) {
+		c.Record("no IVRChaperoneSetup_006", Err(le));
+		c.core->Cleanup();
+		return;
+	}
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	struct Where {
+		float head[3];
+		float headFromSeated[3]; // the head's standing pose less its seated one
+		float seated[3];
+	};
+	auto settle = [&]() {
+		vr::TrackedDevicePose_t poses[16]{};
+		for (int frame = 1; frame <= 30; frame++) {
+			f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+			f.comp->Submit(vr::Eye_Left, tex.get(), nullptr, vr::Submit_Default);
+			f.comp->Submit(vr::Eye_Right, tex.get(), nullptr, vr::Submit_Default);
+		}
+		vr::TrackedDevicePose_t seatedPoses[16]{};
+		f.sys->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding, 0, poses, 16);
+		f.sys->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseSeated, 0, seatedPoses, 16);
+		const vr::HmdMatrix34_t seated = f.sys->GetSeatedZeroPoseToStandingAbsoluteTrackingPose();
+		Where w;
+		for (int i = 0; i < 3; i++) {
+			w.head[i] = poses[vr::k_unTrackedDeviceIndex_Hmd].mDeviceToAbsoluteTracking.m[i][3];
+			w.headFromSeated[i] = w.head[i] - seatedPoses[vr::k_unTrackedDeviceIndex_Hmd].mDeviceToAbsoluteTracking.m[i][3];
+			w.seated[i] = seated.m[i][3];
+		}
+		return w;
+	};
+	auto moved = [&](const char* label, const Where& from, const Where& to, bool committed) {
+		Json::Value r;
+		r["committed"] = committed;
+		Json::Value head(Json::arrayValue), seated(Json::arrayValue);
+		for (int i = 0; i < 3; i++) {
+			head.append(Thousandths(to.head[i] - from.head[i]));
+			seated.append(Thousandths(to.seated[i] - from.seated[i]));
+		}
+		r["head moved"] = head;
+		r["seated origin moved"] = seated;
+		// 1 m back (+Z) within 5 mm
+		auto back = [&](const float* a, const float* b) {
+			return std::fabs(b[0] - a[0]) < 0.005f && std::fabs(b[1] - a[1]) < 0.005f && std::fabs(b[2] - a[2] - 1) < 0.005f;
+		};
+		r["head 1 m back"] = back(from.headFromSeated, to.headFromSeated);
+		r["seated origin 1 m back"] = back(from.seated, to.seated);
+		c.Record(label, r);
+	};
+
+	const Where before = settle();
+	setup->RevertWorkingCopy();
+	vr::HmdMatrix34_t zero{};
+	zero.m[0][0] = zero.m[1][1] = zero.m[2][2] = 1;
+	zero.m[2][3] = -1;
+	setup->SetWorkingStandingZeroPoseToRawTrackingPose(&zero);
+	const bool committed = setup->CommitWorkingCopy(vr::IVRChaperoneSetup_006::EChaperoneConfigFile_Live);
+	const Where after = settle();
+	moved("standing zero 1 m forward", before, after, committed);
+
+	// Put back: the stage where it was
+	zero.m[2][3] = 0;
+	setup->SetWorkingStandingZeroPoseToRawTrackingPose(&zero);
+	const bool restored = setup->CommitWorkingCopy(vr::IVRChaperoneSetup_006::EChaperoneConfigFile_Live);
+	const Where back = settle();
+	moved("standing zero back", back, after, restored);
+	c.core->Cleanup();
+}
+
 // Events from calls (expect/events.json), on the stand-in with scripts/legacy_click.json: the Index profile's
 // right trigger clicked from frame 10 to 20. The game reads the legacy input (GetControllerState at frame 2), so the
 // legacy button events come; ResetSeatedZeroPose's event is the next one polled after it.
@@ -1904,6 +1999,111 @@ void EventsCommitCase(CaseContext& c)
 	commit["ret"] = setup ? setup->CommitWorkingCopy(vr::IVRChaperoneSetup_006::EChaperoneConfigFile_Live) : false;
 	c.Record("CommitWorkingCopy", commit);
 	c.Record("own events", CountChaperoneEvents(sys, 1000));
+	c.core->Cleanup();
+}
+
+// The session's changes as events (scripts/session_events.json): focus lost at frame 10 and back at 20, the IPD changed
+// at 30, the headset taken off at 40, the session exiting at 50 (the session's frames). Each event of those kinds from
+// frame 5 on, in order, and each kind's first one in full. With sessionEvents (expect/session_events.json) all of them;
+// without (expect/session_events_off.json) the IPD's and the quit.
+void SessionEventsCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	const std::set<uint32_t> kinds = { vr::VREvent_InputFocusCaptured, vr::VREvent_InputFocusReleased, vr::VREvent_IpdChanged,
+		vr::VREvent_TrackedDeviceUserInteractionStarted, vr::VREvent_TrackedDeviceUserInteractionEnded, vr::VREvent_ButtonPress,
+		vr::VREvent_ButtonUnpress, vr::VREvent_Quit };
+	Json::Value sequence(Json::arrayValue);
+	std::map<uint32_t, Json::Value> first;
+	Json::Value proximity;
+	auto worn = [&]() {
+		vr::VRControllerState_t state{};
+		bool ok = f.sys->GetControllerState(vr::k_unTrackedDeviceIndex_Hmd, &state, sizeof(state));
+		return ok && (state.ulButtonPressed & vr::ButtonMaskFromId(vr::k_EButton_ProximitySensor)) != 0;
+	};
+	// The headset's state, read every frame: with XR_EXT_user_presence it comes from the runtime's presence events, not
+	// from input, so the session isn't restarted for input and the script's frames are these
+	for (int frame = 1; frame <= 70; frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+		const bool wornNow = worn();
+		f.comp->Submit(vr::Eye_Left, tex.get(), nullptr, vr::Submit_Default);
+		f.comp->Submit(vr::Eye_Right, tex.get(), nullptr, vr::Submit_Default);
+		vr::VREvent_t ev{};
+		for (int n = 0; n < 64 && f.sys->PollNextEvent(&ev, sizeof(ev)); n++) {
+			if (frame < 5 || !kinds.count(ev.eventType))
+				continue;
+			sequence.append(ev.eventType);
+			if (first.count(ev.eventType))
+				continue;
+			Json::Value e;
+			e["frame"] = frame;
+			e["device"] = ev.trackedDeviceIndex;
+			if (ev.eventType == vr::VREvent_IpdChanged)
+				e["ipd"] = Thousandths(ev.data.ipd.ipdMeters);
+			if (ev.eventType == vr::VREvent_ButtonPress || ev.eventType == vr::VREvent_ButtonUnpress)
+				e["button"] = ev.data.controller.button;
+			first[ev.eventType] = e;
+		}
+		if (frame == 35)
+			proximity["worn at 35"] = wornNow;
+		if (frame == 47)
+			proximity["worn at 47"] = wornNow;
+	}
+	proximity["sensor"] = f.sys->GetBoolTrackedDeviceProperty(vr::k_unTrackedDeviceIndex_Hmd, vr::Prop_ContainsProximitySensor_Bool);
+	Json::Value r;
+	r["sequence"] = sequence;
+	c.Record("events", r);
+	for (auto& [type, e] : first)
+		c.Record("event " + std::to_string(type), e);
+	c.Record("proximity", proximity);
+	c.core->Cleanup();
+}
+
+// A controller moving and turning (scripts/velocities.json: the right grip at (0.2, 1, -0.3), 1 m/s along +X, turning
+// 2 rad/s about +Y): GetDeviceToAbsoluteTrackingPose gives both back. The pose is SteamVR's, offset from the grip, so its
+// point moves by the turn as well: v at the grip is v - w x (pose - grip). (expect/velocities.json)
+void VelocitiesCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	for (int frame = 1; frame <= 10; frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+		// Reading the controllers is what starts legacy input
+		for (vr::TrackedDeviceIndex_t i = 1; i < 16; i++) {
+			vr::VRControllerState_t state{};
+			f.sys->GetControllerState(i, &state, sizeof(state));
+		}
+		f.comp->Submit(vr::Eye_Left, tex.get(), nullptr, vr::Submit_Default);
+		f.comp->Submit(vr::Eye_Right, tex.get(), nullptr, vr::Submit_Default);
+	}
+	vr::TrackedDevicePose_t poses[16]{};
+	f.sys->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding, 0, poses, 16);
+	const vr::TrackedDeviceIndex_t right = f.sys->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_RightHand);
+	Json::Value r;
+	r["found"] = right < 16;
+	if (right < 16) {
+		const vr::TrackedDevicePose_t& p = poses[right];
+		r["valid"] = p.bPoseIsValid;
+		r["v"] = ThousandthsOf(p.vVelocity);
+		r["w"] = ThousandthsOf(p.vAngularVelocity);
+		const float grip[3] = { 0.2f, 1.0f, -0.3f };
+		const float d[3] = { p.mDeviceToAbsoluteTracking.m[0][3] - grip[0], p.mDeviceToAbsoluteTracking.m[1][3] - grip[1],
+			p.mDeviceToAbsoluteTracking.m[2][3] - grip[2] };
+		const float* w = p.vAngularVelocity.v;
+		const vr::HmdVector3_t atGrip = { { p.vVelocity.v[0] - (w[1] * d[2] - w[2] * d[1]), p.vVelocity.v[1] - (w[2] * d[0] - w[0] * d[2]),
+			p.vVelocity.v[2] - (w[0] * d[1] - w[1] * d[0]) } };
+		r["v at grip"] = ThousandthsOf(atGrip);
+	}
+	// The head isn't scripted to move
+	r["hmd v"] = ThousandthsOf(poses[vr::k_unTrackedDeviceIndex_Hmd].vVelocity);
+	r["hmd w"] = ThousandthsOf(poses[vr::k_unTrackedDeviceIndex_Hmd].vAngularVelocity);
+	c.Record("GetDeviceToAbsoluteTrackingPose", r);
 	c.core->Cleanup();
 }
 
@@ -2909,6 +3109,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "applications", ApplicationsCase },
 		{ "chaperone", ChaperoneCase },
 		{ "chaperone-read", ChaperoneReadCase },
+		{ "chaperone-offsets", ChaperoneOffsetsCase },
 		{ "events", EventsCase },
 		{ "input-frames", InputFramesCase },
 		{ "binding-info", BindingInfoCase },
@@ -2917,6 +3118,8 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "input-threads", InputThreadsCase },
 		{ "events-listen", EventsListenCase },
 		{ "events-commit", EventsCommitCase },
+		{ "session-events", SessionEventsCase },
+		{ "velocities", VelocitiesCase },
 		{ "submit-edges", SubmitEdges },
 		{ "observer", ObserverCase },
 		{ "own-frames", OwnFramesCase },

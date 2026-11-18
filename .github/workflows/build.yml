@@ -143,6 +143,13 @@ jobs:
           # OpenGL and Vulkan frames through D3D11 where the runtime has D3D11 alone (they skip without those drivers)
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases gfx-gl-interop,gfx-vk-interop,gfx-gl-interop-bounds,gfx-vk-interop-bounds --expect tests/conformance/expect/gfx_interop.json --allow-skip "gfx-(vk|gl)-.*" --out conformance/gfx-interop
           if ($LASTEXITCODE) { $failed++ }
+          # The events SteamVR sends for session changes: with sessionEvents all of them, without it only the IPD's and the quit
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases session-events --script tests/conformance/scripts/session_events.json --ini tests/conformance/ini/session_events.ini --expect tests/conformance/expect/session_events.json --out conformance/session-events
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases session-events --script tests/conformance/scripts/session_events.json --expect tests/conformance/expect/session_events_off.json --out conformance/session-events-off
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases velocities --script tests/conformance/scripts/velocities.json --expect tests/conformance/expect/velocities.json --out conformance/velocities
+          if ($LASTEXITCODE) { $failed++ }
           # The old input as SteamVR's legacy binding files map it, under inputEvaluator=steamvr
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases events --script tests/conformance/scripts/legacy_click.json --ini tests/conformance/ini/steamvr_evaluator.ini --expect tests/conformance/expect/events_steamvr.json --out conformance/events-steamvr
           if ($LASTEXITCODE) { $failed++ }

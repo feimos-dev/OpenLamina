@@ -11,6 +11,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <set>
 #include <string>
 
 class LibMonado {
@@ -36,9 +37,13 @@ public:
 	std::optional<Battery> BatteryForRole(const char* role);
 	/** The name of the device in a role */
 	std::optional<std::string> DeviceForRole(const char* role);
-	/** Moves a reference space (not used yet: for the room setup's zero poses); the type is an mnd_reference_space_type_t. False
-	 * without libmonado. */
+	/** libmonado's mnd_reference_space_type_t */
+	static constexpr int kReferenceSpaceStage = 3;
+	/** Moves a reference space: the offset is the space's origin in the runtime's own space (the room setup's zero poses).
+	 * False without libmonado, or if Monado refuses it (logged once per space type). */
 	bool SetReferenceSpaceOffset(int referenceSpaceType, const vr::HmdMatrix34_t& offset);
+	/** The offset a reference space has now; nothing without libmonado 1.3 */
+	std::optional<vr::HmdMatrix34_t> GetReferenceSpaceOffset(int referenceSpaceType);
 
 	/** The active OpenXR runtime's manifest, as the loader finds it (XR_RUNTIME_JSON, else the registry or the XDG
 	 * config folders) */
@@ -62,4 +67,6 @@ private:
 	std::mutex lock;
 	// Battery answers kept a second: games ask every frame, and each is a call into the service
 	std::map<std::string, std::pair<std::chrono::steady_clock::time_point, std::optional<Battery>>> batteryCache;
+	// The reference space types whose refused offset has been logged
+	std::set<int> refusalsLogged;
 };

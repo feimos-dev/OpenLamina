@@ -3,7 +3,9 @@
 
 #include "stdafx.h"
 
+#include "Misc/ChaperoneData.h"
 #include "Misc/LibMonado.h"
+#include "Reimpl/BaseChaperoneSetup.h"
 #include "XrController.h"
 
 #ifndef _WIN32
@@ -11,8 +13,12 @@
 #endif
 
 #include <chrono>
+#include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <sstream>
+#include <string>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -263,3 +269,249 @@ TEST_CASE("Manifest_search_xdg_config_dirs")
 	CHECK(*found == manifest);
 }
 #endif
+
+namespace {
+// The fake's log of reference space offset calls (FAKE_MND_LOG), one line each, for one test
+struct OffsetLog {
+	fs::path path = fs::temp_directory_path() / "oc_fake_mnd_offsets.log";
+	OffsetLog()
+	{
+		fs::remove(path);
+		SetEnv("FAKE_MND_LOG", path.string().c_str());
+	}
+	~OffsetLog()
+	{
+		SetEnv("FAKE_MND_LOG", nullptr);
+		fs::remove(path);
+	}
+	std::vector<std::string> Lines() const
+	{
+		std::vector<std::string> lines;
+		std::ifstream in(path);
+		for (std::string line; std::getline(in, line);)
+			lines.push_back(line);
+		return lines;
+	}
+};
+
+// Whether a logged call moved that reference space to (px, py, pz, qx, qy, qz, qw), to a millionth
+bool Moved(const std::string& line, int type, std::vector<float> pose)
+{
+	std::istringstream in(line);
+	std::string call;
+	int got = -1;
+	in >> call >> got;
+	if (call != "set_reference_space_offset" || got != type)
+		return false;
+	for (float want : pose) {
+		float v = 0;
+		if (!(in >> v) || std::fabs(v - want) > 1e-6f)
+			return false;
+	}
+	return true;
+}
+
+// The fake's offsets back to identity, as when Monado's service restarts
+void RestartMonado() { FakeCount("fake_mnd_restart"); }
+
+constexpr int kStage = LibMonado::kReferenceSpaceStage;
+constexpr float kHalf = 0.70710677f; // the quaternion's parts for a 90 degree turn
+
+// A room setup with its standing zero pose 1 m forward (along -Z) and turned 90 degrees left
+ChaperoneData RoomOneMetreForward()
+{
+	ChaperoneData d = ChaperoneData::FromStage(2, 3);
+	d.standingZero = ChaperoneData::Identity();
+	d.standingZero.m[0][0] = d.standingZero.m[2][2] = 0;
+	d.standingZero.m[0][2] = 1;
+	d.standingZero.m[2][0] = -1;
+	d.standingZero.m[2][3] = -1;
+	return d;
+}
+
+// The same with the zero pose 2 m forward, not turned
+ChaperoneData RoomTwoMetresForward()
+{
+	ChaperoneData d = ChaperoneData::FromStage(2, 3);
+	d.standingZero = ChaperoneData::Identity();
+	d.standingZero.m[2][3] = -2;
+	return d;
+}
+
+// An offset 0.5 m up, as another program might set it
+vr::HmdMatrix34_t HalfMetreUp()
+{
+	vr::HmdMatrix34_t m = ChaperoneData::Identity();
+	m.m[1][3] = 0.5f;
+	return m;
+}
+} // namespace
+
+TEST_CASE("Commit_standing_zero_applies_stage_offset")
+{
+	FakeLibMonado fake("1", "0,0,0");
+	OffsetLog log;
+	LibMonado mnd("Monado(XRT) by Collabora et al");
+	REQUIRE(mnd.Available());
+	RestartMonado();
+	ChaperoneData room = RoomOneMetreForward();
+	Json::Value offsets(Json::objectValue);
+	std::optional<vr::HmdMatrix34_t> before = BaseChaperoneSetup::ApplyZeroPoses(offsets, room, mnd);
+	// STAGE (3) at the pose: 1 m along -Z, turned 90 degrees about +Y
+	std::vector<std::string> lines = log.Lines();
+	REQUIRE(lines.size() == 1);
+	CHECK(Moved(lines[0], kStage, { 0, 0, -1, 0, kHalf, 0, kHalf }));
+	// The offset it had before, for putting back
+	REQUIRE(before.has_value());
+	CHECK(before->m[2][3] == 0.0f);
+	// Recorded: the zero pose and the absolute offset that set
+	CHECK(ChaperoneData::MatrixFromJson(offsets["stage"]["zero"]).m[2][3] == -1.0f);
+	CHECK(ChaperoneData::MatrixFromJson(offsets["stage"]["offset"]).m[2][3] == doctest::Approx(-1));
+	// The offset as libmonado gives it back
+	std::optional<vr::HmdMatrix34_t> now = mnd.GetReferenceSpaceOffset(kStage);
+	REQUIRE(now.has_value());
+	CHECK(now->m[2][3] == doctest::Approx(-1));
+	CHECK(now->m[0][2] == doctest::Approx(1));
+
+	// Back to the runtime's own stage
+	ChaperoneData back = room;
+	back.standingZero = ChaperoneData::Identity();
+	BaseChaperoneSetup::ApplyZeroPoses(offsets, back, mnd);
+	lines = log.Lines();
+	REQUIRE(lines.size() == 2);
+	CHECK(Moved(lines[1], kStage, { 0, 0, 0, 0, 0, 0, 1 }));
+}
+
+TEST_CASE("Commit_twice_applies_once")
+{
+	FakeLibMonado fake("1", "0,0,0");
+	OffsetLog log;
+	ChaperoneData room = RoomOneMetreForward();
+	Json::Value offsets(Json::objectValue);
+	{
+		LibMonado mnd("Monado(XRT) by Collabora et al");
+		REQUIRE(mnd.Available());
+		RestartMonado();
+		BaseChaperoneSetup::ApplyZeroPoses(offsets, room, mnd);
+		CHECK_FALSE(BaseChaperoneSetup::ApplyZeroPoses(offsets, room, mnd).has_value());
+	}
+	// Another program committing the same room, with the document as the first one left it
+	{
+		LibMonado mnd("Monado(XRT) by Collabora et al");
+		BaseChaperoneSetup::ApplyZeroPoses(offsets, room, mnd);
+	}
+	std::vector<std::string> lines = log.Lines();
+	REQUIRE(lines.size() == 1);
+	CHECK(Moved(lines[0], kStage, { 0, 0, -1, 0, kHalf, 0, kHalf }));
+
+	// Back to the runtime's own stage
+	LibMonado mnd("Monado(XRT) by Collabora et al");
+	BaseChaperoneSetup::ApplyZeroPoses(offsets, ChaperoneData::FromStage(2, 3), mnd);
+	lines = log.Lines();
+	REQUIRE(lines.size() == 2);
+	CHECK(Moved(lines[1], kStage, { 0, 0, 0, 0, 0, 0, 1 }));
+}
+
+TEST_CASE("Commit_after_a_restart_of_Monado")
+{
+	// Monado keeps the offsets only while its service runs: after a restart the stage is its own again, and the
+	// document still says what was applied before
+	FakeLibMonado fake("1", "0,0,0");
+	OffsetLog log;
+	LibMonado mnd("Monado(XRT) by Collabora et al");
+	REQUIRE(mnd.Available());
+	RestartMonado();
+	Json::Value offsets(Json::objectValue);
+	BaseChaperoneSetup::ApplyZeroPoses(offsets, RoomOneMetreForward(), mnd);
+
+	// The same room again: applied again, not taken as already there, and not twice
+	RestartMonado();
+	BaseChaperoneSetup::ApplyZeroPoses(offsets, RoomOneMetreForward(), mnd);
+	// A new room: onto the runtime's own stage, not relative to the one applied before the restart
+	RestartMonado();
+	BaseChaperoneSetup::ApplyZeroPoses(offsets, RoomTwoMetresForward(), mnd);
+	// And without a restart, from that one to the first again
+	BaseChaperoneSetup::ApplyZeroPoses(offsets, RoomOneMetreForward(), mnd);
+
+	std::vector<std::string> lines = log.Lines();
+	REQUIRE(lines.size() == 4);
+	CHECK(Moved(lines[0], kStage, { 0, 0, -1, 0, kHalf, 0, kHalf }));
+	CHECK(Moved(lines[1], kStage, { 0, 0, -1, 0, kHalf, 0, kHalf }));
+	CHECK(Moved(lines[2], kStage, { 0, 0, -2, 0, 0, 0, 1 }));
+	CHECK(Moved(lines[3], kStage, { 0, 0, -1, 0, kHalf, 0, kHalf }));
+	RestartMonado();
+}
+
+TEST_CASE("Commit_onto_an_offset_without_a_record")
+{
+	// The stage moved by another program (or a document without the record): its offset now is the base
+	FakeLibMonado fake("1", "0,0,0");
+	OffsetLog log;
+	LibMonado mnd("Monado(XRT) by Collabora et al");
+	REQUIRE(mnd.Available());
+	RestartMonado();
+	REQUIRE(mnd.SetReferenceSpaceOffset(kStage, HalfMetreUp()));
+	Json::Value offsets(Json::objectValue);
+	BaseChaperoneSetup::ApplyZeroPoses(offsets, RoomOneMetreForward(), mnd);
+	std::vector<std::string> lines = log.Lines();
+	REQUIRE(lines.size() == 2);
+	CHECK(Moved(lines[1], kStage, { 0, 0.5f, -1, 0, kHalf, 0, kHalf }));
+
+	// A record whose offset isn't the one now (another program moved it since): the same
+	RestartMonado();
+	REQUIRE(mnd.SetReferenceSpaceOffset(kStage, HalfMetreUp()));
+	BaseChaperoneSetup::ApplyZeroPoses(offsets, RoomTwoMetresForward(), mnd);
+	lines = log.Lines();
+	REQUIRE(lines.size() == 4);
+	CHECK(Moved(lines[3], kStage, { 0, 0.5f, -2, 0, 0, 0, 1 }));
+	RestartMonado();
+}
+
+TEST_CASE("Commit_without_the_get_call_sets_the_zero_pose")
+{
+	// libmonado without mnd_root_get_reference_space_offset: the zero pose is the absolute offset, on every commit
+	FakeLibMonado fake("1", "0,0,0");
+	OffsetLog log;
+	LibMonado mnd("Monado(XRT) by Collabora et al");
+	REQUIRE(mnd.Available());
+	RestartMonado();
+	REQUIRE(mnd.SetReferenceSpaceOffset(kStage, HalfMetreUp()));
+	SetEnv("FAKE_MND_NO_GET", "1");
+	Json::Value offsets(Json::objectValue);
+	CHECK_FALSE(BaseChaperoneSetup::ApplyZeroPoses(offsets, RoomOneMetreForward(), mnd).has_value());
+	BaseChaperoneSetup::ApplyZeroPoses(offsets, RoomOneMetreForward(), mnd);
+	SetEnv("FAKE_MND_NO_GET", nullptr);
+	std::vector<std::string> lines = log.Lines();
+	REQUIRE(lines.size() == 3);
+	CHECK(Moved(lines[1], kStage, { 0, 0, -1, 0, kHalf, 0, kHalf }));
+	CHECK(Moved(lines[2], kStage, { 0, 0, -1, 0, kHalf, 0, kHalf }));
+	CHECK(ChaperoneData::MatrixFromJson(offsets["stage"]["offset"]).m[2][3] == -1.0f);
+	RestartMonado();
+}
+
+TEST_CASE("No_libmonado_keeps_offsets_only")
+{
+	OffsetLog log;
+	SetEnv("OC_TEST_LIBMONADO_PATH", "no-such-libmonado.dll");
+	LibMonado mnd("Monado(XRT) by Collabora et al");
+	SetEnv("OC_TEST_LIBMONADO_PATH", nullptr);
+	REQUIRE_FALSE(mnd.Available());
+	CHECK_FALSE(mnd.GetReferenceSpaceOffset(kStage).has_value());
+	ChaperoneData room = RoomOneMetreForward();
+	Json::Value offsets(Json::objectValue);
+	CHECK_FALSE(BaseChaperoneSetup::ApplyZeroPoses(offsets, room, mnd).has_value());
+	CHECK(log.Lines().empty());
+	CHECK(offsets.empty());
+
+	// libmonado refusing it: nothing recorded, so the next commit tries again
+	FakeLibMonado fake("1", "0,0,0");
+	SetEnv("FAKE_MND_NO_OFFSETS", "1");
+	{
+		LibMonado refusing("Monado(XRT) by Collabora et al");
+		REQUIRE(refusing.Available());
+		CHECK_FALSE(BaseChaperoneSetup::ApplyZeroPoses(offsets, room, refusing).has_value());
+		CHECK_FALSE(BaseChaperoneSetup::ApplyZeroPoses(offsets, room, refusing).has_value());
+	}
+	SetEnv("FAKE_MND_NO_OFFSETS", nullptr);
+	CHECK(offsets.empty());
+}
