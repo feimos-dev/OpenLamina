@@ -159,7 +159,7 @@ private:
 	std::set<OverlayData*> validOverlays;
 
 	// This doesn't do a whole lot, since OOVR does this for every overlay
-	vr::VROverlayHandle_t highQualityOverlay;
+	vr::VROverlayHandle_t highQualityOverlay = vr::k_ulOverlayHandleInvalid;
 
 	// List of layers, with the first being reserved for the main scene
 	std::vector<XrCompositionLayerBaseHeader*> layerHeaders;
@@ -173,9 +173,13 @@ private:
 	std::string keyboardCache;
 
 	// True if we're modifying the input in any way
-	bool usingInput;
+	bool usingInput = false;
 
 	std::recursive_mutex layersLock;
+
+	// The controllers' lasers and what OpenLamina draws for them: the cursor (BaseOverlay.cpp). Under layersLock.
+	class Pointing;
+	std::unique_ptr<Pointing> pointing;
 
 	vr::EVROverlayError ShowKeyboardWithDispatch(
 	    EGamepadTextInputMode eInputMode, EGamepadTextInputLineMode eLineInputMode,
@@ -184,6 +188,7 @@ private:
 	    VRKeyboard::eventDispatch_t eventDispatch);
 
 public:
+	BaseOverlay();
 	// Destructor, since we have a map of pointers
 	~BaseOverlay();
 
@@ -194,6 +199,11 @@ public:
 
 	// Whether any overlay is shown with an image (as _BuildLayers would draw it, roughly)
 	bool _AnyVisible();
+
+	// The controllers' lasers on the visible overlays that take mouse input (VROverlayInputMethod_Mouse), while the
+	// session is focused: their events and the cursor. On the game's thread before its frame's layers are built (it
+	// fills swapchains from memory), not holding _LayersLock().
+	void _UpdatePointer();
 
 	// Held while the overlays, their compositors or the keyboard are added, replaced or removed, and while a frame
 	// with their layers is built and ended (on the game's thread, or OpenLamina's own frames' thread). Taken after the
