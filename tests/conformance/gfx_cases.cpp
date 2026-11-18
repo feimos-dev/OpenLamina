@@ -452,14 +452,18 @@ void PoseDepth(CaseContext& c, GfxKind kind, int64_t format)
 		bool sideBySide;
 		vr::VRTextureBounds_t left, right;
 		uint32_t rectW, rectH;
+		bool vkImageOnly = false; // Vulkan: the depth's struct names only its image, not the device it's on
 	};
 	const Config configs[] = {
 		{ "pose-depth", 512, 512, false, { 0, 0, 1, 1 }, { 0, 0, 1, 1 }, 512, 512 },
 		{ "halves", 1536, 768, true, { 0, 0, 0.5f, 1 }, { 0.5f, 0, 1, 1 }, 768, 768 },
 		{ "flipped", 640, 640, false, { 0, 1, 1, 0 }, { 0, 1, 1, 0 }, 640, 640 },
+		{ "depth image only", 576, 576, false, { 0, 0, 1, 1 }, { 0, 0, 1, 1 }, 576, 576, true },
 	};
 	bool first = true;
 	for (const Config& cfg : configs) {
+		if (cfg.vkImageOnly && kind != GfxKind::Vulkan)
+			continue;
 		GfxTexture left = s.gfx->Pattern(cfg.w, cfg.h, format, 0);
 		GfxTexture right = cfg.sideBySide ? left : s.gfx->Pattern(cfg.w, cfg.h, format, 1);
 		GfxTexture depth = s.gfx->Depth(cfg.w, cfg.h, 0.25f);
@@ -488,6 +492,16 @@ void PoseDepth(CaseContext& c, GfxKind kind, int64_t format)
 				static_cast<vr::Texture_t&>(t) = *eyes[eye]->Texture();
 				t.mDeviceToAbsoluteTracking = head;
 				t.depth.handle = depth.Texture()->handle;
+				vr::VRVulkanTextureData_t imageOnly{};
+				if (cfg.vkImageOnly) {
+					const auto* full = (const vr::VRVulkanTextureData_t*)depth.Texture()->handle;
+					imageOnly.m_nImage = full->m_nImage;
+					imageOnly.m_nWidth = full->m_nWidth;
+					imageOnly.m_nHeight = full->m_nHeight;
+					imageOnly.m_nFormat = full->m_nFormat;
+					imageOnly.m_nSampleCount = full->m_nSampleCount;
+					t.depth.handle = &imageOnly;
+				}
 				t.depth.mProjection = projection;
 				t.depth.vRange = { 0, 1 };
 				r[eye ? "right" : "left"] = (int)s.comp->Submit(eye ? vr::Eye_Right : vr::Eye_Left, &t, bounds[eye],
