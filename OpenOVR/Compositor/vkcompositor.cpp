@@ -46,8 +46,59 @@ VkCompositor::VkCompositor(const vr::Texture_t* initialTexture)
 	}
 }
 
+bool VkCompositor::CreateStage(VkFormat format, uint32_t width, uint32_t height)
+{
+	VkFormatProperties properties{};
+	if (format != VK_FORMAT_UNDEFINED)
+		vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &properties);
+	if (FormatIsSrgb(GfxApiKind::Vulkan, (int64_t)format) || !(properties.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT))
+		return false;
+	VkImageCreateInfo info{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
+	info.imageType = VK_IMAGE_TYPE_2D;
+	info.format = format;
+	info.extent = { width, height, 1 };
+	info.mipLevels = 1;
+	info.arrayLayers = 1;
+	info.samples = VK_SAMPLE_COUNT_1_BIT;
+	info.tiling = VK_IMAGE_TILING_OPTIMAL;
+	info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
+	info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
+	info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	if (vkCreateImage(appDevice, &info, nullptr, &stageImage) != VK_SUCCESS) {
+		stageImage = VK_NULL_HANDLE;
+		return false;
+	}
+	VkMemoryRequirements requirements{};
+	vkGetImageMemoryRequirements(appDevice, stageImage, &requirements);
+	VkMemoryAllocateInfo allocate{ VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
+	allocate.allocationSize = requirements.size;
+	allocate.memoryTypeIndex = VkFindMemoryType(physicalDevice, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+	if (allocate.memoryTypeIndex == UINT32_MAX || vkAllocateMemory(appDevice, &allocate, nullptr, &stageMemory) != VK_SUCCESS)
+		stageMemory = VK_NULL_HANDLE;
+	if (!stageMemory || vkBindImageMemory(appDevice, stageImage, stageMemory, 0) != VK_SUCCESS) {
+		DestroyStage();
+		return false;
+	}
+	return true;
+}
+
+void VkCompositor::DestroyStage()
+{
+	if (!stageImage && !stageMemory)
+		return;
+	// Frames copied through it may still be on the queue
+	vkQueueWaitIdle(appQueue);
+	if (stageImage)
+		vkDestroyImage(appDevice, stageImage, nullptr);
+	if (stageMemory)
+		vkFreeMemory(appDevice, stageMemory, nullptr);
+	stageImage = VK_NULL_HANDLE;
+	stageMemory = VK_NULL_HANDLE;
+}
+
 VkCompositor::~VkCompositor()
 {
+	DestroyStage();
 	// destroying command pool also frees command buffers
 	if (appCommandPool)
 		vkDestroyCommandPool(appDevice, appCommandPool, nullptr);
@@ -100,6 +151,7 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 			vkFreeCommandBuffers(appDevice, appCommandPool, appCommandBuffers.size(), appCommandBuffers.data());
 			appCommandBuffers.clear();
 		}
+		DestroyStage();
 
 		// Make eye render buffer
 		createInfo = { XR_TYPE_SWAPCHAIN_CREATE_INFO };
@@ -140,6 +192,12 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 			}
 			OOVR_LOGF("Vulkan format %d goes into swapchain format %d through a blit", (int)tex->m_nFormat, (int)createInfo.format);
 			createInfo.sampleCount = 1;
+			// sRGB values in a format that isn't an sRGB one, into an sRGB swapchain: through the stage image, so the
+			// blit doesn't encode them again
+			if (FormatIsSrgb(GfxApiKind::Vulkan, createInfo.format) && !FormatIsSrgb(GfxApiKind::Vulkan, (int64_t)tex->m_nFormat)
+			    && WantsSrgb(GfxApiKind::Vulkan, (int64_t)tex->m_nFormat, texture->eColorSpace)
+			    && !CreateStage((VkFormat)FormatWithSrgb(GfxApiKind::Vulkan, createInfo.format, false), tex->m_nWidth, tex->m_nHeight))
+				OOVR_LOGF("No image of swapchain format %d's linear sibling to blit into: the blit encodes the values again, and they show too bright", (int)createInfo.format);
 		}
 
 		ForgetAcquiredImage(); // a new swapchain: no image of the old one is pending
@@ -252,15 +310,39 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 		region.dstSubresource.layerCount = 1;
 		region.dstOffsets[0] = { 0, 0, 0 };
 		region.dstOffsets[1] = { (int)area.Width(), (int)area.Height(), 1 };
+		// Into the stage image where there is one (its contents before don't matter)
+		VkImageMemoryBarrier stage = barrier;
+		stage.image = stageImage;
+		if (stageImage) {
+			stage.srcAccessMask = 0;
+			stage.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			stage.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+			stage.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+			vkCmdPipelineBarrier(currentCommandBuffer, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &stage);
+		}
 		vkCmdBlitImage( //
 		    currentCommandBuffer, // commandbuffer
 		    (VkImage)tex->m_nImage, // srcImage
 		    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, // srcImageLayout
-		    swapchainImages.at(currentIndex).image, // dstImage
+		    stageImage ? stageImage : swapchainImages.at(currentIndex).image, // dstImage
 		    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, // dstImageLayout
 		    1, // regionCount
 		    &region, // pRegions
 		    VK_FILTER_NEAREST);
+		if (stageImage) {
+			// And on into the swapchain image, texel for texel: a copy between formats of one size converts nothing
+			stage.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			stage.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+			stage.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+			stage.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+			vkCmdPipelineBarrier(currentCommandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &stage);
+			VkImageCopy whole = {};
+			whole.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+			whole.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+			whole.extent = { area.Width(), area.Height(), 1 };
+			vkCmdCopyImage(currentCommandBuffer, stageImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, swapchainImages.at(currentIndex).image,
+			    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &whole);
+		}
 	} else {
 		VkImageCopy region = {};
 		region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;

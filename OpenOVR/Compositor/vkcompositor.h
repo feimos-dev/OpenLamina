@@ -33,6 +33,14 @@ private:
 	bool convertFormat = false;
 	// The colour space the swapchain was made for
 	vr::EColorSpace createColourSpace = vr::ColorSpace_Auto;
+	// An image whose values are sRGB already, in a format that isn't an sRGB one (most games' 8-bit textures), going into
+	// an sRGB swapchain of another family: a blit straight into the swapchain would encode the values once more, and
+	// show them too bright. The blit fills this image of the swapchain's linear sibling instead, where the values stay
+	// as they are, and that is copied on unchanged. Null when no such step is needed (or it couldn't be made).
+	VkImage stageImage = VK_NULL_HANDLE;
+	VkDeviceMemory stageMemory = VK_NULL_HANDLE;
+	bool CreateStage(VkFormat format, uint32_t width, uint32_t height);
+	void DestroyStage();
 	// The GPU, as the runtime knows it
 	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 
