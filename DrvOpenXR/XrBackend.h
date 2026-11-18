@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include "CpuSwapchain.h"
+
 #include <chrono>
 
 #include "XrDriverPrivate.h"
@@ -120,7 +122,23 @@ private:
 	// False if the texture can't be used (logged): no session switch then, or the switch was undone
 	bool CheckOrInitCompositors(const vr::Texture_t* tex);
 	std::unique_ptr<Compositor> compositors[XruEyeCount];
-	std::unique_ptr<Compositor> skybox_compositor;
+	std::unique_ptr<Compositor> skybox_compositor; // the quad shown without equirect layers
+
+	// The skybox SetSkyboxOverride set, shown in OpenLamina's own frames until ClearSkyboxOverride: one or two equirect
+	// layers. Clearing only stops showing it (an own frame may still be using its swapchains); they're replaced by the
+	// next skybox or let go of with the session. Under skyboxLock.
+	struct Skybox {
+		std::unique_ptr<Compositor> textures[2]; // lat-long textures, one per eye for a stereo pair
+		std::unique_ptr<CpuSwapchain> faces; // six faces, as one lat-long image
+		XrCompositionLayerEquirect2KHR layers[2]{};
+		int layerCount = 0;
+	};
+	std::mutex skyboxLock;
+	Skybox skybox;
+	XrCompositionLayerEquirect2KHR ownFrameSkybox[2]{}; // the own frame's copy, used only by the frame being run
+	bool SkyboxShown();
+	// The skybox from lat-long textures or cube faces; an OpenVR compositor error
+	int SetEquirectSkybox(const vr::Texture_t* textures, uint32_t count);
 	std::vector<std::shared_ptr<Compositor>> overlay_compositors;
 
 	/**

@@ -64,18 +64,9 @@
 
 using namespace conformance;
 
-namespace {
-
-Json::Value Err(int e)
-{
-	Json::Value v;
-	v["ret"] = e;
-	return v;
-}
-
 // The stand-in runtime's dump (OC_TEST_RUNTIME_DUMP), written when OpenLamina destroys its instance: read it after
 // Cleanup. Null without one (another runtime, or none written).
-Json::Value ReadStandInDump()
+Json::Value conformance::ReadStandInDump()
 {
 	const char* path = std::getenv("OC_TEST_RUNTIME_DUMP");
 	if (!path || !*path)
@@ -87,6 +78,15 @@ Json::Value ReadStandInDump()
 	if (!in || !Json::parseFromStream(rb, in, &root, &errors))
 		return Json::Value();
 	return root;
+}
+
+namespace {
+
+Json::Value Err(int e)
+{
+	Json::Value v;
+	v["ret"] = e;
+	return v;
 }
 
 void InitMatrix(CaseContext& c)
