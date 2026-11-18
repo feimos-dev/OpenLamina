@@ -459,7 +459,7 @@ VR_INTERFACE void VR_CALLTYPE VR_ShutdownInternal()
 	// What the app asked for that OpenComposite doesn't do, with counts
 	oc_soft_log_summary();
 
-	// OpenComposite's own frames draw from the interfaces (the overlays): stopped before they go
+	// OpenLamina's own frames draw from the interfaces (the overlays): stopped before they go
 	DrvOpenXR::StopOwnFrames();
 
 	// Reset interfaces
