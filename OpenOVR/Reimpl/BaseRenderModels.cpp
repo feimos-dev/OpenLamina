@@ -4,6 +4,7 @@
 #define BASE_IMPL
 #include "BaseRenderModels.h"
 #include "Misc/Config.h"
+#include "Misc/SteamVRRenderModels.h"
 #include "convert.h"
 #include "generated/static_bases.gen.h"
 #include "resources.h"
@@ -14,6 +15,8 @@
 #include "BaseSystem.h"
 #include "Misc/Input/InteractionProfile.h"
 
+#include <algorithm>
+#include <map>
 #include <mutex>
 #include <set>
 #include <sstream>
@@ -161,6 +164,120 @@ static bool TakeLive(std::set<const void*>& set, const void* p)
 	return set.erase(p) != 0;
 }
 
+#ifdef SUPPORT_DX11
+// A D3D11 texture LoadTextureD3D11_Async handed out and FreeTextureD3D11 hasn't released
+static std::set<const void*>& LiveD3D11Textures()
+{
+	static std::set<const void*>& textures = *new std::set<const void*>;
+	return textures;
+}
+#endif
+
+// SteamVR's textures, by the id their models give (from 1: OpenLamina's own models have none), each file read once
+// for the process. A file that can't be read gets no id (its model has no texture), and is tried once.
+namespace {
+struct SteamVRTextures {
+	std::mutex lock;
+	std::map<std::filesystem::path, TextureID_t> ids; // -1: couldn't be read
+	std::map<TextureID_t, std::shared_ptr<const RmTexture>> textures;
+};
+SteamVRTextures& Textures()
+{
+	static SteamVRTextures& t = *new SteamVRTextures;
+	return t;
+}
+} // namespace
+
+static TextureID_t SteamVRTextureId(const std::filesystem::path& file)
+{
+	if (file.empty())
+		return -1;
+	SteamVRTextures& t = Textures();
+	{
+		std::lock_guard<std::mutex> guard(t.lock);
+		auto it = t.ids.find(file);
+		if (it != t.ids.end())
+			return it->second;
+	}
+	std::optional<RmTexture> tex = LoadRenderModelTexture(file); // logged if it can't be read
+	std::lock_guard<std::mutex> guard(t.lock);
+	auto it = t.ids.find(file);
+	if (it != t.ids.end())
+		return it->second;
+	TextureID_t id = tex ? (TextureID_t)t.textures.size() + 1 : -1;
+	t.ids.emplace(file, id);
+	if (tex)
+		t.textures.emplace(id, std::make_shared<const RmTexture>(std::move(*tex)));
+	return id;
+}
+
+static std::shared_ptr<const RmTexture> SteamVRTexture(TextureID_t id)
+{
+	SteamVRTextures& t = Textures();
+	std::lock_guard<std::mutex> guard(t.lock);
+	auto it = t.textures.find(id);
+	return it == t.textures.end() ? nullptr : it->second;
+}
+
+static std::filesystem::path PathFromUtf8(const string& s)
+{
+	return std::filesystem::path(std::u8string(s.begin(), s.end()));
+}
+
+// A model of SteamVR's install by name: a model ("<name>" or "{<driver>}<name>"), one of its components
+// ("<model>/<component>", what GetComponentRenderModelName answers) or an OBJ file's absolute path (what
+// GetRenderModelOriginalPath answers). nullopt without SteamVR or for anything it can't load.
+static std::optional<RmMesh> SteamVRMesh(const string& name)
+{
+	if (std::shared_ptr<const RmModel> model = FindSteamVRRenderModel(name))
+		return LoadRenderModelMesh(*model, "");
+	size_t slash = name.rfind('/');
+	if (slash != string::npos && slash > 0) {
+		if (std::shared_ptr<const RmModel> model = FindSteamVRRenderModel(name.substr(0, slash)))
+			return LoadRenderModelMesh(*model, name.substr(slash + 1));
+	}
+	if (SteamVRRenderModelNames().empty())
+		return std::nullopt; // no SteamVR
+	try {
+		std::filesystem::path file = PathFromUtf8(name);
+		std::error_code ec;
+		if (file.is_absolute() && file.extension() == ".obj" && std::filesystem::is_regular_file(file, ec)) {
+			RmMesh mesh;
+			std::string diffuse;
+			if (!LoadObj(file, mesh.vertices, mesh.indices, &diffuse))
+				return std::nullopt;
+			if (!diffuse.empty())
+				mesh.diffuse = file.parent_path() / PathFromUtf8(diffuse);
+			return mesh;
+		}
+	} catch (const std::exception&) {
+	}
+	return std::nullopt;
+}
+
+static const RmComponent* FindComponent(const RmModel& model, const char* name)
+{
+	if (!name)
+		return nullptr;
+	for (const RmComponent& c : model.components)
+		if (c.name == name)
+			return &c;
+	return nullptr;
+}
+
+// The OpenVR names of every model: SteamVR's, then OpenLamina's own that SteamVR doesn't have
+static const std::vector<string>& AllModelNames()
+{
+	static const std::vector<string>& names = *[] {
+		auto* all = new std::vector<string>(SteamVRRenderModelNames());
+		for (const char* own : { "renderLeftHand", "renderRightHand", "vive_tracker" })
+			if (std::find(all->begin(), all->end(), own) == all->end())
+				all->push_back(own);
+		return all;
+	}();
+	return names;
+}
+
 static string loadResource(int rid)
 {
 #ifndef _WIN32
@@ -239,6 +356,24 @@ EVRRenderModelError BaseRenderModels::LoadRenderModel_Async(const char* pchRende
 	*renderModel = nullptr;
 	OOVR_LOGF("LoadRenderModel_Async %s", pchRenderModelName);
 	string name = pchRenderModelName;
+
+	// SteamVR's model of that name, as SteamVR answers it; else (no SteamVR, or a model it can't load) OpenLamina's own
+	if (std::optional<RmMesh> mesh = SteamVRMesh(name)) {
+		auto* rm = new RenderModel_t();
+		rm->unVertexCount = (uint32_t)mesh->vertices.size();
+		auto* vertices = new OOVR_RenderModel_Vertex_t[mesh->vertices.size()];
+		memcpy(vertices, mesh->vertices.data(), mesh->vertices.size() * sizeof(OOVR_RenderModel_Vertex_t));
+		rm->rVertexData = vertices;
+		auto* indices = new uint16_t[mesh->indices.size()];
+		memcpy(indices, mesh->indices.data(), mesh->indices.size() * sizeof(uint16_t));
+		rm->rIndexData = indices;
+		rm->unTriangleCount = (uint32_t)(mesh->indices.size() / 3);
+		rm->diffuseTextureId = SteamVRTextureId(mesh->diffuse);
+		AddLive(LiveModels(), rm);
+		*renderModel = rm;
+		return VRRenderModelError_None;
+	}
+
 	int rid;
 	float sided;
 
@@ -443,7 +578,17 @@ EVRRenderModelError BaseRenderModels::LoadTexture_Async(TextureID_t textureId, R
 	AddLive(LiveTextures(), *texture);
 	RenderModel_TextureMap_t& tx = **texture;
 
-	// For now use a 1x1 single coloured texture
+	// A SteamVR model's texture
+	if (std::shared_ptr<const RmTexture> steamvr = SteamVRTexture(textureId)) {
+		tx.unWidth = (uint16_t)steamvr->width;
+		tx.unHeight = (uint16_t)steamvr->height;
+		uint8_t* pixels = new uint8_t[steamvr->rgba.size()];
+		memcpy(pixels, steamvr->rgba.data(), steamvr->rgba.size());
+		tx.rubTextureMapData = pixels;
+		return VRRenderModelError_None;
+	}
+
+	// OpenLamina's own models: a 1x1 texture of the hand colour
 	tx.unWidth = 1;
 	tx.unHeight = 1;
 	uint8_t* d = new uint8_t[tx.unWidth * tx.unHeight * 4];
@@ -472,7 +617,35 @@ EVRRenderModelError BaseRenderModels::LoadTextureD3D11_Async(TextureID_t texture
 {
 	if (ppD3D11Texture2D)
 		*ppD3D11Texture2D = nullptr;
-	OC_UNSUPPORTED(VRRenderModelError_NotSupported, "LoadTextureD3D11_Async: use LoadTexture_Async or LoadIntoTextureD3D11_Async");
+	std::shared_ptr<const RmTexture> tex = SteamVRTexture(textureId);
+	// OpenLamina's own models have no texture ids (only the hand colour LoadTexture_Async gives)
+	if (!tex)
+		OC_UNSUPPORTED(VRRenderModelError_NotSupported, "LoadTextureD3D11_Async: no texture %d (only SteamVR's models have textures)", (int)textureId);
+#ifndef SUPPORT_DX11
+	OC_UNSUPPORTED(VRRenderModelError_NotSupported, "LoadTextureD3D11_Async: this build has no D3D11 support");
+#else
+	// Windows never maps the first 64 KiB, so a "device" there is a bad argument, not a device
+	if (!ppD3D11Texture2D || (uintptr_t)pD3D11Device < 0x10000)
+		return VRRenderModelError_InvalidArg;
+
+	D3D11_TEXTURE2D_DESC desc{};
+	desc.Width = tex->width;
+	desc.Height = tex->height;
+	desc.MipLevels = 1;
+	desc.ArraySize = 1;
+	desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	desc.SampleDesc.Count = 1;
+	desc.Usage = D3D11_USAGE_DEFAULT;
+	desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	D3D11_SUBRESOURCE_DATA init{ tex->rgba.data(), tex->width * 4, 0 };
+	ID3D11Texture2D* out = nullptr;
+	HRESULT hr = ((ID3D11Device*)pD3D11Device)->CreateTexture2D(&desc, &init, &out);
+	if (FAILED(hr) || !out)
+		OC_UNSUPPORTED(VRRenderModelError_InvalidTexture, "LoadTextureD3D11_Async: CreateTexture2D failed (0x%08lx)", (unsigned long)hr);
+	AddLive(LiveD3D11Textures(), out);
+	*ppD3D11Texture2D = out;
+	return VRRenderModelError_None;
+#endif
 }
 
 EVRRenderModelError BaseRenderModels::LoadIntoTextureD3D11_Async(TextureID_t textureId, void* pDstTexture)
@@ -512,12 +685,16 @@ EVRRenderModelError BaseRenderModels::LoadIntoTextureD3D11_Async(TextureID_t tex
 	for (int i = 0; i < px_count; i++) {
 		pixels[i] = pixColour;
 	}
+	// A SteamVR model's texture of the texture's size: its pixels
+	std::shared_ptr<const RmTexture> steamvr = SteamVRTexture(textureId);
+	if (steamvr && steamvr->width == desc.Width && steamvr->height == desc.Height)
+		memcpy(pixels, steamvr->rgba.data(), (size_t)px_count * sizeof(pix_t));
 
 	// Cross our fingers it's a four-byte RGBA format.
 	int count = desc.MipLevels * desc.ArraySize;
 	D3D11_SUBRESOURCE_DATA* init = new D3D11_SUBRESOURCE_DATA[count];
 	for (int i = 0; i < count; i++) {
-		init[i] = { pixels, sizeof(uint32_t), 0 };
+		init[i] = { pixels, desc.Width * (UINT)sizeof(pix_t), 0 };
 	}
 
 	ID3D11Texture2D* tempTex = nullptr;
@@ -545,7 +722,11 @@ EVRRenderModelError BaseRenderModels::LoadIntoTextureD3D11_Async(TextureID_t tex
 
 void BaseRenderModels::FreeTextureD3D11(void* pD3D11Texture2D)
 {
-	// LoadTextureD3D11_Async hands no textures out
+#ifdef SUPPORT_DX11
+	// Only what LoadTextureD3D11_Async handed out, once
+	if (pD3D11Texture2D && TakeLive(LiveD3D11Textures(), pD3D11Texture2D))
+		((ID3D11Texture2D*)pD3D11Texture2D)->Release();
+#endif
 }
 
 uint32_t BaseRenderModels::GetRenderModelName(uint32_t unRenderModelIndex, VR_OUT_STRING() char* pchRenderModelName, uint32_t unRenderModelNameLen)
@@ -554,6 +735,17 @@ uint32_t BaseRenderModels::GetRenderModelName(uint32_t unRenderModelIndex, VR_OU
 	uint32_t strLen = 0;
 
 	OOVR_LOGF("GetRenderModelName %d", unRenderModelIndex);
+
+	// With SteamVR: its models, then OpenLamina's own; the size with the terminator, as SteamVR answers
+	if (!SteamVRRenderModelNames().empty()) {
+		const std::vector<string>& names = AllModelNames();
+		if (unRenderModelIndex >= names.size()) {
+			if (pchRenderModelName && unRenderModelNameLen)
+				pchRenderModelName[0] = 0;
+			return 0;
+		}
+		return CopyOutModelString(names[unRenderModelIndex], pchRenderModelName, unRenderModelNameLen);
+	}
 
 	switch (unRenderModelIndex) {
 	case 0:
@@ -582,11 +774,17 @@ uint32_t BaseRenderModels::GetRenderModelName(uint32_t unRenderModelIndex, VR_OU
 
 uint32_t BaseRenderModels::GetRenderModelCount()
 {
-	return 3;
+	// OpenLamina's own three, after SteamVR's models
+	return (uint32_t)AllModelNames().size();
 }
 
 uint32_t BaseRenderModels::GetComponentCount(const char* pchRenderModelName)
 {
+	if (pchRenderModelName) {
+		if (std::shared_ptr<const RmModel> model = FindSteamVRRenderModel(pchRenderModelName))
+			return (uint32_t)model->components.size();
+	}
+
 	// Left at zero for now until I can properly test it, and add textures
 	return oovr_global_configuration.RenderCustomHands() ? 1 : 0;
 
@@ -597,6 +795,17 @@ uint32_t BaseRenderModels::GetComponentCount(const char* pchRenderModelName)
 uint32_t BaseRenderModels::GetComponentName(const char* pchRenderModelName, uint32_t unComponentIndex,
     char* pchComponentName, uint32_t unComponentNameLen)
 {
+	if (pchRenderModelName) {
+		if (std::shared_ptr<const RmModel> model = FindSteamVRRenderModel(pchRenderModelName)) {
+			if (unComponentIndex >= model->components.size()) {
+				if (pchComponentName && unComponentNameLen)
+					pchComponentName[0] = 0;
+				return 0;
+			}
+			return CopyOutModelString(model->components[unComponentIndex].name, pchComponentName, unComponentNameLen);
+		}
+	}
+
 	if (!pchRenderModelName || !IsKnownRenderModel(pchRenderModelName)) {
 		if (pchComponentName && unComponentNameLen)
 			pchComponentName[0] = 0;
@@ -616,12 +825,37 @@ uint32_t BaseRenderModels::GetComponentName(const char* pchRenderModelName, uint
 
 uint64_t BaseRenderModels::GetComponentButtonMask(const char* pchRenderModelName, const char* pchComponentName)
 {
-	return 0;
+	// A SteamVR model's component: the button and the axis its motion follows
+	std::shared_ptr<const RmModel> model = pchRenderModelName ? FindSteamVRRenderModel(pchRenderModelName) : nullptr;
+	const RmComponent* c = model ? FindComponent(*model, pchComponentName) : nullptr;
+	if (!c || !c->motion.isObject())
+		return 0;
+	uint64_t mask = 0;
+	const Json::Value& button = c->motion["controller_button"];
+	if (button.isIntegral() && button.asInt64() >= 0 && button.asInt64() < 64)
+		mask |= vr::ButtonMaskFromId((vr::EVRButtonId)button.asInt());
+	const Json::Value& axis = c->motion["controller_axis"];
+	if (axis.isIntegral() && axis.asInt64() >= 0 && axis.asInt64() < vr::k_unControllerStateAxisCount)
+		mask |= vr::ButtonMaskFromId((vr::EVRButtonId)(vr::k_EButton_Axis0 + axis.asInt()));
+	return mask;
 }
 
 uint32_t BaseRenderModels::GetComponentRenderModelName(const char* pchRenderModelName, const char* pchComponentName,
     char* componentModelName, uint32_t componentModelNameLen)
 {
+	// A SteamVR model's component with something to draw: "<model>/<component>", which LoadRenderModel_Async loads
+	if (pchRenderModelName) {
+		if (std::shared_ptr<const RmModel> model = FindSteamVRRenderModel(pchRenderModelName)) {
+			const RmComponent* c = FindComponent(*model, pchComponentName);
+			if (!c || c->objFile.empty()) {
+				if (componentModelName && componentModelNameLen)
+					componentModelName[0] = 0;
+				return 0;
+			}
+			return CopyOutModelString(model->name + "/" + c->name, componentModelName, componentModelNameLen);
+		}
+	}
+
 	if (!pchRenderModelName || !pchComponentName || !IsKnownRenderModel(pchRenderModelName)
 	    || strcmp(pchRenderModelName, pchComponentName) != 0) {
 		// Only the model's one component (named after it) has a render model
@@ -660,6 +894,53 @@ bool BaseRenderModels::GetComponentState(const char* pchRenderModelName, const c
 		return false;
 
 	std::string componentName = pchComponentName;
+
+	// A SteamVR model's component: where its motion puts it for the controller state (at rest without one)
+	std::shared_ptr<const RmModel> steamvr = pchRenderModelName ? FindSteamVRRenderModel(pchRenderModelName) : nullptr;
+	if (const RmComponent* c = steamvr ? FindComponent(*steamvr, pchComponentName) : nullptr) {
+		float value = 0;
+		vr::HmdVector2_t axis = { { 0, 0 } };
+		bool pressed = false, touched = false;
+		const Json::Value& m = c->motion;
+		if (pControllerState && m.isObject()) {
+			const Json::Value& axisIndex = m["controller_axis"];
+			if (axisIndex.isIntegral() && axisIndex.asInt64() >= 0 && axisIndex.asInt64() < vr::k_unControllerStateAxisCount) {
+				int n = axisIndex.asInt();
+				const vr::VRControllerAxis_t& a = pControllerState->rAxis[n];
+				axis = { { a.x, a.y } };
+				uint64_t bit = vr::ButtonMaskFromId((vr::EVRButtonId)(vr::k_EButton_Axis0 + n));
+				pressed = (pControllerState->ulButtonPressed & bit) != 0;
+				touched = (pControllerState->ulButtonTouched & bit) != 0;
+				const Json::Value& part = m["controller_axis_component"];
+				value = part.isIntegral() && part.asInt64() == 1 ? a.y : a.x;
+			}
+			const Json::Value& button = m["controller_button"];
+			if (button.isIntegral() && button.asInt64() >= 0 && button.asInt64() < 64) {
+				uint64_t bit = vr::ButtonMaskFromId((vr::EVRButtonId)button.asInt());
+				pressed = pressed || (pControllerState->ulButtonPressed & bit) != 0;
+				touched = touched || (pControllerState->ulButtonTouched & bit) != 0;
+				if (!axisIndex.isIntegral())
+					value = pressed ? 1.0f : 0.0f;
+			}
+			// A pad or stick moves with its axis; how far it's pressed is its click
+			if (c->motionType == "trackpad" || c->motionType == "joystick")
+				value = pressed ? 1.0f : 0.0f;
+		}
+		glm::mat4 motion = X2G_om34_pose(ComponentPose(*c, value, axis));
+		pComponentState->mTrackingToComponentRenderModel = G2S_m34(motion);
+		pComponentState->mTrackingToComponentLocal = G2S_m34(motion * X2G_om34_pose(c->local));
+		uint32_t properties = 0;
+		if (c->motionType.empty())
+			properties |= VRComponentProperty_IsStatic;
+		if (ComponentVisible(*c, touched, pressed))
+			properties |= VRComponentProperty_IsVisible;
+		if (touched)
+			properties |= VRComponentProperty_IsTouched;
+		if (pressed)
+			properties |= VRComponentProperty_IsPressed;
+		pComponentState->uProperties = properties;
+		return true;
+	}
 
 	ITrackedDevice::TrackedDeviceType hand = ITrackedDevice::HAND_NONE;
 	if (pchRenderModelName) {
@@ -768,6 +1049,10 @@ bool BaseRenderModels::TryGetComponentState(ITrackedDevice::TrackedDeviceType ha
 
 bool BaseRenderModels::RenderModelHasComponent(const char* pchRenderModelName, const char* pchComponentName)
 {
+	if (pchRenderModelName) {
+		if (std::shared_ptr<const RmModel> model = FindSteamVRRenderModel(pchRenderModelName))
+			return FindComponent(*model, pchComponentName) != nullptr;
+	}
 	// The models' one component is named after the model (GetComponentName)
 	return pchRenderModelName && pchComponentName && IsKnownRenderModel(pchRenderModelName)
 	    && strcmp(pchRenderModelName, pchComponentName) == 0;
@@ -775,6 +1060,18 @@ bool BaseRenderModels::RenderModelHasComponent(const char* pchRenderModelName, c
 
 uint32_t BaseRenderModels::GetRenderModelThumbnailURL(const char* pchRenderModelName, VR_OUT_STRING() char* pchThumbnailURL, uint32_t unThumbnailURLLen, EVRRenderModelError* peError)
 {
+	// A SteamVR model: its thumbnail file as a file URL ("" if it names none)
+	if (std::shared_ptr<const RmModel> model = pchRenderModelName ? FindSteamVRRenderModel(pchRenderModelName) : nullptr) {
+		if (peError)
+			*peError = VRRenderModelError_None;
+		string url;
+		if (!model->thumbnail.empty()) {
+			std::u8string generic = (model->folder / PathFromUtf8(model->thumbnail)).generic_u8string();
+			url = "file:///" + string(generic.begin(), generic.end());
+		}
+		return CopyOutModelString(url, pchThumbnailURL, unThumbnailURLLen);
+	}
+
 	if (peError)
 		*peError = VRRenderModelError_NotSupported;
 	if (pchThumbnailURL && unThumbnailURLLen)
@@ -785,6 +1082,18 @@ uint32_t BaseRenderModels::GetRenderModelThumbnailURL(const char* pchRenderModel
 
 uint32_t BaseRenderModels::GetRenderModelOriginalPath(const char* pchRenderModelName, VR_OUT_STRING() char* pchOriginalPath, uint32_t unOriginalPathLen, EVRRenderModelError* peError)
 {
+	// A SteamVR model: its OBJ in its folder, as SteamVR answers (LoadRenderModel_Async takes it)
+	if (std::shared_ptr<const RmModel> model = pchRenderModelName ? FindSteamVRRenderModel(pchRenderModelName) : nullptr) {
+		if (peError)
+			*peError = VRRenderModelError_None;
+		string stem = model->name;
+		if (!stem.empty() && stem[0] == '{')
+			stem = stem.substr(stem.find('}') + 1);
+		std::filesystem::path file = model->folder / PathFromUtf8(stem + ".obj");
+		std::u8string native = file.make_preferred().u8string();
+		return CopyOutModelString(string(native.begin(), native.end()), pchOriginalPath, unOriginalPathLen);
+	}
+
 	if (peError)
 		*peError = VRRenderModelError_NotSupported;
 	if (pchOriginalPath && unOriginalPathLen)

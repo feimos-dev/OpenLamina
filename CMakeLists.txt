@@ -332,6 +332,7 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/Numbers.cpp
 	OpenOVR/Misc/JsonFile.cpp
 	OpenOVR/Misc/SteamVRPaths.cpp
+	OpenOVR/Misc/SteamVRRenderModels.cpp
 	OpenOVR/Misc/SteamClient.cpp
 	OpenOVR/Misc/SharedStore.cpp
 	OpenOVR/Misc/SteamVRSettings.cpp
@@ -356,6 +357,7 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/OverlayMaths.cpp
 	OpenOVR/Misc/JsonFile.h
 	OpenOVR/Misc/SteamVRPaths.h
+	OpenOVR/Misc/SteamVRRenderModels.h
 	OpenOVR/Misc/SteamClient.h
 	OpenOVR/Misc/SharedStore.h
 	OpenOVR/Misc/SteamVRSettings.h
