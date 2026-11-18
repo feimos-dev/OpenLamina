@@ -2164,6 +2164,10 @@ EVRInputError BaseInput::GetDigitalActionData(VRActionHandle_t action, InputDigi
 	if (act->type == ActionType::EyeTracking)
 		return VRInputError_WrongType;
 
+	// Held by the dashboard: inactive (zeroed above)
+	if (HeldByDashboard())
+		return VRInputError_None;
+
 	// inputEvaluator=steamvr: the evaluators' output, inactive if no active binding writes it
 	if (useEvaluator && rawInputsSet != XR_NULL_HANDLE) {
 		if (std::optional<DigitalOut> d = EvaluatedDigital(*act, ulRestrictToDevice)) {
@@ -2231,6 +2235,10 @@ EVRInputError BaseInput::GetAnalogActionData(VRActionHandle_t action, InputAnalo
 	// A null or wrong-sized struct is an argument error, as SteamVR answers (VRInputError_InvalidParam)
 	if (!pActionData || unActionDataSize != sizeof(*pActionData))
 		return VRInputError_InvalidParam;
+
+	// Held by the dashboard: inactive (zeroed above)
+	if (HeldByDashboard() && act->type != ActionType::EyeTracking)
+		return VRInputError_None;
 
 	// inputEvaluator=steamvr: the evaluators' output, inactive if no active binding writes it
 	if (useEvaluator && rawInputsSet != XR_NULL_HANDLE
@@ -3682,6 +3690,55 @@ bool BaseInput::GetHandPointer(int hand, XrSpace base, XrTime time, HandPointer&
 		out.stickY = read(ctrl.stickY, XR_NULL_PATH).value_or(0.0f);
 	}
 	return true;
+}
+
+static std::atomic<bool> heldByDashboard{ false };
+
+void BaseInput::SetHeldByDashboard(bool held)
+{
+	heldByDashboard = held;
+}
+
+bool BaseInput::HeldByDashboard()
+{
+	return heldByDashboard;
+}
+
+bool BaseInput::GetHandMenu(int hand)
+{
+	if (hand < 0 || hand > 1)
+		return false;
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
+	std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
+	if (!hasLoadedActions || legacyInputsSet == XR_NULL_HANDLE || !xr_session.get())
+		return false;
+	auto held = [&](XrAction action, XrPath subaction) {
+		if (action == XR_NULL_HANDLE)
+			return false;
+		XrActionStateGetInfo getInfo = { XR_TYPE_ACTION_STATE_GET_INFO };
+		getInfo.action = action;
+		getInfo.subactionPath = subaction;
+		XrActionStateBoolean state = { XR_TYPE_ACTION_STATE_BOOLEAN };
+		return XR_SUCCEEDED(xrGetActionStateBoolean(xr_session.get(), &getInfo, &state)) && state.isActive && state.currentState;
+	};
+	if (useEvaluator && rawInputsSet != XR_NULL_HANDLE) {
+		const XrPath subaction = (size_t)hand < allSubactionPaths.size() ? allSubactionPaths[hand] : XR_NULL_PATH;
+		for (const char* component : { "/input/system/click", "/input/menu/click", "/input/b/click", "/input/y/click" }) {
+			auto action = rawActions.find(component);
+			if (action == rawActions.end())
+				continue;
+			// The raw inputs are float actions
+			XrActionStateGetInfo getInfo = { XR_TYPE_ACTION_STATE_GET_INFO };
+			getInfo.action = action->second;
+			getInfo.subactionPath = subaction;
+			XrActionStateFloat state = { XR_TYPE_ACTION_STATE_FLOAT };
+			if (XR_SUCCEEDED(xrGetActionStateFloat(xr_session.get(), &getInfo, &state)) && state.isActive)
+				return state.currentState >= 0.5f;
+		}
+		return false;
+	}
+	const LegacyControllerActions& ctrl = legacyControllers[hand];
+	return held(ctrl.system, XR_NULL_PATH) || held(ctrl.menu, XR_NULL_PATH);
 }
 
 void BaseInput::SyncPointerActions()

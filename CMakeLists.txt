@@ -352,6 +352,8 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/LaserMouse.h
 	OpenOVR/Misc/RemotePointer.cpp
 	OpenOVR/Misc/RemotePointer.h
+	OpenOVR/Misc/Dashboard.cpp
+	OpenOVR/Misc/Dashboard.h
 	OpenOVR/Misc/Equirect.cpp
 	OpenOVR/Misc/FrameStats.cpp
 	OpenOVR/Misc/FrameStats.h

@@ -18,7 +18,7 @@
  {"interface": "IVRHeadsetView_\\d+", "method": "GetHeadsetViewSize", "field": "out", "reason": "the desktop mirror window's size is the PC's own setting"},
  {"interface": "IVRApplications_\\d+", "method": "GetApplicationCount|GetApplicationKeyByIndex|GetApplicationKeyByProcessId|GetStartingApplication|GetSceneApplicationKey|GetCurrentSceneProcessId|GetApplicationProcessId", "field": "ret", "reason": "which applications are installed and running is the PC's own"},
  {"interface": "IVRApplications_\\d+", "method": "GetApplicationKeyByIndex|GetApplicationKeyByProcessId|GetStartingApplication|GetSceneApplicationKey", "field": "out", "reason": "which applications are installed and running is the PC's own"},
- {"interface": "IVROverlay_\\d+", "method": "IsDashboardVisible|IsActiveDashboardOverlay", "field": "ret", "reason": "SteamVR's dashboard opens with the null HMD; OpenLamina has no dashboard"},
+ {"interface": "IVROverlay_\\d+", "method": "IsDashboardVisible|IsActiveDashboardOverlay", "field": "ret", "reason": "SteamVR's dashboard opens with the null HMD; OpenLamina's is off by default (dashboardButton)"},
  {"interface": "IVROverlay_\\d+", "method": "FindOverlay|CreateOverlay|CreateSubviewOverlay", "field": "out", "reason": "overlay handles are numbers each runtime picks"},
  {"interface": "IVROverlay_012", "method": "CreateOverlay", "field": "ret", "reason": "SteamVR still held the previous child's overlay key when it recorded 012 (KeyInUse, 17); every other version answers 0"},
  {"interface": "IVRInput_\\d+", "method": "GetActionSetHandle|GetActionHandle|GetInputSourceHandle", "field": "out", "reason": "handles are numbers each runtime picks (OpenLamina's are pointers)"},

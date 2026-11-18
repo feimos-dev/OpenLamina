@@ -1104,15 +1104,18 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 		}
 	}
 
-	// With laserMouse, the game's lasers reach other programs' overlays even if it has none of its own
-	if (!GetUnsafeBaseOverlay() && !keptOverlay && OtherProgramsToPointAt())
+	// The game's lasers reach other programs' overlays (laserMouse), and its dashboard opens (dashboardButton), even
+	// if it has no overlays of its own
+	if (!GetUnsafeBaseOverlay() && !keptOverlay && WantsOverlaysInstance())
 		keptOverlay = GetCreateBaseOverlay();
 
 	// If we have an overlay then add. Its layers stay as they are until the frame has ended.
 	BaseOverlay* overlay = GetUnsafeBaseOverlay();
 	std::unique_lock<std::recursive_mutex> overlayLock;
 	if (overlay) {
-		// The controllers' lasers on the overlays and the keyboard, on this thread: it fills their swapchains
+		// The dashboard, then the controllers' lasers on the overlays and the keyboard, on this thread: it fills their
+		// swapchains
+		overlay->_UpdateDashboard();
 		overlay->_UpdatePointer();
 		overlayLock = std::unique_lock(overlay->_LayersLock());
 		layer_count = overlay->_BuildLayers(app_layer, headers, true);
@@ -1882,9 +1885,11 @@ void XrBackend::StartHelperLoop()
 		    std::lock_guard<std::mutex> pass(helperPassLock);
 		    PumpEvents();
 		    BaseOverlay* overlay = GetUnsafeBaseOverlay();
-		    // The program's overlays for the scene app to point at
-		    if (overlay)
+		    // The program's overlays for the scene app to point at, and its dashboard overlays as the dashboard shows them
+		    if (overlay) {
+			    overlay->_UpdateDashboard();
 			    overlay->_PublishOverlays();
+		    }
 		    if (!overlaySession)
 			    return 0; // a headless session runs no frames
 		    // The lasers, the keyboard and the cursor, on the session's device, which only OpenLamina's threads use. While
@@ -1991,9 +1996,13 @@ void XrBackend::StopOwnFrames(bool forGood)
 		keptOverlay.reset();
 }
 
-bool XrBackend::OtherProgramsToPointAt()
+bool XrBackend::WantsOverlaysInstance()
 {
-	if (!oovr_global_configuration.LaserMouse() || BaseClientCore::appType != vr::VRApplication_Scene || IsHelperSession())
+	if (BaseClientCore::appType != vr::VRApplication_Scene || IsHelperSession())
+		return false;
+	if (oovr_global_configuration.DashboardButton() != "off")
+		return true;
+	if (!oovr_global_configuration.LaserMouse())
 		return false;
 	// At most once a second: it reads the store and asks whether its programs are running
 	const auto now = std::chrono::steady_clock::now();

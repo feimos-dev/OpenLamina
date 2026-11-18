@@ -800,7 +800,14 @@ bool BaseSystem::GetControllerState(vr::TrackedDeviceIndex_t controllerDeviceInd
 	if (frameNumber > 0)
 		inputSystem->LoadEmptyManifestIfRequired();
 
-	return inputSystem->GetLegacyControllerState(controllerDeviceIndex, controllerState);
+	const bool result = inputSystem->GetLegacyControllerState(controllerDeviceIndex, controllerState);
+	// Held by OpenLamina's dashboard: read (the dashboard's button is in it) and zeroed
+	if (BaseInput::HeldByDashboard()) {
+		const uint32_t packet = controllerState->unPacketNum;
+		memset(controllerState, 0, controllerStateSize);
+		controllerState->unPacketNum = packet;
+	}
+	return result;
 }
 
 bool BaseSystem::GetControllerStateWithPose(ETrackingUniverseOrigin eOrigin, vr::TrackedDeviceIndex_t unControllerDeviceIndex,

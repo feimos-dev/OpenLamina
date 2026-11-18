@@ -4,6 +4,7 @@
 #include "conformance.h"
 
 #include "IVRCompositor_029.h"
+#include "IVRInput_011.h"
 #include "IVROverlay_028.h"
 #include "IVRSystem_022.h"
 
@@ -315,6 +316,131 @@ void RemotePointerDyingOverlayCase(CaseContext& c)
 #endif
 }
 
+// A pose from the store or the dump ({"p": [x, y, z], ...}) rounded to centimetres, null without one
+Json::Value RoundedPosition(const Json::Value& pose)
+{
+	if (!pose["p"].isArray() || pose["p"].size() != 3)
+		return Json::Value();
+	Json::Value out(Json::arrayValue);
+	for (const Json::Value& v : pose["p"]) {
+		double r = std::round(v.asDouble() * 100) / 100;
+		out.append(r == 0 ? 0.0 : r);
+	}
+	return out;
+}
+
+// The game's side of dashboard (scripts/dashboard.json, ini/dashboard.ini, the manifest manifest_basic.json): the
+// left menu button held 0.7 s from frame 30 opens the dashboard, whose "Quit game" the right laser clicks at frame
+// 150. 260 frames, at about 90 a second, once the overlay app's dashboard overlay is in the store.
+void DashboardSceneCase(CaseContext& c)
+{
+	SceneApp app;
+	if (!OpenSceneApp(c, app))
+		return;
+	Json::Value r;
+	auto* in = Interface<vr::IVRInput_011::IVRInput>(c, "IVRInput_011");
+	vr::VRActionSetHandle_t set = vr::k_ulInvalidActionSetHandle;
+	vr::VRActionHandle_t trigger = vr::k_ulInvalidActionHandle;
+	if (in && !c.manifest.empty()) {
+		in->SetActionManifestPath(c.manifest.c_str());
+		in->GetActionSetHandle("/actions/main", &set);
+		in->GetActionHandle("/actions/main/in/trigger", &trigger);
+	}
+	r["saw_overlay_app"] = WaitForOtherProgram(std::chrono::seconds(5));
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	bool activated = false, deactivated = false, quit = false;
+	for (int frame = 1; frame <= 260; frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		app.comp->WaitGetPoses(poses, 16, nullptr, 0);
+		if (in && set != vr::k_ulInvalidActionSetHandle) {
+			vr::IVRInput_011::VRActiveActionSet_t active{};
+			active.ulActionSet = set;
+			in->UpdateActionState(&active, sizeof(active), 1);
+		} else {
+			vr::VRControllerState_t state{};
+			app.sys->GetControllerState(1, &state, sizeof(state));
+		}
+		vr::VREvent_t ev{};
+		while (app.sys->PollNextEvent(&ev, sizeof(ev))) {
+			activated = activated || ev.eventType == vr::VREvent_DashboardActivated;
+			deactivated = deactivated || ev.eventType == vr::VREvent_DashboardDeactivated;
+			quit = quit || ev.eventType == vr::VREvent_Quit;
+		}
+		if (frame == 120) {
+			Json::Value doc = StoreDocument("dashboard");
+			r["open_at_120"] = doc["open"];
+			r["panel_position"] = RoundedPosition(doc["panel_pose"]);
+			if (in && trigger != vr::k_ulInvalidActionHandle) {
+				vr::IVRInput_011::InputAnalogActionData_t data{};
+				in->GetAnalogActionData(trigger, &data, sizeof(data), vr::k_ulInvalidInputValueHandle);
+				r["action_active_while_open"] = data.bActive;
+			}
+		}
+		app.comp->Submit(vr::Eye_Left, tex.get(), nullptr, vr::Submit_Default);
+		app.comp->Submit(vr::Eye_Right, tex.get(), nullptr, vr::Submit_Default);
+		// At about the display's rate (the stand-in doesn't wait), so the overlay app has time to show the panel
+		std::this_thread::sleep_for(std::chrono::milliseconds(11));
+	}
+	r["activated"] = activated;
+	r["quit"] = quit;
+	r["deactivated"] = deactivated;
+	r["open_at_end"] = StoreDocument("dashboard")["open"];
+	c.core->Cleanup();
+	c.Record("dashboard", r);
+}
+
+// The overlay app's side of dashboard: a dashboard overlay (1 m, from memory), which it draws at the panel's pose
+// while the dashboard shows it; done once the dashboard has closed again, at most 10 s
+void DashboardOverlayCase(CaseContext& c)
+{
+	using namespace vr::IVROverlay_028;
+	Json::Value r;
+	r["init"] = (int)c.core->Init(vr::VRApplication_Overlay, nullptr);
+	auto* ov = r["init"].asInt() == vr::VRInitError_None ? Interface<IVROverlay>(c, "IVROverlay_028") : nullptr;
+	if (!ov) {
+		c.Record("dashboard overlay", r);
+		if (r["init"].asInt() == vr::VRInitError_None)
+			c.core->Cleanup();
+		return;
+	}
+	vr::VROverlayHandle_t main = vr::k_ulOverlayHandleInvalid, thumbnail = vr::k_ulOverlayHandleInvalid;
+	r["create"] = (int)ov->CreateDashboardOverlay("oc.helper.dashboard", "Tool", &main, &thumbnail);
+	r["pair"] = main != vr::k_ulOverlayHandleInvalid && thumbnail != vr::k_ulOverlayHandleInvalid && main != thumbnail;
+	std::vector<uint8_t> grey(64 * 64 * 4, 0x80);
+	r["raw"] = (int)ov->SetOverlayRaw(main, grey.data(), 64, 64, 4);
+	ov->SetOverlayRaw(thumbnail, grey.data(), 64, 64, 4);
+	ov->SetOverlayWidthInMeters(main, 1);
+	bool sawOpen = false, active = false;
+	Json::Value panel;
+	auto until = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+	auto closedAt = std::chrono::steady_clock::time_point::max();
+	while (std::chrono::steady_clock::now() < until && std::chrono::steady_clock::now() < closedAt) {
+		Json::Value doc = StoreDocument("dashboard");
+		const bool open = doc["open"].isBool() && doc["open"].asBool();
+		if (open && doc["active_pid"].asUInt() == OwnPid()) {
+			sawOpen = true;
+			panel = doc["panel_pose"];
+			active = active || ov->IsActiveDashboardOverlay(main);
+		}
+		if (sawOpen && !open && closedAt == std::chrono::steady_clock::time_point::max())
+			closedAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
+		std::this_thread::sleep_for(std::chrono::milliseconds(10));
+	}
+	r["shown"] = sawOpen;
+	r["active"] = active;
+	ov->DestroyOverlay(thumbnail);
+	ov->DestroyOverlay(main);
+	c.core->Cleanup();
+	// Its quad at the panel's pose, in this program's own frames
+	bool atPanel = false;
+	Json::Value dump = ReadStandInDump();
+	const Json::Value want = RoundedPosition(panel);
+	for (const Json::Value& layer : dump["layers"])
+		atPanel = atPanel || (layer["type"].asString() == "quad" && !want.isNull() && RoundedPosition(layer["pose"]) == want);
+	r["quad_at_panel"] = atPanel;
+	c.Record("dashboard overlay", r);
+}
+
 // An overlay application with one overlay from memory and nothing else: no WaitGetPoses, so every frame is
 // OpenLamina's own. About 60 frames' time at 90 Hz.
 void OverlayAppCase(CaseContext& c)
@@ -492,6 +618,8 @@ const std::map<std::string, CaseFn>& conformance::HelperCases()
 		{ "remote-pointer-overlay", RemotePointerOverlayCase },
 		{ "remote-pointer-peer-dies", RemotePointerPeerDiesCase },
 		{ "remote-pointer-dying-overlay", RemotePointerDyingOverlayCase },
+		{ "dashboard", DashboardSceneCase },
+		{ "dashboard-overlay", DashboardOverlayCase },
 	};
 	return cases;
 }

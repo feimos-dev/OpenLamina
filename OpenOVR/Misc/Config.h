@@ -34,6 +34,8 @@ public:
 	inline bool HelperApps() const { return helperApps; }
 	/** An overlay application's layers' place among other programs' (XrSessionCreateInfoOverlayEXTX) */
 	inline uint32_t OverlayLayersPlacement() const { return overlayLayersPlacement; }
+	/** What opens OpenLamina's dashboard: "menu_long" (the left menu button held 0.6 s), "menu" (pressed) or "off" */
+	const std::string& DashboardButton() const { return dashboardButton; }
 	float HiddenMeshVerticalScale() const { return hiddenMeshVerticalScale; }
 	inline bool LogAllOpenVRCalls() const { return logAllOpenVRCalls; }
 	/** The program OpenBindingUI starts; empty for none */
@@ -70,6 +72,7 @@ private:
 	bool steamvrRenderModels = false;
 	bool helperApps = true;
 	uint32_t overlayLayersPlacement = 1;
+	std::string dashboardButton = "off";
 	float hiddenMeshVerticalScale = 1.0f;
 	bool logAllOpenVRCalls = false;
 	std::string bindingEditor;

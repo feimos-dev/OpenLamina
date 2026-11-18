@@ -213,6 +213,15 @@ private:
 	// An overlay application while a scene app is running: the scene app's instance points, and this one doesn't
 	bool SceneAppPoints() const;
 
+	// The dashboard: the scene app's (its button, its frame and tabs), and the store's state of it, which every
+	// program's dashboard overlays follow (BaseOverlay.cpp)
+	struct DashboardState;
+	std::unique_ptr<DashboardState> dash;
+	// The scene app's dashboard opens or closes: the store, the events, the game's input
+	void DashboardChanged(bool open, const char* overlayKey = nullptr);
+	// Where a dashboard overlay is drawn while it's the one shown (false while it isn't); with layersLock held
+	bool DashboardPlacement(const OverlayData& overlay, vr::ETrackingUniverseOrigin origin, overlay_maths::Placement& out) const;
+
 public:
 	BaseOverlay();
 	// Destructor, since we have a map of pointers
@@ -243,6 +252,11 @@ public:
 	// and when they changed, dropping the entries of programs that have ended: in an overlay or background application,
 	// or with laserMouse. Not holding _LayersLock().
 	void _PublishOverlays();
+
+	// The scene app's dashboard (with dashboardButton): its button read, opening and closing it, and its frame drawn,
+	// on the game's thread before _UpdatePointer; in every program, the store's Dashboard document read for its
+	// dashboard overlays. Not holding _LayersLock().
+	void _UpdateDashboard();
 
 	// Held while the overlays, their compositors or the keyboard are added, replaced or removed, and while a frame
 	// with their layers is built and ended (on the game's thread, or OpenLamina's own frames' thread). Taken after the
