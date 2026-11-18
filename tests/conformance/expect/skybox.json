@@ -1,5 +1,5 @@
 {
- "#": "Skyboxes (run.py --cases skybox-1,skybox-2,skybox-6 --script scripts/skybox.json): set while the game stalls, shown in OpenLamina's own frames as equirect layers. 1 texture: one lat-long layer; 2: one per eye; 6 cube faces: one lat-long image made from them (1024x512 from 256x256 faces). The lat-long textures are copied upside down, as the quad before them was.",
+ "#": "Skyboxes with ownFrames=true (run.py --cases skybox-1,skybox-2,skybox-6 --script scripts/skybox.json --ini ini/own_frames.ini): set while the game stalls, shown in OpenLamina's own frames as equirect layers, upright. 1 texture: one lat-long layer; 2: one per eye; 6 cube faces: one lat-long image made from them (1024x512 from 256x256 faces).",
  "skybox-1/skybox/-/-": {
   "set": 0,
   "frames_with_skybox_at_least_10": true,
@@ -13,7 +13,7 @@
      256,
      256
     ],
-    "tl": "0000ffff",
+    "tl": "ff0000ff",
     "invalid": []
    }
   ]
@@ -31,7 +31,7 @@
      256,
      256
     ],
-    "tl": "0000ffff",
+    "tl": "ff0000ff",
     "invalid": []
    },
    {
@@ -43,7 +43,7 @@
      256,
      256
     ],
-    "tl": "ffffffff",
+    "tl": "0000ffff",
     "invalid": []
    }
   ]

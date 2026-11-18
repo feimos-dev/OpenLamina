@@ -1,6 +1,7 @@
 #include "Equirect.h"
 
 #include <cmath>
+#include <vector>
 
 namespace {
 enum Face { Front, Back, Left, Right, Top, Bottom };
@@ -39,12 +40,18 @@ Image CubeFacesToEquirect(const std::array<const Image*, 6>& faces, uint32_t wid
 	out.width = width;
 	out.height = width / 2;
 	out.rgba.resize((size_t)out.width * out.height * 4);
+	std::vector<double> sinLon(out.width), cosLon(out.width);
+	for (uint32_t px = 0; px < out.width; px++) {
+		double lon = (px + 0.5) / out.width * 2 * kPi - kPi;
+		sinLon[px] = std::sin(lon);
+		cosLon[px] = std::cos(lon);
+	}
 	for (uint32_t py = 0; py < out.height; py++) {
 		double lat = kPi / 2 - (py + 0.5) / out.height * kPi;
+		double sinLat = std::sin(lat), cosLat = std::cos(lat);
 		for (uint32_t px = 0; px < out.width; px++) {
-			double lon = (px + 0.5) / out.width * 2 * kPi - kPi;
 			double u, v;
-			Face f = FaceOf(std::cos(lat) * std::sin(lon), std::sin(lat), -std::cos(lat) * std::cos(lon), u, v);
+			Face f = FaceOf(cosLat * sinLon[px], sinLat, -cosLat * cosLon[px], u, v);
 			const Image& face = *faces[f];
 			uint32_t fx = (uint32_t)std::min<double>(face.width - 1, u * face.width);
 			uint32_t fy = (uint32_t)std::min<double>(face.height - 1, v * face.height);

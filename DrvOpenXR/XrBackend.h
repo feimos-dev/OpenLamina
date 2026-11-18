@@ -125,8 +125,8 @@ private:
 	std::unique_ptr<Compositor> skybox_compositor; // the quad shown without equirect layers
 
 	// The skybox SetSkyboxOverride set, shown in OpenLamina's own frames until ClearSkyboxOverride: one or two equirect
-	// layers. Clearing only stops showing it (an own frame may still be using its swapchains); they're replaced by the
-	// next skybox or let go of with the session. Under skyboxLock.
+	// layers. Clearing only stops showing it; its swapchains are refilled under frameOwner (which own frames hold) by the
+	// next skybox, or let go of with the session. Under skyboxLock.
 	struct Skybox {
 		std::unique_ptr<Compositor> textures[2]; // lat-long textures, one per eye for a stereo pair
 		std::unique_ptr<CpuSwapchain> faces; // six faces, as one lat-long image
@@ -135,7 +135,11 @@ private:
 	};
 	std::mutex skyboxLock;
 	Skybox skybox;
-	XrCompositionLayerEquirect2KHR ownFrameSkybox[2]{}; // the own frame's copy, used only by the frame being run
+	std::unique_ptr<Compositor> skyboxReader; // reads cube faces back
+	// The game's last projection layer, for OpenLamina's own frames; under frameOwner
+	XrCompositionLayerProjection lastProjection{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
+	XrCompositionLayerProjectionView lastProjectionViews[2]{};
+	bool haveLastProjection = false;
 	bool SkyboxShown();
 	// The skybox from lat-long textures or cube faces; an OpenVR compositor error
 	int SetEquirectSkybox(const vr::Texture_t* textures, uint32_t count);
@@ -224,7 +228,8 @@ private:
 	// busy = time from one xrWaitFrame return to the next xrWaitFrame call (the app's render and submit), smoothed;
 	// interval = time between xrWaitFrame calls, per frame.
 	std::chrono::steady_clock::time_point lastWaitCall{};
-	float measuredIntervalMs = 0.0f, measuredBusyMs = 0.0f, measuredWaitMs = 0.0f, displayPeriodMs = 0.0f;
+	float measuredIntervalMs = 0.0f, measuredBusyMs = 0.0f, measuredWaitMs = 0.0f;
+	std::atomic<float> displayPeriodMs{ 0.0f }; // also written by OpenLamina's own frames' thread
 	uint32_t measuredDropped = 0;
 	XrTime lastPredictedDisplayTime = 0;
 	void RecordFrameTiming(std::chrono::steady_clock::time_point callTime, std::chrono::steady_clock::time_point returnTime,
