@@ -105,6 +105,21 @@
   },
   "dump:views[1].depth": null
  },
+ "gfx-vk-pose-depth/depth image only/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].pose.p[0]": {
+   "near": -0.0315,
+   "within": 0.001
+  },
+  "dump:views[0].depth": null,
+  "dump:views[1].pose.p[0]": {
+   "near": 0.0315,
+   "within": 0.001
+  },
+  "dump:views[1].depth": null
+ },
  "gfx-vk-pose-depth/halves/-/-": {
   "left": 0,
   "right": 0,

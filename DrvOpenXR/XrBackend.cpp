@@ -976,6 +976,20 @@ void XrBackend::SubmitDepth(vr::EVREye eye, const vr::Texture_t* texture, const 
 		return;
 	}
 	vr::Texture_t depth = { info.handle, texture->eType, vr::ColorSpace_Linear };
+#if defined(SUPPORT_VK)
+	// A Vulkan depth image is on the colour image's device: some games fill only the image fields of its struct
+	vr::VRVulkanTextureData_t vkDepth;
+	if (texture->eType == vr::TextureType_Vulkan && texture->handle) {
+		const auto* colour = (const vr::VRVulkanTextureData_t*)texture->handle;
+		vkDepth = *(const vr::VRVulkanTextureData_t*)info.handle;
+		vkDepth.m_pDevice = colour->m_pDevice;
+		vkDepth.m_pPhysicalDevice = colour->m_pPhysicalDevice;
+		vkDepth.m_pInstance = colour->m_pInstance;
+		vkDepth.m_pQueue = colour->m_pQueue;
+		vkDepth.m_nQueueFamilyIndex = colour->m_nQueueFamilyIndex;
+		depth.handle = &vkDepth;
+	}
+#endif
 	std::unique_ptr<Compositor>& comp = depthCompositors[eye];
 	if (!comp)
 		comp = BaseCompositor::CreateCompositorAPI(&depth);
