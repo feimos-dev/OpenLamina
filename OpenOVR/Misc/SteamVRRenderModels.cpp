@@ -8,7 +8,6 @@
 #include "Misc/JsonFile.h"
 #include "Misc/Numbers.h"
 #include "Misc/SteamVRPaths.h"
-#include "Misc/lodepng.h"
 
 #include <algorithm>
 #include <charconv>
@@ -29,8 +28,6 @@ namespace {
 // Files larger than these aren't a render model's: refused before they're read
 constexpr uintmax_t kMaxJsonBytes = 4 * 1024 * 1024;
 constexpr uintmax_t kMaxObjBytes = 64 * 1024 * 1024;
-constexpr uintmax_t kMaxPngBytes = 64 * 1024 * 1024;
-constexpr uint32_t kMaxTextureSide = 8192;
 // More folders than any SteamVR install has: listing stops there
 constexpr int kMaxListed = 4096;
 
@@ -564,43 +561,13 @@ std::optional<RmMesh> LoadRenderModelMesh(const RmModel& model, const std::strin
 	return mesh;
 }
 
-std::optional<RmTexture> LoadRenderModelTexture(const fs::path& file)
+std::optional<Image> LoadRenderModelTexture(const fs::path& file)
 {
-	std::optional<std::string> data = ReadFile(file, kMaxPngBytes);
-	if (!data) {
-		OOVR_LOGF("Render model texture %s can't be read", PathToUtf8(file).c_str());
-		return std::nullopt;
-	}
-	const unsigned char* bytes = (const unsigned char*)data->data();
-	unsigned w = 0, h = 0;
-	LodePNGState state;
-	lodepng_state_init(&state);
-	unsigned error = lodepng_inspect(&w, &h, &state, bytes, data->size());
-	lodepng_state_cleanup(&state);
-	if (error) {
-		OOVR_LOGF("Render model texture %s isn't a PNG (%s): the model has no texture", PathToUtf8(file).c_str(), lodepng_error_text(error));
-		return std::nullopt;
-	}
-	if (w == 0 || h == 0 || w > kMaxTextureSide || h > kMaxTextureSide) {
-		OOVR_LOGF("Render model texture %s is %ux%u, larger than %u on a side: the model has no texture", PathToUtf8(file).c_str(), w, h, kMaxTextureSide);
-		return std::nullopt;
-	}
-	RmTexture tex;
-	try {
-		std::vector<unsigned char> rgba;
-		error = lodepng::decode(rgba, w, h, bytes, data->size());
-		if (error || rgba.size() != (size_t)w * h * 4) {
-			OOVR_LOGF("Render model texture %s can't be decoded (%s)", PathToUtf8(file).c_str(), error ? lodepng_error_text(error) : "wrong size");
-			return std::nullopt;
-		}
-		tex.width = w;
-		tex.height = h;
-		tex.rgba = std::move(rgba);
-	} catch (const std::exception& e) {
-		OOVR_LOGF("Render model texture %s can't be decoded: %s", PathToUtf8(file).c_str(), e.what());
-		return std::nullopt;
-	}
-	return tex;
+	std::string why;
+	std::optional<Image> image = LoadImageFile(file, &why);
+	if (!image)
+		OOVR_LOGF("Render model texture %s can't be used: %s; the model has no texture", PathToUtf8(file).c_str(), why.c_str());
+	return image;
 }
 
 XrPosef ComponentPose(const RmComponent& c, float value, vr::HmdVector2_t axis)

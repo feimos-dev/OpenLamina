@@ -290,7 +290,9 @@ The available options are:
 * `mirrorWindow` - boolean, default `false`.
 	* A window on the desktop with the game's left eye, for games that ask for one (`ShowMirrorWindow`); closing it hides it. Its image is read back from the game's texture at full size, about 30 times a second, which costs frame time on a headset of high resolution. Without it the call does nothing, and the OpenXR runtime may have a mirror of its own. Windows only.
 * `keyboard` - boolean, default `false`.
-	* The keyboard a game asks for (`ShowKeyboard`), typed by pointing at it with the controllers. Without it, the keyboard is answered as done at once.
+	* The keyboard a game asks for (`ShowKeyboard`), typed by pointing at it with the controllers. The game still gets the controllers' input while it's up. Without it, the keyboard is answered as done at once.
+* `keyboardLayout` - `us` or `uk`, default by the user's locale (`uk` for en-GB, `us` otherwise).
+	* The layout of the keyboard games show to type text on, with the controllers' lasers.
 * `laserMouse` - boolean, default `false`.
 	* The controllers point at overlays that take mouse input (`VROverlayInputMethod_Mouse`) as a mouse: focus and mouse events, clicks with the trigger, a cursor where the laser meets the overlay, and laser haptics. Without it, such an overlay gets no events from the controllers. The keyboard and message boxes are pointed at with the lasers regardless (behind `keyboard` and `ownFrames`).
 * `steamvrRenderModels` - boolean, default `false`.
@@ -301,8 +303,6 @@ The available options are:
 	* How a game's SteamVR bindings become input. `direct` turns each binding into OpenXR bindings, as before. `steamvr` has OpenLamina run SteamVR's binding modes (toggles, dpads, chords and the rest) on the controller's raw inputs, and maps legacy input as SteamVR does. `steamvr` hasn't been tried in many games yet; try it when a game's controls don't work under `direct`.
 * `bindingEditor` - string, default empty.
 	* The program a game's "open binding UI" request starts.
-* `keyboardLayout` - `us` or `uk`, default by the user's locale (`uk` for en-GB, `us` otherwise).
-	* The layout of the keyboard games show to type text on, with the controllers' lasers.
 
 The possible types are as follows:
 

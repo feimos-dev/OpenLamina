@@ -738,9 +738,26 @@ void OverlayImages(CaseContext& c)
 	vr::VRTextureBounds_t bounds{};
 	uint32_t format = 0;
 	r["file_texture"] = (int)ov->GetOverlayTexture(file, &handle, nullptr, &w, &h, &format, &type, &space, &bounds);
-	r["tex_texture"] = (int)ov->GetOverlayTexture(tex, &handle, nullptr, &w, &h, &format, &type, &space, &bounds);
-	r["tex_texture_is_its_own"] = handle == texture.tex.handle && type == vr::TextureType_DirectX;
+	// A D3D11 owner gets a shader resource view of its texture, on the device of the texture it names
+	r["tex_texture"] = (int)ov->GetOverlayTexture(tex, &handle, texture.tex.handle, &w, &h, &format, &type, &space, &bounds);
+	r["tex_format"] = format;
+	bool isView = false;
+#ifdef _WIN32
+	if (handle) {
+		ID3D11ShaderResourceView* view = nullptr;
+		if (SUCCEEDED(((IUnknown*)handle)->QueryInterface(__uuidof(ID3D11ShaderResourceView), (void**)&view))) {
+			ID3D11Resource* of = nullptr;
+			view->GetResource(&of);
+			isView = of == (ID3D11Resource*)texture.tex.handle;
+			if (of)
+				of->Release();
+			view->Release();
+		}
+	}
+#endif
+	r["tex_texture_is_a_view_of_it"] = isView && type == vr::TextureType_DirectX;
 	r["release"] = (int)ov->ReleaseNativeOverlayHandle(tex, handle);
+	r["release_again"] = (int)ov->ReleaseNativeOverlayHandle(tex, handle);
 
 	s.Frames(5, left, right, kFull, kFull, r);
 	r.removeMember("left");

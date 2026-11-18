@@ -46,7 +46,6 @@ void LaserMouse::Update(const std::array<PointerRay, 2>& rays, const std::vector
 	const double dt = lastTime < 0 ? 0 : std::clamp(now - lastTime, 0.0, 0.1);
 	lastTime = now;
 
-	// Where each hand points
 	for (int h = 0; h < 2; h++) {
 		Hand& hand = hands[h];
 		const PointerRay& ray = rays[h];
@@ -107,7 +106,6 @@ void LaserMouse::Update(const std::array<PointerRay, 2>& rays, const std::vector
 	const Hand& driver = hands[active];
 	const vr::TrackedDeviceIndex_t device = rays[active].device;
 
-	// Focus
 	const vr::VROverlayHandle_t newFocus = clickOwner >= 0 ? clickTarget : driver.target;
 	if (newFocus != focus) {
 		if (focus != vr::k_ulOverlayHandleInvalid) {
@@ -123,7 +121,6 @@ void LaserMouse::Update(const std::array<PointerRay, 2>& rays, const std::vector
 		focus = newFocus;
 	}
 
-	// Moving
 	const bool onTarget = driver.target != vr::k_ulOverlayHandleInvalid;
 	if (onTarget && (movedOn != driver.target || movedX != driver.x || movedY != driver.y)) {
 		vr::VREvent_t e = MakeEvent(vr::VREvent_MouseMove, device);

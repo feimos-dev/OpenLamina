@@ -134,7 +134,6 @@ struct OOVR_VROverlayProjection_t {
 	float fBottom;
 };
 
-// A swapchain filled from memory (DrvOpenXR/CpuSwapchain.h)
 class CpuSwapchain;
 
 // Avoid importing LibOVR just for this
@@ -179,6 +178,10 @@ private:
 	bool usingInput = false;
 
 	std::recursive_mutex layersLock;
+
+	// The D3D11 shader resource views GetOverlayTexture handed out and ReleaseNativeOverlayHandle hasn't released.
+	// Under layersLock.
+	std::set<void*> handedOutViews;
 
 	// The controllers' lasers and what OpenLamina draws for them and itself: the cursor, the keyboard's quad, a message
 	// box (BaseOverlay.cpp). Under layersLock.
