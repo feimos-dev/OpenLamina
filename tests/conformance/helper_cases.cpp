@@ -392,6 +392,12 @@ void DashboardSceneCase(CaseContext& c)
 			r["own_dashboard_overlay_published"] = dashboard;
 			r["own_plain_overlay_published"] = plain;
 		}
+		if (frame == 20 && in && trigger != vr::k_ulInvalidActionHandle) {
+			// Before the menu button is pressed: the game's action is its own
+			vr::IVRInput_011::InputAnalogActionData_t data{};
+			in->GetAnalogActionData(trigger, &data, sizeof(data), vr::k_ulInvalidInputValueHandle);
+			r["action_active_before_open"] = data.bActive;
+		}
 		if (frame == 120) {
 			Json::Value doc = StoreDocument("dashboard");
 			r["open_at_120"] = doc["open"];

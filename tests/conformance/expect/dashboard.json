@@ -8,6 +8,7 @@
    1.5,
    -1.5
   ],
+  "action_active_before_open": true,
   "action_active_while_open": false,
   "activated": true,
   "quit": true,
