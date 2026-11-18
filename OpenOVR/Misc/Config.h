@@ -24,6 +24,8 @@ public:
 	inline bool SubmitDepth() const { return submitDepth; }
 	/** Frames of OpenLamina's own while the game runs none: the game's last frame again, its overlays and its skybox */
 	inline bool OwnFrames() const { return ownFrames; }
+	/** A desktop window with the game's left eye, when the game asks for one (IVRCompositor::ShowMirrorWindow) */
+	inline bool MirrorWindow() const { return mirrorWindow; }
 	float HiddenMeshVerticalScale() const { return hiddenMeshVerticalScale; }
 	inline bool LogAllOpenVRCalls() const { return logAllOpenVRCalls; }
 	/** The program OpenBindingUI starts; empty for none */
@@ -53,6 +55,7 @@ private:
 	bool useSubmittedPose = false;
 	bool submitDepth = false;
 	bool ownFrames = false;
+	bool mirrorWindow = false;
 	float hiddenMeshVerticalScale = 1.0f;
 	bool logAllOpenVRCalls = false;
 	std::string bindingEditor;

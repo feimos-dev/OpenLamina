@@ -3,6 +3,8 @@
 #define BASE_IMPL
 
 #include "Misc/Config.h"
+#include "Misc/FrameStats.h"
+#include "Misc/MirrorWindow.h"
 
 #include "convert.h"
 
@@ -77,7 +79,14 @@ ovr_enum_t BaseCompositor::WaitGetPoses(TrackedDevicePose_t* renderPoseArray, ui
 
 	BackendManager::Instance().WaitForTrackingData();
 
-	return GetLastPoses(renderPoseArray, renderPoseArrayCount, gamePoseArray, gamePoseArrayCount);
+	ovr_enum_t result = GetLastPoses(renderPoseArray, renderPoseArrayCount, gamePoseArray, gamePoseArrayCount);
+	if (renderPoseArray && renderPoseArrayCount) {
+		std::lock_guard<std::mutex> lock(posesLock);
+		FramePoses& kept = recentPoses[++lastPoseId % std::size(recentPoses)];
+		kept.id = lastPoseId;
+		kept.poses.assign(renderPoseArray, renderPoseArray + renderPoseArrayCount);
+	}
+	return result;
 }
 
 void BaseCompositor::GetSinglePoseRendering(ETrackingUniverseOrigin origin, TrackedDeviceIndex_t unDeviceIndex, TrackedDevicePose_t* pOutputPose)
@@ -335,8 +344,19 @@ void BaseCompositor::PostPresentHandoff()
 
 bool BaseCompositor::GetFrameTiming(OOVR_Compositor_FrameTiming* pTiming, uint32_t unFramesAgo)
 {
-	// "Sets oldest timing info if nFramesAgo is larger than the stored history." So if our history
-	// of timing records is only 1 we can just return that.
+	// "Sets oldest timing info if nFramesAgo is larger than the stored history"
+	if (unFramesAgo > 0 && pTiming && pTiming->m_nSize >= sizeof(uint32_t)) {
+		uint32_t count = (uint32_t)std::min<uint64_t>((uint64_t)unFramesAgo + 1, FrameStats::kHistory);
+		std::vector<OOVR_Compositor_FrameTiming> recent(count);
+		recent[0].m_nSize = sizeof(OOVR_Compositor_FrameTiming);
+		uint32_t got = FrameStats::Get().Timings(recent.data(), count);
+		if (got > 0) {
+			uint32_t size = std::min<uint32_t>(pTiming->m_nSize, sizeof(OOVR_Compositor_FrameTiming));
+			memcpy(pTiming, &recent[got - 1], size);
+			pTiming->m_nSize = size;
+			return true;
+		}
+	}
 
 	return BackendManager::Instance().GetFrameTiming(pTiming, unFramesAgo);
 
@@ -351,6 +371,8 @@ uint32_t BaseCompositor::GetFrameTimings(OOVR_Compositor_FrameTiming* pTiming, u
 	// being available we can just send the most recent timing data and return 1.
 	if (nFrames == 0)
 		return 0;
+	if (uint32_t got = FrameStats::Get().Timings(pTiming, nFrames))
+		return got;
 	bool populated = BackendManager::Instance().GetFrameTiming(pTiming, 1);
 	return populated ? 1 : 0;
 }
@@ -367,20 +389,14 @@ uint32_t BaseCompositor::GetFrameTimings(vr::Compositor_FrameTiming* pTiming, ui
 
 float BaseCompositor::GetFrameTimeRemaining()
 {
-	// OpenXR doesn't say how long is left before the compositor needs the frame
-	return 0.0f;
+	return FrameStats::Get().SecondsRemaining(FrameStats::Clock::now());
 }
 
 void BaseCompositor::GetCumulativeStats(OOVR_Compositor_CumulativeStats* pStats, uint32_t nStatsSizeInBytes)
 {
 	if (!pStats || nStatsSizeInBytes == 0)
 		return;
-	// Zeroed within the size the app gave (older SDKs have a shorter struct), with this process's id
-	size_t size = std::min<size_t>(nStatsSizeInBytes, sizeof(OOVR_Compositor_CumulativeStats));
-	memset(pStats, 0, size);
-	if (size >= sizeof(uint32_t))
-		pStats->m_nPid = oc_current_pid();
-	OC_UNSUPPORTED_VOID("GetCumulativeStats: no frame statistics, all zero");
+	FrameStats::Get().Cumulative(oc_current_pid(), pStats, nStatsSizeInBytes);
 }
 
 void BaseCompositor::FadeToColor(float fSeconds, float fRed, float fGreen, float fBlue, float fAlpha, bool bBackground)
@@ -564,7 +580,7 @@ void BaseCompositor::CompositorGoToBack()
 
 void BaseCompositor::CompositorQuit()
 {
-	OC_UNSUPPORTED_VOID("CompositorQuit: the OpenXR runtime's compositor isn't ours to quit");
+	// The OpenXR runtime's compositor isn't ours to quit
 }
 
 bool BaseCompositor::IsFullscreen()
@@ -590,17 +606,22 @@ bool BaseCompositor::CanRenderScene()
 
 void BaseCompositor::ShowMirrorWindow()
 {
-	OC_UNSUPPORTED_VOID("ShowMirrorWindow: no mirror window (the OpenXR runtime may have its own)");
+	// Only where the user asked for it: its image is read back from the game's frames, which costs frame time
+	if (!oovr_global_configuration.MirrorWindow()) {
+		OOVR_LOG_ONCE("ShowMirrorWindow: the game asks for a mirror window, which mirrorWindow=true in openlamina.ini shows");
+		return;
+	}
+	MirrorWindow::Get().Show();
 }
 
 void BaseCompositor::HideMirrorWindow()
 {
-	// There's no mirror window to hide
+	MirrorWindow::Get().Hide();
 }
 
 bool BaseCompositor::IsMirrorWindowVisible()
 {
-	return false;
+	return MirrorWindow::Get().Visible();
 }
 
 void BaseCompositor::CompositorDumpImages()
@@ -759,20 +780,29 @@ bool BaseCompositor::GetCompositorBenchmarkResults(Compositor_BenchmarkResults* 
 
 ovr_enum_t BaseCompositor::GetLastPosePredictionIDs(uint32_t* pRenderPosePredictionID, uint32_t* pGamePosePredictionID)
 {
-	OOVR_SOFT_ABORT("Pose prediction IDs hardcoded at 0");
+	// The render and game poses come from the same WaitGetPoses
+	std::lock_guard<std::mutex> lock(posesLock);
 	if (pRenderPosePredictionID)
-		*pRenderPosePredictionID = 0;
+		*pRenderPosePredictionID = lastPoseId;
 	if (pGamePosePredictionID)
-		*pGamePosePredictionID = 0;
+		*pGamePosePredictionID = lastPoseId;
 	return VRCompositorError_None;
 }
 
 ovr_enum_t BaseCompositor::GetPosesForFrame(uint32_t unPosePredictionID, TrackedDevicePose_t* pPoseArray, uint32_t unPoseArrayCount)
 {
-	// Pose prediction ids are always 0 (GetLastPosePredictionIDs), so there's no earlier frame's poses to give
 	if (pPoseArray)
 		memset(pPoseArray, 0, sizeof(TrackedDevicePose_t) * unPoseArrayCount);
-	OC_UNSUPPORTED(VRCompositorError_RequestFailed, "GetPosesForFrame: no pose prediction ids");
+	std::lock_guard<std::mutex> lock(posesLock);
+	for (const FramePoses& kept : recentPoses) {
+		if (kept.id == 0 || kept.id != unPosePredictionID)
+			continue;
+		if (pPoseArray)
+			memcpy(pPoseArray, kept.poses.data(), sizeof(TrackedDevicePose_t) * std::min<size_t>(unPoseArrayCount, kept.poses.size()));
+		return VRCompositorError_None;
+	}
+	// Older than the last few frames, or never given
+	return VRCompositorError_IndexOutOfRange;
 }
 
 ovr_enum_t BaseCompositor::GetSubmitTexture(Texture_t* pOutTexture, bool* pNeedsFlush, OOVR_EVRCompositorTextureUsage eUsage,

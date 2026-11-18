@@ -23,6 +23,18 @@ public:
 
 	ID3D11Device* GetDevice() { return device; }
 
+	// IVRCompositor::GetMirrorTextureD3D11's texture of an eye: a texture of OpenLamina's own on the game's device, which
+	// each frame the game submits is copied into, so a view of it shows the game's latest frame for as long as it's held.
+	//
+	// MirrorUpdate copies the bounds' area of a submitted texture (the game's ID3D11Texture2D; a multisampled one is
+	// resolved whole) into *mirror. Where *mirror isn't a texture of that device, size and format (there's none yet, or
+	// the game's frames changed), it's replaced by one that is: views handed out before then keep the old one.
+	static void MirrorUpdate(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, ID3D11Texture2D** mirror);
+	// A view of *mirror for deviceOrResource's device (an ID3D11Device, or a resource of it): an OpenVR compositor
+	// error, with *view set only on success (the caller releases it). Before the game's first frame *mirror is made
+	// here, width x height of 8-bit sRGB RGBA, which most frames are; the first frame fills it if it is.
+	static int MirrorView(ID3D11Texture2D** mirror, IUnknown* deviceOrResource, uint32_t width, uint32_t height, ID3D11ShaderResourceView** view);
+
 protected:
 	// A swapchain for the texture, width x height (0: the texture's size)
 	void CheckCreateSwapChain(const vr::Texture_t* texture, uint32_t width, uint32_t height, bool cube);

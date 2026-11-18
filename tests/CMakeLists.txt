@@ -110,6 +110,7 @@ add_executable(oc_unit_tests
 	unit/NumbersTests.cpp
 	unit/ImageTests.cpp
 	unit/EquirectTests.cpp
+	unit/FrameStatsTests.cpp
 	unit/FormatTableTests.cpp
 	unit/DepthRangeTests.cpp
 	unit/OwnFrameLoopTests.cpp

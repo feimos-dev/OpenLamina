@@ -340,6 +340,10 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/ProgramEvents.cpp
 	OpenOVR/Misc/LibMonado.cpp
 	OpenOVR/Misc/Equirect.cpp
+	OpenOVR/Misc/FrameStats.cpp
+	OpenOVR/Misc/FrameStats.h
+	OpenOVR/Misc/MirrorWindow.cpp
+	OpenOVR/Misc/MirrorWindow.h
 	OpenOVR/Misc/Equirect.h
 	OpenOVR/Misc/GlPixelStore.h
 	OpenOVR/Misc/Image.cpp
