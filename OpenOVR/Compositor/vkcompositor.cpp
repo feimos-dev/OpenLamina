@@ -77,15 +77,15 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 		return;
 	}
 
-	// The bounds' area, which the swapchain is the size of
+	// The bounds' area, copied to the origin of an image of the texture's size
 	TextureRegion area;
 	if (!RegionFromBounds(bounds, tex->m_nWidth, tex->m_nHeight, area)) {
 		// Submit answers InvalidTexture; the eye is left out
 		lastResult = XR_ERROR_VALIDATION_FAILURE;
-		OC_UNSUPPORTED_VOID("Vulkan texture whose bounds have no area: u %f to %f, v %f to %f", (double)Bounds(bounds).uMin, (double)Bounds(bounds).uMax, (double)Bounds(bounds).vMin, (double)Bounds(bounds).vMax);
+		OC_UNSUPPORTED_VOID("A Vulkan texture of no size (%u x %u)", tex->m_nWidth, tex->m_nHeight);
 	}
 
-	bool usable = chain != XR_NULL_HANDLE && area.Width() == createInfo.width && area.Height() == createInfo.height
+	bool usable = chain != XR_NULL_HANDLE && tex->m_nWidth == createInfo.width && tex->m_nHeight == createInfo.height
 	    && tex->m_nSampleCount == createInfo.sampleCount && (int64_t)tex->m_nFormat == createInfoFormat && texture->eColorSpace == createColourSpace;
 
 	if (!usable) {
@@ -106,8 +106,8 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 		createInfo.createFlags = 0;
 		createInfo.usageFlags = XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
 		createInfo.faceCount = 1;
-		createInfo.width = area.Width();
-		createInfo.height = area.Height();
+		createInfo.width = tex->m_nWidth;
+		createInfo.height = tex->m_nHeight;
 		createInfo.mipCount = 1;
 		createInfo.sampleCount = tex->m_nSampleCount;
 		createInfo.arraySize = 1;
@@ -179,6 +179,8 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 		}
 	}
 
+	copiedArea = { (int32_t)area.Width(), (int32_t)area.Height() };
+
 	// Reserve an image from the swapchain and wait until the compositor is done with it (at most 500 ms)
 	uint32_t currentIndex = 0;
 	if (!AcquireAndWait((uint32_t)std::min(appCommandBuffers.size(), swapchainImages.size()), currentIndex))
@@ -249,7 +251,7 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 		region.dstSubresource.baseArrayLayer = 0;
 		region.dstSubresource.layerCount = 1;
 		region.dstOffsets[0] = { 0, 0, 0 };
-		region.dstOffsets[1] = { (int)createInfo.width, (int)createInfo.height, 1 };
+		region.dstOffsets[1] = { (int)area.Width(), (int)area.Height(), 1 };
 		vkCmdBlitImage( //
 		    currentCommandBuffer, // commandbuffer
 		    (VkImage)tex->m_nImage, // srcImage

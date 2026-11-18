@@ -903,7 +903,7 @@ void RecordPlacement(Json::Value& entry, XrSpace space, const XrQuaternionf* q, 
 		Invalid(invalid, "pose not normalized");
 }
 
-// rect, array_index, format and (when sample) samples of a sub-image, with the spec's checks of it; prefix names
+// rect, array_index, format, image (the swapchain's width and height) and (when sample) samples of a sub-image, with the spec's checks of it; prefix names
 // the image in the checks ("depth " for a depth sub-image)
 void RecordSubImage(RtSession* s, Json::Value& entry, const XrSwapchainSubImage& sub, bool sample,
     std::vector<std::string>& invalid, const std::string& prefix = "")
@@ -921,6 +921,9 @@ void RecordSubImage(RtSession* s, Json::Value& entry, const XrSwapchainSubImage&
 	}
 	RtSwapchain* sc = it->second.get();
 	entry["format"] = (Json::Int64)sc->info.format;
+	entry["image"] = Json::Value(Json::arrayValue);
+	entry["image"].append(sc->info.width);
+	entry["image"].append(sc->info.height);
 	if (r.extent.width < 0 || r.extent.height < 0)
 		Invalid(invalid, prefix + "negative extent");
 	else if (r.extent.width == 0 || r.extent.height == 0)

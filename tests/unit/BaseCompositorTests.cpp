@@ -21,7 +21,7 @@ TEST_CASE("Vk_extensions_size_insufficient_answers_needed_size")
 TEST_CASE("Bounds_with_no_area_show_the_whole_texture_on_that_axis")
 {
 	TextureRegion r;
-	// All zero (a mod that never fills them in): the whole texture, as before
+	// All zero (a mod that never fills them in): the whole texture
 	vr::VRTextureBounds_t zero{ 0, 0, 0, 0 };
 	REQUIRE(RegionFromBounds(&zero, 800, 600, r));
 	CHECK(r.x0 == 0);

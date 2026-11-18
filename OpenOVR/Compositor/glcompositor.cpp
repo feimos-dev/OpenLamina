@@ -208,22 +208,20 @@ void GLBaseCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::V
 		OC_UNSUPPORTED_VOID("An OpenGL texture that can't be used: %dx%d, slice %d of %d", inputWidth, inputHeight, layer, layers);
 	}
 
-	// The bounds' area (in OpenGL's rows, bottom-up), which the swapchain is the size of
+	// The bounds' area (in OpenGL's rows, bottom-up), copied to the origin of an image of the texture's size (a texture
+	// of some size always has one)
 	TextureRegion area;
-	if (!RegionFromBounds(bounds, (uint32_t)inputWidth, (uint32_t)inputHeight, area)) {
-		// Submit answers InvalidTexture; the eye is left out
-		lastResult = XR_ERROR_VALIDATION_FAILURE;
-		OC_UNSUPPORTED_VOID("OpenGL texture whose bounds have no area: u %f to %f, v %f to %f", (double)Bounds(bounds).uMin, (double)Bounds(bounds).uMax, (double)Bounds(bounds).vMin, (double)Bounds(bounds).vMax);
-	}
+	RegionFromBounds(bounds, (uint32_t)inputWidth, (uint32_t)inputHeight, area);
 	// The blit flips where the bounds run backwards (invertUsingShaders: always used)
 	bool useBlit = area.flipX || area.flipY || oovr_global_configuration.InvertUsingShaders();
 
-	CheckCreateSwapChain((int)area.Width(), (int)area.Height(), texture->eColorSpace, rawFormat);
+	CheckCreateSwapChain(inputWidth, inputHeight, texture->eColorSpace, rawFormat);
 	if (!chain || XR_FAILED(lastResult) || images.empty()) {
 		if (!XR_FAILED(lastResult))
 			lastResult = XR_ERROR_RUNTIME_FAILURE;
 		return;
 	}
+	copiedArea = { (int32_t)area.Width(), (int32_t)area.Height() };
 	// A swapchain format that isn't of the texture's family is converted by the blit
 	useBlit = useBlit || convertFormat;
 
@@ -247,13 +245,13 @@ void GLBaseCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::V
 		// Reversed source coordinates flip
 		glBlitFramebuffer(
 		    (GLint)(area.flipX ? area.x1 : area.x0), (GLint)(area.flipY ? area.y1 : area.y0), (GLint)(area.flipX ? area.x0 : area.x1), (GLint)(area.flipY ? area.y0 : area.y1),
-		    0, 0, (int)createInfo.width, (int)createInfo.height,
+		    0, 0, (GLint)area.Width(), (GLint)area.Height(),
 		    GL_COLOR_BUFFER_BIT, GL_NEAREST);
 	} else {
 		glCopyImageSubData(
 		    src, target, 0, (GLint)area.x0, (GLint)area.y0, layer, // 0 == no mipmapping, next three are xyz
 		    dst, GL_TEXTURE_2D, 0, 0, 0, 0, // Same as above but for the destination
-		    (int)createInfo.width, (int)createInfo.height, 1 // Region of the output texture to copy into (in this case, everything)
+		    (GLsizei)area.Width(), (GLsizei)area.Height(), 1 // The area, to the image's origin
 		);
 	}
 

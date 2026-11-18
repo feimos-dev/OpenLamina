@@ -228,7 +228,7 @@ void DX12Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, uint32_t
 	D3D12_RESOURCE_DESC srcDesc;
 	srcDesc = src->m_pResource->GetDesc();
 
-	// The swapchain is the size of the area shown
+	// The swapchain's size, if not the texture's
 	if (width && height) {
 		srcDesc.Width = width;
 		srcDesc.Height = height;
@@ -470,17 +470,18 @@ void DX12Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 		OC_UNSUPPORTED_VOID("A D3D12 array texture of %u slices submitted with slice %u", (unsigned)srcDesc.DepthOrArraySize, arrayIndex);
 	}
 
-	// The bounds' area, which the swapchain is the size of
+	// The bounds' area, copied to the origin of an image of the texture's size
 	TextureRegion region;
 	if (!RegionFromBounds(bounds, (uint32_t)srcDesc.Width, srcDesc.Height, region)) {
 		// Submit answers InvalidTexture; the eye is left out
 		lastResult = XR_ERROR_VALIDATION_FAILURE;
-		OC_UNSUPPORTED_VOID("D3D12 texture whose bounds have no area: u %f to %f, v %f to %f", (double)Bounds(bounds).uMin, (double)Bounds(bounds).uMax, (double)Bounds(bounds).vMin, (double)Bounds(bounds).vMax);
+		OC_UNSUPPORTED_VOID("A D3D12 texture of no size (%llu x %u)", (unsigned long long)srcDesc.Width, srcDesc.Height);
 	}
 
-	CheckCreateSwapChain(texture, region.Width(), region.Height(), false);
+	CheckCreateSwapChain(texture, 0, 0, false);
 	if (!chain || XR_FAILED(lastResult))
 		return;
+	copiedArea = { (int32_t)region.Width(), (int32_t)region.Height() };
 
 	// The shader pass converts and flips (invertUsingShaders: always used); made at its first use
 	const bool flip = region.flipX || region.flipY;
@@ -551,7 +552,7 @@ void DX12Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 		p.decodeSrgb = wantSrgb && !viewSrgb && targetSrgb;
 		p.encodeSrgb = wantSrgb && viewSrgb && !targetSrgb;
 		recorded = pass && pass->Record(commandList, currentIndex, from, typedFormat, fromSlice, image, (DXGI_FORMAT)createInfo.format,
-		                       createInfo.width, createInfo.height, p);
+		                       region.Width(), region.Height(), p);
 	} else {
 		D3D12_RESOURCE_BARRIER in[2] = { Dx12Transition(from, given, D3D12_RESOURCE_STATE_COPY_SOURCE),
 			Dx12Transition(image, D3D12_RESOURCE_STATE_RENDER_TARGET, D3D12_RESOURCE_STATE_COPY_DEST) };

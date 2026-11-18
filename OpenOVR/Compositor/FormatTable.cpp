@@ -307,11 +307,6 @@ std::optional<int64_t> ChooseDepthSwapchainFormat(GfxApiKind api, int64_t gameFo
 	return std::nullopt;
 }
 
-bool FormatKnown(GfxApiKind api, int64_t format)
-{
-	return Find(api, format) != nullptr;
-}
-
 bool FormatIsSrgb(GfxApiKind api, int64_t format)
 {
 	const FormatInfo* info = Find(api, format);

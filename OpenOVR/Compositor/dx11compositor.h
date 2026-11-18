@@ -60,7 +60,9 @@ protected:
 		// The source area: uv = offset + scale * (0..1 across the image)
 		float offsetX = 0, offsetY = 0, scaleX = 1, scaleY = 1;
 		bool decodeSrgb = false, encodeSrgb = false;
+		// The area drawn, from the image's origin
+		uint32_t width = 0, height = 0;
 	};
-	// Draws view over the whole of swapchain image index (its render target view)
+	// Draws view over pass's area of swapchain image index (its render target view)
 	void DrawWithShader(ID3D11ShaderResourceView* view, uint32_t index, const ShaderPass& pass);
 };

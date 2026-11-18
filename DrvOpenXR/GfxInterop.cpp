@@ -373,7 +373,6 @@ constexpr uint64_t kCopyTimeoutNs = 100'000'000;
 
 class VkInterop : public GfxInterop {
 public:
-	VkInstance instance = VK_NULL_HANDLE;
 	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 	VkDevice vkDevice = VK_NULL_HANDLE;
 	VkQueue queue = VK_NULL_HANDLE;
@@ -437,7 +436,9 @@ public:
 			return false;
 		}
 
+		// Signalled, so a teardown before the first copy doesn't wait for it (CopyIn resets it before each submit)
 		VkFenceCreateInfo fenceInfo{ VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+		fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
 		return vkCreateFence(vkDevice, &fenceInfo, nullptr, &fence) == VK_SUCCESS;
 	}
 
@@ -625,7 +626,6 @@ std::unique_ptr<GfxInterop> GfxInterop::ForVulkan(VkInstance instance, VkPhysica
 	if (!instance || !physicalDevice || !device || !queue)
 		return nullptr;
 	auto interop = std::make_unique<VkInterop>();
-	interop->instance = instance;
 	interop->physicalDevice = physicalDevice;
 	interop->vkDevice = device;
 	interop->queue = queue;

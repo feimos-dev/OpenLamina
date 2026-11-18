@@ -55,6 +55,7 @@
 #include "gfx/GfxApi.h"
 
 #ifdef _WIN32
+#include <d3d11_4.h>
 #include <d3d9.h>
 #include <dxgi.h>
 #ifndef VK_NO_PROTOTYPES
@@ -1768,9 +1769,24 @@ void OwnFramesCase(CaseContext& c)
 	std::this_thread::sleep_for(std::chrono::seconds(1));
 	for (int frame = 0; frame < 10; frame++)
 		GameFrame(f, tex.get());
-	c.core->Cleanup();
 
 	Json::Value r;
+#ifdef _WIN32
+	// The game's device, which own frames' xrEndFrame shares with the game's threads, is multithread protected
+	if (c.call->d3d11) {
+		ID3D11DeviceContext* context = nullptr;
+		c.call->d3d11->GetImmediateContext(&context);
+		ID3D11Multithread* multithread = nullptr;
+		if (context && SUCCEEDED(context->QueryInterface(__uuidof(ID3D11Multithread), (void**)&multithread)) && multithread) {
+			r["device_multithread_protected"] = multithread->GetMultithreadProtected() != FALSE;
+			multithread->Release();
+		}
+		if (context)
+			context->Release();
+	}
+#endif
+	c.core->Cleanup();
+
 	r["frames"] = 20;
 	r["overlay_shown"] = shown;
 	Json::Value dump = ReadStandInDump();
