@@ -152,6 +152,10 @@ The **OpenLamina** app (Start menu) shows what OpenVR games use and the active O
   using SteamVR, open the app and press *Use OpenLamina* again.
 - **Per-app settings**: send one program to SteamVR (or to OpenLamina) whatever the switch says. Programs appear in
   the list once they have tried to start VR with OpenLamina.
+- **Settings**: the options of `openlamina.ini` you're most likely to change (overlay tools, input, picture and game
+  behaviour), each with its name in the file and its default. They are saved in the `openlamina.ini` next to the
+  libraries and apply to games started afterwards. The rest are set in the file by hand, see
+  [Configuration file](#configuration-file).
 - **Updates**: when opened, it looks for a newer release here and offers *Update to …*, which downloads the new
   installer, checks its SHA-256 against the one GitHub lists, and runs it. Nothing updates by itself. *Include
   pre-releases* offers those too.
@@ -254,6 +258,9 @@ The Windows installer is a different app from OpenComposite's and installs next 
 On startup, OpenLamina searches for a file named `openlamina.ini` (or `opencomposite.ini`, as it was called), first next to the `openvr_api.dll` file, and if it can't find
 that, then it looks in the working directory (usually in the same folder as the EXE). If no file is found, that's fine and all
 the default values are used.
+
+On Windows, the OpenLamina app's *Settings* window changes the common options in the first of these files, and leaves
+everything else in it (comments, other options) as it is.
 
 This is its configuration file, where you can specify a number of options. These are listed in `name=value` format, and you
 can define a comment by starting a line with `;` or a `#`. Note the option names **are** case sensitive. An option OpenLamina

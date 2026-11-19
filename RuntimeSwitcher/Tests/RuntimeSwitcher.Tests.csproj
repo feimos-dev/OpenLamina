@@ -1,6 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
 
-  <!-- Tests of ../Core (the paths file, the switch, releases and versions), on any OS: dotnet test RuntimeSwitcher/Tests -->
+  <!-- Tests of ../Core (the paths file, the switch, releases, versions and openlamina.ini), on any OS: dotnet test RuntimeSwitcher/Tests -->
 
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>

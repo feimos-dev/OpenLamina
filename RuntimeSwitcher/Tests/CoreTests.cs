@@ -366,4 +366,175 @@ namespace RuntimeSwitcher.Tests
             }
         }
     }
+
+    public class IniFileTests : IDisposable
+    {
+        private readonly string _folder = Path.Combine(Path.GetTempPath(), "oc-tests-" + Guid.NewGuid().ToString("N"));
+
+        public void Dispose()
+        {
+            if (Directory.Exists(_folder))
+                Directory.Delete(_folder, true);
+        }
+
+        private const string UsersFile = "; my settings\r\n" +
+                                         "handColour=#ffff00\r\n" +
+                                         "haptics = off   ; too strong\r\n" +
+                                         "futureOption=7\r\n" +
+                                         "\r\n" +
+                                         "[other]\r\n" +
+                                         "laserMouse=true\r\n";
+
+        private static string Changed(string text, Action<IniFile> change)
+        {
+            IniFile ini = IniFile.Parse(text);
+            change(ini);
+            return ini.ToText();
+        }
+
+        [Theory]
+        [InlineData("")]
+        [InlineData(UsersFile)]
+        [InlineData("ï»¿# café\nhaptics=off")]
+        [InlineData("no line end\r\n\r\n  \r\n[a\n=\n")]
+        public void AFileComesBackAsItWas(string text)
+        {
+            Assert.Equal(text, IniFile.Parse(text).ToText());
+        }
+
+        [Fact]
+        public void ReadsWhatTheLibraryReads()
+        {
+            IniFile ini = IniFile.Parse(UsersFile + "[default]\nkeyboard : on\nhaptics=on\n haptics=continued\n" +
+                                        "#drawBounds=true\nownFrames=\nmirrorWindow=;x ;y\n");
+            Assert.Equal("#ffff00", ini.Get("handColour"));
+            Assert.Equal("on", ini.Get("keyboard"));
+            Assert.Equal("haptics=continued", ini.Get("haptics")); // an indented line is the last name's value
+            Assert.Null(ini.Get("laserMouse")); // in a section the library doesn't read
+            Assert.Null(ini.Get("drawBounds"));
+            Assert.Null(ini.Get("Keyboard"));
+            Assert.Equal("", ini.Get("ownFrames"));
+            Assert.Equal(";x", ini.Get("mirrorWindow"));
+        }
+
+        [Fact]
+        public void SetChangesOnlyTheValue()
+        {
+            Assert.Equal(UsersFile.Replace("haptics = off   ; too strong", "haptics = true   ; too strong"),
+                Changed(UsersFile, ini => ini.Set("haptics", "true")));
+            Assert.Equal("a=1\nhaptics=false ; later\n",
+                Changed("a=1\nhaptics= ; later\n", ini => ini.Set("haptics", "false")));
+            Assert.Equal("haptics=on\nhaptics:false\n",
+                Changed("haptics=on\nhaptics:off\n", ini => ini.Set("haptics", "false")));
+        }
+
+        [Fact]
+        public void ANewOptionGoesWhereTheLibraryReadsIt()
+        {
+            Assert.Equal(UsersFile.Replace("futureOption=7\r\n", "futureOption=7\r\nlaserMouse=true\r\n"),
+                Changed(UsersFile, ini => ini.Set("laserMouse", "true")));
+            Assert.Equal("laserMouse=true\r\n", Changed("", ini => ini.Set("laserMouse", "true")));
+            Assert.Equal("a=1\nlaserMouse=true\n", Changed("a=1\n", ini => ini.Set("laserMouse", "true")));
+            Assert.Equal("a=1\r\nlaserMouse=true\r\n", Changed("a=1", ini => ini.Set("laserMouse", "true")));
+            Assert.Equal("[x]\na=1\n[default]\nb=2\nlaserMouse=true\n\n[y]\n",
+                Changed("[x]\na=1\n[default]\nb=2\n\n[y]\n", ini => ini.Set("laserMouse", "true")));
+            Assert.Equal("ï»¿laserMouse=true\n[x]\n",
+                Changed("ï»¿[x]\n", ini => ini.Set("laserMouse", "true")));
+        }
+
+        [Fact]
+        public void RemoveTakesOutEveryLineThatSetsIt()
+        {
+            Assert.Equal("; c\na=1\n[other]\nkeyboardLayout=uk\n",
+                Changed("; c\nkeyboardLayout=us\na=1\nkeyboardLayout=uk\n  uk\n[other]\nkeyboardLayout=uk\n",
+                    ini => ini.Remove("keyboardLayout")));
+        }
+
+        [Fact]
+        public void SavesBytesOfAnyEncodingUnchanged()
+        {
+            Directory.CreateDirectory(_folder);
+            string file = Path.Combine(_folder, IniFile.FileName);
+            byte[] before =
+            {
+                0xEF, 0xBB, 0xBF, (byte)';', 0xC3, 0xA9, 0xE9, 0x80, (byte)'\n', (byte)'a', (byte)'=', (byte)'1',
+            };
+            File.WriteAllBytes(file, before);
+
+            IniFile ini = IniFile.Load(file);
+            ini.Save(file);
+            Assert.Equal(before, File.ReadAllBytes(file));
+
+            ini.Set("a", "2");
+            ini.Save(file);
+            before[before.Length - 1] = (byte)'2';
+            Assert.Equal(before, File.ReadAllBytes(file));
+            Assert.Equal(new[] { file }, Directory.GetFiles(_folder));
+        }
+
+        [Fact]
+        public void TheFileInAFolderIsTheOneTheLibraryReads()
+        {
+            Directory.CreateDirectory(_folder);
+            string file = Path.Combine(_folder, IniFile.FileName);
+            string legacy = Path.Combine(_folder, IniFile.LegacyFileName);
+            Assert.Equal(file, IniFile.InFolder(_folder));
+            Assert.Null(IniFile.Load(file).Get("haptics"));
+            File.WriteAllText(legacy, "haptics=off\n");
+            Assert.Equal(legacy, IniFile.InFolder(_folder));
+            File.WriteAllText(file, "");
+            Assert.Equal(file, IniFile.InFolder(_folder));
+        }
+    }
+
+    public class SettingsTests
+    {
+        private static Setting Named(string name) => Settings.All.Single(s => s.Name == name);
+
+        [Theory]
+        [InlineData("haptics", null, "true")]
+        [InlineData("haptics", "OFF", "false")]
+        [InlineData("haptics", "Disabled", "false")]
+        [InlineData("haptics", "maybe", "true")]
+        [InlineData("laserMouse", "Enabled", "true")]
+        [InlineData("laserMouse", "", "false")]
+        [InlineData("dashboardButton", "Menu_Long", "menu_long")]
+        [InlineData("dashboardButton", "grip", "off")]
+        [InlineData("keyboardLayout", null, "")]
+        [InlineData("keyboardLayout", "UK", "uk")]
+        [InlineData("supersampleRatio", "1.45", "1.45")]
+        [InlineData("supersampleRatio", "2", "2.0")]
+        [InlineData("supersampleRatio", "big", "1.0")]
+        public void ReadsValuesAsTheLibraryDoes(string name, string raw, string value)
+        {
+            Assert.Equal(value, Named(name).Read(raw));
+        }
+
+        /// <summary>Each option of the window is one the library reads, with the library's default and values.</summary>
+        [Fact]
+        public void MatchesTheLibrarysOptions()
+        {
+            string folder = AppContext.BaseDirectory;
+            while (folder != null && !File.Exists(Path.Combine(folder, "OpenOVR", "Misc", "Config.h")))
+                folder = Path.GetDirectoryName(folder);
+            Assert.NotNull(folder);
+            string header = File.ReadAllText(Path.Combine(folder, "OpenOVR", "Misc", "Config.h"));
+            string source = File.ReadAllText(Path.Combine(folder, "OpenOVR", "Misc", "Config.cpp"));
+
+            Assert.Equal(Settings.All.Count, Settings.All.Select(s => s.Name).Distinct().Count());
+            foreach (Setting setting in Settings.All)
+            {
+                Assert.Matches(@"CFGOPT\(\w+, " + setting.Name + @"\)", source);
+                var field = System.Text.RegularExpressions.Regex.Match(header,
+                    @"^\s*(?:bool|float|std::string) " + setting.Name + @"(?: = ([^;]+))?;",
+                    System.Text.RegularExpressions.RegexOptions.Multiline);
+                Assert.True(field.Success, setting.Name);
+                string value = field.Groups[1].Value.Trim('"');
+                Assert.Equal(setting.Default, setting.Kind == SettingKind.Number ? value.TrimEnd('f') : value);
+                Assert.Equal(setting.Default, setting.Read(null));
+                foreach (string choice in setting.Choices.Select(c => c.Key).Where(c => c.Length > 0))
+                    Assert.Contains("\"" + choice + "\"", source);
+            }
+        }
+    }
 }

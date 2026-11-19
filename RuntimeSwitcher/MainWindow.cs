@@ -10,7 +10,7 @@ using RuntimeSwitcher.Core;
 namespace RuntimeSwitcher
 {
     /// <summary>
-    /// What OpenVR games use now, the switch both ways, per-app settings and updates. The paths file is read again
+    /// What OpenVR games use now, the switch both ways, per-app settings, openlamina.ini's settings and updates. The paths file is read again
     /// whenever the window is activated, since SteamVR rewrites it when it starts.
     /// </summary>
     public sealed class MainWindow : Form
@@ -22,6 +22,7 @@ namespace RuntimeSwitcher
         private readonly Button _useOpenComposite = NewButton("Use OpenLamina");
         private readonly Button _useSteamVR = NewButton("Use SteamVR");
         private readonly Button _perApp = NewButton("Per-app settings…");
+        private readonly Button _settings = NewButton("Settings…");
         private readonly Label _openXR = Wrapping();
         private readonly Label _version = Wrapping();
         private readonly Label _updateStatus = Wrapping();
@@ -64,9 +65,10 @@ namespace RuntimeSwitcher
             };
             root.Controls.Add(Row(statusCaption, _status));
             root.Controls.Add(_statusDetail);
-            root.Controls.Add(Row(_useOpenComposite, _useSteamVR, _perApp));
+            root.Controls.Add(Row(_useOpenComposite, _useSteamVR));
             root.Controls.Add(Wrapping(gray: true,
                 text: "Starting SteamVR from Steam switches OpenVR games back to SteamVR."));
+            root.Controls.Add(Row(_perApp, _settings));
             root.Controls.Add(_openXR);
             root.Controls.Add(new Label
             {
@@ -82,6 +84,7 @@ namespace RuntimeSwitcher
             _useOpenComposite.Click += (s, e) => Switch(Switcher.UseOpenComposite);
             _useSteamVR.Click += (s, e) => Switch(Switcher.UseSteamVR);
             _perApp.Click += (s, e) => ShowAppList();
+            _settings.Click += (s, e) => ShowSettings();
             _update.Click += async (s, e) => await UpdateAsync();
             _update.Visible = false;
             _whatsNew.LinkClicked += (s, e) => Open(_pending?.HtmlUrl ?? Releases.PageUrl);
@@ -231,6 +234,19 @@ namespace RuntimeSwitcher
             }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException ||
                                       e is Newtonsoft.Json.JsonException)
+            {
+                MessageBox.Show(this, e.Message, "OpenLamina", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void ShowSettings()
+        {
+            try
+            {
+                using (var settings = new SettingsForm(IniFile.InFolder(Install.Bin)))
+                    settings.ShowDialog(this);
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
             {
                 MessageBox.Show(this, e.Message, "OpenLamina", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
