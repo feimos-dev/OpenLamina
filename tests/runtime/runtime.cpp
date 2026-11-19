@@ -1138,6 +1138,40 @@ Json::Value RecordLayer(RtSession* s, const XrCompositionLayerBaseHeader* layer,
 	return entry;
 }
 
+// Whether a layer shows a swapchain that never had an image released: a runtime has nothing to show for it
+bool ShowsUnreleasedSwapchain(const XrCompositionLayerBaseHeader* layer)
+{
+	auto unreleased = [](XrSwapchain swapchain) {
+		auto it = St().swapchains.find((RtSwapchain*)swapchain);
+		return it != St().swapchains.end() && it->second->lastReleased < 0;
+	};
+	if (!layer)
+		return false;
+	switch (layer->type) {
+	case XR_TYPE_COMPOSITION_LAYER_PROJECTION: {
+		auto* proj = (const XrCompositionLayerProjection*)layer;
+		for (uint32_t v = 0; v < proj->viewCount && proj->views; v++) {
+			if (unreleased(proj->views[v].subImage.swapchain))
+				return true;
+			for (auto* n = (const XrBaseInStructure*)proj->views[v].next; n; n = n->next)
+				if (n->type == XR_TYPE_COMPOSITION_LAYER_DEPTH_INFO_KHR && unreleased(((const XrCompositionLayerDepthInfoKHR*)n)->subImage.swapchain))
+					return true;
+		}
+		return false;
+	}
+	case XR_TYPE_COMPOSITION_LAYER_QUAD:
+		return unreleased(((const XrCompositionLayerQuad*)layer)->subImage.swapchain);
+	case XR_TYPE_COMPOSITION_LAYER_CYLINDER_KHR:
+		return unreleased(((const XrCompositionLayerCylinderKHR*)layer)->subImage.swapchain);
+	case XR_TYPE_COMPOSITION_LAYER_EQUIRECT2_KHR:
+		return unreleased(((const XrCompositionLayerEquirect2KHR*)layer)->subImage.swapchain);
+	case XR_TYPE_COMPOSITION_LAYER_CUBE_KHR:
+		return unreleased(((const XrCompositionLayerCubeKHR*)layer)->swapchain);
+	default:
+		return false;
+	}
+}
+
 XrResult XRAPI_CALL EndFrame(XrSession, const XrFrameEndInfo* info)
 {
 	FAIL_POINT("xrEndFrame");
@@ -1148,6 +1182,18 @@ XrResult XRAPI_CALL EndFrame(XrSession, const XrFrameEndInfo* info)
 	if (s->headless || !s->frameOpen) {
 		CountFrameOrderError(); // an end without a begin
 		return XR_ERROR_CALL_ORDER_INVALID;
+	}
+	// As real runtimes do: a frame with a layer whose swapchain never had an image released is refused, and stays
+	// open for another xrEndFrame
+	for (uint32_t i = 0; i < info->layerCount && info->layers; i++) {
+		if (ShowsUnreleasedSwapchain(info->layers[i])) {
+			if (Dump::Enabled()) {
+				Dump& refused = GetDump();
+				std::lock_guard<std::mutex> dg(refused.lock);
+				refused.root["frames_refused"] = refused.root["frames_refused"].asUInt64() + 1;
+			}
+			return XR_ERROR_LAYER_INVALID;
+		}
 	}
 	s->frameOpen = false;
 	s->framesEnded++;

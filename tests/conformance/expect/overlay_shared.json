@@ -1,0 +1,24 @@
+{
+ "#": "An overlay application's texture read back, written in place and shown on a second overlay by its DXGI shared handle (run.py --cases overlay-app-shared --script scripts/helper_apps.json --expect expect/overlay_shared.json): GetOverlayTexture gives a view of a shared texture that isn't the program's own, the same one while a view is out; the pattern copied into it afterwards, with no SetOverlayTexture, is what both quads show, the second overlay's its left half (its bounds); a null handle is refused; and no frame is refused by the runtime.",
+ "overlay-app-shared/shared/-/-": {
+  "init": 0,
+  "set_source": 0,
+  "get": 0,
+  "size": [
+   64,
+   64
+  ],
+  "view": true,
+  "not_the_programs_own_texture": true,
+  "shared_handle": true,
+  "same_texture_again": true,
+  "release_again": 0,
+  "set_target": 0,
+  "set_null_handle_refused": true,
+  "release": 0,
+  "frame_order_errors": 0,
+  "frames_refused": 0,
+  "source_shows_what_was_written": true,
+  "target_shows_its_left_half": true
+ }
+}

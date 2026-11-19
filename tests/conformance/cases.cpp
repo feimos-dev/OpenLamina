@@ -2447,6 +2447,10 @@ std::string EventName(uint32_t type)
 		return "scroll";
 	case vr::VREvent_ScrollSmooth:
 		return "scroll-smooth";
+	case vr::VREvent_OverlayShown:
+		return "shown";
+	case vr::VREvent_OverlayHidden:
+		return "hidden";
 	default:
 		return std::to_string(type);
 	}
@@ -2455,8 +2459,9 @@ std::string EventName(uint32_t type)
 // The right controller's laser on an overlay that takes mouse input (expect/laser_mouse.json, with
 // scripts/laser.json): a 1 m overlay at (0, 1.5, -2), 200 x 100 in mouse units; the right aim pose at (0, 1.5, -1)
 // looking along -Z from frame 5, its trigger held from frame 10 to 12. The game reads the old input from frame 2,
-// which loads the actions the lasers read. PollNextOverlayEvent gives FocusEnter, MouseMove, MouseButtonDown and Up,
-// all at the overlay's centre, and the stand-in is sent a 2 cm cursor quad.
+// which loads the actions the lasers read. PollNextOverlayEvent gives OverlayShown (from ShowOverlay), then
+// FocusEnter, MouseMove, MouseButtonDown and Up, all at the overlay's centre, and OverlayHidden once it's hidden; the
+// stand-in is sent a 2 cm cursor quad.
 void LaserMouseCase(CaseContext& c)
 {
 	using namespace vr::IVROverlay_028;
@@ -2489,6 +2494,7 @@ void LaserMouseCase(CaseContext& c)
 	std::string last;
 	Json::Value down, up;
 	bool hovered = false;
+	bool entered = false;
 	int haptic = -1;
 	for (int frame = 1; frame <= 30; frame++) {
 		GameFrame(f, tex.get());
@@ -2502,6 +2508,7 @@ void LaserMouseCase(CaseContext& c)
 			if (name != last)
 				order.append(name);
 			last = name;
+			entered = entered || ev.eventType == vr::VREvent_FocusEnter;
 			Json::Value* at = ev.eventType == vr::VREvent_MouseButtonDown ? &down : (ev.eventType == vr::VREvent_MouseButtonUp ? &up : nullptr);
 			if (at && at->isNull()) {
 				(*at)["x"] = Milli(ev.data.mouse.x);
@@ -2510,11 +2517,17 @@ void LaserMouseCase(CaseContext& c)
 				(*at)["device"] = (int)ev.trackedDeviceIndex;
 			}
 		}
-		if (!order.empty() && order[0].asString() == "enter" && !hovered) {
+		if (entered && !hovered) {
 			hovered = ov->IsHoverTargetOverlay(h);
 			haptic = (int)ov->TriggerLaserMouseHapticVibration(h, 0.05f, 0, 1);
 		}
 	}
+	// Hidden: told once, and not again for an overlay that's hidden already
+	ov->HideOverlay(h);
+	ov->HideOverlay(h);
+	vr::VREvent_t hiddenEvent{};
+	while (ov->PollNextOverlayEvent(h, &hiddenEvent, sizeof(hiddenEvent)))
+		order.append(EventName(hiddenEvent.eventType));
 	ov->DestroyOverlay(h);
 	c.core->Cleanup();
 
@@ -2528,6 +2541,8 @@ void LaserMouseCase(CaseContext& c)
 	if (!dump.isNull()) {
 		r["cursor_quad"] = QuadsOfSize(dump, 0.02, 0.02) > 0;
 		r["frame_order_errors"] = dump["frame_order_errors"];
+		// No frame refused: the cursor's swapchain has its image before a layer shows it
+		r["frames_refused"] = (Json::UInt64)dump["frames_refused"].asUInt64();
 	}
 	c.Record("events", r);
 }

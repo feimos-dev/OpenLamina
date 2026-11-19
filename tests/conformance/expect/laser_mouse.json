@@ -1,12 +1,13 @@
 {
  "#": "Pointing at overlays with the controllers (run.py --cases laser-mouse --script scripts/laser.json --ini ini/laser_mouse.ini --expect expect/laser_mouse.json; the same under ini/laser_mouse_steamvr.ini; the key is laserMouse). The right laser on the overlay's centre gets it the focus and a MouseMove, its trigger a MouseButtonDown and Up (Left, from the right controller, device 2), at (100, 50) of its 200 x 100 mouse units (from its lower left); while it's on it, it's the hover target and laser haptics pulse that hand. A 2 cm cursor quad is drawn on it, and no frame call comes out of order.",
  "laser-mouse/events/-/-": {
-  "order": ["enter", "move", "down", "up"],
+  "order": ["shown", "enter", "move", "down", "up", "hidden"],
   "down": {"x": 100, "y": 50, "button": 1, "device": 2},
   "up": {"x": 100, "y": 50, "button": 1, "device": 2},
   "hover_target": true,
   "haptic": 0,
   "cursor_quad": true,
-  "frame_order_errors": 0
+  "frame_order_errors": 0,
+  "frames_refused": 0
  }
 }
