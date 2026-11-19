@@ -137,7 +137,7 @@ ITrackedDevice::TrackedDeviceType XrController::GetHand()
 	return type == XCT_LEFT ? HAND_LEFT : HAND_RIGHT;
 }
 
-void XrController::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDevicePose_t* pose, ETrackingStateType trackingState)
+void XrController::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDevicePose_t* pose, ETrackingStateType trackingState, int64_t xrTime)
 {
 	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	// Default to an invalid pose
@@ -171,17 +171,17 @@ void XrController::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDevice
 	// Find the hand transform matrix, and include that
 	glm::mat4 transform = profile.GetGripToSteamVRTransform(GetHand());
 
-	if (xr_utils::PoseFromSpace(pose, space, origin, transform)) {
+	if (xr_utils::PoseFromSpace(pose, space, origin, transform, xrTime)) {
 		isPoseFromHandTracking = false;
 		return;
 	}
 
 	// Fallback to pose from hand tracking if the controller one isn't valid
-	GetPoseFromHandTracking(input, pose);
+	GetPoseFromHandTracking(input, pose, xrTime);
 	isPoseFromHandTracking = true;
 }
 
-void XrController::GetPoseFromHandTracking(BaseInput* input, vr::TrackedDevicePose_t* pose)
+void XrController::GetPoseFromHandTracking(BaseInput* input, vr::TrackedDevicePose_t* pose, int64_t xrTime)
 {
 	if (!xr_gbl || !xr_gbl->handTrackingProperties.supportsHandTracking)
 		return;
@@ -191,7 +191,7 @@ void XrController::GetPoseFromHandTracking(BaseInput* input, vr::TrackedDevicePo
 
 	XrHandJointsLocateInfoEXT locateInfo = { XR_TYPE_HAND_JOINTS_LOCATE_INFO_EXT };
 	locateInfo.baseSpace = xr_gbl->floorSpace;
-	locateInfo.time = xr_gbl->GetBestTime();
+	locateInfo.time = xrTime > 0 ? xrTime : xr_gbl->GetBestTime();
 
 	XrHandJointVelocitiesEXT velocities = { XR_TYPE_HAND_JOINT_VELOCITIES_EXT };
 	velocities.jointCount = XR_HAND_JOINT_COUNT_EXT;

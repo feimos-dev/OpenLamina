@@ -13,6 +13,7 @@
 #include "Misc/Config.h"
 #include "Misc/EnumNames.h"
 #include "Misc/Foveation.h"
+#include "Misc/xrmoreutils.h"
 #include "convert.h"
 #include "generated/static_bases.gen.h"
 
@@ -973,17 +974,9 @@ void BaseSystem::ResetSeatedZeroPose()
 		OOVR_FAILED_XR_SOFT_ABORT(xrLocateSpace(xr_gbl->viewSpace, xr_gbl->seatedSpace, xr_gbl->GetBestTime(), &location));
 
 		if ((location.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) && (location.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)) {
-			XrReferenceSpaceCreateInfo spaceInfo{ XR_TYPE_REFERENCE_SPACE_CREATE_INFO, nullptr, XR_REFERENCE_SPACE_TYPE_LOCAL, xr_gbl->seatedPose };
-			// The head's place in the seated space now, turned into the space that one is made in
-			XrVector3f rotatedPos;
-			rotate_vector_by_quaternion(location.pose.position, spaceInfo.poseInReferenceSpace.orientation, rotatedPos);
-			auto rot = yRotation(location.pose.orientation, spaceInfo.poseInReferenceSpace.orientation);
-			spaceInfo.poseInReferenceSpace.position.x += rotatedPos.x;
-			spaceInfo.poseInReferenceSpace.position.y += rotatedPos.y;
-			spaceInfo.poseInReferenceSpace.position.z += rotatedPos.z;
-
-			spaceInfo.poseInReferenceSpace.orientation.y = rot.y;
-			spaceInfo.poseInReferenceSpace.orientation.w = rot.w;
+			// The origin goes to the head's place now, with only the heading kept
+			XrReferenceSpaceCreateInfo spaceInfo{ XR_TYPE_REFERENCE_SPACE_CREATE_INFO, nullptr, XR_REFERENCE_SPACE_TYPE_LOCAL,
+				xr_utils::SeatedOriginAtHead(xr_gbl->seatedPose, location.pose) };
 
 			// On failure the old seated space stays
 			XrSpace newSpace = XR_NULL_HANDLE;
@@ -991,6 +984,7 @@ void BaseSystem::ResetSeatedZeroPose()
 			xrDestroySpace(xr_gbl->seatedSpace);
 			xr_gbl->seatedSpace = newSpace;
 			xr_gbl->seatedPose = spaceInfo.poseInReferenceSpace;
+			xr_seated_origin = xr_gbl->seatedPose;
 		}
 	}
 

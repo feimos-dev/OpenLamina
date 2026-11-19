@@ -17,7 +17,7 @@ public:
 	bool valid = true;
 	float x = 0;
 
-	void GetPose(vr::ETrackingUniverseOrigin, vr::TrackedDevicePose_t* pose, ETrackingStateType) override
+	void GetPose(vr::ETrackingUniverseOrigin, vr::TrackedDevicePose_t* pose, ETrackingStateType, int64_t) override
 	{
 		*pose = {};
 		pose->bDeviceIsConnected = true;
@@ -135,4 +135,56 @@ TEST_CASE("Devices of a class are sorted right to left")
 	// No array: the count only
 	CHECK(system.GetSortedTrackedDeviceIndicesOfClass(vr::TrackedDeviceClass_Controller, nullptr, 3, vr::k_unTrackedDeviceIndexInvalid) == 4);
 	CHECK(system.GetSortedTrackedDeviceIndicesOfClass(vr::TrackedDeviceClass_HMD, nullptr, 0, vr::k_unTrackedDeviceIndexInvalid) == 0);
+}
+
+#include "Misc/xrmoreutils.h"
+#include <cmath>
+
+TEST_CASE("A seated origin placed at the head keeps the heading and drops pitch and roll")
+{
+	const float quarter = 3.14159265f / 4;
+	// Turned a quarter to the left about the vertical axis, then pitched 30 degrees up
+	glm::quat turn = glm::angleAxis(2 * quarter, glm::vec3(0, 1, 0));
+	glm::quat pitch = glm::angleAxis(3.14159265f / 6, glm::vec3(1, 0, 0));
+	glm::quat headRotation = turn * pitch;
+	XrPosef head = { { headRotation.x, headRotation.y, headRotation.z, headRotation.w }, { 0.5f, 1.6f, -0.25f } };
+	XrPosef identity = { { 0, 0, 0, 1 }, { 0, 0, 0 } };
+
+	XrPosef placed = xr_utils::SeatedOriginAtHead(identity, head);
+	CHECK(placed.position.x == doctest::Approx(0.5f));
+	CHECK(placed.position.y == doctest::Approx(1.6f));
+	CHECK(placed.position.z == doctest::Approx(-0.25f));
+	CHECK(placed.orientation.x == doctest::Approx(0.0f).epsilon(1e-5));
+	CHECK(placed.orientation.z == doctest::Approx(0.0f).epsilon(1e-5));
+	CHECK(placed.orientation.y == doctest::Approx(std::sin(quarter)));
+	CHECK(placed.orientation.w == doctest::Approx(std::cos(quarter)));
+
+	// Placing again at the same head, which is now at the origin's centre, changes nothing
+	XrPosef again = xr_utils::SeatedOriginAtHead(placed, { { 0, 0, 0, 1 }, { 0, 0, 0 } });
+	CHECK(again.position.x == doctest::Approx(0.5f));
+	CHECK(again.orientation.y == doctest::Approx(std::sin(quarter)));
+}
+
+TEST_CASE("Looking straight up has no heading")
+{
+	glm::quat up = glm::angleAxis(3.14159265f / 2, glm::vec3(1, 0, 0));
+	XrQuaternionf yaw = xr_utils::YawOnly({ up.x, up.y, up.z, up.w });
+	CHECK(yaw.y == 0.0f);
+	CHECK(yaw.w == 1.0f);
+}
+
+TEST_CASE("Poses are located as far ahead as asked")
+{
+	const XrTime now = 1000000000, frame = 1016000000;
+	// Without a clock the default time stays
+	CHECK(xr_utils::PoseTimeForPrediction(0.01f, 0, frame) == 0);
+	// Now, and ahead of now
+	CHECK(xr_utils::PoseTimeForPrediction(0.0f, now, 0) == now);
+	CHECK(xr_utils::PoseTimeForPrediction(0.25f, now, 0) == now + 250000000);
+	CHECK(xr_utils::PoseTimeForPrediction(0.0f, now, frame) == now);
+	// Close to the frame's display time is the frame's
+	CHECK(xr_utils::PoseTimeForPrediction(0.015f, now, frame) == frame);
+	// Out of range or not a number is held to the range
+	CHECK(xr_utils::PoseTimeForPrediction(100.0f, now, 0) == now + 1000000000);
+	CHECK(std::llabs(xr_utils::PoseTimeForPrediction(std::nanf(""), now, 0) - (now - 100000000)) < 10);
 }

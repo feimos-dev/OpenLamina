@@ -45,6 +45,7 @@
 #include "../OpenOVR/Misc/FrameStats.h"
 #include "../OpenOVR/Misc/MirrorWindow.h"
 #include "../OpenOVR/Misc/Process.h"
+#include "../OpenOVR/Misc/xrmoreutils.h"
 #include "../OpenOVR/Misc/ProgramEvents.h"
 #include "../OpenOVR/Misc/SharedStore.h"
 #include "../OpenOVR/Reimpl/BaseSettings.h"
@@ -212,10 +213,18 @@ void XrBackend::GetDeviceToAbsoluteTrackingPose(
     vr::TrackedDevicePose_t* poseArray,
     uint32_t poseArrayCount)
 {
+	// All the devices are located at the one time, as far ahead as the program asked
+	XrTime poseTime = 0;
+	{
+		auto sessionLock = xr_session.lock_shared();
+		if (xr_gbl)
+			poseTime = xr_utils::PoseTimeForPrediction(predictedSecondsToPhotonsFromNow, xr_time_now(), xr_gbl->nextPredictedFrameTime);
+	}
+
 	for (uint32_t i = 0; i < poseArrayCount; ++i) {
 		std::shared_ptr<ITrackedDevice> dev = GetDevice(i);
 		if (dev) {
-			dev->GetPose(toOrigin, &poseArray[i], ETrackingStateType::TrackingStateType_Rendering);
+			dev->GetPose(toOrigin, &poseArray[i], ETrackingStateType::TrackingStateType_Rendering, poseTime);
 		} else {
 			poseArray[i] = BackendManager::InvalidPose();
 		}

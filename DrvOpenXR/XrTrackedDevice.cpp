@@ -17,7 +17,7 @@ static void NoPose(vr::TrackedDevicePose_t* pose)
 	pose->bDeviceIsConnected = false;
 }
 
-void XrTrackedDevice::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDevicePose_t* pose, ETrackingStateType trackingState)
+void XrTrackedDevice::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDevicePose_t* pose, ETrackingStateType trackingState, int64_t xrTime)
 {
 	NoPose(pose);
 }

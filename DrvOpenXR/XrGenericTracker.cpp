@@ -17,7 +17,7 @@ XrGenericTracker::~XrGenericTracker()
 		xrDestroySpace(genericTrackerSpace);
 }
 
-void XrGenericTracker::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDevicePose_t* pose, ETrackingStateType trackingState)
+void XrGenericTracker::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDevicePose_t* pose, ETrackingStateType trackingState, int64_t xrTime)
 {
 	ZeroMemory(pose, sizeof(*pose));
 	pose->bDeviceIsConnected = true;
@@ -34,7 +34,7 @@ void XrGenericTracker::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDe
 		return;
 	}
 
-	xr_utils::PoseFromSpace(pose, genericTrackerSpace, origin, glm::identity<glm::mat4>());
+	xr_utils::PoseFromSpace(pose, genericTrackerSpace, origin, glm::identity<glm::mat4>(), xrTime);
 }
 
 // Properties

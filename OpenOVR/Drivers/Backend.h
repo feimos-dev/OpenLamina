@@ -40,10 +40,14 @@ public:
 		HAND_NONE,
 	};
 
+	/**
+	 * xrTime is the OpenXR time to locate the device at; zero, the default, is the display time of the latest frame.
+	 */
 	virtual void GetPose(
 	    vr::ETrackingUniverseOrigin origin,
 	    vr::TrackedDevicePose_t* pose,
-	    ETrackingStateType trackingState)
+	    ETrackingStateType trackingState,
+	    int64_t xrTime = 0)
 	    = 0;
 
 	virtual vr::ETrackedDeviceClass GetTrackedDeviceClass() = 0;

@@ -19,8 +19,8 @@ public:
 
 	TrackedDeviceType GetHand() override;
 
-	void GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDevicePose_t* pose, ETrackingStateType trackingState) override;
-	void GetPoseFromHandTracking(BaseInput* input, vr::TrackedDevicePose_t* pose);
+	void GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDevicePose_t* pose, ETrackingStateType trackingState, int64_t xrTime = 0) override;
+	void GetPoseFromHandTracking(BaseInput* input, vr::TrackedDevicePose_t* pose, int64_t xrTime = 0);
 
 	vr::ETrackedDeviceClass GetTrackedDeviceClass() override;
 

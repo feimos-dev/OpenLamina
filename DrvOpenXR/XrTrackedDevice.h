@@ -17,7 +17,8 @@ public:
 	void GetPose(
 	    vr::ETrackingUniverseOrigin origin,
 	    vr::TrackedDevicePose_t* pose,
-	    ETrackingStateType trackingState) override;
+	    ETrackingStateType trackingState,
+	    int64_t xrTime = 0) override;
 
 	int32_t GetInt32TrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::ETrackedPropertyError* pErrorL) override;
 	uint64_t GetUint64TrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::ETrackedPropertyError* pErrorL) override;
