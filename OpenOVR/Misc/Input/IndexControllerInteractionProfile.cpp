@@ -46,12 +46,12 @@ IndexControllerInteractionProfile::IndexControllerInteractionProfile()
 	this->rawSourceNames = { { "squeeze", "grip" } };
 
 	this->hmdPropertiesMap = {
-		// { vr::Prop_TrackingSystemName_String, "lighthouse" },
+		{ vr::Prop_TrackingSystemName_String, "lighthouse" },
 		{ vr::Prop_ManufacturerName_String, "Valve" },
 	};
 
 	this->propertiesMap = {
-		// { vr::Prop_TrackingSystemName_String, { "lighthouse" } },
+		{ vr::Prop_TrackingSystemName_String, { "lighthouse" } },
 		{ vr::Prop_ModelNumber_String, { "Knuckles Left", "Knuckles Right" } },
 		{ vr::Prop_ControllerType_String, { GetOpenVRName().value() } }
 	};
