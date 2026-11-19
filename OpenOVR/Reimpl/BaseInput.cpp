@@ -3083,6 +3083,18 @@ ITrackedDevice::TrackedDeviceType BaseInput::ParseAndRemoveHandPrefix(std::strin
 EVRInputError BaseInput::GetEyeTrackingDataRelativeToNow(VRActionHandle_t action, ETrackingUniverseOrigin eOrigin,
     float fPredictedSecondsFromNow, VREyeTrackingData_t* pEyeTrackingData, uint32_t ulEyeTrackingDataSize)
 {
+	// So many seconds from now, where the runtime can say what time it is; otherwise at the frame being predicted
+	XrTime time = 0;
+	if (std::isfinite(fPredictedSecondsFromNow)) {
+		if (XrTime now = xr_time_now(); now > 0)
+			time = now + (XrTime)(std::clamp((double)fPredictedSecondsFromNow, -1.0, 1.0) * 1e9);
+	}
+	return GetEyeTrackingDataAt(action, eOrigin, time, pEyeTrackingData, ulEyeTrackingDataSize);
+}
+
+EVRInputError BaseInput::GetEyeTrackingDataAt(VRActionHandle_t action, ETrackingUniverseOrigin eOrigin,
+    XrTime time, VREyeTrackingData_t* pEyeTrackingData, uint32_t ulEyeTrackingDataSize)
+{
 	GET_ACTION_FROM_HANDLE(act, action);
 	if (ulEyeTrackingDataSize != sizeof(*pEyeTrackingData))
 		return VRInputError_InvalidParam;
@@ -3090,14 +3102,14 @@ EVRInputError BaseInput::GetEyeTrackingDataRelativeToNow(VRActionHandle_t action
 		return VRInputError_None;
 
 	// As SteamVR answers: in the space asked for; with no eye tracker behind the action (or for an action of
-	// another type) inactive, at the head; with one, active and as valid as the tracker's gaze. The time is
-	// ignored, as it is for pose actions.
+	// another type) inactive, at the head; with one, active and as valid as the tracker's gaze.
 	*pEyeTrackingData = {};
 	auto lock = xr_session.lock_shared();
 	if (!xr_gbl)
 		return VRInputError_None;
 	XrSpace base = xr_space_from_tracking_origin(eOrigin);
-	XrTime time = xr_gbl->GetBestTime();
+	if (time <= 1)
+		time = xr_gbl->GetBestTime();
 	XrSpaceLocation head = { XR_TYPE_SPACE_LOCATION };
 	bool headValid = XR_SUCCEEDED(xrLocateSpace(xr_gbl->viewSpace, base, time, &head)) && (head.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT);
 	if (headValid)
@@ -3132,5 +3144,6 @@ EVRInputError BaseInput::GetEyeTrackingDataRelativeToNow(VRActionHandle_t action
 EVRInputError BaseInput::GetEyeTrackingDataForNextFrame(VRActionHandle_t action, ETrackingUniverseOrigin eOrigin,
     VREyeTrackingData_t* pEyeTrackingData, uint32_t ulEyeTrackingDataSize)
 {
-	return GetEyeTrackingDataRelativeToNow(action, eOrigin, 0, pEyeTrackingData, ulEyeTrackingDataSize);
+	// The frame the last WaitGetPoses was for
+	return GetEyeTrackingDataAt(action, eOrigin, 0, pEyeTrackingData, ulEyeTrackingDataSize);
 }
