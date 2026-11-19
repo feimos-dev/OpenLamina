@@ -15,6 +15,9 @@
 #include "KhrSimpleInteractionProfile.h"
 #include "OculusInteractionProfile.h"
 #include "ReverbG2InteractionProfile.h"
+#include "ViveCosmosInteractionProfile.h"
+#include "ViveFocus3InteractionProfile.h"
+#include "PicoInteractionProfile.h"
 #include "ViveInteractionProfile.h"
 #include "ViveTrackerInteractionProfile.h"
 
@@ -119,20 +122,34 @@ void InteractionProfile::AddLegacyBindings(const LegacyControllerActions& ctrl, 
 	create(ctrl.aimPoseAction, paths->aimPoseAction);
 }
 
+InteractionProfile::ProfileList InteractionProfile::CreateProfiles(XrExt& ext)
+{
+	ProfileList profiles;
+	if (ext.G2Controller_Available())
+		profiles.emplace_back(std::make_unique<ReverbG2InteractionProfile>());
+
+	profiles.emplace_back(std::make_unique<HolographicInteractionProfile>());
+	profiles.emplace_back(std::make_unique<IndexControllerInteractionProfile>());
+	profiles.emplace_back(std::make_unique<ViveWandInteractionProfile>());
+	profiles.emplace_back(std::make_unique<OculusTouchInteractionProfile>());
+	if (ext.ExtensionEnabled(OC_XR_HTC_VIVE_COSMOS_CONTROLLER_INTERACTION_EXTENSION_NAME))
+		profiles.emplace_back(std::make_unique<ViveCosmosInteractionProfile>());
+	if (ext.ExtensionEnabled(OC_XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME))
+		profiles.emplace_back(std::make_unique<ViveFocus3InteractionProfile>());
+	if (ext.ExtensionEnabled(OC_XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME)) {
+		profiles.emplace_back(std::make_unique<PicoInteractionProfile>(PicoInteractionProfile::Model::Neo3));
+		profiles.emplace_back(std::make_unique<PicoInteractionProfile>(PicoInteractionProfile::Model::Pico4));
+	}
+	profiles.emplace_back(std::make_unique<KhrSimpleInteractionProfile>());
+	profiles.emplace_back(std::make_unique<ViveTrackerInteractionProfile>());
+	return profiles;
+}
+
 const InteractionProfile::ProfileList& InteractionProfile::GetProfileList()
 {
-	static std::vector<std::unique_ptr<InteractionProfile>> profiles;
-	if (profiles.empty()) {
-		if (xr_ext->G2Controller_Available())
-			profiles.emplace_back(std::make_unique<ReverbG2InteractionProfile>());
-
-		profiles.emplace_back(std::make_unique<HolographicInteractionProfile>());
-		profiles.emplace_back(std::make_unique<IndexControllerInteractionProfile>());
-		profiles.emplace_back(std::make_unique<ViveWandInteractionProfile>());
-		profiles.emplace_back(std::make_unique<OculusTouchInteractionProfile>());
-		profiles.emplace_back(std::make_unique<KhrSimpleInteractionProfile>());
-		profiles.emplace_back(std::make_unique<ViveTrackerInteractionProfile>());
-	}
+	static ProfileList profiles;
+	if (profiles.empty())
+		profiles = CreateProfiles(*xr_ext);
 	return profiles;
 }
 

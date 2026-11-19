@@ -94,6 +94,7 @@ add_executable(oc_unit_tests
 	unit/SteamClientTests.cpp
 	unit/SharedStoreTests.cpp
 	unit/DeviceIdentityTests.cpp
+	unit/InteractionProfileTests.cpp
 	unit/SettingsTests.cpp
 	unit/ApplicationsTests.cpp
 	unit/ChaperoneTests.cpp

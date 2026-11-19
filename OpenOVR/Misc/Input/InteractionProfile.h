@@ -25,6 +25,8 @@
  * Implementing an interaction profile is fairly straightforward, view the other interaction profiles for examples.
  * Be sure to add any implemented profiles to the interactionProfiles vector in BaseInput.cpp. (This is done in the BaseInput constructor.)
  */
+class XrExt;
+
 class InteractionProfile {
 private:
 	// types of properties that can be retrieved
@@ -52,6 +54,12 @@ public:
 	 * If implementing a new profile, be sure to add it here!
 	 */
 	static const ProfileList& GetProfileList();
+
+	/**
+	 * The profiles for an instance created with the extensions of ext: a profile that comes with an extension is in it
+	 * only when the extension is enabled, as a runtime refuses suggestions for a profile it doesn't have.
+	 */
+	static ProfileList CreateProfiles(XrExt& ext);
 
 	/**
 	 * Lookup an interaction profile from it's path, as returned by GetPath.
