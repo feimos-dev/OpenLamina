@@ -1676,13 +1676,18 @@ void XrBackend::KeepForMirror(vr::EVREye eye, const vr::Texture_t* texture, cons
 		*mirror = nullptr;
 		return;
 	}
-	// Nothing is copied until the game asks for a mirror texture. A Direct3D 10 texture (or any other) has none.
-	if (!mirrorWanted || texture->eType != vr::TextureType_DirectX || !texture->handle
+	// A Direct3D 10 texture (or any other) has no mirror
+	if (texture->eType != vr::TextureType_DirectX || !texture->handle
 #if defined(SUPPORT_DX10)
 	    || DX10Compositor::AsD3D10Texture(texture)
 #endif
 	)
 		return;
+	// The format of the game's frames, which a mirror texture asked for later is made in; nothing is copied until it is
+	if (!mirrorWanted) {
+		mirrorFormat[eye] = (int)DX11Compositor::MirrorFormat(texture);
+		return;
+	}
 	DX11Compositor::MirrorUpdate(texture, bounds, mirror);
 #endif
 }
@@ -1699,7 +1704,7 @@ IBackend::openvr_enum_t XrBackend::GetMirrorTextureD3D11(vr::EVREye eEye, void* 
 	std::lock_guard<std::mutex> lock(mirrorLock);
 	mirrorWanted = true;
 	int result = DX11Compositor::MirrorView((ID3D11Texture2D**)&mirrorTexture[eEye], (IUnknown*)pD3D11DeviceOrResource, width, height,
-	    (ID3D11ShaderResourceView**)ppD3D11ShaderResourceView);
+	    (DXGI_FORMAT)mirrorFormat[eEye], (ID3D11ShaderResourceView**)ppD3D11ShaderResourceView);
 	if (result == 0)
 		mirrorViews.insert(*ppD3D11ShaderResourceView);
 	return result;

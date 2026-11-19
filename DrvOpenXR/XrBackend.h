@@ -192,6 +192,8 @@ private:
 	// game's frames are copied into once it has asked for one (mirrorWanted); under mirrorLock
 	void* mirrorTexture[XruEyeCount]{};
 	bool mirrorWanted = false;
+	// The format of each eye's frames (a DXGI_FORMAT), for a mirror texture made after them
+	int mirrorFormat[XruEyeCount]{};
 	std::mutex mirrorLock;
 	std::set<void*> mirrorViews; // handed out by GetMirrorTextureD3D11 and not yet released
 	// A frame's texture of the eye, submitted with these bounds; with none, the eye's mirror texture is let go
