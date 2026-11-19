@@ -907,8 +907,8 @@ private:
 	std::map<std::string, LegacyEvaluator> legacyEvaluators; // by controller type
 	void UpdateEvaluators(const VRActiveActionSet_t* sets, uint32_t count);
 	/** The eye tracking read at an XrTime (0: the frame being predicted) */
-	EVRInputError GetEyeTrackingDataAt(VRActionHandle_t action, ETrackingUniverseOrigin eOrigin, XrTime time,
-	    VREyeTrackingData_t* pEyeTrackingData, uint32_t ulEyeTrackingDataSize);
+	EVRInputError GetEyeTrackingDataAt(VRActionHandle_t action, vr::ETrackingUniverseOrigin eOrigin, XrTime time,
+	    vr::VREyeTrackingData_t* pEyeTrackingData, uint32_t ulEyeTrackingDataSize);
 	/** An action set active for one frame, with the hands it's on */
 	struct ActiveSetOnHands {
 		ActionSet* set = nullptr;
