@@ -49,6 +49,7 @@ typedef uint32_t XrGraphicsApiSupportedFlags;
 // Extensions that only add an interaction profile, newer than the bundled OpenXR headers
 #define OC_XR_HTC_VIVE_COSMOS_CONTROLLER_INTERACTION_EXTENSION_NAME "XR_HTC_vive_cosmos_controller_interaction"
 #define OC_XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME "XR_HTC_vive_focus3_controller_interaction"
+#define OC_XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME "XR_BD_controller_interaction"
 
 // XR_FB_display_refresh_rate, which the bundled OpenXR headers predate (named apart from the newer headers' own)
 #define OC_XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME "XR_FB_display_refresh_rate"

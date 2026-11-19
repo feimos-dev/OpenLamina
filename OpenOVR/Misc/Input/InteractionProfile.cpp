@@ -17,6 +17,7 @@
 #include "ReverbG2InteractionProfile.h"
 #include "ViveCosmosInteractionProfile.h"
 #include "ViveFocus3InteractionProfile.h"
+#include "PicoInteractionProfile.h"
 #include "ViveInteractionProfile.h"
 #include "ViveTrackerInteractionProfile.h"
 
@@ -153,6 +154,10 @@ InteractionProfile::ProfileList InteractionProfile::CreateProfiles(XrExt& ext)
 		profiles.emplace_back(std::make_unique<ViveCosmosInteractionProfile>());
 	if (ext.ExtensionEnabled(OC_XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME))
 		profiles.emplace_back(std::make_unique<ViveFocus3InteractionProfile>());
+	if (ext.ExtensionEnabled(OC_XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME)) {
+		profiles.emplace_back(std::make_unique<PicoInteractionProfile>(PicoInteractionProfile::Model::Neo3));
+		profiles.emplace_back(std::make_unique<PicoInteractionProfile>(PicoInteractionProfile::Model::Pico4));
+	}
 	profiles.emplace_back(std::make_unique<KhrSimpleInteractionProfile>());
 	profiles.emplace_back(std::make_unique<ViveTrackerInteractionProfile>());
 	return profiles;

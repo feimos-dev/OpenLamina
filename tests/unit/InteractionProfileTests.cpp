@@ -5,6 +5,7 @@
 
 #include "../DrvOpenXR/DeviceIdentity.h"
 #include "Misc/Input/InteractionProfile.h"
+#include "Misc/Input/PicoInteractionProfile.h"
 #include "Misc/Input/ViveCosmosInteractionProfile.h"
 #include "Misc/Input/ViveFocus3InteractionProfile.h"
 #include "Misc/xr_ext.h"
@@ -35,6 +36,15 @@ TEST_CASE("Extension_profiles_are_offered_only_when_their_extension_is_enabled")
 	XrExt withFocus3(0, { "XR_HTC_vive_focus3_controller_interaction" });
 	CHECK(HasProfile(InteractionProfile::CreateProfiles(withFocus3), focus3));
 	CHECK_FALSE(HasProfile(InteractionProfile::CreateProfiles(withFocus3), cosmos));
+
+	// One extension gives the PICO profiles
+	const std::string neo3 = "/interaction_profiles/bytedance/pico_neo3_controller";
+	const std::string pico4 = "/interaction_profiles/bytedance/pico4_controller";
+	CHECK_FALSE(HasProfile(InteractionProfile::CreateProfiles(withFocus3), pico4));
+	XrExt withPico(0, { "XR_BD_controller_interaction" });
+	CHECK(HasProfile(InteractionProfile::CreateProfiles(withPico), neo3));
+	CHECK(HasProfile(InteractionProfile::CreateProfiles(withPico), pico4));
+	CHECK_FALSE(HasProfile(InteractionProfile::CreateProfiles(withPico), focus3));
 }
 
 TEST_CASE("Vive_cosmos_profile_paths")
@@ -96,4 +106,25 @@ TEST_CASE("Vive_focus3_controller_identity")
 	DeviceIdentity left = ControllerIdentity(focus3, vr::TrackedControllerRole_LeftHand);
 	CHECK(left.controllerType == "vive_focus3_controller");
 	CHECK((left.supportedButtons & vr::ButtonMaskFromId(vr::k_EButton_ApplicationMenu)) != 0);
+}
+
+TEST_CASE("Pico_profiles_have_their_own_paths_and_types")
+{
+	PicoInteractionProfile neo3(PicoInteractionProfile::Model::Neo3);
+	PicoInteractionProfile pico4(PicoInteractionProfile::Model::Pico4);
+	CHECK(neo3.GetPath() == "/interaction_profiles/bytedance/pico_neo3_controller");
+	CHECK(pico4.GetPath() == "/interaction_profiles/bytedance/pico4_controller");
+	CHECK(std::string(*neo3.GetOpenVRName()) != std::string(*pico4.GetOpenVRName()));
+
+	// The menu button is on both hands, the face buttons have a touch, the squeeze a value and a click
+	CHECK(pico4.IsInputPathValid("/user/hand/left/input/menu/click"));
+	CHECK(pico4.IsInputPathValid("/user/hand/right/input/menu/click"));
+	CHECK(pico4.IsInputPathValid("/user/hand/right/input/a/touch"));
+	CHECK_FALSE(pico4.IsInputPathValid("/user/hand/left/input/a/touch"));
+	CHECK(pico4.IsInputPathValid("/user/hand/left/input/squeeze/click"));
+	CHECK(pico4.IsInputPathValid("/user/hand/left/input/squeeze/value"));
+	CHECK_FALSE(pico4.IsInputPathValid("/user/hand/left/input/thumbrest/touch"));
+	CHECK(neo3.GetValidInputPaths() == pico4.GetValidInputPaths());
+
+	CHECK(pico4.TranslateAction("/user/hand/left/input/grip/force") == "/user/hand/left/input/squeeze/value");
 }
