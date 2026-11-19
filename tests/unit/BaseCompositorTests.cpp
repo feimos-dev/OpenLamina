@@ -3,6 +3,8 @@
 
 #include "stdafx.h"
 
+#include <limits>
+
 #include "Reimpl/BaseCompositor.h"
 
 TEST_CASE("Vk_extensions_size_insufficient_answers_needed_size")
@@ -101,4 +103,26 @@ TEST_CASE("Submit_ends_the_frame_unless_the_game_ends_it_with_PostPresentHandoff
 	CHECK_FALSE(BaseCompositor::SubmitEndsFrame(VRCompositorTimingMode_Explicit_ApplicationPerformsPostPresentHandoff, false));
 	// A game that calls it ends its frames there in any mode
 	CHECK_FALSE(BaseCompositor::SubmitEndsFrame(VRCompositorTimingMode_Implicit, true));
+}
+
+TEST_CASE("Submitted_bounds_with_a_NaN_are_not_bounds")
+{
+	const float nan = std::numeric_limits<float>::quiet_NaN();
+	vr::VRTextureBounds_t good{ 0, 0, 1, 1 };
+	CHECK(BaseCompositor::BoundsAreNumbers(nullptr));
+	CHECK(BaseCompositor::BoundsAreNumbers(&good));
+	for (int i = 0; i < 4; i++) {
+		vr::VRTextureBounds_t bad = good;
+		(&bad.uMin)[i] = nan;
+		CHECK_FALSE(BaseCompositor::BoundsAreNumbers(&bad));
+	}
+}
+
+TEST_CASE("The_raw_tracking_universe_is_answered_as_set")
+{
+	CHECK(BaseCompositor::UniverseAnswer(vr::TrackingUniverseRawAndUncalibrated, XR_REFERENCE_SPACE_TYPE_STAGE) == vr::TrackingUniverseRawAndUncalibrated);
+	CHECK(BaseCompositor::UniverseAnswer(vr::TrackingUniverseStanding, XR_REFERENCE_SPACE_TYPE_STAGE) == vr::TrackingUniverseStanding);
+	CHECK(BaseCompositor::UniverseAnswer(vr::TrackingUniverseSeated, XR_REFERENCE_SPACE_TYPE_LOCAL) == vr::TrackingUniverseSeated);
+	// The space moved to seated by other means: seated
+	CHECK(BaseCompositor::UniverseAnswer(vr::TrackingUniverseRawAndUncalibrated, XR_REFERENCE_SPACE_TYPE_LOCAL) == vr::TrackingUniverseSeated);
 }

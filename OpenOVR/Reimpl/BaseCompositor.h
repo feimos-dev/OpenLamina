@@ -1,6 +1,7 @@
 #pragma once
 
 #include <atomic>
+#include <cmath>
 #include <cstdint>
 #include "../BaseCommon.h" // TODO don't import from OCOVR, and remove the "../"
 #include "generated/interfaces/IVRCompositor_022.h"
@@ -168,10 +169,25 @@ private:
 	std::atomic<int32_t> explicitTimingMode{ 0 };
 	// The game has called PostPresentHandoff: it ends its frames there, not at its second Submit
 	std::atomic<bool> usesPostPresentHandoff{ false };
+	// What the game last set with SetTrackingSpace
+	std::atomic<int> trackingUniverse{ vr::TrackingUniverseStanding };
 
 public:
 	// Whether the second eye's Submit ends the frame: not for a game that ends its frames with PostPresentHandoff,
 	// whether it says so in its timing mode or has called it
+	// Submitted bounds with a NaN in them are no bounds at all
+	static bool BoundsAreNumbers(const vr::VRTextureBounds_t* bounds)
+	{
+		return !bounds || (!std::isnan(bounds->uMin) && !std::isnan(bounds->vMin) && !std::isnan(bounds->uMax) && !std::isnan(bounds->vMax));
+	}
+	// The tracking universe to answer after the game set `set`, when the space in use is `space`: the stage space
+	// holds both the standing and the raw universes
+	static vr::ETrackingUniverseOrigin UniverseAnswer(vr::ETrackingUniverseOrigin set, XrReferenceSpaceType space)
+	{
+		if (space == XR_REFERENCE_SPACE_TYPE_LOCAL)
+			return vr::TrackingUniverseSeated;
+		return set == vr::TrackingUniverseRawAndUncalibrated ? vr::TrackingUniverseRawAndUncalibrated : vr::TrackingUniverseStanding;
+	}
 	static bool SubmitEndsFrame(int32_t timingMode, bool calledHandoff)
 	{
 		return timingMode != (int32_t)VRCompositorTimingMode_Explicit_ApplicationPerformsPostPresentHandoff && !calledHandoff;

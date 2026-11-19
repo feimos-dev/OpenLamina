@@ -61,15 +61,12 @@ void BaseCompositor::SetTrackingSpace(ETrackingUniverseOrigin eOrigin)
 	}
 
 	BaseSystem::currentSpace = origin;
+	trackingUniverse = (int)eOrigin;
 }
 
 ETrackingUniverseOrigin BaseCompositor::GetTrackingSpace()
 {
-	if (BaseSystem::currentSpace == XR_REFERENCE_SPACE_TYPE_LOCAL) {
-		return TrackingUniverseSeated;
-	} else {
-		return TrackingUniverseStanding;
-	}
+	return UniverseAnswer((ETrackingUniverseOrigin)trackingUniverse.load(), BaseSystem::currentSpace);
 }
 
 ovr_enum_t BaseCompositor::WaitGetPoses(TrackedDevicePose_t* renderPoseArray, uint32_t renderPoseArrayCount,
@@ -291,6 +288,10 @@ ovr_enum_t BaseCompositor::Submit(EVREye eye, const Texture_t* texture, const VR
 	}
 	if (!texture || (eye != Eye_Left && eye != Eye_Right))
 		return VRCompositorError_InvalidTexture;
+	if (!BoundsAreNumbers(bounds)) {
+		OOVR_LOG_ONCE("Texture bounds that aren't numbers: Submit refused");
+		return VRCompositorError_InvalidBounds;
+	}
 
 	bool isFirstEye = !leftEyeSubmitted && !rightEyeSubmitted;
 	ovr_enum_t result = VRCompositorError_None;
