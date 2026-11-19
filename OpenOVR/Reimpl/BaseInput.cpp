@@ -1608,7 +1608,7 @@ void BaseInput::SuggestRawBindings(const InteractionProfile& profile, const std:
 	BindingFile file = LoadBindingFile(PathFromUtf8(bindingsPath));
 	std::optional<const char*> type = profile.GetOpenVRName();
 	if (type && !file.controllerType.empty() && lowerStr(file.controllerType) != *type) {
-		OOVR_LOGF("Binding evaluator: %s's bindings converted for %s", file.controllerType.c_str(), *type);
+		OOVR_LOGF("Binding file: %s's bindings converted for %s", file.controllerType.c_str(), *type);
 		file = ConvertBindingFile(file, *type);
 	}
 	bindingFiles[&profile] = file;
@@ -1624,10 +1624,19 @@ void BaseInput::SuggestRawBindings(const InteractionProfile& profile, const std:
 
 std::optional<std::vector<ActionBinding>> BaseInput::BindingsFromFiles(const Action& action)
 {
+	// The files bind inputs; a pose, a skeleton and a vibration keep OpenXR's bound sources
+	if (action.type == ActionType::Pose || action.type == ActionType::Skeleton || action.type == ActionType::Vibration)
+		return std::nullopt;
 	std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
 	std::optional<std::vector<ActionBinding>> found;
 	for (size_t i = 0; i < allSubactionPathNames.size() && i < handInteractionProfiles.size(); i++) {
-		auto file = bindingFiles.find(handInteractionProfiles[i]);
+		// Before the first UpdateActionState the hand's profile is the backend's to tell
+		const InteractionProfile* profile = handInteractionProfiles[i];
+		if (!profile) {
+			auto device = BackendManager::Instance().GetBackendInstance()->GetDeviceByHand(static_cast<ITrackedDevice::TrackedDeviceType>(i));
+			profile = device ? device->GetInteractionProfile() : nullptr;
+		}
+		auto file = bindingFiles.find(profile);
 		if (file == bindingFiles.end())
 			continue;
 		if (!found)
@@ -3119,7 +3128,7 @@ EVRInputError BaseInput::GetActionOrigins(VRActionSetHandle_t actionSetHandle, V
 	XrBoundSourcesForActionEnumerateInfo info = { XR_TYPE_BOUND_SOURCES_FOR_ACTION_ENUMERATE_INFO };
 	info.action = act->xr;
 
-	// The hands the controllers' binding files bind it on (see GetActionBindingInfo); OpenXR's bound sources without
+	// The hands the binding files bind it on; OpenXR's bound sources only if no controller in use has a file
 	std::optional<std::vector<ActionBinding>> fromFiles = BindingsFromFiles(*act);
 	if (fromFiles)
 		for (const ActionBinding& b : *fromFiles)
@@ -3266,8 +3275,8 @@ EVRInputError BaseInput::GetActionBindingInfo(VRActionHandle_t actionHandle, OOV
 	if (action->type == ActionType::EyeTracking)
 		return VRInputError_None;
 
-	// From the controllers' binding files, as SteamVR answers: OpenXR's bound sources know neither the mode nor the
-	// slot, name the inputs their own way, and have nothing for an input OpenLamina evaluates itself (a d-pad)
+	// From the controllers' binding files, as SteamVR answers: OpenXR's bound sources have no mode or slot, and
+	// nothing for a d-pad
 	if (std::optional<std::vector<ActionBinding>> fromFiles = BindingsFromFiles(*action)) {
 		uint32_t written = 0;
 		for (const ActionBinding& b : *fromFiles) {
