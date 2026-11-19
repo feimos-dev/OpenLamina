@@ -1131,7 +1131,23 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 		}
 	}
 
-	// If we have an overlay then add. Its layers stay as they are until the frame has ended.
+	// The scene (the game's layer, or the skybox in its place once the grid is fully in), the fade over it, then the
+	// overlays. The overlays' layers stay as they are until the frame has ended.
+	const ScenePlan plan = PlanScene(app_layer != nullptr, SkyboxShown(), CompositorFades::Get().GridAlphaAt(CompositorClockSeconds()));
+	frameLayers.clear();
+	if (plan.skybox) {
+		std::lock_guard<std::mutex> lock(skyboxLock);
+		for (int i = 0; i < skybox.layerCount; i++)
+			frameLayers.push_back((const XrCompositionLayerBaseHeader*)&skybox.layers[i]);
+	} else if (plan.scene) {
+		frameLayers.push_back(app_layer);
+	}
+	if (!frameLayers.empty()) {
+		if (XrCompositionLayerBaseHeader* fade = BuildFadeLayer())
+			frameLayers.push_back(fade);
+	}
+	const bool sceneShown = plan.scene;
+
 	BaseOverlay* overlay = GetUnsafeBaseOverlay();
 	std::unique_lock<std::recursive_mutex> overlayLock;
 	if (overlay) {
@@ -1141,11 +1157,11 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 		WithStoreDocuments([&] { overlay->_UpdateBounds(); });
 		WithStoreDocuments([&] { overlay->_UpdatePointer(); });
 		overlayLock = std::unique_lock(overlay->_LayersLock());
-		layer_count = overlay->_BuildLayers(app_layer, headers, true);
-	} else if (app_layer) {
-		layer_count = 1;
-		headers = &app_layer;
+		const int overlayCount = overlay->_BuildLayers(nullptr, headers, true);
+		frameLayers.insert(frameLayers.end(), headers, headers + overlayCount);
 	}
+	headers = frameLayers.data();
+	layer_count = (int)frameLayers.size();
 
 	// It's ok if no layers have been added at this point,
 	// it will just cause the display to be blanked
@@ -1153,7 +1169,7 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 	info.layerCount = layer_count;
 
 	XrResult endResult = xrEndFrame(xr_session.get(), &info);
-	if (XR_FAILED(endResult) && app_layer && layer_count > 1) {
+	if (XR_FAILED(endResult) && sceneShown && layer_count > 1) {
 		// A layer of the overlays' was refused. The game's frame isn't dropped for it: ended without each of those
 		// layers in turn, then with the game's layer alone.
 		const XrResult refusal = endResult;
@@ -1209,6 +1225,42 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 	frameSubmitTimeUs = (double)std::chrono::duration_cast<std::chrono::microseconds>(now).count() / 1000000.0;
 
 	nFrameIndex++;
+}
+
+XrCompositionLayerBaseHeader* XrBackend::BuildFadeLayer()
+{
+	const vr::HmdColor_t colour = CompositorFades::Get().ColourAt(CompositorClockSeconds(), false);
+	if (!FadeVisible(colour) || !xr_gbl)
+		return nullptr;
+
+	// The colour on the swapchain's texels (a small one: runtimes have a minimum size)
+	constexpr uint32_t side = 8;
+	uint8_t texel[4];
+	FadeTexel(colour, texel);
+	if (!fadeSwapchain)
+		fadeSwapchain = CpuSwapchain::Create(side, side);
+	if (!fadeSwapchain)
+		return nullptr;
+	if (!fadeSwapchain->Live() || memcmp(texel, fadeTexel, sizeof(texel)) != 0) {
+		Image image;
+		image.width = image.height = side;
+		image.rgba.resize((size_t)side * side * 4);
+		for (size_t i = 0; i < image.rgba.size(); i += 4)
+			memcpy(&image.rgba[i], texel, sizeof(texel));
+		if (!fadeSwapchain->Upload(image) || !fadeSwapchain->Live())
+			return nullptr;
+		memcpy(fadeTexel, texel, sizeof(texel));
+	}
+
+	fadeLayer = { XR_TYPE_COMPOSITION_LAYER_QUAD };
+	fadeLayer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT | XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
+	fadeLayer.space = xr_gbl->viewSpace;
+	fadeLayer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+	fadeLayer.subImage = fadeSwapchain->SubImage();
+	// Close in front of the eyes and wide enough to fill any field of view up to about 170 degrees across
+	fadeLayer.pose = { { 0.f, 0.f, 0.f, 1.f }, { 0.0f, 0.0f, -0.2f } };
+	fadeLayer.size = { 6.0f, 6.0f };
+	return (XrCompositionLayerBaseHeader*)&fadeLayer;
 }
 
 bool XrBackend::SkyboxShown()
@@ -2294,6 +2346,7 @@ void XrBackend::PrepareForSessionShutdown()
 		c.reset();
 	}
 	skybox_compositor.reset();
+	fadeSwapchain.reset();
 	{
 		std::lock_guard<std::mutex> lock(skyboxLock);
 		skybox = Skybox();

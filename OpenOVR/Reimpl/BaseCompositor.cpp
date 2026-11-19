@@ -457,34 +457,26 @@ void BaseCompositor::GetCumulativeStats(OOVR_Compositor_CumulativeStats* pStats,
 
 void BaseCompositor::FadeToColor(float fSeconds, float fRed, float fGreen, float fBlue, float fAlpha, bool bBackground)
 {
-	fadeTime = fSeconds;
-	fadeColour.r = fRed;
-	fadeColour.g = fGreen;
-	fadeColour.b = fBlue;
-	fadeColour.a = fAlpha;
-
-	// TODO what does background do?
+	// Drawn over the scene by the backend. The background's fade is kept and answered, but not drawn.
+	CompositorFades::Get().FadeToColour(CompositorClockSeconds(), fSeconds, { fRed, fGreen, fBlue, fAlpha }, bBackground);
 }
 
 HmdColor_t BaseCompositor::GetCurrentFadeColor(bool bBackground)
 {
-	return fadeColour;
+	return CompositorFades::Get().ColourAt(CompositorClockSeconds(), bBackground);
 }
 
 void BaseCompositor::FadeGrid(float fSeconds, bool bFadeIn)
 {
-	// This is the app telling SteamVR to fade from the rendered scene into the skybox, eg before the
-	//  app loads a new level (this is how the default SteamVR Unity plugin works).
-	//
-	// Let's not bother implementing the fade (that would be a LOT of work), and just skip straight over.
+	// The app fading from the scene into the skybox, eg before it loads a new level. Once the grid is fully in, the
+	// skybox override is shown in place of the scene; no grid is drawn.
+	CompositorFades::Get().FadeGrid(CompositorClockSeconds(), fSeconds, bFadeIn);
 	isInSkybox = bFadeIn;
-
-	// TODO suppress input while in this mode
 }
 
 float BaseCompositor::GetCurrentGridAlpha()
 {
-	return isInSkybox ? 1.0f : 0.0f;
+	return CompositorFades::Get().GridAlphaAt(CompositorClockSeconds());
 }
 
 ovr_enum_t BaseCompositor::SetSkyboxOverride(const Texture_t* pTextures, uint32_t unTextureCount)

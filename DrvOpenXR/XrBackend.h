@@ -215,6 +215,14 @@ private:
 	XrCompositionLayerProjectionView lastProjectionViews[2]{};
 	bool haveLastProjection = false;
 	bool SkyboxShown();
+	// The layers of the frame being ended, under frameOwner
+	std::vector<const XrCompositionLayerBaseHeader*> frameLayers;
+	// The scene fade as a layer: a quad over the whole view, its texels the fade's colour and alpha. Under frameOwner.
+	std::unique_ptr<CpuSwapchain> fadeSwapchain;
+	uint8_t fadeTexel[4]{};
+	XrCompositionLayerQuad fadeLayer{ XR_TYPE_COMPOSITION_LAYER_QUAD };
+	// The fade layer for the fade as it is now, or nullptr while nothing is faded (or it can't be drawn)
+	XrCompositionLayerBaseHeader* BuildFadeLayer();
 	// A skybox asked for while the session wasn't running, shown at the next frame's start; under pendingSkyboxLock
 	std::mutex pendingSkyboxLock;
 	SkyboxRequest pendingSkybox;

@@ -150,9 +150,6 @@ private:
 	float oldGamma = 1.0f;
 	OOVR_Compositor_DeviceType oldDeviceType = OOVR_Compositor_DeviceType_None;
 
-	vr::HmdColor_t fadeColour = { 0, 0, 0, 0 };
-	float fadeTime = 0;
-
 	std::atomic<bool> isInSkybox{ false };
 
 	// The poses WaitGetPoses gave the last few frames, by pose prediction id (GetPosesForFrame); under posesLock, as
