@@ -84,14 +84,33 @@ vr::HmdMatrix34_t ChaperoneData::Identity()
 
 vr::HmdQuad_t ChaperoneData::FloorQuad(float width, float depth)
 {
-	// Half the width and depth each side of the origin, like the play area
+	// Half the width and depth each side of the origin, like the play area: front right, front left, back left, back
+	// right (the front being -Z)
 	float x = width / 2, z = depth / 2;
 	vr::HmdQuad_t q{};
-	q.vCorners[0] = { -x, 0, -z };
-	q.vCorners[1] = { -x, 0, z };
-	q.vCorners[2] = { x, 0, z };
-	q.vCorners[3] = { x, 0, -z };
+	q.vCorners[0] = { x, 0, -z };
+	q.vCorners[1] = { -x, 0, -z };
+	q.vCorners[2] = { -x, 0, z };
+	q.vCorners[3] = { x, 0, z };
 	return q;
+}
+
+std::vector<vr::HmdQuad_t> ChaperoneData::WallQuads(float width, float depth, float height)
+{
+	// One wall on each edge of the floor quad: from a corner on the floor, up to the height, along to the next
+	// corner and back down to the floor
+	const vr::HmdQuad_t floor = FloorQuad(width, depth);
+	std::vector<vr::HmdQuad_t> walls;
+	for (int i = 0; i < 4; i++) {
+		const vr::HmdVector3_t from = floor.vCorners[i], to = floor.vCorners[(i + 1) % 4];
+		vr::HmdQuad_t q{};
+		q.vCorners[0] = from;
+		q.vCorners[1] = { from.v[0], height, from.v[2] };
+		q.vCorners[2] = { to.v[0], height, to.v[2] };
+		q.vCorners[3] = to;
+		walls.push_back(q);
+	}
+	return walls;
 }
 
 ChaperoneData ChaperoneData::FromStage(float width, float depth)
@@ -99,7 +118,7 @@ ChaperoneData ChaperoneData::FromStage(float width, float depth)
 	ChaperoneData d;
 	d.playArea[0] = width;
 	d.playArea[1] = depth;
-	d.collisionBounds.push_back(FloorQuad(width, depth));
+	d.collisionBounds = WallQuads(width, depth, kWallHeight);
 	return d;
 }
 

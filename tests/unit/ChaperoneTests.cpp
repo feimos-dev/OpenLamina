@@ -8,9 +8,9 @@
 TEST_CASE("Chaperone_data_round_trip")
 {
 	ChaperoneData d = ChaperoneData::FromStage(4, 5);
-	REQUIRE(d.collisionBounds.size() == 1);
-	CHECK(d.collisionBounds[0].vCorners[0].v[0] == -2.0f);
-	CHECK(d.collisionBounds[0].vCorners[2].v[2] == 2.5f);
+	REQUIRE(d.collisionBounds.size() == 4);
+	CHECK(d.collisionBounds[0].vCorners[0].v[0] == 2.0f);
+	CHECK(d.collisionBounds[2].vCorners[2].v[2] == 2.5f);
 	d.tags = { 1, 0 };
 	d.physicalBounds.push_back(ChaperoneData::FloorQuad(6, 7));
 	d.perimeter = { { { 1, 2 } }, { { -3, 4.5f } } };
@@ -23,13 +23,13 @@ TEST_CASE("Chaperone_data_round_trip")
 	REQUIRE(back.has_value());
 	CHECK(back->playArea[0] == 4.0f);
 	CHECK(back->playArea[1] == 5.0f);
-	REQUIRE(back->collisionBounds.size() == 1);
+	REQUIRE(back->collisionBounds.size() == 4);
 	for (int c = 0; c < 4; c++)
 		for (int i = 0; i < 3; i++)
 			CHECK(back->collisionBounds[0].vCorners[c].v[i] == d.collisionBounds[0].vCorners[c].v[i]);
 	CHECK(back->tags == d.tags);
 	REQUIRE(back->physicalBounds.size() == 1);
-	CHECK(back->physicalBounds[0].vCorners[2].v[0] == 3.0f);
+	CHECK(back->physicalBounds[0].vCorners[2].v[0] == -3.0f);
 	REQUIRE(back->perimeter.size() == 2);
 	CHECK(back->perimeter[1].v[0] == -3.0f);
 	CHECK(back->perimeter[1].v[1] == 4.5f);
@@ -45,9 +45,46 @@ TEST_CASE("Chaperone_data_round_trip")
 	// A broken quad is left out, not half read
 	Json::Value broken = d.ToJson();
 	broken["collision_bounds"][0][1] = "x";
-	CHECK(ChaperoneData::FromJson(broken)->collisionBounds.empty());
+	CHECK(ChaperoneData::FromJson(broken)->collisionBounds.size() == 3);
 	// A tag that isn't a number (an imported buffer's, say) reads as 0
 	broken["tags"][0] = "x";
 	broken["tags"][1] = -1;
 	CHECK(ChaperoneData::FromJson(broken)->tags == std::vector<uint8_t>{ 0, 0 });
+}
+
+TEST_CASE("Chaperone_floor_quad_starts_at_the_front_right")
+{
+	// Counter-clockwise seen from above, from (+x, -z)
+	const vr::HmdQuad_t q = ChaperoneData::FloorQuad(2, 4);
+	const float expected[4][2] = { { 1, -2 }, { -1, -2 }, { -1, 2 }, { 1, 2 } };
+	for (int i = 0; i < 4; i++) {
+		CHECK(q.vCorners[i].v[0] == expected[i][0]);
+		CHECK(q.vCorners[i].v[1] == 0.0f);
+		CHECK(q.vCorners[i].v[2] == expected[i][1]);
+	}
+}
+
+TEST_CASE("Chaperone_walls_stand_on_the_edges_of_the_floor_quad")
+{
+	const vr::HmdQuad_t floor = ChaperoneData::FloorQuad(2, 4);
+	const std::vector<vr::HmdQuad_t> walls = ChaperoneData::WallQuads(2, 4, 2.5f);
+	REQUIRE(walls.size() == 4);
+	for (int i = 0; i < 4; i++) {
+		const vr::HmdVector3_t from = floor.vCorners[i], to = floor.vCorners[(i + 1) % 4];
+		const vr::HmdQuad_t& w = walls[i];
+		for (int c : { 0, 1 }) {
+			CHECK(w.vCorners[c].v[0] == from.v[0]);
+			CHECK(w.vCorners[c].v[2] == from.v[2]);
+		}
+		for (int c : { 2, 3 }) {
+			CHECK(w.vCorners[c].v[0] == to.v[0]);
+			CHECK(w.vCorners[c].v[2] == to.v[2]);
+		}
+		CHECK(w.vCorners[0].v[1] == 0.0f);
+		CHECK(w.vCorners[3].v[1] == 0.0f);
+		CHECK(w.vCorners[1].v[1] == 2.5f);
+		CHECK(w.vCorners[2].v[1] == 2.5f);
+	}
+	// A room of the runtime's stage has a wall on each edge
+	CHECK(ChaperoneData::FromStage(1, 1).collisionBounds.size() == 4);
 }

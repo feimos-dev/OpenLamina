@@ -74,16 +74,17 @@ bool BaseChaperone::GetPlayAreaRect(HmdQuad_t* rect)
 	if (!success)
 		return false;
 
+	// Counter-clockwise from the front right (the front being -Z)
 	rect->vCorners[0].v[0] = maxPoint.v[0];
-	rect->vCorners[0].v[2] = maxPoint.v[2];
+	rect->vCorners[0].v[2] = minPoint.v[2];
 
-	rect->vCorners[1].v[0] = maxPoint.v[0];
+	rect->vCorners[1].v[0] = minPoint.v[0];
 	rect->vCorners[1].v[2] = minPoint.v[2];
 
 	rect->vCorners[2].v[0] = minPoint.v[0];
-	rect->vCorners[2].v[2] = minPoint.v[2];
+	rect->vCorners[2].v[2] = maxPoint.v[2];
 
-	rect->vCorners[3].v[0] = minPoint.v[0];
+	rect->vCorners[3].v[0] = maxPoint.v[0];
 	rect->vCorners[3].v[2] = maxPoint.v[2];
 
 	return true;

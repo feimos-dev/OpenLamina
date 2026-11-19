@@ -21,11 +21,17 @@ struct ChaperoneData {
 	vr::HmdMatrix34_t seatedZero = Identity();
 	vr::HmdColor_t colors[2] = {}; // the bounds' colour, and the camera's
 
-	/** The room the OpenXR runtime has: a play area of width by depth around the origin, with one collision bounds
-	 * quad on the floor at its edges */
+	/** The height of the collision bounds walls of a room that has none of its own, metres */
+	static constexpr float kWallHeight = 2.43f;
+
+	/** The room the OpenXR runtime has: a play area of width by depth around the origin, with a wall of collision
+	 * bounds on each of its edges */
 	static ChaperoneData FromStage(float width, float depth);
-	/** The collision bounds quad on the floor at the edges of a width by depth play area around the origin */
+	/** The quad on the floor at the edges of a width by depth play area around the origin, in the order of
+	 * IVRChaperone::GetPlayAreaRect: front right, front left, back left, back right */
 	static vr::HmdQuad_t FloorQuad(float width, float depth);
+	/** The four walls on the edges of that quad, each of the given height */
+	static std::vector<vr::HmdQuad_t> WallQuads(float width, float depth, float height);
 
 	Json::Value ToJson() const;
 	/** Nothing if it isn't an object with a play area; missing parts are empty */
