@@ -84,9 +84,13 @@ public:
 		return vkBindBufferMemory(device, buffer, memory, 0) == VK_SUCCESS;
 	}
 
+	// How long an upload waits for the GPU: a busy one fails the upload (the caller tries again) rather than stalling
+	// the calling thread
+	static constexpr uint64_t kUploadWaitNs = 50000000ull; // 50 ms
+
 	bool Write(uint32_t index, const std::vector<uint8_t>& texels) override
 	{
-		if (index >= images.size() || !cmd || vkWaitForFences(device, 1, &fence, VK_TRUE, 5000000000ull) != VK_SUCCESS)
+		if (index >= images.size() || !cmd || vkWaitForFences(device, 1, &fence, VK_TRUE, kUploadWaitNs) != VK_SUCCESS)
 			return false;
 		void* mapped = nullptr;
 		if (vkMapMemory(device, memory, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS)
@@ -122,7 +126,7 @@ public:
 		si.pCommandBuffers = &cmd;
 		if (vkQueueSubmit(queue, 1, &si, fence) != VK_SUCCESS)
 			return false;
-		return vkWaitForFences(device, 1, &fence, VK_TRUE, 5000000000ull) == VK_SUCCESS;
+		return vkWaitForFences(device, 1, &fence, VK_TRUE, kUploadWaitNs) == VK_SUCCESS;
 	}
 
 	void DropImages() override

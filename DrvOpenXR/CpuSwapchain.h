@@ -57,6 +57,7 @@ private:
 	std::unique_ptr<CpuSwapchainApi> api;
 	// An image acquired whose wait timed out: waited on again at the next Upload, not acquired anew
 	bool waitPending = false;
+	std::vector<uint8_t> swapped; // the image with its red and blue swapped, for a BGRA swapchain
 	uint32_t pendingIndex = 0;
 	// An image was written and released into this swapchain
 	bool filled = false;
