@@ -17,6 +17,10 @@ using namespace vr;
 
 BaseChaperone::BaseChaperoneCalibrationState BaseChaperone::GetCalibrationState()
 {
+	// The play area and the collision bounds both come from the runtime's stage
+	vr::HmdVector3_t minPoint, maxPoint;
+	if (!GetMinMaxPoints(minPoint, maxPoint))
+		return ChaperoneCalibrationState_Error_PlayAreaInvalid;
 	return ChaperoneCalibrationState_OK;
 }
 bool BaseChaperone::GetPlayAreaSize(float* pSizeX, float* pSizeZ)
