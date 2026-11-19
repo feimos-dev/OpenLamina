@@ -34,8 +34,10 @@ public:
 	XrSwapchainSubImage SubImage() const;
 	~CpuSwapchain();
 
-	// Whether it has a swapchain on the current session (none after ReleaseAll, until the next Upload)
-	bool Live() const { return chain != XR_NULL_HANDLE; }
+	// Whether it has a swapchain on the current session with an image in it, which a layer may show: not before the
+	// first Upload that worked (a runtime refuses a frame whose layer's swapchain never had an image released), nor
+	// after ReleaseAll until the next one
+	bool Live() const { return chain != XR_NULL_HANDLE && filled; }
 
 	// The session is ending: every CpuSwapchain lets go of its swapchain and graphics objects now, while the session
 	// and its device are still there. The next Upload makes them again, on the next session.
@@ -56,6 +58,8 @@ private:
 	// An image acquired whose wait timed out: waited on again at the next Upload, not acquired anew
 	bool waitPending = false;
 	uint32_t pendingIndex = 0;
+	// An image was written and released into this swapchain
+	bool filled = false;
 };
 
 // The part for the session's graphics binding (an XrGraphicsBinding*KHR), or nullptr for one it hasn't
