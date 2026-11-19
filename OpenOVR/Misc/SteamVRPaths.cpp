@@ -73,7 +73,9 @@ std::optional<fs::path> DefaultSteamDir()
 	const char* home = getenv("HOME");
 	if (!home || !home[0])
 		return std::nullopt;
-	for (const char* sub : { ".steam/steam", ".local/share/Steam" }) {
+	// Steam's own folder, then where the Flatpak and Snap packages keep theirs
+	for (const char* sub : { ".steam/steam", ".local/share/Steam", ".var/app/com.valvesoftware.Steam/.local/share/Steam",
+	         ".var/app/com.valvesoftware.Steam/.steam/steam", "snap/steam/common/.local/share/Steam", "snap/steam/common/.steam/steam" }) {
 		fs::path p = fs::path(home) / sub;
 		if (IsDirectory(p))
 			return p;
@@ -103,6 +105,25 @@ std::optional<fs::path> FromPathsFile(const fs::path& pathsFile)
 			if (c >= u8'A' && c <= u8'Z')
 				c = (char8_t)(c - u8'A' + u8'a');
 		if (name == u8"steamvr" && IsSteamVRInstall(p))
+			return p;
+	}
+	return std::nullopt;
+}
+
+// The paths file's first config entry that is a folder: where SteamVR keeps its settings
+std::optional<fs::path> ConfigFromPathsFile(const fs::path& pathsFile)
+{
+	Json::Value root;
+	if (!oc_read_json_file(pathsFile, root))
+		return std::nullopt;
+	const Json::Value& configs = root["config"];
+	if (!configs.isArray())
+		return std::nullopt;
+	for (const Json::Value& entry : configs) {
+		if (!entry.isString())
+			continue;
+		fs::path p = FromUtf8(entry.asString());
+		if (!p.empty() && IsDirectory(p))
 			return p;
 	}
 	return std::nullopt;
@@ -184,12 +205,17 @@ std::optional<fs::path> FindSteamVRInstall(const fs::path* pathsFileOverride, co
 	return std::nullopt;
 }
 
-std::optional<fs::path> FindSteamConfigDir()
+std::optional<fs::path> FindSteamConfigDir(const fs::path* pathsFileOverride, const fs::path* steamDirOverride)
 {
-	if (NoSteamVRForTests())
+	if (!pathsFileOverride && !steamDirOverride && NoSteamVRForTests())
 		return std::nullopt;
 	try {
-		std::optional<fs::path> steamDir = DefaultSteamDir();
+		std::optional<fs::path> pathsFile = pathsFileOverride ? std::optional<fs::path>(*pathsFileOverride) : DefaultPathsFile();
+		if (pathsFile) {
+			if (auto found = ConfigFromPathsFile(*pathsFile))
+				return found;
+		}
+		std::optional<fs::path> steamDir = steamDirOverride ? std::optional<fs::path>(*steamDirOverride) : DefaultSteamDir();
 		if (steamDir && IsDirectory(*steamDir / "config"))
 			return *steamDir / "config";
 	} catch (const std::exception&) {
