@@ -18,10 +18,10 @@ TEST_CASE("Control_panel_lists_the_driver_manager_s_driver")
 	CHECK(panel.GetDriverId(0, fromPanel, sizeof(fromPanel)) == size);
 	CHECK(std::string(fromPanel) == fromManager);
 
-	// Too small a buffer: the size needed, nothing copied
-	char small[2] = { 'x', 'x' };
-	CHECK(panel.GetDriverId(0, small, 1) == size);
-	CHECK(small[0] == '\0');
+	// Too tooShort a buffer: the size needed, nothing copied
+	char tooShort[2] = { 'x', 'x' };
+	CHECK(panel.GetDriverId(0, tooShort, 1) == size);
+	CHECK(tooShort[0] == '\0');
 
 	// No such driver
 	CHECK(panel.GetDriverId(1, fromPanel, sizeof(fromPanel)) == 0);
