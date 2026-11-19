@@ -65,7 +65,7 @@ public:
 	DEF_PRINT_RESULT(float, "%f", result)
 	DEF_PRINT_RESULT(int32_t, "%" PRIi32, result)
 	DEF_PRINT_RESULT(uint64_t, "%" PRIu64, result)
-	DEF_PRINT_RESULT(char*, "%s", result)
+	DEF_PRINT_RESULT(char*, "%s", result ? result : "(no buffer)")
 
 	void print_result(HmdMatrix34_t result)
 	{
@@ -86,14 +86,22 @@ public:
 		OOVR_LOGF("dev: %u | prop: %u | result: %s", idx, prop, matrix.c_str());
 	}
 
+	// bytes is the size of the buffer the game gave; with no buffer only the size is known
 	template <typename T>
-	void print_result(const T* buffer, size_t size)
+	void print_result(const T* buffer, size_t bytes)
 	{
-		std::string array = "{";
-		for (size_t i = 0; i < size; i++) {
-			array.append(std::to_string(buffer[i]) + ", ");
+		if (!oovr_global_configuration.LogGetTrackedProperty())
+			return;
+		if (!buffer) {
+			OOVR_LOGF("dev: %u | prop: %u | result: no buffer", idx, prop);
+			return;
 		}
-		array.erase(array.end() - 2, array.end());
+		std::string array = "{";
+		for (size_t i = 0; i < bytes / sizeof(T); i++) {
+			if (i)
+				array.append(", ");
+			array.append(std::to_string(buffer[i]));
+		}
 		array.push_back('}');
 		OOVR_LOGF("dev: %u | prop: %u | result: %s", idx, prop, array.c_str());
 	}
@@ -550,7 +558,7 @@ uint32_t BaseSystem::GetArrayTrackedDeviceProperty(vr::TrackedDeviceIndex_t unDe
 #define ARRAY_CASE(tag_type, actual_type)                         \
 	case k_un##tag_type##PropertyTag: {                           \
 		actual_type* buffer = static_cast<actual_type*>(pBuffer); \
-		p.print_result(buffer, unBufferSize);                     \
+		p.print_result(buffer, ret <= unBufferSize ? ret : 0);    \
 	} break
 		switch (propType) {
 			ARRAY_CASE(Float, float);
