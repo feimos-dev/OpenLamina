@@ -518,9 +518,7 @@ float XrHMD::GetFloatTrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::
 		// Seems to be used by croteam games, IDK what the real value is, 100us should do
 		return 0.0001f;
 	case vr::Prop_UserHeadToEyeDepthMeters_Float:
-		// TODO ensure this has the correct sign, though it seems to always be zero anyway
-		// In any case, see: https://github.com/ValveSoftware/openvr/issues/398
-		OOVR_SOFT_ABORT("Unsupported eye relief depth setting");
+		// The eye relief adjustment the user made in SteamVR's settings: none here
 		return 0;
 	default:
 		break;

@@ -4,6 +4,10 @@
 
 #include "XrHMD.h"
 #include "Reimpl/BaseSystem.h"
+#include "logging.h"
+
+#include <string>
+#include <vector>
 
 #ifndef _WIN32
 #include "steamvr_abi.h"
@@ -248,4 +252,23 @@ TEST_CASE("Without a session the vsync time is unknown and still written")
 	CHECK(since == 0.0f);
 	CHECK(count == 0);
 	CHECK_FALSE(hmd.GetTimeSinceLastVsync(nullptr, nullptr));
+}
+
+namespace {
+std::vector<std::string> logged;
+void keepLine(const char* line) { logged.emplace_back(line); }
+}
+
+TEST_CASE("The eye relief property is zero without a complaint")
+{
+	logged.clear();
+	oovr_log_set_test_sink(keepLine);
+	XrHMD hmd;
+	vr::ETrackedPropertyError err = vr::TrackedProp_UnknownProperty;
+	float depth = hmd.GetFloatTrackedDeviceProperty(vr::Prop_UserHeadToEyeDepthMeters_Float, &err);
+	oovr_log_set_test_sink(nullptr);
+
+	CHECK(depth == 0.0f);
+	CHECK(err == vr::TrackedProp_Success);
+	CHECK(logged.empty());
 }
