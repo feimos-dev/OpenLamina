@@ -214,6 +214,9 @@ jobs:
           # An overlay app's Vulkan and OpenGL textures through D3D11 (they skip without those drivers)
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases overlay-app-vk,overlay-app-gl --script tests/conformance/scripts/helper_apps.json --expect tests/conformance/expect/helper_apps_gl_vk.json --allow-skip "overlay-app-(vk|gl)" --out conformance/helper-apps-gl-vk
           if ($LASTEXITCODE) { $failed++ }
+          # An overlay texture read back, written in place and shown on another overlay by its shared handle
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases overlay-app-shared --script tests/conformance/scripts/helper_apps.json --expect tests/conformance/expect/overlay_shared.json --out conformance/overlay-shared
+          if ($LASTEXITCODE) { $failed++ }
           # Every interface as an overlay application on its session: nothing crashes, ends or hangs. (A background
           # application gets its session only beside a running game: the background-app cases.)
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --apptypes 2 --script tests/conformance/scripts/helper_apps.json --out conformance/helper-apps-interfaces

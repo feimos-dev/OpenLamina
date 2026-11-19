@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <map>
 #include <set>
 #include <thread>
 #include <vector>
@@ -29,6 +30,8 @@
 #define NOMINMAX
 #endif
 #include <windows.h>
+
+#include <d3d11.h>
 #else
 #include <unistd.h>
 #endif
@@ -98,6 +101,24 @@ Json::Value StoreDocument(const char* name)
 	return root["data"];
 }
 
+// The last frame in the dump that has as many quads as any frame has: the frame to judge a program's overlays by.
+// The frames after it have fewer, as the program destroys its overlays one by one while OpenLamina's frames go on.
+uint64_t LastFrameWithEveryQuad(const Json::Value& dump)
+{
+	std::map<Json::UInt64, int> quads;
+	for (const Json::Value& layer : dump["layers"])
+		if (layer["type"].asString() == "quad")
+			quads[layer["frame"].asUInt64()]++;
+	int most = 0;
+	for (const auto& [frame, count] : quads)
+		most = std::max(most, count);
+	uint64_t last = 0;
+	for (const auto& [frame, count] : quads)
+		if (count == most)
+			last = frame;
+	return last;
+}
+
 // Whether the Overlays document has an entry of another program than this one (with an overlay, if withOverlay)
 bool OtherProgramInStore(bool withOverlay)
 {
@@ -135,6 +156,10 @@ std::string EventName(uint32_t type)
 		return "down";
 	case vr::VREvent_MouseButtonUp:
 		return "up";
+	case vr::VREvent_OverlayShown:
+		return "shown";
+	case vr::VREvent_OverlayHidden:
+		return "hidden";
 	default:
 		return std::to_string(type);
 	}
@@ -402,6 +427,23 @@ void DashboardSceneCase(CaseContext& c)
 			Json::Value doc = StoreDocument("dashboard");
 			r["open_at_120"] = doc["open"];
 			r["panel_position"] = RoundedPosition(doc["panel_pose"]);
+			// The overlay app's dashboard overlay, found by its key from here and read through that handle: shown,
+			// 1 m wide, at the panel
+			vr::VROverlayHandle_t helpers = vr::k_ulOverlayHandleInvalid;
+			if (ov && ov->FindOverlay("oc.helper.dashboard", &helpers) == vr::VROverlayError_None) {
+				r["helper_overlay_visible"] = ov->IsOverlayVisible(helpers);
+				float width = 0;
+				ov->GetOverlayWidthInMeters(helpers, &width);
+				r["helper_overlay_width"] = width;
+				vr::HmdMatrix34_t centre{};
+				Json::Value pose;
+				if (ov->GetTransformForOverlayCoordinates(helpers, vr::TrackingUniverseStanding, { { 0.5f, 0.5f } }, &centre) == vr::VROverlayError_None)
+					for (int i = 0; i < 3; i++)
+						pose["p"].append(centre.m[i][3]);
+				r["helper_overlay_position"] = RoundedPosition(pose);
+			} else {
+				r["helper_overlay_visible"] = Json::Value();
+			}
 			if (in && trigger != vr::k_ulInvalidActionHandle) {
 				vr::IVRInput_011::InputAnalogActionData_t data{};
 				in->GetAnalogActionData(trigger, &data, sizeof(data), vr::k_ulInvalidInputValueHandle);
@@ -446,7 +488,12 @@ void DashboardOverlayCase(CaseContext& c)
 	r["raw"] = (int)ov->SetOverlayRaw(main, grey.data(), 64, 64, 4);
 	ov->SetOverlayRaw(thumbnail, grey.data(), 64, 64, 4);
 	ov->SetOverlayWidthInMeters(main, 1);
-	bool sawOpen = false, active = false;
+	bool sawOpen = false, active = false, visible = false, atPanelWhileShown = false;
+	// The overlay's own events, in order, a repeated one once: shown when the dashboard shows it, hidden when it closes
+	Json::Value events(Json::arrayValue);
+	// The game's dashboard overlay (made at its frame 125), found by its key and read through that handle
+	vr::VROverlayHandle_t games = vr::k_ulOverlayHandleInvalid;
+	std::string gamesKey;
 	Json::Value panel;
 	auto until = std::chrono::steady_clock::now() + std::chrono::seconds(10);
 	auto closedAt = std::chrono::steady_clock::time_point::max();
@@ -457,6 +504,29 @@ void DashboardOverlayCase(CaseContext& c)
 			sawOpen = true;
 			panel = doc["panel_pose"];
 			active = active || ov->IsActiveDashboardOverlay(main);
+			visible = visible || ov->IsOverlayVisible(main);
+			// Where the dashboard shows it: its centre at the panel's
+			vr::HmdMatrix34_t centre{};
+			if (ov->GetTransformForOverlayCoordinates(main, vr::TrackingUniverseStanding, { { 0.5f, 0.5f } }, &centre) == vr::VROverlayError_None) {
+				Json::Value pose;
+				for (int i = 0; i < 3; i++)
+					pose["p"].append(centre.m[i][3]);
+				atPanelWhileShown = atPanelWhileShown || RoundedPosition(pose) == RoundedPosition(panel);
+			}
+		}
+		vr::VREvent_t ev{};
+		while (ov->PollNextOverlayEvent(main, &ev, sizeof(ev))) {
+			const std::string name = EventName(ev.eventType);
+			if ((name == "shown" || name == "hidden") && (events.empty() || events[events.size() - 1].asString() != name))
+				events.append(name);
+		}
+		if (games == vr::k_ulOverlayHandleInvalid && ov->FindOverlay("oc.test.game.dashboard", &games) == vr::VROverlayError_None) {
+			char key[128] = {};
+			vr::EVROverlayError keyError = vr::VROverlayError_None;
+			ov->GetOverlayKey(games, key, sizeof(key), &keyError);
+			gamesKey = key;
+			// Nothing of another program's overlay can be changed
+			r["game_overlay_set_refused"] = ov->SetOverlayWidthInMeters(games, 3) != vr::VROverlayError_None;
 		}
 		if (sawOpen && !open && closedAt == std::chrono::steady_clock::time_point::max())
 			closedAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
@@ -464,6 +534,14 @@ void DashboardOverlayCase(CaseContext& c)
 	}
 	r["shown"] = sawOpen;
 	r["active"] = active;
+	r["visible_while_shown"] = visible;
+	r["visible_after"] = ov->IsOverlayVisible(main);
+	r["at_panel_while_shown"] = atPanelWhileShown;
+	r["events"] = events;
+	r["game_overlay_found"] = games != vr::k_ulOverlayHandleInvalid && games != main && games != thumbnail;
+	r["game_overlay_key"] = gamesKey;
+	vr::VROverlayHandle_t missing = vr::k_ulOverlayHandleInvalid;
+	r["missing_overlay_found"] = ov->FindOverlay("oc.test.no.such.overlay", &missing) == vr::VROverlayError_None;
 	ov->DestroyOverlay(thumbnail);
 	ov->DestroyOverlay(main);
 	c.core->Cleanup();
@@ -703,13 +781,13 @@ void OverlayAppTexturesCase(CaseContext& c, const char* label, std::vector<Overl
 	r["binding"] = summary["binding"];
 	r["session_overlay"] = summary["overlay"];
 	r["frame_order_errors"] = summary["frame_order_errors"];
-	// The last frame's quads that show the pattern: red top left, white bottom right
+	// The quads that show the pattern (red top left, white bottom right) in the last frame that has them all
 	Json::Value dump = ReadStandInDump();
 	const Json::Value& layers = dump["layers"];
-	const Json::Value lastFrame = layers.size() ? layers[layers.size() - 1]["frame"] : Json::Value();
+	const uint64_t lastFrame = LastFrameWithEveryQuad(dump);
 	int shown = 0;
 	for (const Json::Value& layer : layers) {
-		if (layer["frame"] == lastFrame && layer["type"].asString() == "quad" && layer["samples"]["tl"].asString() == "ff0000ff"
+		if (layer["frame"].asUInt64() == lastFrame && layer["type"].asString() == "quad" && layer["samples"]["tl"].asString() == "ff0000ff"
 		    && layer["samples"]["br"].asString() == "ffffffff")
 			shown++;
 	}
@@ -717,6 +795,138 @@ void OverlayAppTexturesCase(CaseContext& c, const char* label, std::vector<Overl
 	c.Record(label, r);
 	for (auto& api : apis)
 		api->Flush();
+}
+
+// An overlay application that reads its overlay's texture back and writes it in place, and shows it on a second
+// overlay by its DXGI shared handle, as desktop viewers do: the pattern of eye 0 is set on "source", read back with
+// GetOverlayTexture, and the pattern of eye 1 copied straight into the texture that came back; "target" gets that
+// texture's shared handle, with bounds of its left half. Both quads then show eye 1's pattern (top-left blue), the
+// target's its left half (blue over white), with no further SetOverlayTexture. D3D11 only.
+void OverlayAppSharedTextureCase(CaseContext& c)
+{
+	Json::Value r;
+#ifdef _WIN32
+	using namespace vr::IVROverlay_028;
+	std::string why;
+	std::unique_ptr<GfxApi> api = GfxApi::Create(GfxKind::D3D11, &why);
+	if (!api) {
+		r["skipped"] = why;
+		c.Record("shared", r);
+		return;
+	}
+	const int64_t bgra8 = 87; // DXGI_FORMAT_B8G8R8A8_UNORM
+	GfxTexture first = api->Pattern(64, 64, bgra8, 0);
+	GfxTexture second = api->Pattern(64, 64, bgra8, 1);
+	api->Flush();
+	r["init"] = (int)c.core->Init(vr::VRApplication_Overlay, nullptr);
+	if (r["init"].asInt() != vr::VRInitError_None) {
+		c.Record("shared", r);
+		return;
+	}
+	auto* ov = Interface<IVROverlay>(c, "IVROverlay_028");
+	if (ov) {
+		vr::VROverlayHandle_t source = vr::k_ulOverlayHandleInvalid, target = vr::k_ulOverlayHandleInvalid;
+		ov->CreateOverlay("oc.helper.source", "Source", &source);
+		ov->CreateOverlay("oc.helper.target", "Target", &target);
+		vr::HmdMatrix34_t at = At(0, 1.5f, -2);
+		ov->SetOverlayTransformAbsolute(source, vr::TrackingUniverseStanding, &at);
+		at = At(1.2f, 1.5f, -2);
+		ov->SetOverlayTransformAbsolute(target, vr::TrackingUniverseStanding, &at);
+		r["set_source"] = (int)ov->SetOverlayTexture(source, first.Texture());
+		ov->ShowOverlay(source);
+
+		// Read back: a view of a texture on the program's own device, which has a shared handle
+		auto* own = (ID3D11Texture2D*)first.keep;
+		ID3D11ShaderResourceView* view = nullptr;
+		uint32_t width = 0, height = 0, format = 0;
+		vr::ETextureType type = vr::TextureType_Invalid;
+		vr::EColorSpace space = vr::ColorSpace_Auto;
+		vr::VRTextureBounds_t bounds{};
+		r["get"] = (int)ov->GetOverlayTexture(source, (void**)&view, own, &width, &height, &format, &type, &space, &bounds);
+		r["size"] = Json::Value(Json::arrayValue);
+		r["size"].append(width);
+		r["size"].append(height);
+		ID3D11Resource* live = nullptr;
+		HANDLE handle = nullptr;
+		if (view) {
+			view->GetResource(&live);
+			IDXGIResource* dxgi = nullptr;
+			if (live && SUCCEEDED(live->QueryInterface(__uuidof(IDXGIResource), (void**)&dxgi)) && dxgi) {
+				dxgi->GetSharedHandle(&handle);
+				dxgi->Release();
+			}
+		}
+		r["view"] = view != nullptr;
+		r["not_the_programs_own_texture"] = live != nullptr && live != (ID3D11Resource*)own;
+		r["shared_handle"] = handle != nullptr;
+
+		// The same texture again while the first view is out
+		ID3D11ShaderResourceView* again = nullptr;
+		ov->GetOverlayTexture(source, (void**)&again, own, &width, &height, &format, &type, &space, &bounds);
+		ID3D11Resource* liveAgain = nullptr;
+		if (again)
+			again->GetResource(&liveAgain);
+		r["same_texture_again"] = liveAgain != nullptr && liveAgain == live;
+		if (liveAgain)
+			liveAgain->Release();
+		if (again)
+			r["release_again"] = (int)ov->ReleaseNativeOverlayHandle(source, again);
+
+		// On the second overlay by its handle, its left half
+		vr::Texture_t shared{ handle, vr::TextureType_DXGISharedHandle, vr::ColorSpace_Gamma };
+		const vr::VRTextureBounds_t leftHalf{ 0, 0, 0.5f, 1 };
+		ov->SetOverlayTextureBounds(target, &leftHalf);
+		r["set_target"] = (int)ov->SetOverlayTexture(target, &shared);
+		ov->ShowOverlay(target);
+		// A null handle is refused
+		vr::Texture_t none{ nullptr, vr::TextureType_DXGISharedHandle, vr::ColorSpace_Gamma };
+		r["set_null_handle_refused"] = ov->SetOverlayTexture(target, &none) != vr::VROverlayError_None;
+
+		// Written in place, with no call that says so
+		if (live) {
+			ID3D11Device* device = nullptr;
+			ID3D11DeviceContext* context = nullptr;
+			own->GetDevice(&device);
+			device->GetImmediateContext(&context);
+			context->CopyResource(live, (ID3D11Texture2D*)second.keep);
+			context->Flush();
+			context->Release();
+			device->Release();
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(400));
+		if (live)
+			live->Release();
+		if (view)
+			r["release"] = (int)ov->ReleaseNativeOverlayHandle(source, view);
+		ov->DestroyOverlay(target);
+		ov->DestroyOverlay(source);
+	}
+	c.core->Cleanup();
+	Json::Value dump = ReadStandInDump();
+	r["frame_order_errors"] = dump["frame_order_errors"];
+	r["frames_refused"] = (Json::UInt64)dump["frames_refused"].asUInt64();
+	// The quads of the last frame that has both, told apart by where they are
+	const Json::Value& layers = dump["layers"];
+	const uint64_t lastFrame = LastFrameWithEveryQuad(dump);
+	for (const Json::Value& layer : layers) {
+		if (layer["frame"].asUInt64() != lastFrame || layer["type"].asString() != "quad")
+			continue;
+		const Json::Value& s = layer["samples"];
+		const Json::Value position = RoundedPosition(layer["pose"]);
+		if (position.isNull())
+			continue;
+		if (position[0].asDouble() < 0.5)
+			r["source_shows_what_was_written"] = s["tl"].asString() == "0000ffff" && s["tr"].asString() == "ff0000ff"
+			    && s["bl"].asString() == "ffffffff" && s["br"].asString() == "00ff00ff";
+		else
+			r["target_shows_its_left_half"] = s["tl"].asString() == "0000ffff" && s["tr"].asString() == "0000ffff"
+			    && s["bl"].asString() == "ffffffff" && s["br"].asString() == "ffffffff";
+	}
+	api->Flush();
+#else
+	r["skipped"] = "Direct3D 11 only";
+#endif
+	c.Record("shared", r);
 }
 
 // A file in the store's folder that one program of a pair writes for the other
@@ -840,6 +1050,7 @@ const std::map<std::string, CaseFn>& conformance::HelperCases()
 		 } },
 		{ "overlay-app-vk", [](CaseContext& c) { OverlayAppTexturesCase(c, "textures", { { GfxKind::Vulkan, 43, "vulkan" } }); } },
 		{ "overlay-app-gl", [](CaseContext& c) { OverlayAppTexturesCase(c, "textures", { { GfxKind::OpenGL, 0x8C43, "gl" } }); } },
+		{ "overlay-app-shared", OverlayAppSharedTextureCase },
 		{ "background-app", BackgroundAppCase },
 		{ "background-app-game", BackgroundAppGameCase },
 		{ "background-app-alone", BackgroundAppAloneCase },
