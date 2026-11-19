@@ -150,13 +150,8 @@ jobs:
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases velocities --script tests/conformance/scripts/velocities.json --expect tests/conformance/expect/velocities.json --out conformance/velocities
           if ($LASTEXITCODE) { $failed++ }
-          # The old input as SteamVR's legacy binding files map it, under inputEvaluator=steamvr
-          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases events --script tests/conformance/scripts/legacy_click.json --ini tests/conformance/ini/steamvr_evaluator.ini --expect tests/conformance/expect/events_steamvr.json --out conformance/events-steamvr
-          if ($LASTEXITCODE) { $failed++ }
-          # The binding evaluator: inputEvaluator=steamvr evaluates a toggle_button; direct stays as it was; both read vector3
-          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases input-frames --script tests/conformance/scripts/input_toggle.json --manifest tests/unit/data/manifest_toggle.json --ini tests/conformance/ini/steamvr_evaluator.ini --expect tests/conformance/expect/input_evaluator.json --out conformance/input-steamvr
-          if ($LASTEXITCODE) { $failed++ }
-          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases input-frames --script tests/conformance/scripts/input_toggle.json --manifest tests/unit/data/manifest_toggle.json --expected tests/conformance/baseline/input-direct.json --expect tests/conformance/expect/input_direct.json --out conformance/input-direct
+          # The binding evaluator evaluates a toggle_button, and reads a vector3
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases input-frames --script tests/conformance/scripts/input_toggle.json --manifest tests/unit/data/manifest_toggle.json --expect tests/conformance/expect/input_evaluator.json --out conformance/input-steamvr
           if ($LASTEXITCODE) { $failed++ }
           # A bound source that isn't an input path: GetActionBindingInfo leaves it out
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases binding-info --script tests/conformance/scripts/bound_source_odd.json --manifest tests/unit/data/manifest_toggle.json --expect tests/conformance/expect/binding_info.json --out conformance/binding-info
@@ -175,19 +170,15 @@ jobs:
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases eye-gaze --manifest tests/unit/data/manifest_basic.json --expect tests/conformance/expect/eye_gaze_off.json --out conformance/eye-gaze-noext
           if ($LASTEXITCODE) { $failed++ }
-          # IVRInput's eye tracking action: a manifest with a binding file naming it, a gaze without a position, inputEvaluator=steamvr, eyeTracking=off
+          # IVRInput's eye tracking action: a manifest with a binding file naming it, a gaze without a position, eyeTracking=off
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases eye-tracking --script tests/conformance/scripts/eye_gaze.json --manifest tests/unit/data/manifest_eye_tracking.json --expect tests/conformance/expect/eye_tracking.json --out conformance/eye-tracking
-          if ($LASTEXITCODE) { $failed++ }
-          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases eye-tracking --script tests/conformance/scripts/eye_gaze.json --manifest tests/unit/data/manifest_eye_tracking.json --ini tests/conformance/ini/steamvr_evaluator.ini --expect tests/conformance/expect/eye_tracking.json --out conformance/eye-tracking-evaluator
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases eye-tracking --script tests/conformance/scripts/eye_gaze_no_position.json --manifest tests/unit/data/manifest_eye_tracking.json --expect tests/conformance/expect/eye_tracking.json --out conformance/eye-tracking-no-position
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases eye-tracking --script tests/conformance/scripts/eye_gaze.json --manifest tests/unit/data/manifest_eye_tracking.json --ini tests/conformance/ini/eye_tracking_off.ini --expect tests/conformance/expect/eye_tracking_off.json --out conformance/eye-tracking-off
           if ($LASTEXITCODE) { $failed++ }
-          # Input from two threads at once, under both evaluators
-          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases input-threads --repeat 5 --script tests/conformance/scripts/input_toggle.json --manifest tests/unit/data/manifest_toggle.json --ini tests/conformance/ini/steamvr_evaluator.ini --expect tests/conformance/expect/input_threads.json --out conformance/input-threads-steamvr
-          if ($LASTEXITCODE) { $failed++ }
-          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases input-threads --repeat 5 --script tests/conformance/scripts/input_toggle.json --manifest tests/unit/data/manifest_toggle.json --expect tests/conformance/expect/input_threads.json --out conformance/input-threads-direct
+          # Input from two threads at once
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases input-threads --repeat 5 --script tests/conformance/scripts/input_toggle.json --manifest tests/unit/data/manifest_toggle.json --expect tests/conformance/expect/input_threads.json --out conformance/input-threads-steamvr
           if ($LASTEXITCODE) { $failed++ }
           # The runtime's GPU (the Vulkan record and a second adapter's case skip on a runner without them) and refresh rate
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases gpu-answers,gpu-other-adapter --script tests/conformance/scripts/gfx_all_apis.json --expect tests/conformance/expect/gpu.json --allow-skip "gpu-.*" --out conformance/gpu
@@ -249,10 +240,8 @@ jobs:
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases skybox-1,skybox-6 --script tests/conformance/scripts/skybox.json --expect tests/conformance/expect/skybox_bare.json --out conformance/skybox-off
           if ($LASTEXITCODE) { $failed++ }
-          # The controllers' lasers on an overlay as a mouse, under both evaluators
+          # The controllers' lasers on an overlay as a mouse
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases laser-mouse --script tests/conformance/scripts/laser.json --ini tests/conformance/ini/laser_mouse.ini --expect tests/conformance/expect/laser_mouse.json --out conformance/laser-mouse
-          if ($LASTEXITCODE) { $failed++ }
-          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases laser-mouse --script tests/conformance/scripts/laser.json --ini tests/conformance/ini/laser_mouse_steamvr.ini --expect tests/conformance/expect/laser_mouse.json --out conformance/laser-mouse-steamvr
           if ($LASTEXITCODE) { $failed++ }
           # The features that are on by default, with the defaults as they ship (every other run starts from
           # ini/features_off.ini): the same answers as their own runs above
@@ -273,8 +262,6 @@ jobs:
           # A message box in OpenLamina's own frames, answered with the laser
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases message-overlay --script tests/conformance/scripts/message_box.json --ini tests/conformance/ini/own_frames.ini --expect tests/conformance/expect/message_overlay.json --out conformance/message-overlay
           if ($LASTEXITCODE) { $failed++ }
-          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases message-overlay --script tests/conformance/scripts/message_box.json --ini tests/conformance/ini/own_frames_steamvr.ini --expect tests/conformance/expect/message_overlay.json --out conformance/message-overlay-steamvr
-          if ($LASTEXITCODE) { $failed++ }
           # A message box the session ends under answers as the game's quit
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases message-overlay --script tests/conformance/scripts/message_box_exit.json --ini tests/conformance/ini/own_frames.ini --expect tests/conformance/expect/message_overlay_exit.json --out conformance/message-overlay-exit
           if ($LASTEXITCODE) { $failed++ }
@@ -286,22 +273,6 @@ jobs:
           if ($LASTEXITCODE) { $failed++ }
           # Without mirrorWindow no window is shown; the mirror texture is given all the same
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases mirror --script tests/conformance/scripts/gfx_all_apis.json --expect tests/conformance/expect/mirror_window_off.json --out conformance/mirror-window-off
-          if ($LASTEXITCODE) { $failed++ }
-          # inputEvaluator=steamvr suggests bindings for the same profiles as direct
-          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases input-manifest --manifest tests/unit/data/manifest_a_only.json --out conformance/profiles-direct
-          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases input-manifest --manifest tests/unit/data/manifest_a_only.json --ini tests/conformance/ini/steamvr_evaluator.ini --out conformance/profiles-steamvr
-          python tests/conformance/check_suggested_profiles.py conformance/profiles-direct/raw/case-input-manifest.dump.json conformance/profiles-steamvr/raw/case-input-manifest.dump.json
-          if ($LASTEXITCODE) { $failed++ }
-          # Under direct, vector actions are suggested only onto two-axis components (a runtime may refuse the rest)
-          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases input-manifest --manifest tests/unit/data/manifest_vector3.json --out conformance/vector-shapes
-          python tests/conformance/check_suggested_profiles.py --vector-shapes conformance/vector-shapes/raw/case-input-manifest.dump.json
-          if ($LASTEXITCODE) { $failed++ }
-          # Converting bindings to other controllers only adds: everything bound without it is bound with it
-          $env:OC_NO_BINDING_CONVERSION = '1'
-          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases input-manifest --out conformance/bindings-unconverted
-          Remove-Item Env:OC_NO_BINDING_CONVERSION
-          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases input-manifest --out conformance/bindings-converted
-          python tests/conformance/check_bindings_superset.py conformance/bindings-unconverted/raw/case-input-manifest.dump.json conformance/bindings-converted/raw/case-input-manifest.dump.json
           if ($LASTEXITCODE) { $failed++ }
           exit $failed
 

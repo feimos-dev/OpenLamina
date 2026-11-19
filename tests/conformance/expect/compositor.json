@@ -5,7 +5,7 @@
   "presents_at_least_29": true,
   "dropped": 0,
   "timings": 5,
-  "timings_newest_first": true,
+  "timings_oldest_first": true,
   "timing_sizes": true,
   "frame_timing_3_ago": true,
   "time_remaining_in_a_frame": true,

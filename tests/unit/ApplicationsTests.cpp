@@ -4,6 +4,7 @@
 #include "stdafx.h"
 
 #include "Misc/AppManifest.h"
+#include "Misc/Dashboard.h"
 #include "Misc/ProgramEvents.h"
 #include "Misc/Process.h"
 #include "Misc/SharedStore.h"
@@ -676,4 +677,26 @@ TEST_CASE("Launching_a_running_application_is_refused")
 	store.Update(StoreDoc::Applications, [&](Json::Value& doc) { doc["pids"][std::to_string(other)] = "oc.test.echo"; });
 	REQUIRE(apps.GetApplicationProcessId("oc.test.echo") == other);
 	CHECK(apps.LaunchApplication("oc.test.echo") == VRApplicationError_ApplicationAlreadyRunning);
+}
+
+TEST_CASE("Autolaunch_starts_only_flagged_dashboard_overlays")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	BaseApplications apps(store);
+	apps.AddApplicationManifest(PathToUtf8(Data("echo.vrmanifest")).c_str());
+	apps.AddApplicationManifest(PathToUtf8(Data("overlay_apps.vrmanifest")).c_str());
+	CHECK(StartAutolaunchOverlays(apps).empty());
+
+	// A flag on a program that isn't a dashboard overlay starts nothing
+	CHECK(apps.SetApplicationAutoLaunch("oc.test.echo", true) == VRApplicationError_None);
+	CHECK(StartAutolaunchOverlays(apps).empty());
+
+	CHECK(apps.SetApplicationAutoLaunch("oc.test.overlay", true) == VRApplicationError_None);
+	std::vector<std::string> tried = StartAutolaunchOverlays(apps);
+	REQUIRE(tried.size() == 1);
+	CHECK(tried[0] == "oc.test.overlay");
+
+	CHECK(apps.SetApplicationAutoLaunch("oc.test.overlay", false) == VRApplicationError_None);
+	CHECK(StartAutolaunchOverlays(apps).empty());
 }

@@ -357,6 +357,8 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/Bounds.cpp
 	OpenOVR/Misc/Bounds.h
 	OpenOVR/Misc/Equirect.cpp
+	OpenOVR/Misc/Fade.cpp
+	OpenOVR/Misc/Fade.h
 	OpenOVR/Misc/FrameStats.cpp
 	OpenOVR/Misc/FrameStats.h
 	OpenOVR/Misc/MirrorWindow.cpp
@@ -404,7 +406,9 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/Input/HolographicInteractionProfile.cpp
 	OpenOVR/Misc/Input/ReverbG2InteractionProfile.cpp
 	OpenOVR/Misc/Input/ViveTrackerInteractionProfile.cpp
-	OpenOVR/OpenOVR.cpp
+	OpenOVR/Misc/Input/ViveCosmosInteractionProfile.cpp
+	OpenOVR/Misc/Input/ViveFocus3InteractionProfile.cpp
+	OpenOVR/Misc/Input/PicoInteractionProfile.cpp
 	OpenOVR/Reimpl/BaseApplications.cpp
 	OpenOVR/Reimpl/BaseChaperone.cpp
 	OpenOVR/Reimpl/BaseChaperoneSetup.cpp
@@ -477,6 +481,9 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/Input/InteractionProfile.h
 	OpenOVR/Misc/Input/OculusInteractionProfile.h
 	OpenOVR/Misc/Input/KhrSimpleInteractionProfile.h
+	OpenOVR/Misc/Input/ViveCosmosInteractionProfile.h
+	OpenOVR/Misc/Input/ViveFocus3InteractionProfile.h
+	OpenOVR/Misc/Input/PicoInteractionProfile.h
 	OpenOVR/Misc/lodepng.h
 	OpenOVR/Misc/ScopeGuard.h
 	OpenOVR/Reimpl/BaseApplications.h
@@ -546,7 +553,6 @@ target_precompile_headers(OCCore PRIVATE ${CMAKE_SOURCE_DIR}/OpenOVR/stdafx.h)
 set_source_files_properties(${OVR_PCH_EXCLUDED} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 
 source_group(OpenVR REGULAR_EXPRESSION ${GENERATED_DIR}/interfaces)
-source_group(OpenVR\\Drivers REGULAR_EXPRESSION ${GENERATED_DIR}/interfaces/driver_*)
 source_group(OpenVR\\Custom REGULAR_EXPRESSION OpenVRHeaders/custom_interfaces/*)
 source_group(Interfaces REGULAR_EXPRESSION OpenOVR/Reimpl/Base*)
 source_group(Interfaces\\Declarations REGULAR_EXPRESSION OpenOVR/Reimpl/CVR*)

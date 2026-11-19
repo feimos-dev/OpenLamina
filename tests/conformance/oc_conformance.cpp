@@ -15,6 +15,7 @@
 #include <dlfcn.h>
 #endif
 
+#include <algorithm>
 #include <climits>
 #include <cstdlib>
 #include <cstring>
@@ -65,6 +66,19 @@ int CaseContext::IntArg(const std::string& name, int fallback) const
 
 typedef void* (*VRClientCoreFactoryFn)(const char* pInterfaceName, int* pReturnCode);
 
+static void* g_library = nullptr;
+
+static void* FindSymbol(const char* name)
+{
+	if (!g_library)
+		return nullptr;
+#ifdef _WIN32
+	return (void*)GetProcAddress((HMODULE)g_library, name);
+#else
+	return dlsym(g_library, name);
+#endif
+}
+
 static VRClientCoreFactoryFn LoadFactory(const std::string& path)
 {
 #ifdef _WIN32
@@ -74,11 +88,13 @@ static VRClientCoreFactoryFn LoadFactory(const std::string& path)
 	HMODULE dll = LoadLibraryW(wide.c_str());
 	if (!dll)
 		return nullptr;
+	g_library = dll;
 	return (VRClientCoreFactoryFn)GetProcAddress(dll, "VRClientCoreFactory");
 #else
 	void* dll = dlopen(path.c_str(), RTLD_NOW | RTLD_LOCAL);
 	if (!dll)
 		return nullptr;
+	g_library = dll;
 	return (VRClientCoreFactoryFn)dlsym(dll, "VRClientCoreFactory");
 #endif
 }
@@ -167,6 +183,8 @@ int main(int argc, char** argv)
 		}
 		CaseContext cc;
 		cc.core = core;
+		cc.factory = factory;
+		cc.symbol = FindSymbol;
 		cc.call = &ctx;
 		cc.out = &out;
 		cc.caseName = args["--case"];
@@ -217,6 +235,41 @@ int main(int argc, char** argv)
 		if (!cr.skipped.empty())
 			r["skipped"] = cr.skipped;
 		out.Write(base(r));
+	}
+
+	// The same methods through the interface's function table: the records follow the interface's own, their index
+	// continuing from the last, so a restart after a call that ended the program starts at the right one
+	const std::string tableName = "FnTable:" + version;
+	const std::vector<CallerFn>* tableCallers = FindCallers(tableName.c_str());
+	if (tableCallers && startAt < (int)(callers->size() + tableCallers->size())) {
+		vr::EVRInitError tableError = vr::VRInitError_None;
+		void* table = core->GetGenericInterface(tableName.c_str(), &tableError);
+		const int first = (int)callers->size();
+		auto tableBase = [&](Json::Value r) {
+			r = base(r);
+			r["interface"] = tableName;
+			r["lookup_error"] = (int)tableError;
+			return r;
+		};
+		if (!table) {
+			Json::Value r;
+			r["method"] = "<lookup>";
+			r["index"] = first;
+			r["found"] = false;
+			out.Write(tableBase(r));
+		} else {
+			for (int i = (std::max)(startAt - first, 0); i < (int)tableCallers->size(); i++) {
+				CallRecord cr = (*tableCallers)[i](table, set, ctx);
+				Json::Value r;
+				r["method"] = cr.method;
+				r["index"] = first + cr.index;
+				r["ret"] = cr.ret;
+				r["out"] = cr.out;
+				if (!cr.skipped.empty())
+					r["skipped"] = cr.skipped;
+				out.Write(tableBase(r));
+			}
+		}
 	}
 	if (initError == vr::VRInitError_None)
 		core->Cleanup();

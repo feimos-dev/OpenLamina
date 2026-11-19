@@ -111,6 +111,16 @@ TEST_CASE("Image file: rejects bad input")
 	std::ofstream(text) << "not an image";
 	CHECK_FALSE(LoadImageFile(text, &why));
 
+	// A JPEG is named as one
+	auto jpeg = Scratch(u8"photo.jpg");
+	{
+		const unsigned char header[] = { 0xFF, 0xD8, 0xFF, 0xE0, 0, 16, 'J', 'F', 'I', 'F', 0 };
+		std::ofstream(jpeg, std::ios::binary).write((const char*)header, (std::streamsize)sizeof(header));
+	}
+	why.clear();
+	CHECK_FALSE(LoadImageFile(jpeg, &why));
+	CHECK(why.find("JPEG") != std::string::npos);
+
 	// 16384 pixels wide: refused from its header, without decoding
 	std::vector<uint8_t> row(16384 * 4, 0);
 	std::vector<uint8_t> png = test_png::Encode(row.data(), 16384, 1);

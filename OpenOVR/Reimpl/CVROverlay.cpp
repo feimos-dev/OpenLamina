@@ -12,11 +12,9 @@ GEN_INTERFACE("Overlay", "007")
 GEN_INTERFACE("Overlay", "008")
 GEN_INTERFACE("Overlay", "010")
 GEN_INTERFACE("Overlay", "011")
-// TODO 012
 GEN_INTERFACE("Overlay", "012")
 GEN_INTERFACE("Overlay", "013")
 GEN_INTERFACE("Overlay", "014")
-// TODO 015
 GEN_INTERFACE("Overlay", "016")
 GEN_INTERFACE("Overlay", "017")
 GEN_INTERFACE("Overlay", "018")

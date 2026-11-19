@@ -4,6 +4,7 @@
 #include "stdafx.h"
 
 #include "Reimpl/BaseInput.h"
+#include "Misc/Input/InteractionProfile.h"
 
 #include <cmath>
 #include <vector>
@@ -131,4 +132,82 @@ TEST_CASE("Compressed_buffer_too_small_reports_size")
 	CHECK(CompressBones(VRSkeletalTransformSpace_Model, vr::VRSkeletalMotionRange_WithController, hand.data(), tooSmall, sizeof(tooSmall)) == 1004);
 	CHECK(tooSmall[0] == 0); // nothing written
 	CHECK(CompressBones(VRSkeletalTransformSpace_Model, vr::VRSkeletalMotionRange_WithController, hand.data(), nullptr, 0) == 1004);
+}
+
+namespace {
+std::vector<XrHandJointLocationEXT> ValidJoints()
+{
+	std::vector<XrHandJointLocationEXT> joints(XR_HAND_JOINT_COUNT_EXT);
+	for (int i = 0; i < XR_HAND_JOINT_COUNT_EXT; i++) {
+		joints[i].locationFlags = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+		joints[i].pose.orientation = { 0, 0, 0, 1 };
+		joints[i].pose.position = { 0.01f * (float)i, 0.002f * (float)(i % 4), 0.0f };
+	}
+	return joints;
+}
+} // namespace
+
+TEST_CASE("Hand_joints_convert_when_all_valid")
+{
+	std::vector<vr::VRBoneTransform_t> bones(31);
+	CHECK(BaseInput::XrHandJointsToSkeleton(ValidJoints(), true, bones.data(), glm::mat4(1.0f)));
+	CHECK(BaseInput::XrHandJointsToSkeleton(ValidJoints(), false, bones.data(), glm::mat4(1.0f)));
+}
+
+TEST_CASE("Hand_joints_without_a_valid_pose_are_rejected")
+{
+	std::vector<vr::VRBoneTransform_t> bones(31);
+	for (int joint = 0; joint < XR_HAND_JOINT_COUNT_EXT; joint++) {
+		if (joint == XR_HAND_JOINT_PALM_EXT) // not part of the skeleton
+			continue;
+		for (XrSpaceLocationFlags flag : { XR_SPACE_LOCATION_POSITION_VALID_BIT, XR_SPACE_LOCATION_ORIENTATION_VALID_BIT }) {
+			std::vector<XrHandJointLocationEXT> joints = ValidJoints();
+			joints[joint].locationFlags &= ~flag;
+			INFO("joint " << joint << " flag " << flag);
+			CHECK_FALSE(BaseInput::XrHandJointsToSkeleton(joints, true, bones.data(), glm::mat4(1.0f)));
+		}
+	}
+}
+
+TEST_CASE("Hand_joints_too_few_are_rejected")
+{
+	std::vector<vr::VRBoneTransform_t> bones(31);
+	std::vector<XrHandJointLocationEXT> joints = ValidJoints();
+	joints.resize(10);
+	CHECK_FALSE(BaseInput::XrHandJointsToSkeleton(joints, false, bones.data(), glm::mat4(1.0f)));
+}
+
+TEST_CASE("Bone_array_checks")
+{
+	std::vector<vr::VRBoneTransform_t> bones(31);
+	CHECK(BaseInput::CheckBoneArray(bones.data(), 31) == vr::VRInputError_None);
+	CHECK(BaseInput::CheckBoneArray(bones.data(), 30) == vr::VRInputError_BufferTooSmall);
+	CHECK(BaseInput::CheckBoneArray(bones.data(), 0) == vr::VRInputError_BufferTooSmall);
+	CHECK(BaseInput::CheckBoneArray(nullptr, 31) == vr::VRInputError_BufferTooSmall);
+
+	// Clearing a null array is harmless, and only the count asked for is cleared
+	BaseInput::ClearBones(nullptr, 31);
+	for (auto& b : bones)
+		b.position = { 1, 2, 3, 1 };
+	BaseInput::ClearBones(bones.data(), 30);
+	CHECK(bones[0].position.v[0] == 0);
+	CHECK(bones[29].position.v[2] == 0);
+	CHECK(bones[30].position.v[2] == 3);
+}
+
+TEST_CASE("Only_two_hands_have_a_skeleton")
+{
+	CHECK(BaseInput::IsSkeletonHand(ITrackedDevice::HAND_LEFT));
+	CHECK(BaseInput::IsSkeletonHand(ITrackedDevice::HAND_RIGHT));
+	CHECK_FALSE(BaseInput::IsSkeletonHand(ITrackedDevice::HAND_NONE));
+}
+
+TEST_CASE("Default_reference_poses_exist_without_a_controller")
+{
+	for (auto hand : { ITrackedDevice::HAND_LEFT, ITrackedDevice::HAND_RIGHT }) {
+		for (int pose : { VRSkeletalReferencePose_BindPose, VRSkeletalReferencePose_OpenHand, VRSkeletalReferencePose_Fist, VRSkeletalReferencePose_GripLimit })
+			CHECK(InteractionProfile::GetDefaultSkeletalReferencePose(hand, pose).has_value());
+		CHECK_FALSE(InteractionProfile::GetDefaultSkeletalReferencePose(hand, 99).has_value());
+	}
+	CHECK_FALSE(InteractionProfile::GetDefaultSkeletalReferencePose(ITrackedDevice::HAND_NONE, VRSkeletalReferencePose_Fist).has_value());
 }

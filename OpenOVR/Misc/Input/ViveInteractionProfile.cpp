@@ -27,13 +27,6 @@ ViveWandInteractionProfile::ViveWandInteractionProfile()
 	// SteamVR's names for the raw inputs the binding evaluator reads (RawComponents)
 	this->rawSourceNames = { { "squeeze", "grip" }, { "menu", "application_menu" } };
 
-	pathTranslationMap = {
-		{ "application_menu", "menu" },
-		{ "grip/click", "squeeze/click" },
-		{ "grip/value", "squeeze/click" },
-		{ "pull", "value" }
-	};
-
 	hmdPropertiesMap = {
 		{ vr::Prop_ManufacturerName_String, "HTC" },
 		{ vr::Prop_ModelNumber_String, "Vive. MV" },

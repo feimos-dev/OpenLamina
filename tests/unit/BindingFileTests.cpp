@@ -5,7 +5,10 @@
 
 #include "Misc/Input/Bindings/BindingFile.h"
 
+#include "Misc/JsonFile.h"
+
 #include <filesystem>
+#include <fstream>
 
 namespace {
 std::filesystem::path Data(const char* name)
@@ -99,4 +102,73 @@ TEST_CASE("Binding_paths_lower_cased")
 	CHECK(s.path == "/user/hand/right/input/a");
 	CHECK(s.mode == "button");
 	CHECK(s.inputs.at("click") == "/actions/main/in/jump");
+}
+
+TEST_CASE("Binding_file_binds_a_raw_input_of_the_controller")
+{
+	BindingFile f = LoadBindingFile(Data("bindings_all_sections.json"));
+	auto anyOutput = [](const std::string&, const std::string&) { return true; };
+
+	// A source counts when a raw input of its own is among the controller's
+	CHECK(BindsRawInput(f, { "/user/hand/right/input/trigger/value" }, anyOutput));
+	CHECK(BindsRawInput(f, { "/user/hand/left/input/thumbstick/x" }, anyOutput));
+	// Not another input of the same hand, a hand the file doesn't bind, or a source that only starts with the same letters
+	CHECK_FALSE(BindsRawInput(f, { "/user/hand/right/input/squeeze/value" }, anyOutput));
+	CHECK_FALSE(BindsRawInput(f, { "/user/hand/left/input/trigger/value" }, anyOutput));
+	CHECK_FALSE(BindsRawInput(f, { "/user/hand/right/input/trig/value" }, anyOutput));
+	// The disabled source is no binding
+	CHECK_FALSE(BindsRawInput(f, { "/user/hand/left/input/a/click" }, anyOutput));
+	CHECK_FALSE(BindsRawInput(f, {}, anyOutput));
+
+	// Only to an output of a set and action the caller accepts
+	CHECK(BindsRawInput(f, { "/user/hand/right/input/b/click" }, [](const std::string& set, const std::string& output) {
+		return set == "/actions/menu" && output == "/actions/menu/in/back";
+	}));
+	CHECK_FALSE(BindsRawInput(f, { "/user/hand/right/input/b/click" }, [](const std::string& set, const std::string&) {
+		return set == "/actions/main";
+	}));
+}
+
+TEST_CASE("Manifest_localization_picks_the_language_and_merges_files")
+{
+	std::filesystem::path dir = std::filesystem::temp_directory_path() / "oc_localization_test";
+	std::filesystem::create_directories(dir);
+	{
+		std::ofstream out(dir / "fr.json", std::ios::binary);
+		out << R"([{ "language_tag": "fr_FR", "/actions/main/in/fire": "Tirer" }])";
+	}
+	{
+		std::ofstream out(dir / "en.json", std::ios::binary);
+		out << R"({ "/actions/Main/in/Jump": "Jump up" })"; // no tag of its own: the entry's
+	}
+
+	Json::Value manifest;
+	std::string error;
+	REQUIRE(ParseJsonLenient(R"({
+		"localization": [
+			{ "language_tag": "en_US", "/actions/main": "Main set", "/actions/main/in/fire": "Fire" },
+			{ "language_tag": "de_DE", "/actions/main": "Hauptsatz" }
+		],
+		"localization_files": [
+			{ "language_tag": "fr_FR", "file": "fr.json" },
+			{ "language_tag": "en_US", "file": "en.json" },
+			{ "language_tag": "en_US", "file": "missing.json" }
+		]
+	})",
+	    manifest, error));
+
+	auto en = ReadManifestLocalization(manifest, dir, "en_US");
+	CHECK(en["/actions/main"] == "Main set");
+	CHECK(en["/actions/main/in/fire"] == "Fire");
+	CHECK(en["/actions/main/in/jump"] == "Jump up");
+
+	auto fr = ReadManifestLocalization(manifest, dir, "fr-FR");
+	CHECK(fr.size() == 1);
+	CHECK(fr["/actions/main/in/fire"] == "Tirer");
+
+	// A language none of the tables has: English
+	CHECK(ReadManifestLocalization(manifest, dir, "ja_JP")["/actions/main"] == "Main set");
+
+	CHECK(ReadManifestLocalization(Json::Value(), dir, "en_US").empty());
+	std::filesystem::remove_all(dir);
 }

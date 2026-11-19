@@ -4,25 +4,51 @@
 
 #include "Misc/lodepng.h"
 
-#include <assert.h>
+#include <cstring>
 
-std::vector<char> readBytes(std::vector<char>& data, size_t len)
-{
-	assert(len <= data.size());
-	std::vector<char> result(data.begin(), data.begin() + len);
-	data.erase(data.begin(), data.begin() + len);
-	return result;
-}
+namespace {
 
-template <typename T>
-T readData(std::vector<char>& data)
-{
-	T val;
-	std::vector<char> sVal = readBytes(data, sizeof(val));
-	memcpy(&val, sVal.data(), sizeof(val));
+// Reads little-endian values off the front of a buffer; a read past its end fails the reader (and gives zero)
+class Reader {
+public:
+	explicit Reader(std::vector<char>& data)
+	    : data(data)
+	{
+	}
 
-	return val;
-}
+	bool Ok() const { return ok; }
+
+	std::vector<char> Bytes(size_t len)
+	{
+		if (len > data.size() - pos) {
+			ok = false;
+			return {};
+		}
+		std::vector<char> result(data.begin() + (std::ptrdiff_t)pos, data.begin() + (std::ptrdiff_t)(pos + len));
+		pos += len;
+		return result;
+	}
+
+	template <typename T>
+	T Read()
+	{
+		T val{};
+		if (sizeof(val) > data.size() - pos) {
+			ok = false;
+			return val;
+		}
+		memcpy(&val, data.data() + pos, sizeof(val));
+		pos += sizeof(val);
+		return val;
+	}
+
+private:
+	std::vector<char>& data;
+	size_t pos = 0;
+	bool ok = true;
+};
+
+} // namespace
 
 enum SectionID_t : uint16_t {
 	ID_FONT_INFO = 0,
@@ -35,108 +61,87 @@ enum SectionID_t : uint16_t {
 
 SudoFontMeta::SudoFontMeta(std::vector<char> data, std::vector<char> image)
 {
-	string headerReq = "\x0bSudoFont1.1";
-	std::vector<char> headerVec = readBytes(data, headerReq.length());
-	string header(headerVec.data(), headerVec.size());
-	assert(header == headerReq);
+	// A font that can't be read has no characters: every one is drawn as an empty box
+	auto fail = [&](const char* why) {
+		OOVR_LOGF("The built-in font can't be read: %s", why);
+		chars.clear();
+		pixel_data.clear();
+		imgWidth = imgHeight = 0;
+	};
+	imgWidth = imgHeight = 0;
+	lineHeight = 0;
 
-	unsigned int origTexW, origTexH;
-	// GCC & Clang believe these aren't used for some reason...
-	static_cast<void>(origTexW);
-	static_cast<void>(origTexH);
+	const std::string headerReq = "\x0bSudoFont1.1";
+	Reader in(data);
+	std::vector<char> headerVec = in.Bytes(headerReq.length());
+	if (!in.Ok() || std::string(headerVec.data(), headerVec.size()) != headerReq)
+		{ fail("bad header"); return; }
+
+	unsigned int origTexW = 0, origTexH = 0;
 
 	while (true) {
-		auto sectionID = readData<SectionID_t>(data);
+		auto sectionID = in.Read<SectionID_t>();
+		if (!in.Ok())
+			{ fail("truncated"); return; }
 
 		if (sectionID == ID_END)
 			break;
 
-		auto sectionSize = readData<uint32_t>(data);
-
-		std::vector<char> sec = readBytes(data, sectionSize);
+		auto sectionSize = in.Read<uint32_t>();
+		std::vector<char> sec = in.Bytes(sectionSize);
+		if (!in.Ok())
+			{ fail("truncated section"); return; }
+		Reader r(sec);
 
 		if (sectionID == ID_FONT_INFO) {
-			lineHeight = readData<uint16_t>(sec);
-			origTexH = readData<uint16_t>(sec);
-			origTexW = readData<uint16_t>(sec);
+			lineHeight = r.Read<uint16_t>();
+			origTexH = r.Read<uint16_t>();
+			origTexW = r.Read<uint16_t>();
 		} else if (sectionID == ID_CHARACTERS) {
-			auto count = readData<uint16_t>(sec);
+			auto count = r.Read<uint16_t>();
 
-			for (size_t i = 0; i < count; i++) {
+			for (size_t i = 0; i < count && r.Ok(); i++) {
 				CharInfo info = { 0 };
 
-				info.CharacterCode = readData<uint16_t>(sec);
+				info.CharacterCode = r.Read<uint16_t>();
 
-				info.PackedX = readData<uint16_t>(sec);
-				info.PackedY = readData<uint16_t>(sec);
-				info.PackedWidth = readData<uint16_t>(sec);
-				info.PackedHeight = readData<uint16_t>(sec);
+				info.PackedX = r.Read<uint16_t>();
+				info.PackedY = r.Read<uint16_t>();
+				info.PackedWidth = r.Read<uint16_t>();
+				info.PackedHeight = r.Read<uint16_t>();
 
-				info.XOffset = readData<uint16_t>(sec);
-				info.YOffset = readData<uint16_t>(sec);
+				info.XOffset = r.Read<uint16_t>();
+				info.YOffset = r.Read<uint16_t>();
 
-				info.XAdvance = readData<uint16_t>(sec);
+				info.XAdvance = r.Read<uint16_t>();
 
-				assert(chars.count(info.CharacterCode) == 0);
 				chars[info.CharacterCode] = info;
 			}
 		}
+		if (!r.Ok())
+			{ fail("truncated section"); return; }
 	}
 
 	// Load the image itself
-	lodepng::decode(
-	    pixel_data,
-	    imgWidth, imgHeight,
-	    (const uint8_t*)image.data(), image.size(),
-	    LCT_RGBA, 8);
+	if (lodepng::decode(
+	        pixel_data,
+	        imgWidth, imgHeight,
+	        (const uint8_t*)image.data(), image.size(),
+	        LCT_RGBA, 8)
+	    != 0)
+		{ fail("its image can't be decoded"); return; }
+	if (origTexW != imgWidth || origTexH != imgHeight)
+		{ fail("its image isn't the size it names"); return; }
 
-	assert(origTexW == imgWidth);
-	assert(origTexH == imgHeight);
+	// A glyph outside the image is never drawn from it
+	for (auto it = chars.begin(); it != chars.end();) {
+		const CharInfo& c = it->second;
+		const bool inside = c.PackedX >= 0 && c.PackedY >= 0 && c.PackedWidth >= 0 && c.PackedHeight >= 0
+		    && (unsigned)c.PackedX + (unsigned)c.PackedWidth <= imgWidth && (unsigned)c.PackedY + (unsigned)c.PackedHeight <= imgHeight;
+		it = inside ? std::next(it) : chars.erase(it);
+	}
 }
 
 SudoFontMeta::~SudoFontMeta()
 {
-}
-
-void SudoFontMeta::Blit(wchar_t ch, int x, int y, int img_width, pix_t targetColour, pix_t* rawPixels, bool hpad)
-{
-	pix_t* pixels = (pix_t*)rawPixels;
-	const pix_t* font = (const pix_t*)pixel_data.data();
-
-	const CharInfo& info = chars.at(ch);
-
-	for (int ix = 0; ix < info.PackedWidth; ix++) {
-		for (int iy = 0; iy < info.PackedHeight; iy++) {
-			int px = ix + info.PackedX;
-			int py = iy + info.PackedY;
-			pix_t p = font[px + py * imgHeight];
-
-			if (p.a == 0)
-				continue;
-
-			int tx = ix + x + (hpad ? info.XOffset : 0);
-			int ty = iy + y + info.YOffset;
-
-			assert(tx > 0);
-			assert(ty > 0);
-
-			size_t idx = tx + ty * img_width;
-			pix_t& out = pixels[idx];
-			out = targetColour;
-		}
-	}
-}
-
-int SudoFontMeta::Width(wchar_t ch)
-{
-	const CharInfo& info = chars.at(ch);
-	return info.XAdvance;
-}
-
-int SudoFontMeta::Width(wstring str)
-{
-	int width = 0;
-	for (wchar_t ch : str)
-		width += Width(ch);
-	return width;
 }

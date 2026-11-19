@@ -6,9 +6,47 @@
 
 #include "xrmoreutils.h"
 #include <convert.h>
+#include <cmath>
+
+XrTime xr_utils::PoseTimeForPrediction(float secondsFromNow, XrTime now, XrTime frameTime)
+{
+	if (now <= 0)
+		return 0;
+
+	// Not NaN, and within a range a runtime can predict
+	if (!(secondsFromNow > -0.1f))
+		secondsFromNow = -0.1f;
+	if (secondsFromNow > 1.0f)
+		secondsFromNow = 1.0f;
+
+	XrTime target = now + (XrTime)std::llround((double)secondsFromNow * 1e9);
+	constexpr XrTime frameTolerance = 3000000; // 3 ms
+	if (frameTime > 1 && target - frameTime <= frameTolerance && frameTime - target <= frameTolerance)
+		return frameTime;
+	return target;
+}
+
+XrQuaternionf xr_utils::YawOnly(const XrQuaternionf& orientation)
+{
+	glm::vec3 forward = X2G_quat(orientation) * glm::vec3(0.0f, 0.0f, -1.0f);
+	// Looking straight up or down has no heading
+	if (forward.x * forward.x + forward.z * forward.z < 1e-6f)
+		return { 0.0f, 0.0f, 0.0f, 1.0f };
+
+	float yaw = atan2f(-forward.x, -forward.z);
+	return { 0.0f, sinf(yaw / 2), 0.0f, cosf(yaw / 2) };
+}
+
+XrPosef xr_utils::SeatedOriginAtHead(const XrPosef& origin, const XrPosef& head)
+{
+	glm::quat originRotation = X2G_quat(origin.orientation);
+	glm::vec3 position = X2G_v3f(origin.position) + originRotation * X2G_v3f(head.position);
+	glm::quat rotation = glm::normalize(originRotation * X2G_quat(YawOnly(head.orientation)));
+	return { G2X_quat(rotation), G2X_v3f(position) };
+}
 
 bool xr_utils::PoseFromSpace(vr::TrackedDevicePose_t* pose, XrSpace space, vr::ETrackingUniverseOrigin origin,
-    std::optional<glm::mat4> extraTransform)
+    std::optional<glm::mat4> extraTransform, XrTime time)
 {
 	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	if (!xr_gbl) {
@@ -24,7 +62,7 @@ bool xr_utils::PoseFromSpace(vr::TrackedDevicePose_t* pose, XrSpace space, vr::E
 	XrSpaceVelocity velocity{ XR_TYPE_SPACE_VELOCITY };
 	XrSpaceLocation info{ XR_TYPE_SPACE_LOCATION, &velocity, 0, {} };
 
-	OOVR_FAILED_XR_SOFT_ABORT(xrLocateSpace(space, baseSpace, xr_gbl->GetBestTime(), &info));
+	OOVR_FAILED_XR_SOFT_ABORT(xrLocateSpace(space, baseSpace, time > 0 ? time : xr_gbl->GetBestTime(), &info));
 	
 	// A pose whose orientation is tracked is given, marked valid only when its position is tracked too
 	bool orientationTracked = (info.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0;

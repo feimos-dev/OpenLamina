@@ -12,6 +12,7 @@
 #include <cstring>
 #include <mutex>
 #include <optional>
+#include <vector>
 
 // This warning tells us that a method (GetPose) was overridden by one of our parent classes
 // Totally fine, that's the reason why we include XrTrackedDevice in the first place
@@ -23,6 +24,13 @@
 class XrHMD : public XrTrackedDevice, public IHMD {
 	const InteractionProfile* profile = nullptr;
 	std::shared_mutex profile_mutex;
+
+	// The hidden area meshes handed out, one per eye and type (the eye and the mesh type are both below 3)
+	struct HiddenMesh {
+		std::vector<vr::HmdVector2_t> current, previous;
+	};
+	std::mutex hiddenMeshMutex;
+	HiddenMesh hiddenMeshes[2][3];
 
 public:
 	/** What GetHiddenAreaMesh answers: the vertices and their triangle (or line loop) count, with the struct's padding
@@ -41,13 +49,24 @@ public:
 	void GetPose(
 	    vr::ETrackingUniverseOrigin origin,
 	    vr::TrackedDevicePose_t* pose,
-	    ETrackingStateType trackingState) override;
+	    ETrackingStateType trackingState,
+	    int64_t xrTime = 0) override;
 
 	// from BaseSystem
 
 	void GetRecommendedRenderTargetSize(uint32_t* width, uint32_t* height) override;
+	/** One dimension of an image size: the recommended one times the render scale, rounded, within the largest the
+	 * runtime allows (0 for no limit) and at least one pixel */
+	static uint32_t ScaledImageSize(uint32_t recommended, uint32_t maximum, float scale);
 	// The render scale GetRecommendedRenderTargetSize last answered with, 0 before it has
 	static float AnsweredRenderScale();
+
+	/** Whether a field of view can be a view's: finite angles short of a right angle, and some width and height */
+	static bool IsValidFov(const XrFovf& fov);
+
+	/** The off-axis projection (row-major, as OpenVR gives it) for a view's tangents: depth from -1 to 1 for the
+	 * near to the far plane, or from 0 to 1 for DirectX */
+	static vr::HmdMatrix44_t ProjectionFromTangents(float tanL, float tanR, float tanU, float tanD, float fNearZ, float fFarZ, EGraphicsAPIConvention convention);
 
 	/** The projection matrix for the specified eye */
 	vr::HmdMatrix44_t GetProjectionMatrix(vr::EVREye eEye, float fNearZ, float fFarZ, EGraphicsAPIConvention convention) override;
@@ -89,6 +108,11 @@ public:
 	 *   return zero for vsync time and frame counter and return false from the method. */
 	bool GetTimeSinceLastVsync(float* pfSecondsSinceLastVsync, uint64_t* pulFrameCounter) override;
 
+	/** Where a time falls on a display's vsync grid (vsyncs at anchor + k * period, all in the runtime's nanoseconds):
+	 * the seconds since the last vsync and the vsyncs counted from the clock's start. False, with zeros, where a time
+	 * or the period is not known. */
+	static bool VsyncPhase(XrTime now, XrTime anchor, XrDuration period, float* secondsSinceVsync, uint64_t* vsyncCount);
+
 	/** Returns the hidden area mesh for the current HMD. The pixels covered by this mesh will never be seen by the user after the lens distortion is
 	 * applied based on visibility to the panels. If this HMD does not have a hidden area mesh, the vertex data and count will be NULL and 0 respectively.
 	 * This mesh is meant to be rendered into the stencil buffer (or into the depth buffer setting nearz) before rendering each eye's view.
@@ -104,6 +128,7 @@ public:
 	// Properties
 	bool GetBoolTrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::ETrackedPropertyError* pErrorL) override;
 	float GetFloatTrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::ETrackedPropertyError* pErrorL) override;
+	uint64_t GetUint64TrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::ETrackedPropertyError* pErrorL) override;
 	DeviceIdentity Identity() override;
 
 	uint32_t GetStringTrackedDeviceProperty(vr::ETrackedDeviceProperty prop, char* pchValue,

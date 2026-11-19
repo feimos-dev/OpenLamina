@@ -1,5 +1,5 @@
 {
- "#": "A message box answered with the controllers' laser (run.py --cases message-overlay --script scripts/message_box.json --ini ini/own_frames.ini --expect expect/message_overlay.json; the same under ini/own_frames_steamvr.ini). Two buttons; the laser's click on the second answers ButtonPress_1, in frames of OpenLamina's own (the game is blocked in the call), its 1 m x 0.5 m panel drawn, with no frame call out of order.",
+ "#": "A message box answered with the controllers' laser (run.py --cases message-overlay --script scripts/message_box.json --ini ini/own_frames.ini --expect expect/message_overlay.json). Two buttons; the laser's click on the second answers ButtonPress_1, in frames of OpenLamina's own (the game is blocked in the call), its 1 m x 0.5 m panel drawn, with no frame call out of order.",
  "message-overlay/ShowMessageOverlay/-/-": {
   "ret": 1,
   "closed_by_watchdog": false,

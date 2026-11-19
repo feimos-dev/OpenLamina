@@ -9,7 +9,11 @@
 #include <algorithm>
 #include <string>
 
-GLESCompositor::GLESCompositor() = default;
+GLESCompositor::GLESCompositor()
+{
+	// The blit path (flipped bounds, format conversion) reads and draws through these
+	glGenFramebuffers(2, fboId);
+}
 
 void GLESCompositor::ReadSwapchainImages()
 {

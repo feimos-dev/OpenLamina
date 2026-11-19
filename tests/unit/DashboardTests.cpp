@@ -213,3 +213,11 @@ TEST_CASE("Dashboard_document_stale_and_live")
 	request["requested_by"] = 222;
 	CHECK(!DashboardDocRequest(request, 101, alive));
 }
+
+TEST_CASE("Dashboard_primary_hand_is_the_laser_on_it_else_the_last_driver")
+{
+	CHECK(Dashboard::PrimaryHand(0, 1) == 0);
+	CHECK(Dashboard::PrimaryHand(1, 0) == 1);
+	CHECK(Dashboard::PrimaryHand(-1, 0) == 0);
+	CHECK(Dashboard::PrimaryHand(-1, 1) == 1);
+}

@@ -205,6 +205,8 @@ extern SessionWrapper& xr_session;
 extern XrSystemId xr_system;
 XrViewConfigurationView& xr_main_view(XruEye view_id);
 extern XrSessionGlobals* xr_gbl;
+// The seated origin's pose in the local space, kept for sessions made later
+extern XrPosef xr_seated_origin;
 
 class XrExt;
 extern XrExt* xr_ext;

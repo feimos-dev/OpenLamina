@@ -9,7 +9,6 @@ public:
 	// Override
 	void CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, std::optional<XruEye> eye, vr::EVRSubmitFlags submitFlags) override;
 
-	void InvokeCubemap(const vr::Texture_t* textures) override;
 
 	bool ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTextureBounds_t* bounds, Image& out) override;
 
@@ -42,4 +41,15 @@ public:
 protected:
 	void ReadSwapchainImages() override;
 };
+#endif
+
+#ifdef SUPPORT_GL
+// The OpenGL mirror textures (IVRCompositor::GetMirrorTextureGL) of the eyes, in the game's context: each frame the game
+// submits is blitted into its eye's texture, scaled to its size, once the game has asked for one.
+// The eye's texture, made width x height of RGBA8 the first time; 0 if it can't be made.
+GLuint GLMirrorGet(int eye, uint32_t width, uint32_t height);
+// Deletes a texture GLMirrorGet gave: false if it isn't one
+bool GLMirrorRelease(GLuint texture);
+// The eye's frame into its mirror texture, if there is one
+void GLMirrorFrame(int eye, const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, vr::EVRSubmitFlags submitFlags);
 #endif

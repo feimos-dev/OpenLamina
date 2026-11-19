@@ -1,0 +1,7 @@
+# Interface versions Valve never published (or only in its C API), with headers in OpenVRHeaders/custom_interfaces that
+# OpenLamina offers. gen_callers.py calls their methods like those of interfaces.txt; run.py runs them like the others.
+IVRPaths_001
+IVRPaths_002
+IVRMailbox_001
+IVRControlPanel_006
+IVRInputInternal_002

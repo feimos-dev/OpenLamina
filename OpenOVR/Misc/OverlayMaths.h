@@ -103,6 +103,31 @@ struct ChainLink {
 // Resolves an overlay's transform through its parents, the farthest first; transforms are ordinary glm matrices
 Chain ResolveChain(const void* overlay, const std::function<ChainLink(const void*)>& link, glm::mat4& out);
 
+// What decides the order overlays are drawn in: the high quality overlay on top of the rest, then by sort order, then
+// the farthest first
+struct DrawOrder {
+	bool highQuality;
+	uint32_t sortOrder;
+	float distance;
+};
+// Whether a is drawn before (under) b
+bool DrawnBefore(const DrawOrder& a, const DrawOrder& b);
+
+// A quad's width over its height from its texture's size in texels. A flipped texture has a negative height. A texel
+// aspect of 2 means texels twice as wide as tall; a size or aspect that makes no sense gives 1.
+float QuadAspect(int32_t texelsWide, int32_t texelsHigh, float texelAspect);
+
+// The rectangle of an image of width x height texels that shows the texel columns x0..x1 and rows y0..y1 of the texture
+// it was copied from, where the copy was mirrored left to right (mirrorX) and/or top to bottom (mirrorY)
+XrRect2Di ImageRect(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1, uint32_t width, uint32_t height, bool mirrorX, bool mirrorY);
+
+// The scale of an overlay's layer for its colour and alpha, each kept between 0 and 1. A premultiplied texture's colour
+// is faded with its alpha too.
+XrColor4f ColourScale(float r, float g, float b, float a, bool premultiplied);
+
+// The angle in radians a quad of this width covers, seen from straight ahead at this distance
+float SubtendedAngle(float width, float distance);
+
 // a then b (b given in a's space), and a's inverse
 XrPosef ComposePoses(const XrPosef& a, const XrPosef& b);
 XrPosef InversePose(const XrPosef& a);
