@@ -3,5 +3,5 @@
  "events/ResetSeatedZeroPose then PollNextEvent/-/-": { "polled": true, "type": 804 },
  "events/trigger button events/-/-": { "press_in_frames_10_to_16": true, "held_10_frames": true, "device": 2 },
  "events/trigger controller state/-/-": { "pressed_from_10_to_16": true, "pressed_10_frames": true, "trigger_axis_full": true },
- "events/a button controller state/-/-": { "a_bit": true, "grip_bit": false, "supported_buttons": 30064771327, "axis0_type": 2, "axis1_type": 3, "axis2_type": 3 }
+ "events/a button controller state/-/-": { "a_bit": true, "grip_bit": false, "supported_buttons": 30064771327, "axis0_type": 1, "axis1_type": 3, "axis2_type": 0 }
 }
