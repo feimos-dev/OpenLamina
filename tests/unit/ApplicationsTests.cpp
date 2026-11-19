@@ -4,11 +4,13 @@
 #include "stdafx.h"
 
 #include "Misc/AppManifest.h"
+#include "Misc/ProgramEvents.h"
 #include "Misc/Process.h"
 #include "Misc/SharedStore.h"
 #include "Reimpl/BaseApplications.h"
 #include "Reimpl/BaseClientCore.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <filesystem>
@@ -16,6 +18,7 @@
 #include <optional>
 #include <string>
 #include <thread>
+#include <vector>
 
 #ifdef _WIN32
 #include <windows.h>
@@ -478,4 +481,82 @@ TEST_CASE("Scene_process_is_this_one_when_it_is_a_scene_app")
 	BaseClientCore::appType = vr::VRApplication_Scene;
 	CHECK(apps.GetCurrentSceneProcessId() == oc_current_pid());
 	BaseClientCore::appType = saved;
+}
+
+namespace {
+std::vector<vr::VREvent_t> postedEvents;
+void RecordEvent(const vr::VREvent_t& event)
+{
+	postedEvents.push_back(event);
+}
+
+size_t CountEvents(vr::EVREventType type)
+{
+	return (size_t)std::count_if(postedEvents.begin(), postedEvents.end(), [&](const vr::VREvent_t& e) { return e.eventType == type; });
+}
+
+// Records this program's events while it lives
+struct EventRecorder {
+	EventRecorder()
+	{
+		postedEvents.clear();
+		OcSetLocalEventSink(&RecordEvent);
+	}
+	~EventRecorder() { OcSetLocalEventSink(nullptr); }
+};
+}
+
+TEST_CASE("Application_list_changes_are_announced")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	BaseApplications apps(store);
+	EventRecorder recorder;
+
+	CHECK(apps.AddApplicationManifest(PathToUtf8(Data("echo.vrmanifest")).c_str()) == VRApplicationError_None);
+	CHECK(CountEvents(vr::VREvent_ApplicationListUpdated) == 1);
+	// Nothing changed: nothing to announce
+	CHECK(apps.AddApplicationManifest(PathToUtf8(Data("steamvr.vrsettings")).c_str()) == VRApplicationError_InvalidManifest);
+	CHECK(apps.RemoveApplicationManifest(PathToUtf8(Data("overlay_apps.vrmanifest")).c_str()) == VRApplicationError_None);
+	CHECK(CountEvents(vr::VREvent_ApplicationListUpdated) == 1);
+	CHECK(apps.RemoveApplicationManifest(PathToUtf8(Data("echo.vrmanifest")).c_str()) == VRApplicationError_None);
+	CHECK(CountEvents(vr::VREvent_ApplicationListUpdated) == 2);
+
+	// A template launch adds an application
+	fs::path manifest = dir.path / "template.vrmanifest";
+	std::ofstream(manifest) << R"({"applications":[{"app_key":"oc.test.template","launch_type":"binary",)"
+	                           R"("binary_path":"/nonexistent/oc_test_binary","is_template":true}]})";
+	CHECK(apps.AddApplicationManifest(PathToUtf8(manifest).c_str()) == VRApplicationError_None);
+	size_t before = CountEvents(vr::VREvent_ApplicationListUpdated);
+	apps.LaunchTemplateApplication("oc.test.template", "oc.test.instance", nullptr, 0);
+	CHECK(apps.IsApplicationInstalled("oc.test.instance"));
+	CHECK(CountEvents(vr::VREvent_ApplicationListUpdated) == before + 1);
+}
+
+TEST_CASE("Scene_process_changes_are_announced")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	EventRecorder recorder;
+
+	BaseApplications::SetSceneProcess(store, true);
+	CHECK(CountEvents(vr::VREvent_ProcessConnected) == 1);
+	CHECK(CountEvents(vr::VREvent_SceneApplicationChanged) == 1);
+	CHECK(CountEvents(vr::VREvent_SceneApplicationStateChanged) == 1);
+	for (const vr::VREvent_t& e : postedEvents)
+		if (e.eventType == vr::VREvent_ProcessConnected || e.eventType == vr::VREvent_SceneApplicationChanged)
+			CHECK(e.data.process.pid == oc_current_pid());
+
+	// Already the scene application: nothing changed
+	BaseApplications::SetSceneProcess(store, true);
+	CHECK(CountEvents(vr::VREvent_ProcessConnected) == 1);
+
+	BaseApplications::SetSceneProcess(store, false);
+	CHECK(CountEvents(vr::VREvent_ProcessDisconnected) == 1);
+	CHECK(CountEvents(vr::VREvent_SceneApplicationChanged) == 2);
+	CHECK(postedEvents.back().eventType == vr::VREvent_SceneApplicationStateChanged);
+	const vr::VREvent_t& changed = postedEvents[postedEvents.size() - 3];
+	CHECK(changed.eventType == vr::VREvent_SceneApplicationChanged);
+	CHECK(changed.data.process.pid == 0);
+	CHECK(changed.data.process.oldPid == oc_current_pid());
 }

@@ -99,6 +99,12 @@ uint64_t UInt64Or(const Json::Value& v, uint64_t fallback)
 	return v.isUInt64() ? v.asUInt64() : fallback;
 }
 
+// Tells this program and every other one that the list of applications changed
+void PostApplicationListUpdated()
+{
+	OcPostEvent(vr::VREvent_ApplicationListUpdated, vr::k_unTrackedDeviceIndexInvalid, vr::VREvent_Data_t{}, true);
+}
+
 // Edits the Applications document, first dropping what programs that ended left: their process ids, and the
 // temporary manifests they added
 bool UpdateApplications(SharedStore& store, const std::function<void(Json::Value& doc)>& edit)
@@ -172,9 +178,11 @@ void BaseApplications::SetSceneProcess(SharedStore& store, bool running)
 	uint32_t pid = oc_current_pid();
 	std::string key = running ? CurrentProcessAppKey(store) : std::string();
 	bool changed = false;
+	uint32_t oldPid = 0;
 	store.Update(StoreDoc::Scene, [&](Json::Value& scene) {
 		if (running) {
-			changed = PidOf(scene["pid"]) != pid;
+			oldPid = scene.isObject() ? PidOf(scene["pid"]) : 0;
+			changed = oldPid != pid;
 			scene = Json::Value(Json::objectValue);
 			scene["pid"] = pid;
 			scene["start"] = (Json::UInt64)SharedStore::OwnStartTime();
@@ -185,6 +193,7 @@ void BaseApplications::SetSceneProcess(SharedStore& store, bool running)
 		} else if (scene.isObject() && PidOf(scene["pid"]) == pid) {
 			// Only our own: another program may have become the scene application since
 			scene = Json::Value(Json::objectValue);
+			oldPid = pid;
 			changed = true;
 		}
 	});
@@ -192,6 +201,15 @@ void BaseApplications::SetSceneProcess(SharedStore& store, bool running)
 	// For this program and every other one
 	if (changed) {
 		vr::VREvent_Data_t data{};
+		data.process.pid = running ? pid : 0;
+		data.process.oldPid = oldPid;
+		OcPostEvent(vr::VREvent_SceneApplicationChanged, vr::k_unTrackedDeviceIndexInvalid, data, true);
+
+		data = {};
+		data.process.pid = pid;
+		OcPostEvent(running ? vr::VREvent_ProcessConnected : vr::VREvent_ProcessDisconnected, vr::k_unTrackedDeviceIndexInvalid, data, true);
+
+		data = {};
 		data.process.pid = pid;
 		OcPostEvent(vr::VREvent_SceneApplicationStateChanged, vr::k_unTrackedDeviceIndexInvalid, data, true);
 	}
@@ -250,6 +268,8 @@ EVRApplicationError BaseApplications::AddApplicationManifest(const char* pchAppl
 	// The store not written only loses the registry: answered as before it was kept
 	if (!written)
 		OOVR_LOG("Application manifest not kept: the store can't be written");
+	else
+		PostApplicationListUpdated();
 	return VRApplicationError_None;
 }
 
@@ -258,10 +278,15 @@ EVRApplicationError BaseApplications::RemoveApplicationManifest(const char* pchA
 	if (!pchApplicationManifestFullPath || !pchApplicationManifestFullPath[0])
 		return VRApplicationError_InvalidManifest;
 	std::string path = ManifestKey(pchApplicationManifestFullPath);
+	bool existed = false;
 	bool written = UpdateApplications(Store(), [&](Json::Value& doc) {
-		if (doc.isMember("manifests") && doc["manifests"].isObject())
+		if (doc.isMember("manifests") && doc["manifests"].isObject()) {
+			existed = doc["manifests"].isMember(path);
 			doc["manifests"].removeMember(path);
+		}
 	});
+	if (written && existed)
+		PostApplicationListUpdated();
 	return written ? VRApplicationError_None : VRApplicationError_IPCFailed;
 }
 
@@ -366,13 +391,15 @@ EVRApplicationError BaseApplications::LaunchTemplateApplication(const char* pchT
 	}
 	std::string path = "template:" + std::string(pchNewAppKey);
 	uint32_t pid = oc_current_pid();
-	UpdateApplications(Store(), [&](Json::Value& doc) {
+	bool written = UpdateApplications(Store(), [&](Json::Value& doc) {
 		Json::Value& m = doc["manifests"][path];
 		m["temporary"] = true;
 		m["owner_pid"] = pid;
 		m["apps"] = Json::Value(Json::arrayValue);
 		m["apps"].append(app);
 	});
+	if (written)
+		PostApplicationListUpdated();
 	return Launch(AppManifestEntry::FromJson(app), "");
 }
 EVRApplicationError BaseApplications::LaunchApplicationFromMimeType(const char* pchMimeType, const char* pchArgs)
