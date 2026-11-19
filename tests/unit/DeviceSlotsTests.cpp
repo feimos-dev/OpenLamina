@@ -34,6 +34,7 @@ class SlotsBackend : public IBackend {
 public:
 	std::map<vr::TrackedDeviceIndex_t, std::shared_ptr<FakeDevice>> devices;
 	bool lost = false;
+	bool strained = false;
 
 	std::shared_ptr<IHMD> GetPrimaryHMD() override { return nullptr; }
 	std::shared_ptr<ITrackedDevice> GetDevice(vr::TrackedDeviceIndex_t index) override
@@ -57,6 +58,7 @@ public:
 	void PumpEvents() override {}
 	bool IsInputAvailable() override { return false; }
 	bool IsInputFocusLost() override { return lost; }
+	bool ShouldReduceRenderingWork() override { return strained; }
 	bool IsGraphicsConfigured() override { return false; }
 	void OnOverlayTexture(const vr::Texture_t*) override {}
 };
@@ -270,4 +272,13 @@ TEST_CASE("The application is told to pause only after it had input focus and lo
 	CHECK(system.ShouldApplicationPause());
 	CHECK(system.IsSteamVRDrawingControllers());
 	CHECK_FALSE(system.ShouldApplicationReduceRenderingWork());
+}
+
+TEST_CASE("The application is told to reduce its rendering when the runtime is short of time")
+{
+	WithSlots slots;
+	BaseSystem system;
+	slots.backend->strained = true;
+	CHECK(system.ShouldApplicationReduceRenderingWork());
+	CHECK_FALSE(system.ShouldApplicationPause());
 }

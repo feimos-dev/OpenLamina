@@ -782,6 +782,9 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 
 void XrBackend::WaitForTrackingData()
 {
+	// A game that waits for frames before its first submit still sees the session become ready
+	PumpEvents();
+
 	// Make sure the OpenXR session is active before doing anything else, and if not then skip
 	if (!sessionActive) {
 		renderingFrame = false;
@@ -1654,6 +1657,11 @@ bool XrBackend::IsInputFocusLost()
 	return inputFocusHad && sessionState != XR_SESSION_STATE_FOCUSED;
 }
 
+bool XrBackend::ShouldReduceRenderingWork()
+{
+	return perfStrainedDomains != 0;
+}
+
 // VREvent_InputFocusCaptured or _Released
 static void PostFocusChange(bool captured)
 {
@@ -1670,17 +1678,33 @@ static void PostPresenceChange(bool present)
 	    VREvent_Data_t{}, false);
 }
 
+// XR_EXT_local_floor's reference space type, which the bundled headers predate
+static const XrReferenceSpaceType kReferenceSpaceLocalFloor = (XrReferenceSpaceType)1000426000;
+
+// A device's role (which controller is the left hand, say) changed: no device in particular
+static void PostRoleChange()
+{
+	OcPostEvent(VREvent_TrackedDeviceRoleChanged, k_unTrackedDeviceIndexInvalid, VREvent_Data_t{}, false);
+}
+
+// The runtime ends the game's session by its own choice: the driver asks to quit, and the game is told to
+void XrBackend::OnRuntimeQuit()
+{
+	if (!sessionLost)
+		OcPostEvent(VREvent_DriverRequestedQuit, k_unTrackedDeviceIndexInvalid, VREvent_Data_t{}, false);
+	OnSessionLost();
+}
+
 void XrBackend::PumpEvents()
 {
 	// Poll for OpenXR events
-	// TODO filter by session?
 	while (true) {
 		XrEventDataBuffer ev = { XR_TYPE_EVENT_DATA_BUFFER };
 		XrResult res = xr_instance ? xrPollEvent(xr_instance, &ev) : XR_ERROR_HANDLE_INVALID;
 		if (XR_FAILED(res)) {
 			OOVR_LOG_ONCE("xrPollEvent failed: no events this frame");
 			if (res == XR_ERROR_INSTANCE_LOST)
-				OnSessionLost();
+				OnRuntimeQuit();
 			break;
 		}
 
@@ -1699,6 +1723,60 @@ void XrBackend::PumpEvents()
 			continue;
 		}
 
+		// The runtime dropped events before this one (the program polled too rarely): states may have changed unseen
+		if (ev.type == XR_TYPE_EVENT_DATA_EVENTS_LOST) {
+			OOVR_LOGF("The OpenXR runtime lost %u events", ((XrEventDataEventsLost*)&ev)->lostEventCount);
+			continue;
+		}
+
+		// The instance is going away (the runtime updating or shutting down): the game is told to quit while it can
+		if (ev.type == XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING) {
+			OOVR_LOG("The OpenXR instance will be lost");
+			if (!exitExpected)
+				OnRuntimeQuit();
+			continue;
+		}
+
+		// A reference space's origin moves (the user recentres or redraws the play area): the spaces follow by
+		// themselves, the game is told. The floor and the stage are the standing origin, the local space the seated one.
+		if (ev.type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING) {
+			auto* change = (XrEventDataReferenceSpaceChangePending*)&ev;
+			if (change->session != xr_session.get() || exitExpected)
+				continue;
+			switch ((int)change->referenceSpaceType) {
+			case (int)XR_REFERENCE_SPACE_TYPE_STAGE:
+			case (int)kReferenceSpaceLocalFloor:
+				OcPostEvent(VREvent_StandingZeroPoseReset, k_unTrackedDeviceIndex_Hmd, VREvent_Data_t{}, false);
+				OcPostEvent(VREvent_ChaperoneUniverseHasChanged, k_unTrackedDeviceIndexInvalid, VREvent_Data_t{}, false);
+				break;
+			case (int)XR_REFERENCE_SPACE_TYPE_LOCAL:
+				OcPostEvent(VREvent_SeatedZeroPoseReset, k_unTrackedDeviceIndex_Hmd, VREvent_Data_t{}, false);
+				break;
+			default:
+				break;
+			}
+			continue;
+		}
+
+		// XR_KHR_visibility_mask: the hidden area meshes are asked of the runtime on every call, so nothing is kept to
+		// drop
+		if (ev.type == XR_TYPE_EVENT_DATA_VISIBILITY_MASK_CHANGED_KHR)
+			continue;
+
+		// XR_EXT_performance_settings: the runtime's CPU or GPU load went above or back to normal
+		if (ev.type == XR_TYPE_EVENT_DATA_PERF_SETTINGS_EXT) {
+			auto* perf = (XrEventDataPerfSettingsEXT*)&ev;
+			OOVR_LOGF("The runtime's performance level for domain %d went from %d to %d", (int)perf->domain, (int)perf->fromLevel, (int)perf->toLevel);
+			if (perf->domain > 0 && perf->domain < 32) {
+				const uint32_t bit = 1u << (uint32_t)perf->domain;
+				if (perf->toLevel == XR_PERF_SETTINGS_NOTIF_LEVEL_NORMAL_EXT)
+					perfStrainedDomains &= ~bit;
+				else
+					perfStrainedDomains |= bit;
+			}
+			continue;
+		}
+
 		if (ev.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
 			auto* changed = (XrEventDataSessionStateChanged*)&ev;
 			// A state change for a session already destroyed (around a restart) is old news
@@ -1708,6 +1786,18 @@ void XrBackend::PumpEvents()
 			sessionState = changed->state;
 			if (sessionState == XR_SESSION_STATE_FOCUSED)
 				inputFocusHad = true;
+
+			// The headset in standby while its session is stopped (taken off, on runtimes that stop the session for it),
+			// out of it when the session is ready again (sessionEvents)
+			if (oovr_global_configuration.SessionEvents() && !exitExpected) {
+				if (sessionState == XR_SESSION_STATE_STOPPING && previous != XR_SESSION_STATE_UNKNOWN) {
+					if (!standbyTold.exchange(true))
+						OcPostEvent(VREvent_EnterStandbyMode, k_unTrackedDeviceIndex_Hmd, VREvent_Data_t{}, false);
+				} else if (sessionState == XR_SESSION_STATE_READY || sessionState == XR_SESSION_STATE_FOCUSED) {
+					if (standbyTold.exchange(false))
+						OcPostEvent(VREvent_LeaveStandbyMode, k_unTrackedDeviceIndex_Hmd, VREvent_Data_t{}, false);
+				}
+			}
 
 			// Input focus (sessionEvents): lost from FOCUSED to VISIBLE (the runtime's menu over the game, say), back
 			// at FOCUSED. Not while OpenLamina ends the session itself (a restart). Each change is told once, whichever
@@ -1768,13 +1858,12 @@ void XrBackend::PumpEvents()
 				// The runtime ending the session (the user quitting from its menu, say) is the game's cue to quit;
 				// OpenComposite ending it itself isn't
 				if (!exitExpected)
-					OnSessionLost();
+					OnRuntimeQuit();
 				break;
 			}
 			case XR_SESSION_STATE_LOSS_PENDING: {
 				// If the headset is unplugged or the user decides to exit the app
-				// TODO just kill the app after awhile, unless it sends a message to stop that - read the OpenVR wiki docs for more info
-				OnSessionLost();
+				OnRuntimeQuit();
 				break;
 			}
 			default:
@@ -1782,7 +1871,9 @@ void XrBackend::PumpEvents()
 				break;
 			}
 		} else if (ev.type == XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED) {
-			UpdateInteractionProfile();
+			// A session already destroyed (around a restart) has nothing to say about the controllers
+			if (((XrEventDataInteractionProfileChanged*)&ev)->session == xr_session.get())
+				UpdateInteractionProfile();
 		} else if (ev.type == OC_XR_TYPE_EVENT_DATA_DISPLAY_REFRESH_RATE_CHANGED_FB) {
 			// Prop_DisplayFrequency_Float asks the runtime again
 			auto* changed = (const OcXrEventDataDisplayRefreshRateChangedFB*)&ev;
@@ -1835,6 +1926,19 @@ void XrBackend::PumpEvents()
 	BaseInput* input = GetUnsafeBaseInput();
 	if (input && !exitExpected && !input->AreActionsLoaded() && sessionState == XR_SESSION_STATE_FOCUSED && !Hand(XrController::XCT_LEFT) && !Hand(XrController::XCT_RIGHT)) {
 		QueryForInteractionProfile();
+	}
+}
+
+bool XrBackend::WaitForEvents(const std::function<bool()>& done, int timeoutMs)
+{
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+	while (true) {
+		PumpEvents();
+		if (done())
+			return true;
+		if (std::chrono::steady_clock::now() >= deadline)
+			return false;
+		std::this_thread::sleep_for(std::chrono::milliseconds(5));
 	}
 }
 
@@ -1918,21 +2022,7 @@ void XrBackend::OnSessionCreated()
 
 	// Wait until we transition to the idle state.
 	// This sets the time, so OpenXR calls which use that will work correctly.
-	int count = 0;
-	while (sessionState == XR_SESSION_STATE_UNKNOWN && !sessionLost && count++ < 10) {
-		const int durationMs = 250;
-
-		OOVR_LOGF("No session transition yet received, waiting %dms ...", durationMs);
-
-#ifdef _WIN32
-		Sleep(durationMs);
-#else
-		struct timespec ts = { 0, durationMs * 1000000 };
-		nanosleep(&ts, &ts);
-#endif
-
-		PumpEvents();
-	}
+	WaitForEvents([this]() { return sessionState != XR_SESSION_STATE_UNKNOWN || sessionLost; }, 2500);
 	if (sessionState == XR_SESSION_STATE_UNKNOWN && !sessionLost)
 		OOVR_LOG("No session transition received yet: carrying on, later PumpEvents calls take the session's states");
 	if (sessionLost) {
@@ -2373,6 +2463,7 @@ void XrBackend::UpdateInteractionProfile()
 
 					OOVR_LOGF("%s - Using interaction profile: %s", info.pathstr, path_name);
 					BaseSystem* system = GetUnsafeBaseSystem();
+					const bool handAppeared = !current;
 					if (current && system) {
 						VREvent_t event = {
 							.eventType = VREvent_TrackedDeviceDeactivated,
@@ -2396,6 +2487,8 @@ void XrBackend::UpdateInteractionProfile()
 						};
 						system->_EnqueueEvent(event);
 					}
+					if (handAppeared)
+						PostRoleChange();
 					break;
 				}
 			}
@@ -2419,6 +2512,7 @@ void XrBackend::UpdateInteractionProfile()
 					};
 					system->_EnqueueEvent(event);
 				}
+				PostRoleChange();
 			}
 		}
 	}

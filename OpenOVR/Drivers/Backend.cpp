@@ -191,6 +191,11 @@ bool BackendManager::IsInputFocusLost()
 	return backend->IsInputFocusLost();
 }
 
+bool BackendManager::ShouldReduceRenderingWork()
+{
+	return backend->ShouldReduceRenderingWork();
+}
+
 bool BackendManager::IsGraphicsConfigured()
 {
 	return backend->IsGraphicsConfigured();

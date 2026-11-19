@@ -631,8 +631,7 @@ bool BaseSystem::ShouldApplicationPause()
 
 bool BaseSystem::ShouldApplicationReduceRenderingWork()
 {
-	// Nothing tells OpenLamina the runtime is short of rendering time
-	return false;
+	return BackendManager::Instance().ShouldReduceRenderingWork();
 }
 
 void BaseSystem::_OnPostFrame()

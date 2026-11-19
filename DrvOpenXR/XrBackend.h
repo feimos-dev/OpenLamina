@@ -54,6 +54,10 @@ public:
 	std::atomic<bool> inputFocusLost{ false };
 	// The session has been FOCUSED: only then is leaving that state the runtime taking input
 	std::atomic<bool> inputFocusHad{ false };
+	// The headset's standby, as the game was told of it (the session stopping), and the domains (bit n for
+	// XrPerfSettingsDomainEXT n) the runtime reports above normal load
+	std::atomic<bool> standbyTold{ false };
+	std::atomic<uint32_t> perfStrainedDomains{ 0 };
 	std::atomic<float> toldIpd{ NAN };
 	// The app's graphics device couldn't be bound: the session stays on the temporary device
 	std::atomic<bool> appGraphicsUnusable{ false };
@@ -73,6 +77,10 @@ public:
 	 * that failed): VREvent_Quit is queued once, and no more frames are begun. There's no reconnecting.
 	 */
 	void OnSessionLost();
+	/** Pumps events until done() is true, for at most timeoutMs: whether it was */
+	bool WaitForEvents(const std::function<bool()>& done, int timeoutMs);
+	/** The runtime ends the session on its own: VREvent_DriverRequestedQuit, then OnSessionLost */
+	void OnRuntimeQuit();
 	bool IsSessionLost() const { return sessionLost; }
 	/** The session is lost, not running, or stopping, exiting or about to be lost: nothing can be shown in it any more */
 	bool IsSessionEnded() const
