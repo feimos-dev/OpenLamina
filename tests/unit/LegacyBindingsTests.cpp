@@ -154,6 +154,14 @@ TEST_CASE("Legacy_finger_curls_fill_only_the_free_axes")
 	ApplyLegacyFingerCurls(curl, true, false, s);
 	CHECK(s.rAxis[3].x == doctest::Approx(0.2f * 1.66f * 1.33f));
 	CHECK(s.rAxis[3].y == doctest::Approx(0.3f * 1.66f));
+
+	// A closed fist reads 1, not past it
+	const float fist[5] = { 1, 1, 0.9f, 1, 1 };
+	ApplyLegacyFingerCurls(fist, true, true, s);
+	CHECK(s.rAxis[3].x == 1.0f);
+	CHECK(s.rAxis[3].y == 1.0f);
+	CHECK(s.rAxis[4].x == 1.0f);
+	CHECK(s.rAxis[4].y == 1.0f);
 }
 
 TEST_CASE("Legacy_haptic_strength_follows_the_duration")
