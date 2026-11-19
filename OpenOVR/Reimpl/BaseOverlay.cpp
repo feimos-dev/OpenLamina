@@ -866,10 +866,13 @@ public:
 			canvas.FillRect(kPanelMargin, y, kPanelWidth - 2 * kPanelMargin, 2, 0x6a7486ff);
 			y += 16;
 			const int textEnd = ButtonRect(0, buttons.size()).y - 16;
-			for (const std::wstring& row : WrapText(canvas, text, kPanelWidth - 2 * kPanelMargin)) {
+			const std::vector<std::wstring> rows = WrapText(canvas, text, kPanelWidth - 2 * kPanelMargin);
+			for (size_t i = 0; i < rows.size(); i++) {
 				if (y + line > textEnd)
 					break;
-				canvas.Text(kPanelMargin, y, row, 0xd8d8d8ff);
+				// Text that doesn't all fit ends in an ellipsis on the last line that does
+				const bool last = y + 2 * line + 4 > textEnd && i + 1 < rows.size();
+				canvas.Text(kPanelMargin, y, last ? rows[i] + L" ..." : rows[i], 0xd8d8d8ff);
 				y += line + 4;
 			}
 			for (size_t i = 0; i < buttons.size(); i++) {
