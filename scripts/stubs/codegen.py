@@ -116,7 +116,9 @@ std::shared_ptr<{cls}> GetCreate{getter_name}() {{
         _build_fntable(fi, ver)
 
         # Generate the deleter (see BaseCommon.h for the rationale here)
-        fi.write(f"void {cname}::Delete() {{ delete this; }}\n")
+        # (a function table taken from this object must not keep calling into it)
+        inst_name = f"fntable_{ver.varname()}_{ver.version}_instance"
+        fi.write(f"void {cname}::Delete() {{ if ({inst_name} == this) {inst_name} = NULL; delete this; }}\n")
 
 
 def is_deleted_type(ver: InterfaceDef, arg_type: str) -> bool:
