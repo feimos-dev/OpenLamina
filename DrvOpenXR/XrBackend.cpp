@@ -1149,6 +1149,35 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 	info.layerCount = layer_count;
 
 	XrResult endResult = xrEndFrame(xr_session.get(), &info);
+	if (XR_FAILED(endResult) && app_layer && layer_count > 1) {
+		// A layer of the overlays' was refused. The game's frame isn't dropped for it: ended without each of those
+		// layers in turn, then with the game's layer alone.
+		const XrResult refusal = endResult;
+		std::vector<const XrCompositionLayerBaseHeader*> kept;
+		int without = -1;
+		for (int skip = 1; skip < layer_count && layer_count > 2 && XR_FAILED(endResult); skip++) {
+			kept.clear();
+			for (int i = 0; i < layer_count; i++)
+				if (i != skip)
+					kept.push_back(headers[i]);
+			info.layers = kept.data();
+			info.layerCount = (uint32_t)kept.size();
+			endResult = xrEndFrame(xr_session.get(), &info);
+			if (XR_SUCCEEDED(endResult))
+				without = skip;
+		}
+		if (XR_FAILED(endResult)) {
+			kept.assign(1, app_layer);
+			info.layers = kept.data();
+			info.layerCount = 1;
+			endResult = xrEndFrame(xr_session.get(), &info);
+		}
+		// (the sub-image is at the same place in quad and cylinder layers)
+		const auto* quad = (const XrCompositionLayerQuad*)headers[without > 0 ? without : 1];
+		OOVR_LOG_ONCEF("xrEndFrame refused a frame of %d layers (%d): ended without %s (layer %d: type %d, %dx%d)", layer_count, (int)refusal,
+		    without > 0 ? "one of the overlays' layers" : "all the overlays' layers", without, (int)quad->type,
+		    quad->subImage.imageRect.extent.width, quad->subImage.imageRect.extent.height);
+	}
 	OOVR_FAILED_XR_SOFT_ABORT(endResult);
 	// A present: the game's eye textures shown
 	if (XR_SUCCEEDED(endResult) && app_layer)

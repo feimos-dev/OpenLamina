@@ -103,6 +103,7 @@ void CpuSwapchain::Release()
 	chain = XR_NULL_HANDLE;
 	imageCount = 0;
 	waitPending = false;
+	filled = false;
 }
 
 bool CpuSwapchain::Make(uint32_t w, uint32_t h)
@@ -207,6 +208,7 @@ bool CpuSwapchain::Upload(const Image& image)
 		written = false;
 	if (!written)
 		OOVR_LOG_ONCE("Images from memory: an image couldn't be written into its swapchain");
+	filled = filled || written;
 	return written;
 }
 
