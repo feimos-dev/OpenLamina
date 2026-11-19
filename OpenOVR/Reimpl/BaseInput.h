@@ -539,12 +539,6 @@ public: // INTERNAL FUNCTIONS
 private:
 	inline static std::string startupManifest;
 
-	enum class ActionRequirement {
-		Suggested = 0, // default
-		Mandatory,
-		Optional,
-	};
-
 public:
 	enum class ActionType {
 		Boolean = 0,
@@ -653,7 +647,6 @@ private:
 		std::string fullName; // Full name as set in the JSON file, eg '/actions/main/in/Test1'
 		std::string shortName; // The last part of the name, eg 'Test1'
 		std::string manifestName; // As the manifest has it, lower-cased and never shortened (the binding evaluator's name)
-		ActionRequirement requirement = ActionRequirement::Suggested;
 		bool haptic = false;
 		ActionType type = ActionType::Boolean;
 		ActionSet* set = nullptr;

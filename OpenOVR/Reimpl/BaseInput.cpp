@@ -510,20 +510,6 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 			continue;
 		}
 
-		// Parse the requirement
-		// TODO default to optional
-		std::string requirement = item["requirement"].asString();
-		if (requirement == "mandatory")
-			action.requirement = ActionRequirement::Mandatory;
-		else if (requirement == "suggested" || requirement.empty()) // Default
-			action.requirement = ActionRequirement::Suggested;
-		else if (requirement == "optional")
-			action.requirement = ActionRequirement::Optional;
-		else {
-			OOVR_LOGF("Warning: invalid requirement '%s' for action '%s', using suggested", requirement.c_str(), action.fullName.c_str());
-			action.requirement = ActionRequirement::Suggested;
-		}
-
 		// Parse the type
 		std::string type = item["type"].asString();
 		if (type == "boolean")
@@ -555,19 +541,17 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 
 		// If this is a skeletal action, see what hand it's bound to. Uniquely, this is done in the actions manifest itself
 		if (action.type == ActionType::Skeleton) {
-			// Default to the left hand, so we can always safely use it as a 0 or 1 value for indexing arrays etc
-			action.skeletalHand = ITrackedDevice::HAND_LEFT;
-
-			std::string skelSide = item["skeleton"].asString();
-			if (skelSide.empty()) {
-				OOVR_SOFT_ABORTF("Skeletal hand side not set for action '%s'", action.fullName.c_str());
-			} else if (skelSide == "/skeleton/hand/left") {
+			// An action that names no hand, or one other than the two, is left out: it reads as an invalid skeleton
+			std::string skelSide = lowerStr(item["skeleton"].asString());
+			if (skelSide == "/skeleton/hand/left") {
 				action.skeletalHand = ITrackedDevice::HAND_LEFT;
 			} else if (skelSide == "/skeleton/hand/right") {
 				action.skeletalHand = ITrackedDevice::HAND_RIGHT;
 			} else {
-				OOVR_SOFT_ABORTF("Unknown/unsupported skeletal hand side '%s' for action '%s'",
-				    skelSide.c_str(), action.fullName.c_str());
+				OOVR_LOGF("Warning: skipping skeletal action '%s' - its hand side '%s' isn't /skeleton/hand/left or right",
+				    action.fullName.c_str(), skelSide.c_str());
+				skippedActionSets.insert(action.setName);
+				continue;
 			}
 		}
 
