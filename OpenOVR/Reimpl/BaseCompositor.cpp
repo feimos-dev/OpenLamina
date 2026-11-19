@@ -649,6 +649,14 @@ bool BaseCompositor::IsFullscreen()
 
 uint32_t BaseCompositor::GetCurrentSceneFocusProcess()
 {
+	// An overlay or background application's: the scene application's, as it put in the store
+	if (IsHelperSession()) {
+		Json::Value scene = SharedStore::Get().Read(StoreDoc::Scene);
+		const uint32_t pid = scene["pid"].isUInt() ? scene["pid"].asUInt() : 0;
+		if (pid && SharedStore::IsSameProcessAlive(pid, scene["start"].isUInt64() ? scene["start"].asUInt64() : 0))
+			return pid;
+		return 0;
+	}
 	return oc_current_pid();
 }
 
