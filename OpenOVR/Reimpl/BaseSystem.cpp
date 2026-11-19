@@ -1058,7 +1058,15 @@ bool BaseSystem::PollNextEventWithPoseAndOverlays(ETrackingUniverseOrigin eOrigi
 {
 	if (pulOverlayHandle)
 		*pulOverlayHandle = k_ulOverlayHandleInvalid;
-	return PollNextEventWithPose(eOrigin, pEvent, uncbVREvent, pTrackedDevicePose);
+	if (PollNextEventWithPose(eOrigin, pEvent, uncbVREvent, pTrackedDevicePose))
+		return true;
+	// Then the events of the program's overlays
+	BaseOverlay* overlay = GetUnsafeBaseOverlay();
+	if (!overlay || !overlay->PollNextAnyOverlayEvent(pEvent, uncbVREvent, pulOverlayHandle))
+		return false;
+	if (pTrackedDevicePose)
+		*pTrackedDevicePose = {};
+	return true;
 }
 
 // The eye gaze in the head's frame for the frame being rendered (its -Z the direction looked in): false without one.

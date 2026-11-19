@@ -263,6 +263,10 @@ public:
 		return keyboard != nullptr;
 	}
 
+	// Whether the lasers' actions need syncing for this program: the keyboard is shown, or a visible overlay with an
+	// image takes mouse input
+	bool _PointerWanted();
+
 	// This program's overlays in the store's Overlays document (other programs point at them), at most ten times a second
 	// and when they changed, dropping the entries of programs that have ended: in an overlay or background application,
 	// or with laserMouse. Not holding _LayersLock().
@@ -483,6 +487,8 @@ public:
 	/** Returns true and fills the event with the next event on the overlay's event queue, if there is one.
 	 * If there are no events this method returns false. uncbVREvent should be the size in bytes of the VREvent_t struct */
 	bool PollNextOverlayEvent(vr::VROverlayHandle_t ulOverlayHandle, vr::VREvent_t* pEvent, uint32_t uncbVREvent);
+	// The next event of any of this program's overlays, with that overlay's handle (IVRSystem::PollNextEventWithPoseAndOverlays)
+	bool PollNextAnyOverlayEvent(vr::VREvent_t* pEvent, uint32_t uncbVREvent, vr::VROverlayHandle_t* pulOverlayHandle);
 
 	/** Returns the current input settings for the specified overlay. */
 	vr::EVROverlayError GetOverlayInputMethod(vr::VROverlayHandle_t ulOverlayHandle, VROverlayInputMethod* peInputMethod);

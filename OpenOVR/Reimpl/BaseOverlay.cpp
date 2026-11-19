@@ -665,6 +665,16 @@ vr::ETrackingUniverseOrigin FrameOrigin()
 	return BaseSystem::currentSpace == XR_REFERENCE_SPACE_TYPE_LOCAL ? vr::TrackingUniverseSeated : vr::TrackingUniverseStanding;
 }
 
+// The lasers read the old input's actions, which an overlay application never loads itself: an empty manifest is
+// loaded for it the first time something needs a laser. Not under the session lock (loading restarts the session).
+void EnsurePointerInput()
+{
+	if (CurrentSessionKind() != SessionKind::Overlay)
+		return;
+	if (std::shared_ptr<BaseInput> input = GetBaseInput())
+		input->LoadEmptyManifestIfRequired();
+}
+
 // Each hand's laser, from its aim pose in the frame's space; none while input isn't available
 std::array<PointerRay, 2> ReadRays(bool available)
 {
@@ -1329,6 +1339,21 @@ void BaseOverlay::_PublishOverlays()
 	});
 	sh.published = list;
 	sh.wrote = true;
+}
+
+bool BaseOverlay::_PointerWanted()
+{
+	const bool laserMouse = oovr_global_configuration.LaserMouse();
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	if (keyboard != nullptr)
+		return true;
+	for (const auto& kv : overlays) {
+		const OverlayData* o = kv.second;
+		if (o && o->visible && ((laserMouse && o->inputMethod == VROverlayInputMethod_Mouse) || o->asMouseUpdates > 0)
+		    && (o->texture.handle != nullptr || !o->rawImage.Empty()))
+			return true;
+	}
+	return false;
 }
 
 void BaseOverlay::_UpdatePointer()
@@ -2563,6 +2588,27 @@ bool BaseOverlay::PollNextOverlayEvent(VROverlayHandle_t ulOverlayHandle, VREven
 
 	return true;
 }
+bool BaseOverlay::PollNextAnyOverlayEvent(VREvent_t* pEvent, uint32_t eventSize, VROverlayHandle_t* pulOverlayHandle)
+{
+	if (!pEvent || eventSize < offsetof(VREvent_t, data))
+		return false;
+
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	TakeRemotePointerEvents();
+	for (const auto& kv : overlays) {
+		OverlayData* o = kv.second;
+		if (!o || o->eventQueue.empty())
+			continue;
+		const VREvent_t e = o->eventQueue.front();
+		o->eventQueue.pop();
+		memset(pEvent, 0, eventSize);
+		memcpy(pEvent, &e, std::min((size_t)eventSize, sizeof(e)));
+		if (pulOverlayHandle)
+			*pulOverlayHandle = (VROverlayHandle_t)(uintptr_t)o;
+		return true;
+	}
+	return false;
+}
 EVROverlayError BaseOverlay::GetOverlayInputMethod(VROverlayHandle_t ulOverlayHandle, VROverlayInputMethod* peInputMethod)
 {
 	USEH();
@@ -2577,6 +2623,8 @@ EVROverlayError BaseOverlay::SetOverlayInputMethod(VROverlayHandle_t ulOverlayHa
 {
 	USEH();
 
+	if (eInputMethod == VROverlayInputMethod_Mouse)
+		EnsurePointerInput();
 	overlay->inputMethod = eInputMethod;
 
 	return VROverlayError_None;
@@ -3310,6 +3358,7 @@ EVROverlayError BaseOverlay::ShowKeyboardWithDispatch(EGamepadTextInputMode eInp
 		SubmitPlaceholderKeyboardEvent(VREvent_KeyboardDone, forOverlay, uUserValue);
 		return VROverlayError_None;
 	}
+	EnsurePointerInput();
 	auto session = xr_session.lock_shared();
 	std::unique_ptr<VRKeyboard> made;
 	std::unique_ptr<CpuSwapchain> chain;
@@ -3534,6 +3583,7 @@ BaseOverlay::VRMessageOverlayResponse BaseOverlay::ShowMessageOverlay(const char
 		OC_UNSUPPORTED(VRMessageOverlayResponse_CouldntFindSystemOverlay, "ShowMessageOverlay: no frames of OpenLamina's own to show it in (ownFrames)");
 	// Answered with the controllers' lasers, which read the game's input actions: before it has any, nothing could
 	// answer it
+	EnsurePointerInput();
 	BaseInput* input = GetUnsafeBaseInput();
 	if (!input || !input->AreActionsLoaded())
 		OC_UNSUPPORTED(VRMessageOverlayResponse_CouldntFindSystemOverlay, "ShowMessageOverlay: the game has loaded no input yet, so nothing could answer it");

@@ -148,3 +148,20 @@ TEST_CASE("Overlay_relative_transform_is_only_read_back_when_set")
 	CHECK(overlays.GetOverlayTransformOverlayRelative(child, &got, &m) == VROverlayError_None);
 	CHECK(got == k_ulOverlayHandleInvalid);
 }
+
+TEST_CASE("Any_overlay_event_is_polled_with_its_overlay_handle")
+{
+	BaseOverlay overlays;
+	const VROverlayHandle_t first = Make(overlays, "oc.test.pollany.first");
+	const VROverlayHandle_t second = Make(overlays, "oc.test.pollany.second");
+	VREvent_t e{};
+	VROverlayHandle_t from = k_ulOverlayHandleInvalid;
+	CHECK_FALSE(overlays.PollNextAnyOverlayEvent(&e, sizeof(e), &from));
+
+	REQUIRE(overlays.ShowOverlay(second) == VROverlayError_None);
+	REQUIRE(overlays.PollNextAnyOverlayEvent(&e, sizeof(e), &from));
+	CHECK(from == second);
+	CHECK(e.eventType == VREvent_OverlayShown);
+	CHECK_FALSE(overlays.PollNextAnyOverlayEvent(&e, sizeof(e), &from));
+	(void)first;
+}
