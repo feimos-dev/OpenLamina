@@ -2326,7 +2326,7 @@ void CompositorStatsCase(CaseContext& c)
 	r["prediction_ids_match"] = render != 0 && render == game;
 	vr::TrackedDevicePose_t poses[16]{};
 	r["poses_for_last_frame"] = (int)f.comp->GetPosesForFrame(render, poses, 16);
-	r["poses_for_old_frame"] = (int)f.comp->GetPosesForFrame(render - 10, poses, 16);
+	r["poses_for_old_frame"] = (int)f.comp->GetPosesForFrame(render - 40, poses, 16);
 
 	r["fullscreen"] = f.comp->IsFullscreen();
 	r["motion_smoothing_supported"] = f.comp->IsMotionSmoothingSupported();
