@@ -4,10 +4,14 @@
 #include "stdafx.h"
 
 #include "../DrvOpenXR/DeviceIdentity.h"
+#include "Misc/Input/IndexControllerInteractionProfile.h"
 #include "Misc/Input/InteractionProfile.h"
+#include "Misc/Input/OculusInteractionProfile.h"
 #include "Misc/Input/PicoInteractionProfile.h"
 #include "Misc/Input/ViveCosmosInteractionProfile.h"
 #include "Misc/Input/ViveFocus3InteractionProfile.h"
+#include "Misc/Input/ViveInteractionProfile.h"
+#include "Misc/Input/ViveTrackerInteractionProfile.h"
 #include "Misc/xr_ext.h"
 
 namespace {
@@ -120,4 +124,22 @@ TEST_CASE("Pico_profiles_have_their_own_paths_and_types")
 	CHECK(pico4.IsInputPathValid("/user/hand/left/input/squeeze/value"));
 	CHECK_FALSE(pico4.IsInputPathValid("/user/hand/left/input/thumbrest/touch"));
 	CHECK(neo3.GetValidInputPaths() == pico4.GetValidInputPaths());
+}
+
+// Programs tell Lighthouse controllers from Oculus ones by the tracking system, as SteamVR names it (Skyrim VR loads
+// its Oculus Touch controls for "oculus"): "lighthouse" for the devices SteamVR's lighthouse driver drives
+TEST_CASE("Lighthouse_devices_name_their_tracking_system_as_SteamVR_does")
+{
+	using enum ITrackedDevice::TrackedDeviceType;
+	IndexControllerInteractionProfile index;
+	ViveWandInteractionProfile wand;
+	ViveTrackerInteractionProfile tracker;
+	OculusTouchInteractionProfile touch;
+	for (const InteractionProfile* profile : { (const InteractionProfile*)&index, (const InteractionProfile*)&wand }) {
+		CHECK(profile->GetProperty<std::string>(vr::Prop_TrackingSystemName_String, HAND_LEFT) == "lighthouse");
+		CHECK(profile->GetProperty<std::string>(vr::Prop_TrackingSystemName_String, HAND_RIGHT) == "lighthouse");
+		CHECK(profile->GetProperty<std::string>(vr::Prop_TrackingSystemName_String, HAND_NONE) == "lighthouse");
+	}
+	CHECK(tracker.GetProperty<std::string>(vr::Prop_TrackingSystemName_String, HAND_LEFT) == "lighthouse");
+	CHECK(touch.GetProperty<std::string>(vr::Prop_TrackingSystemName_String, HAND_LEFT) == "oculus");
 }
