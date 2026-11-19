@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Misc/Input/InteractionProfile.h"
+#include <atomic>
 #include "Misc/LibMonado.h"
 #include "XrTrackedDevice.h"
 
@@ -64,5 +65,5 @@ private:
 	XrControllerType type;
 	const InteractionProfile& profile;
 	bool isHandTrackingValid = false;
-	bool isPoseFromHandTracking = false;
+	std::atomic<bool> isPoseFromHandTracking{ false };
 };
