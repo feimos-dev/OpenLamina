@@ -188,3 +188,40 @@ TEST_CASE("The_interop_extension_list_fills_the_buffer_it_fits_in")
 	CHECK(strncmp(small, list, 9) == 0);
 	CHECK(std::string(BaseCompositor::InteropVulkanExtensions(true)).find("VK_KHR_external_memory_win32") != std::string::npos);
 }
+
+#include "Reimpl/BaseScreenshots.h"
+
+TEST_CASE("Screenshots_are_requested_of_a_game_that_hooked_them")
+{
+	BaseScreenshots screenshots;
+	vr::ScreenshotHandle_t handle = 0;
+	char name[64];
+	BaseScreenshots::EVRScreenshotError error;
+	using Error = BaseScreenshots::EVRScreenshotError;
+
+	// Not hooked: nobody to take it
+	CHECK(screenshots.RequestScreenshot(&handle, vr::VRScreenshotType_Stereo, "preview", "vr") == Error::VRScreenshotError_RequestFailed);
+	CHECK(handle == vr::k_unScreenshotHandleInvalid);
+
+	const vr::EVRScreenshotType types[] = { vr::VRScreenshotType_Stereo };
+	CHECK(screenshots.HookScreenshot(types, 1) == Error::VRScreenshotError_None);
+	// A type it didn't hook
+	CHECK(screenshots.RequestScreenshot(&handle, vr::VRScreenshotType_Cubemap, "preview", "vr") == Error::VRScreenshotError_RequestFailed);
+
+	REQUIRE(screenshots.RequestScreenshot(&handle, vr::VRScreenshotType_Stereo, "preview", "vr") == Error::VRScreenshotError_None);
+	CHECK(handle != vr::k_unScreenshotHandleInvalid);
+	CHECK(screenshots.GetScreenshotPropertyType(handle, &error) == vr::VRScreenshotType_Stereo);
+	CHECK(error == Error::VRScreenshotError_None);
+	CHECK(screenshots.GetScreenshotPropertyFilename(handle, vr::VRScreenshotPropertyFilenames_VR, name, sizeof(name), &error) == 3);
+	CHECK(std::string(name) == "vr");
+	char tiny[2];
+	CHECK(screenshots.GetScreenshotPropertyFilename(handle, vr::VRScreenshotPropertyFilenames_Preview, tiny, sizeof(tiny), &error) == 8);
+	CHECK(error == Error::VRScreenshotError_BufferTooSmall);
+
+	// A handle nobody was given
+	CHECK(screenshots.GetScreenshotPropertyType(handle + 100, &error) == vr::VRScreenshotType_None);
+	CHECK(error == Error::VRScreenshotError_NotFound);
+	CHECK(screenshots.GetScreenshotPropertyFilename(handle + 100, vr::VRScreenshotPropertyFilenames_VR, name, sizeof(name), &error) == 0);
+	CHECK(error == Error::VRScreenshotError_NotFound);
+	CHECK(std::string(name).empty());
+}
