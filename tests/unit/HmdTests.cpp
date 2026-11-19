@@ -53,7 +53,9 @@ public:
 	void GetDeviceToAbsoluteTrackingPose(vr::ETrackingUniverseOrigin, float, vr::TrackedDevicePose_t*, uint32_t) override {}
 	void WaitForTrackingData() override {}
 	IBackend::openvr_enum_t StoreEyeTexture(vr::EVREye, const vr::Texture_t*, const vr::VRTextureBounds_t*, vr::EVRSubmitFlags, bool) override { return 0; }
-	void SubmitFrames(bool, bool) override {}
+	void SubmitFrames(bool) override {}
+	void ClearSubmittedFrame() override {}
+	void SetRenderingSuspended(bool) override {}
 	IBackend::openvr_enum_t SetSkyboxOverride(const vr::Texture_t*, uint32_t) override { return 0; }
 	void ClearSkyboxOverride() override {}
 	bool GetFrameTiming(OOVR_Compositor_FrameTiming*, uint32_t) override { return false; }
