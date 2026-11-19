@@ -43,6 +43,8 @@
 #include <atomic>
 #include <chrono>
 #include <climits>
+#include <codecvt>
+#include <locale>
 #include <optional>
 #include <string>
 #include <utility>
