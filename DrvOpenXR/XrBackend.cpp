@@ -2531,7 +2531,7 @@ void XrBackend::CreateGenericTrackers()
 		if (!system)
 			return;
 		VREvent_t event = {
-			.eventType = type,
+			.eventType = (uint32_t)type,
 			.trackedDeviceIndex = device
 		};
 		system->_EnqueueEvent(event);
