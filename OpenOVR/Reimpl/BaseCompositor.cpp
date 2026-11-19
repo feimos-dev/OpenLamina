@@ -396,7 +396,7 @@ bool BaseCompositor::GetFrameTiming(OOVR_Compositor_FrameTiming* pTiming, uint32
 		uint32_t got = FrameStats::Get().Timings(recent.data(), count);
 		if (got > 0) {
 			uint32_t size = std::min<uint32_t>(pTiming->m_nSize, sizeof(OOVR_Compositor_FrameTiming));
-			memcpy(pTiming, &recent[got - 1], size);
+			memcpy(pTiming, &recent[0], size);
 			pTiming->m_nSize = size;
 			return true;
 		}
@@ -451,6 +451,7 @@ void BaseCompositor::GetCumulativeStats(OOVR_Compositor_CumulativeStats* pStats,
 			stats.m_nNumDroppedFrames = scene["frame_stats"]["dropped"].asUInt();
 			stats.m_nNumReprojectedFrames = scene["frame_stats"]["reprojected"].asUInt();
 		}
+		memset(pStats, 0, nStatsSizeInBytes);
 		memcpy(pStats, &stats, std::min<size_t>(nStatsSizeInBytes, sizeof(stats)));
 		return;
 	}
