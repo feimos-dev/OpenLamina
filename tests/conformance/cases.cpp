@@ -2608,6 +2608,9 @@ void LaserMouseCase(CaseContext& c)
 		}
 		vr::VREvent_t ev{};
 		while (ov->PollNextOverlayEvent(h, &ev, sizeof(ev))) {
+			// Not about the mouse: the image's load
+			if (ev.eventType == vr::VREvent_ImageLoaded)
+				continue;
 			const std::string name = EventName(ev.eventType);
 			if (name != last)
 				order.append(name);
