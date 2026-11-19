@@ -59,6 +59,9 @@ static PFNGLBINDRENDERBUFFERPROC glBindRenderbuffer = nullptr;
 static PFNGLGETRENDERBUFFERPARAMETERIVPROC glGetRenderbufferParameteriv = nullptr;
 static PFNGLFRAMEBUFFERRENDERBUFFERPROC glFramebufferRenderbuffer = nullptr;
 
+#ifndef GL_CLAMP_TO_EDGE
+#define GL_CLAMP_TO_EDGE 0x812F
+#endif
 #ifndef GL_RENDERBUFFER
 #define GL_RENDERBUFFER 0x8D41
 #endif
