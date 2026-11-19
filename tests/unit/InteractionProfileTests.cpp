@@ -6,6 +6,7 @@
 #include "../DrvOpenXR/DeviceIdentity.h"
 #include "Misc/Input/InteractionProfile.h"
 #include "Misc/Input/ViveCosmosInteractionProfile.h"
+#include "Misc/Input/ViveFocus3InteractionProfile.h"
 #include "Misc/xr_ext.h"
 
 namespace {
@@ -28,6 +29,12 @@ TEST_CASE("Extension_profiles_are_offered_only_when_their_extension_is_enabled")
 
 	XrExt with(0, { "XR_HTC_vive_cosmos_controller_interaction" });
 	CHECK(HasProfile(InteractionProfile::CreateProfiles(with), cosmos));
+
+	const std::string focus3 = "/interaction_profiles/htc/vive_focus3_controller";
+	CHECK_FALSE(HasProfile(InteractionProfile::CreateProfiles(with), focus3));
+	XrExt withFocus3(0, { "XR_HTC_vive_focus3_controller_interaction" });
+	CHECK(HasProfile(InteractionProfile::CreateProfiles(withFocus3), focus3));
+	CHECK_FALSE(HasProfile(InteractionProfile::CreateProfiles(withFocus3), cosmos));
 }
 
 TEST_CASE("Vive_cosmos_profile_paths")
@@ -63,4 +70,30 @@ TEST_CASE("Vive_cosmos_controller_identity")
 	CHECK((right.supportedButtons & vr::ButtonMaskFromId(vr::k_EButton_A)) != 0);
 	CHECK((right.supportedButtons & vr::ButtonMaskFromId(vr::k_EButton_SteamVR_Trigger)) != 0);
 	CHECK((right.supportedButtons & vr::ButtonMaskFromId(vr::k_EButton_Grip)) != 0);
+}
+
+TEST_CASE("Vive_focus3_profile_paths")
+{
+	ViveFocus3InteractionProfile focus3;
+	CHECK(focus3.GetPath() == "/interaction_profiles/htc/vive_focus3_controller");
+	CHECK(std::string(*focus3.GetOpenVRName()) == "vive_focus3_controller");
+
+	// The squeeze has a value and a touch, the thumbrest a touch
+	CHECK(focus3.IsInputPathValid("/user/hand/left/input/squeeze/value"));
+	CHECK(focus3.IsInputPathValid("/user/hand/right/input/squeeze/touch"));
+	CHECK(focus3.IsInputPathValid("/user/hand/right/input/thumbrest/touch"));
+	// The face buttons have no touch, and are on one hand each
+	CHECK_FALSE(focus3.IsInputPathValid("/user/hand/right/input/a/touch"));
+	CHECK(focus3.IsInputPathValid("/user/hand/left/input/y/click"));
+	CHECK_FALSE(focus3.IsInputPathValid("/user/hand/right/input/y/click"));
+
+	CHECK(focus3.TranslateAction("/user/hand/right/input/grip/value") == "/user/hand/right/input/squeeze/value");
+}
+
+TEST_CASE("Vive_focus3_controller_identity")
+{
+	ViveFocus3InteractionProfile focus3;
+	DeviceIdentity left = ControllerIdentity(focus3, vr::TrackedControllerRole_LeftHand);
+	CHECK(left.controllerType == "vive_focus3_controller");
+	CHECK((left.supportedButtons & vr::ButtonMaskFromId(vr::k_EButton_ApplicationMenu)) != 0);
 }

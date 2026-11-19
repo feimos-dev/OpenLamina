@@ -16,6 +16,7 @@
 #include "OculusInteractionProfile.h"
 #include "ReverbG2InteractionProfile.h"
 #include "ViveCosmosInteractionProfile.h"
+#include "ViveFocus3InteractionProfile.h"
 #include "ViveInteractionProfile.h"
 #include "ViveTrackerInteractionProfile.h"
 
@@ -150,6 +151,8 @@ InteractionProfile::ProfileList InteractionProfile::CreateProfiles(XrExt& ext)
 	profiles.emplace_back(std::make_unique<OculusTouchInteractionProfile>());
 	if (ext.ExtensionEnabled(OC_XR_HTC_VIVE_COSMOS_CONTROLLER_INTERACTION_EXTENSION_NAME))
 		profiles.emplace_back(std::make_unique<ViveCosmosInteractionProfile>());
+	if (ext.ExtensionEnabled(OC_XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME))
+		profiles.emplace_back(std::make_unique<ViveFocus3InteractionProfile>());
 	profiles.emplace_back(std::make_unique<KhrSimpleInteractionProfile>());
 	profiles.emplace_back(std::make_unique<ViveTrackerInteractionProfile>());
 	return profiles;
