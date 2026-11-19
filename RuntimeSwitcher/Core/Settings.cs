@@ -139,9 +139,9 @@ namespace RuntimeSwitcher.Core
                 "Automatic goes by your locale: UK for British English, US otherwise.",
                 "", "Automatic", "us", "US", "uk", "UK"),
 
-            new Setting(Input, "inputEvaluator", SettingKind.Choice, "direct", "Controller bindings",
-                "Try SteamVR's binding modes when a game's controls don't work: toggles, d-pads, chords and legacy " +
-                "input then behave as in SteamVR.",
+            new Setting(Input, "inputEvaluator", SettingKind.Choice, "steamvr", "Controller bindings",
+                "With SteamVR's binding modes, toggles, d-pads, chords and legacy input behave as in SteamVR. Try " +
+                "plain OpenXR bindings when a game's controls don't work.",
                 "direct", "As OpenXR bindings", "steamvr", "SteamVR's binding modes"),
             Bool(Input, "haptics", true, "Controller vibration", "Haptic feedback from games."),
             Bool(Input, "eyeTracking", true, "Give games the eye gaze",
@@ -151,9 +151,9 @@ namespace RuntimeSwitcher.Core
                 "As SteamVR's resolution setting: 1.45 is 145%. Higher is sharper and slower."),
             Bool(Picture, "renderCustomHands", true, "Draw OpenLamina's hand models",
                 "Some games have models of their own, which show when this is off."),
-            Bool(Picture, "steamvrRenderModels", false, "Use SteamVR's controller models",
+            Bool(Picture, "steamvrRenderModels", true, "Use SteamVR's controller models",
                 "From your SteamVR install, with their moving parts. When off, OpenLamina's built-in models."),
-            Bool(Picture, "drawBounds", false, "Show the play area's edge when near it",
+            Bool(Picture, "drawBounds", true, "Show the play area's edge when near it",
                 "A grid wall, for OpenXR runtimes that show no boundary of their own."),
             Bool(Picture, "mirrorWindow", false, "Desktop mirror window for games that ask for one",
                 "Shows the game's left eye. Costs some frame time on a headset of high resolution."),
@@ -163,7 +163,7 @@ namespace RuntimeSwitcher.Core
                 "overlays, or its skybox."),
             Bool(Games, "sessionEvents", true, "Tell games when focus is lost or the headset is taken off",
                 "The events SteamVR sends. Some games pause on them."),
-            Bool(Games, "applyZeroPoses", false, "Let recentring tools move the play space (Monado)",
+            Bool(Games, "applyZeroPoses", true, "Let recentring tools move the play space (Monado)",
                 "A standing zero pose that a program sets moves Monado's stage, for every program, until Monado " +
                 "restarts."),
             Bool(Games, "useSubmittedPose", true, "Use the head pose a game submits with its frames",
