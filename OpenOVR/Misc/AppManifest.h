@@ -13,7 +13,7 @@
 class SharedStore;
 
 struct AppManifestEntry {
-	std::string appKey, launchType, binaryPath, arguments, workingDirectory, url, imagePath, actionManifestPath, nameEnUs, descriptionEnUs, source, newsUrl;
+	std::string appKey, launchType, binaryPath, arguments, workingDirectory, url, imagePath, imagePathCapsule, actionManifestPath, nameEnUs, descriptionEnUs, source, newsUrl;
 	bool isDashboardOverlay = false, isTemplate = false, isInstanced = false, isInternal = false, wantsCompositorPauseInStandby = false, isHidden = false;
 	std::vector<std::string> mimeTypes;
 	std::filesystem::path manifestPath;

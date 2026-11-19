@@ -560,3 +560,29 @@ TEST_CASE("Scene_process_changes_are_announced")
 	CHECK(changed.data.process.pid == 0);
 	CHECK(changed.data.process.oldPid == oc_current_pid());
 }
+
+TEST_CASE("Capsule_image_and_hidden_flag_are_properties")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	BaseApplications apps(store);
+	BaseApplications::EVRApplicationError error;
+
+	fs::path manifest = dir.path / "hidden.vrmanifest";
+	std::ofstream(manifest) << R"({"applications":[{"app_key":"oc.test.hidden","launch_type":"url","url":"https://example.invalid/",)"
+	                           R"("image_path_capsule":"capsule.png","is_hidden":true},)"
+	                           R"({"app_key":"oc.test.shown","launch_type":"url","url":"https://example.invalid/"}]})";
+	REQUIRE(apps.AddApplicationManifest(PathToUtf8(manifest).c_str()) == VRApplicationError_None);
+
+	char value[512];
+	CHECK(apps.GetApplicationPropertyString("oc.test.hidden", VRApplicationProperty_ImagePathCapsule_String, value, sizeof(value), &error) > 1);
+	CHECK(error == VRApplicationError_None);
+	CHECK(fs::path(value) == dir.path / "capsule.png");
+	apps.GetApplicationPropertyString("oc.test.shown", VRApplicationProperty_ImagePathCapsule_String, value, sizeof(value), &error);
+	CHECK(error == VRApplicationError_PropertyNotSet);
+
+	CHECK(apps.GetApplicationPropertyBool("oc.test.hidden", VRApplicationProperty_IsHidden_Bool, &error));
+	CHECK(error == VRApplicationError_None);
+	CHECK_FALSE(apps.GetApplicationPropertyBool("oc.test.shown", VRApplicationProperty_IsHidden_Bool, &error));
+	CHECK(error == VRApplicationError_None);
+}

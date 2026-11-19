@@ -108,6 +108,7 @@ Json::Value AppManifestEntry::ToJson() const
 	v["working_directory"] = workingDirectory;
 	v["url"] = url;
 	v["image_path"] = imagePath;
+	v["image_path_capsule"] = imagePathCapsule;
 	v["action_manifest_path"] = actionManifestPath;
 	v["name"] = nameEnUs;
 	v["description"] = descriptionEnUs;
@@ -139,6 +140,7 @@ AppManifestEntry AppManifestEntry::FromJson(const Json::Value& v)
 	e.workingDirectory = StringMember(v, "working_directory");
 	e.url = StringMember(v, "url");
 	e.imagePath = StringMember(v, "image_path");
+	e.imagePathCapsule = StringMember(v, "image_path_capsule");
 	e.actionManifestPath = StringMember(v, "action_manifest_path");
 	e.nameEnUs = StringMember(v, "name");
 	e.descriptionEnUs = StringMember(v, "description");
@@ -201,6 +203,7 @@ std::vector<AppManifestEntry> ParseAppManifest(const fs::path& path, std::vector
 		e.workingDirectory = StringMember(app, "working_directory");
 		e.url = StringMember(app, "url");
 		e.imagePath = StringMember(app, "image_path");
+		e.imagePathCapsule = StringMember(app, "image_path_capsule");
 		e.actionManifestPath = StringMember(app, "action_manifest_path");
 		e.newsUrl = StringMember(app, "news_url");
 		e.source = source;

@@ -512,6 +512,9 @@ uint32_t BaseApplications::GetApplicationPropertyString(const char* pchAppKey, E
 	case VRApplicationProperty_ActionManifestURL_String:
 		value = PathToUtf8(app->Resolved(app->actionManifestPath));
 		break;
+	case VRApplicationProperty_ImagePathCapsule_String:
+		value = PathToUtf8(app->Resolved(app->imagePathCapsule));
+		break;
 	default:
 		return fail(VRApplicationError_UnknownProperty);
 	}
@@ -546,6 +549,8 @@ bool BaseApplications::GetApplicationPropertyBool(const char* pchAppKey, EVRAppl
 		return answer(VRApplicationError_None, app->isInternal);
 	case VRApplicationProperty_WantsCompositorPauseInStandby_Bool:
 		return answer(VRApplicationError_None, app->wantsCompositorPauseInStandby);
+	case VRApplicationProperty_IsHidden_Bool:
+		return answer(VRApplicationError_None, app->isHidden);
 	default:
 		return answer(VRApplicationError_UnknownProperty, false);
 	}
