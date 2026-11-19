@@ -27,6 +27,7 @@ TEST_CASE("The IPD before the runtime has views is a human one")
 
 #include "Drivers/Backend.h"
 #include "Reimpl/BaseExtendedDisplay.h"
+#include "Reimpl/BaseHeadsetView.h"
 
 namespace {
 
@@ -121,4 +122,47 @@ TEST_CASE("The extended display's eye viewports tile the window")
 	CHECK(h == 1200);
 	// Outputs the caller doesn't want
 	display.GetEyeOutputViewport(vr::Eye_Left, nullptr, nullptr, nullptr, nullptr);
+}
+
+TEST_CASE("The headset view reads back what was set")
+{
+	WithEyeSize eyes(1000, 1250);
+	BaseHeadsetView view;
+
+	view.SetHeadsetViewSize(800, 600);
+	uint32_t w = 0, h = 0;
+	view.GetHeadsetViewSize(&w, &h);
+	CHECK(w == 800);
+	CHECK(h == 600);
+
+	// Clamped to the largest size
+	view.SetHeadsetViewSize(100000, 100000);
+	view.GetHeadsetViewSize(&w, &h);
+	CHECK(w == 3840u);
+	CHECK(h == 2160u);
+
+	view.SetHeadsetViewMode(HeadsetViewMode_Right);
+	CHECK(view.GetHeadsetViewMode() == HeadsetViewMode_Right);
+	view.SetHeadsetViewMode((OOVR_HeadsetViewMode_t)77);
+	CHECK(view.GetHeadsetViewMode() == HeadsetViewMode_Right);
+
+	view.SetHeadsetViewCropped(true);
+	CHECK(view.GetHeadsetViewCropped());
+
+	view.SetHeadsetViewBlendRange(0.25f, 3.0f);
+	float start = -1, end = -1;
+	view.GetHeadsetViewBlendRange(&start, &end);
+	CHECK(start == doctest::Approx(0.25f));
+	CHECK(end == doctest::Approx(1.0f));
+}
+
+TEST_CASE("The headset view's aspect ratio follows the eye and the mode")
+{
+	WithEyeSize eyes(1000, 1250);
+	BaseHeadsetView view;
+
+	view.SetHeadsetViewMode(HeadsetViewMode_Left);
+	CHECK(view.GetHeadsetViewAspectRatio() == doctest::Approx(0.8f));
+	view.SetHeadsetViewMode(HeadsetViewMode_Both);
+	CHECK(view.GetHeadsetViewAspectRatio() == doctest::Approx(1.6f));
 }
