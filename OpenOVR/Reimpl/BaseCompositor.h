@@ -138,7 +138,7 @@ enum OOVR_Compositor_DeviceType {
 
 class BaseCompositor {
 private:
-	bool leftEyeSubmitted = false, rightEyeSubmitted = false;
+	std::atomic<bool> leftEyeSubmitted{ false }, rightEyeSubmitted{ false };
 
 	// The old compositor window calls (IVRCompositor_005-008) and SetGraphicsDevice (005, 006)
 	bool oldVSync = true;
@@ -148,7 +148,7 @@ private:
 	vr::HmdColor_t fadeColour = { 0, 0, 0, 0 };
 	float fadeTime = 0;
 
-	bool isInSkybox = false;
+	std::atomic<bool> isInSkybox{ false };
 
 	// The poses WaitGetPoses gave the last few frames, by pose prediction id (GetPosesForFrame); under posesLock, as
 	// games ask for them from other threads
@@ -161,7 +161,7 @@ private:
 	std::mutex posesLock;
 
 	// True if the current frame has only nullptr textures supplied, and should be ignored
-	bool isNullRender = false;
+	std::atomic<bool> isNullRender{ false };
 	std::atomic<int32_t> explicitTimingMode{ 0 };
 
 public:
