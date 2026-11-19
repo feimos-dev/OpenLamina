@@ -22,16 +22,6 @@ public:
 	virtual void Delete() = 0;
 };
 
-#if defined(BASE_IMPL) || defined(GENFILE)
-
-#define STUBBED()                                                                                                            \
-	do {                                                                                                                     \
-		std::string str = "Hit stubbed file at " __FILE__ ":" + std::to_string(__LINE__) + " func " + std::string(__func__); \
-		OOVR_ABORT(str.c_str());                                                                                             \
-	} while (0)
-
-#endif
-
 #if defined(GENFILE)
 #define BASE_FLAG(...)
 #define GEN_INTERFACE(if_name, version, ...)

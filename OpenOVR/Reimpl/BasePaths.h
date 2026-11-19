@@ -15,6 +15,9 @@ typedef uint64_t OOVR_PathHandle_t;
  */
 class BasePaths {
 public:
+	// How many distinct paths are kept; a path past that gets no handle
+	static constexpr size_t kMaxPaths = 65536;
+
 	vr::ETrackedPropertyError StringToHandle(OOVR_PathHandle_t* pHandle, const char* pchPath);
 	vr::ETrackedPropertyError HandleToString(OOVR_PathHandle_t pHandle, char* pchBuffer, uint32_t unBufferSize, uint32_t* punBufferSizeUsed);
 

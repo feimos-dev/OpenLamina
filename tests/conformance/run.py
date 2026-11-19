@@ -53,7 +53,8 @@ SHARED_STORES = {"events-listen": "events", "events-commit": "events", "chaperon
                  "background-app": "background", "background-app-game": "background"}
 # Cases that read files of SteamVR's install get a fixture of our own as SteamVR (OC_TEST_STEAMVR_DIR, which wins over
 # OC_TEST_NO_STEAMVR); everything else runs without SteamVR
-CASE_ENV = {"render-models": {"OC_TEST_STEAMVR_DIR": str(HERE.parent / "unit" / "data" / "steamvr")}}
+STEAMVR_FIXTURE = {"OC_TEST_STEAMVR_DIR": str(HERE.parent / "unit" / "data" / "steamvr")}
+CASE_ENV = {"render-models": STEAMVR_FIXTURE, "state-and-resources": STEAMVR_FIXTURE}
 # SteamVR's answers while vrserver was starting or stopping between children (Retry, AnotherAppLaunching,
 # ShuttingDown): a recording keeps them, a comparison skips them
 STEAMVR_TRANSIENT = {115, 117, 119}
@@ -64,6 +65,11 @@ def load_versions():
     for line in (HERE / "interfaces.txt").read_text(encoding="utf-8").splitlines():
         parts = line.split()
         if parts and not line.startswith("#") and len(parts) > 1 and parts[1] == "app":
+            versions.append(parts[0])
+    # Our own interfaces (custom_interfaces.txt)
+    for line in (HERE / "custom_interfaces.txt").read_text(encoding="utf-8").splitlines():
+        parts = line.split()
+        if parts and not line.startswith("#"):
             versions.append(parts[0])
     return versions
 

@@ -19,10 +19,12 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 
 #include "Misc/Config.h"
 #include "Misc/EnumNames.h"
+#include "Misc/LibMonado.h"
 
 // Specific to OCOVR
 #include "Drivers/Backend.h"
@@ -33,12 +35,34 @@ using namespace vr;
 // Binary-compatible openvr_api.dll implementation
 static bool running;
 static bool running_ovr; // are we in an apptype which uses LibOVR?
-static uint32_t current_init_token = 1;
+// Changes with every session start: programs drop the interface pointers they cached under an earlier one
+static uint32_t current_init_token = 0;
 static EVRApplicationType current_apptype;
 // Inits of a running Scene app not yet matched by a shutdown (a second Init succeeds and is counted)
 static int scene_init_count = 0;
 // A Utility app has called Init: it may have the interfaces whose APPTYPE flag allows Utility, with no backend
 static bool utility_init = false;
+// Inits refused while a session was up, whose Shutdown (made by the caller on failure) doesn't end that session
+static int refused_init_count = 0;
+// Init, Shutdown and the interface lookups run on whatever threads the program uses; a lookup of an FnTable calls itself
+static std::recursive_mutex state_mutex;
+
+static void NewInitToken()
+{
+	// Never 0: that is what a refused Init returns
+	if (++current_init_token == 0)
+		current_init_token = 1;
+}
+
+// Answers a refused Init. Its caller shuts down after it, which mustn't end a session another caller uses.
+static uint32_t RefuseInit(EVRInitError* peError, EVRInitError error)
+{
+	if (peError)
+		*peError = error;
+	if (running || utility_init)
+		refused_init_count++;
+	return 0;
+}
 // Unknown interface names already logged (games ask from several threads)
 static std::set<std::string> logged_unknown_interfaces;
 static std::mutex logged_unknown_interfaces_mutex;
@@ -70,6 +94,8 @@ VR_INTERFACE void* VR_CALLTYPE VR_GetGenericInterface(const char* interfaceVersi
 			*error = VRInitError_Init_InvalidInterface;
 		return NULL;
 	}
+
+	std::lock_guard<std::recursive_mutex> lock(state_mutex);
 
 	if (!running && !utility_init) {
 		OOVR_LOGF("[INFO] VR_GetGenericInterface called while OOVR not running, setting error=NotInitialized, for interfaceVersion=%s", interfaceVersion);
@@ -234,7 +260,8 @@ VR_INTERFACE const char* VR_CALLTYPE VR_GetVRInitErrorAsEnglishDescription(EVRIn
 		// clang-format on
 
 	default:
-		return "VRInitError_Init_IllegalTypeTransition";
+		// The rest are named by their symbol; a value the header doesn't have says so
+		return OC_EnumNameAsSteamVR("EVRInitError", (int32_t)error, "Unknown error (%d)");
 	}
 }
 
@@ -258,6 +285,8 @@ VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(EVRInitError* peError, EVRApp
 
 	oovr_install_crash_handler();
 
+	std::lock_guard<std::recursive_mutex> lock(state_mutex);
+
 	if (eApplicationType == VRApplication_Bootstrapper) {
 #ifdef _WIN32
 		char szFileName[MAX_PATH];
@@ -269,15 +298,11 @@ VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(EVRInitError* peError, EVRApp
 		if (filename == "vrstartup.exe") {
 			// AFAIK vrstartup is the only program that uses this mode, and returning an
 			// error makes it exit immediately.
-			if (peError)
-				*peError = VRInitError_Unknown;
-			return 0;
+			return RefuseInit(peError, VRInitError_Unknown);
 		}
 #endif
 		OOVR_LOG("Refusing the Bootstrapper application type: only vrstartup.exe uses it");
-		if (peError)
-			*peError = VRInitError_Init_InvalidApplicationType;
-		return 0;
+		return RefuseInit(peError, VRInitError_Init_InvalidApplicationType);
 	}
 
 	if (eApplicationType == VRApplication_Utility) {
@@ -287,7 +312,10 @@ VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(EVRInitError* peError, EVRApp
 			return current_init_token;
 		}
 		// No backend: only the interfaces a Utility app may have (APPTYPE flag), until its Shutdown
-		utility_init = true;
+		if (!utility_init) {
+			utility_init = true;
+			NewInitToken();
+		}
 		BaseClientCore::appType = eApplicationType;
 		return current_init_token;
 	}
@@ -296,9 +324,7 @@ VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(EVRInitError* peError, EVRApp
 		// The Steam client's own connection only watches the VR system: it is answered as a runtime does when nothing
 		// is running, without starting the OpenXR runtime (Linux lets other Background apps in, for Proton)
 		OOVR_LOG_ONCE("Refusing the Steam client's Background connection: no VR system is running");
-		if (peError)
-			*peError = VRInitError_Init_NoServerForBackgroundApp;
-		return 0;
+		return RefuseInit(peError, VRInitError_Init_NoServerForBackgroundApp);
 	}
 
 	// Overlay and background apps get sessions of their own where the OpenXR runtime has them (helperApps): the backend
@@ -313,10 +339,7 @@ VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(EVRInitError* peError, EVRApp
 			// Overlays and background apps aren't games, so refuse them with an init error rather than ending
 			// the program: it can then carry on as if VR weren't there.
 			OOVR_LOGF("Refusing application type %d: OpenLamina runs games only", (int)eApplicationType);
-			if (peError) {
-				*peError = eApplicationType == VRApplication_Background ? VRInitError_Init_NoServerForBackgroundApp : VRInitError_Init_InvalidApplicationType;
-			}
-			return 0;
+			return RefuseInit(peError, eApplicationType == VRApplication_Background ? VRInitError_Init_NoServerForBackgroundApp : VRInitError_Init_InvalidApplicationType);
 		}
 
 	if (running) {
@@ -348,6 +371,7 @@ VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(EVRInitError* peError, EVRApp
 	// An earlier Utility Init not yet shut down is matched by a Shutdown too
 	scene_init_count = utility_init ? 2 : 1;
 	utility_init = false;
+	NewInitToken();
 
 	return current_init_token;
 }
@@ -408,13 +432,33 @@ VR_INTERFACE uint32_t VR_CALLTYPE HmdSystemFactory()
 
 VR_INTERFACE bool VR_CALLTYPE VR_IsInterfaceVersionValid(const char* pchInterfaceVersion)
 {
-	return true; // Kinda dodgy
+	if (!pchInterfaceVersion)
+		return false;
+
+	// The function table of a version is as valid as the version
+	const char* fnTablePrefix = "FnTable:";
+	if (!strncmp(fnTablePrefix, pchInterfaceVersion, strlen(fnTablePrefix)))
+		pchInterfaceVersion += strlen(fnTablePrefix);
+
+	bool known = false;
+	GetInterfaceFlagsByName(pchInterfaceVersion, "APPTYPE", &known);
+	if (known)
+		return true;
+
+	// GetInterfaceFlagsByName only knows the interfaces with flags: making the interface tells the rest
+	void* probe = CreateInterfaceByName(pchInterfaceVersion);
+	if (!probe)
+		return false;
+	((CVRCorrectLayout*)probe)->Delete();
+	return true;
 }
 
 VR_INTERFACE bool VR_CALLTYPE VR_IsRuntimeInstalled()
 {
-	// TODO in future check that the Oculus Runtime is installed
-	return true;
+	// An OpenXR runtime is registered (or named by XR_RUNTIME_JSON) and its manifest is there
+	std::optional<std::filesystem::path> manifest = LibMonado::ActiveRuntimeManifest();
+	std::error_code ec;
+	return manifest && std::filesystem::exists(*manifest, ec);
 }
 
 VR_INTERFACE const char* VR_CALLTYPE VR_RuntimePath()
@@ -438,10 +482,32 @@ VR_INTERFACE const char* VR_CALLTYPE VR_RuntimePath()
 	return path.c_str();
 }
 
+VR_INTERFACE bool VR_GetRuntimePath(char* pchPathBuffer, uint32_t unBufferSize, uint32_t* punRequiredBufferSize)
+{
+	const char* path = VR_RuntimePath();
+	// Including the terminator
+	const size_t needed = strlen(path) + 1;
+	if (punRequiredBufferSize)
+		*punRequiredBufferSize = (uint32_t)needed;
+	if (!pchPathBuffer || unBufferSize < needed)
+		return false;
+	memcpy(pchPathBuffer, path, needed);
+	return true;
+}
+
 VR_INTERFACE void VR_CALLTYPE VR_ShutdownInternal()
 {
+	std::lock_guard<std::recursive_mutex> lock(state_mutex);
+
+	// The Shutdown that follows a refused Init: the session belongs to someone else
+	if ((running || utility_init) && refused_init_count > 0) {
+		refused_init_count--;
+		OOVR_LOG("Shutdown after a refused Init: keeping the session");
+		return;
+	}
 	if (utility_init && !running) {
 		utility_init = false;
+		refused_init_count = 0;
 		BaseClientCore::appType = VRApplication_Max;
 		interfaces.clear();
 		return;
@@ -450,13 +516,13 @@ VR_INTERFACE void VR_CALLTYPE VR_ShutdownInternal()
 		OOVR_LOG("Shutdown while not running: ignored");
 		return;
 	}
-	// A Shutdown after a refused Init (say a plugin's Background one) can't be told from the game's own, so it's counted
 	if (scene_init_count > 1) {
 		scene_init_count--;
 		OOVR_LOGF("Shutdown with %d more Init(s) to match: keeping the session", scene_init_count);
 		return;
 	}
 	scene_init_count = 0;
+	refused_init_count = 0;
 	utility_init = false;
 
 	OOVR_LOG("OpenLamina shutdown");
@@ -484,19 +550,19 @@ VR_INTERFACE void VR_CALLTYPE VR_ShutdownInternal()
 
 VR_INTERFACE void* VRClientCoreFactory(const char* pInterfaceName, int* pReturnCode)
 {
-	if (alternativeCoreFactory) {
-	use_alt:
-		return alternativeCoreFactory(pInterfaceName, pReturnCode);
-	}
-
-	bool shouldUseOC = BaseClientCore::CheckAppEnabled();
-	if (!shouldUseOC) {
+	// The choice between OpenLamina and SteamVR is made on the first call only
+	static std::once_flag chosen;
+	std::call_once(chosen, [] {
+		if (BaseClientCore::CheckAppEnabled())
+			return;
 		alternativeCoreFactory = PlatformGetAlternativeCoreFactory();
-		if (alternativeCoreFactory)
-			goto use_alt;
-		// The app was set to SteamVR, which couldn't be loaded (logged): the game still starts, on OpenComposite
-		OOVR_LOG("SteamVR was chosen for this program but couldn't be loaded; using OpenLamina instead");
-	}
+		if (!alternativeCoreFactory) {
+			// The app was set to SteamVR, which couldn't be loaded (logged): the game still starts, on OpenComposite
+			OOVR_LOG("SteamVR was chosen for this program but couldn't be loaded; using OpenLamina instead");
+		}
+	});
+	if (alternativeCoreFactory)
+		return alternativeCoreFactory(pInterfaceName, pReturnCode);
 
 	if (pReturnCode)
 		*pReturnCode = VRInitError_None;

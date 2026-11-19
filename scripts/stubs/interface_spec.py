@@ -63,9 +63,5 @@ class InterfaceSpec:
 def build_interface(name, version, flags, spec):
     if "CUSTOM" in flags:
         return stubs.interface.CustomInterface(name, version, flags, spec)
-    elif "API" in flags:
-        return stubs.interface.APIInterface(name, version, flags, spec)
-    elif "DRIVER" in flags:
-        return stubs.interface.DriverInterface(name, version, flags, spec)
     else:
         return stubs.interface.InterfaceDef(name, version, flags, spec)

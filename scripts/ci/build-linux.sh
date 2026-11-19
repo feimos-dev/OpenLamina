@@ -59,7 +59,7 @@ if [ "$(od -An -tx1 -j4 -N1 "$out/$lib" | tr -d ' ')" != "$class" ]; then
 	exit 1
 fi
 # The entry points of a system-wide install (vrclient) and of a per-game one (in place of libopenvr_api.so).
-for symbol in VRClientCoreFactory VR_InitInternal2; do
+for symbol in VRClientCoreFactory VR_InitInternal2 VR_GetRuntimePath; do
 	if ! nm -D --defined-only "$out/$lib" | grep -q " $symbol\$"; then
 		echo "$out/$lib doesn't export $symbol." >&2
 		exit 1

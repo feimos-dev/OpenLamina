@@ -26,6 +26,13 @@
 #include <utility>
 #include <vector>
 
+// The calling convention of a function table's entries (openvr_capi.h)
+#ifdef _WIN32
+#define OC_FNTABLE_CALL __stdcall
+#else
+#define OC_FNTABLE_CALL
+#endif
+
 enum class ArgSet { Valid, Edge, Null, Invalid };
 
 struct CallContext {
