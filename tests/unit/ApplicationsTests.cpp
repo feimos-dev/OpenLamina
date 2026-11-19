@@ -586,3 +586,38 @@ TEST_CASE("Capsule_image_and_hidden_flag_are_properties")
 	CHECK_FALSE(apps.GetApplicationPropertyBool("oc.test.shown", VRApplicationProperty_IsHidden_Bool, &error));
 	CHECK(error == VRApplicationError_None);
 }
+
+TEST_CASE("Process_id_taken_over_by_another_program_is_not_the_application")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	BaseApplications apps(store);
+	REQUIRE(apps.AddApplicationManifest(PathToUtf8(Data("echo.vrmanifest")).c_str()) == VRApplicationError_None);
+#ifdef _WIN32
+	uint32_t other = 4; // System, always there
+#else
+	uint32_t other = (uint32_t)getppid();
+#endif
+	uint64_t start = SharedStore::ProcessStartTime(other);
+	REQUIRE(start != 0);
+	char key[64];
+
+	// Listed by its start time: known
+	REQUIRE(apps.RegisterSubprocess(other) == VRApplicationError_None);
+	CHECK(apps.GetApplicationKeyByProcessId(other, key, sizeof(key)) == VRApplicationError_None);
+	CHECK(apps.GetApplicationProcessId(CurrentProcessAppKey(store).c_str()) != 0);
+
+	// The id listed for a process that started at another time
+	store.Update(StoreDoc::Applications, [&](Json::Value& doc) {
+		doc["pids"][std::to_string(other)] = "oc.test.echo";
+		doc["pid_starts"][std::to_string(other)] = (Json::UInt64)(start + 1);
+	});
+	CHECK(apps.GetApplicationKeyByProcessId(other, key, sizeof(key)) == VRApplicationError_UnknownApplication);
+	CHECK(apps.GetApplicationProcessId("oc.test.echo") == 0);
+
+	// Dropped at the next change to the document
+	CHECK(apps.SetApplicationAutoLaunch("oc.test.echo", true) == VRApplicationError_None);
+	Json::Value doc = store.Read(StoreDoc::Applications);
+	CHECK_FALSE(doc["pids"].isMember(std::to_string(other)));
+	CHECK_FALSE(doc["pid_starts"].isMember(std::to_string(other)));
+}

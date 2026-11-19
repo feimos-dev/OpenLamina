@@ -24,7 +24,7 @@ typedef OOVR_EVRApplicationError EVRApplicationError;
 // The application registry lives in the store's Applications document, shared by every OpenComposite program
 // of the user:
 //   {"manifests": {"<path>": {"temporary": bool, "owner_pid": n, "apps": [entries]}},
-//    "autolaunch": {"<key>": bool}, "mime_defaults": {"<type>": "<key>"}, "pids": {"<pid>": "<key>"},
+//    "autolaunch": {"<key>": bool}, "mime_defaults": {"<type>": "<key>"}, "pids": {"<pid>": "<key>"}, "pid_starts": {"<pid>": start_time},
 //    "last_launch": {"<key>": unix_seconds}}
 // and the scene application in the Scene document: {"pid": n, "app_key": "...", "since_ms": n}.
 
@@ -99,6 +99,26 @@ uint64_t UInt64Or(const Json::Value& v, uint64_t fallback)
 	return v.isUInt64() ? v.asUInt64() : fallback;
 }
 
+// A process id listed in the Applications document's pids, with the start time it had then: a process that took
+// over the id since is another one
+void RecordProcess(Json::Value& doc, uint32_t pid, const std::string& key)
+{
+	std::string name = std::to_string(pid);
+	doc["pids"][name] = key;
+	uint64_t start = SharedStore::ProcessStartTime(pid);
+	if (start)
+		doc["pid_starts"][name] = (Json::UInt64)start;
+	else if (doc["pid_starts"].isObject())
+		doc["pid_starts"].removeMember(name);
+}
+
+// Whether the process listed under that name still runs, and is the one that was listed
+bool ListedProcessAlive(const Json::Value& doc, const std::string& name)
+{
+	const Json::Value& starts = doc["pid_starts"];
+	return SharedStore::IsSameProcessAlive(ParsePid(name), starts.isObject() ? UInt64Or(starts[name], 0) : 0);
+}
+
 // Tells this program and every other one that the list of applications changed
 void PostApplicationListUpdated()
 {
@@ -112,8 +132,14 @@ bool UpdateApplications(SharedStore& store, const std::function<void(Json::Value
 	return store.Update(StoreDoc::Applications, [&](Json::Value& doc) {
 		if (doc.isMember("pids") && doc["pids"].isObject()) {
 			for (const std::string& p : doc["pids"].getMemberNames())
-				if (!SharedStore::IsProcessAlive(ParsePid(p)))
+				if (!ListedProcessAlive(doc, p))
 					doc["pids"].removeMember(p);
+		}
+		// The start times of the processes that are no longer listed
+		if (doc.isMember("pid_starts") && doc["pid_starts"].isObject()) {
+			for (const std::string& p : doc["pid_starts"].getMemberNames())
+				if (!doc["pids"].isMember(p))
+					doc["pid_starts"].removeMember(p);
 		}
 		if (doc.isMember("manifests") && doc["manifests"].isObject()) {
 			for (const std::string& path : doc["manifests"].getMemberNames()) {
@@ -316,7 +342,7 @@ EVRApplicationError BaseApplications::GetApplicationKeyByProcessId(uint32_t unPr
 	} else if (SharedStore::IsProcessAlive(unProcessId)) {
 		Json::Value doc = Store().Read(StoreDoc::Applications);
 		std::string pid = std::to_string(unProcessId);
-		if (doc["pids"].isObject() && doc["pids"][pid].isString())
+		if (doc["pids"].isObject() && doc["pids"][pid].isString() && ListedProcessAlive(doc, pid))
 			key = doc["pids"][pid].asString();
 		Json::Value scene = Store().Read(StoreDoc::Scene);
 		if (key.empty() && PidOf(scene["pid"]) == unProcessId)
@@ -350,7 +376,7 @@ EVRApplicationError BaseApplications::Launch(const AppManifestEntry& app, const 
 	UpdateApplications(Store(), [&](Json::Value& doc) {
 		doc["last_launch"][app.appKey] = (Json::UInt64)now;
 		if (pid)
-			doc["pids"][std::to_string(*pid)] = app.appKey;
+			RecordProcess(doc, *pid, app.appKey);
 	});
 	return VRApplicationError_None;
 }
@@ -437,7 +463,7 @@ EVRApplicationError BaseApplications::IdentifyApplication(uint32_t unProcessId, 
 	uint32_t pid = unProcessId ? unProcessId : oc_current_pid();
 	std::string key = pchAppKey;
 	// As AddApplicationManifest: not kept if the store can't be written, answered as before it was
-	UpdateApplications(Store(), [&](Json::Value& doc) { doc["pids"][std::to_string(pid)] = key; });
+	UpdateApplications(Store(), [&](Json::Value& doc) { RecordProcess(doc, pid, key); });
 	return VRApplicationError_None;
 }
 uint32_t BaseApplications::GetApplicationProcessId(const char* pchAppKey)
@@ -451,12 +477,12 @@ uint32_t BaseApplications::GetApplicationProcessId(const char* pchAppKey)
 	if (doc["pids"].isObject()) {
 		for (const std::string& p : doc["pids"].getMemberNames()) {
 			uint32_t pid = ParsePid(p);
-			if (StringOr(doc["pids"][p]) == key && SharedStore::IsProcessAlive(pid))
+			if (StringOr(doc["pids"][p]) == key && SharedStore::IsProcessAlive(pid) && ListedProcessAlive(doc, p))
 				return pid;
 		}
 	}
 	Json::Value scene = Store().Read(StoreDoc::Scene);
-	if (StringOr(scene["app_key"]) == key && SharedStore::IsProcessAlive(PidOf(scene["pid"])))
+	if (StringOr(scene["app_key"]) == key && SharedStore::IsSameProcessAlive(PidOf(scene["pid"]), UInt64Or(scene["start"], 0)))
 		return PidOf(scene["pid"]);
 	return 0;
 }
@@ -707,7 +733,7 @@ EVRApplicationError BaseApplications::LaunchInternalProcess(const char* pchBinar
 
 	// The new process is part of this application
 	std::string key = CurrentProcessAppKey(Store());
-	UpdateApplications(Store(), [&](Json::Value& doc) { doc["pids"][std::to_string(*pid)] = key; });
+	UpdateApplications(Store(), [&](Json::Value& doc) { RecordProcess(doc, *pid, key); });
 	return VRApplicationError_None;
 }
 uint32_t BaseApplications::GetCurrentSceneProcessId()
@@ -726,7 +752,7 @@ EVRApplicationError BaseApplications::RegisterSubprocess(uint32_t nPid)
 	// The subprocess is part of this application
 	if (nPid && SharedStore::IsProcessAlive(nPid)) {
 		std::string key = CurrentProcessAppKey(Store());
-		UpdateApplications(Store(), [&](Json::Value& doc) { doc["pids"][std::to_string(nPid)] = key; });
+		UpdateApplications(Store(), [&](Json::Value& doc) { RecordProcess(doc, nPid, key); });
 	}
 	return VRApplicationError_None;
 }

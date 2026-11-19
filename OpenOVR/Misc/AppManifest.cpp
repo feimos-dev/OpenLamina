@@ -291,7 +291,11 @@ std::string CurrentProcessAppKey(SharedStore& store)
 	Json::Value doc = store.Read(StoreDoc::Applications);
 	const Json::Value& pids = doc["pids"];
 	std::string pidKey = std::to_string(pid);
-	if (pids.isObject() && pids[pidKey].isString() && !pids[pidKey].asString().empty())
+	const Json::Value& starts = doc["pid_starts"];
+	uint64_t listedStart = starts.isObject() && starts[pidKey].isUInt64() ? starts[pidKey].asUInt64() : 0;
+	// Not an earlier process's entry, if this one took over its id
+	bool ours = !listedStart || listedStart == SharedStore::OwnStartTime();
+	if (ours && pids.isObject() && pids[pidKey].isString() && !pids[pidKey].asString().empty())
 		return pids[pidKey].asString();
 
 	// 2. Steam's
