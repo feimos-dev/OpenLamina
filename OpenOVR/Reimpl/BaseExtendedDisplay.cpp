@@ -46,13 +46,14 @@ void BaseExtendedDisplay::GetEyeOutputViewport(vr::EVREye eEye, uint32_t* pnX, u
 
 void BaseExtendedDisplay::GetDXGIOutputInfo(int32_t* pnAdapterIndex, int32_t* pnAdapterOutputIndex)
 {
-	// The headset isn't a desktop output: the OpenXR runtime's adapter (else the first), and its first output, as SteamVR
-	// answers in direct mode
-	if (pnAdapterIndex) {
-		uint64_t luid = 0;
-		int32_t index = BaseSystem::_RuntimeAdapterLuid(&luid) ? BaseSystem::_DxgiAdapterIndexOf(luid) : -1;
-		*pnAdapterIndex = index >= 0 ? index : 0;
-	}
+	// The headset isn't a desktop output: the OpenXR runtime's adapter and its first output, as SteamVR answers in
+	// direct mode; -1 for both (an error) where the runtime names no adapter
+	int32_t index = -1;
+	uint64_t luid = 0;
+	if (BaseSystem::_RuntimeAdapterLuid(&luid))
+		index = BaseSystem::_DxgiAdapterIndexOf(luid);
+	if (pnAdapterIndex)
+		*pnAdapterIndex = index;
 	if (pnAdapterOutputIndex)
-		*pnAdapterOutputIndex = 0;
+		*pnAdapterOutputIndex = index >= 0 ? 0 : -1;
 }

@@ -217,20 +217,21 @@ int32_t BaseSystem::_DxgiAdapterIndexOf(uint64_t luid)
 
 int32_t BaseSystem::GetD3D9AdapterIndex()
 {
-	// The D3D9Ex adapter with the OpenXR runtime's adapter's LUID, else the first
+	// The D3D9Ex adapter with the OpenXR runtime's adapter's LUID, else the first; -1 where there's no way to tell
 #ifdef SUPPORT_DX
 	uint64_t runtimeLuid = 0;
 	if (!_RuntimeAdapterLuid(&runtimeLuid))
-		return 0;
+		return -1;
 
 	HMODULE d3d9 = LoadLibraryW(L"d3d9.dll");
 	if (!d3d9)
-		return 0;
+		return -1;
 	using Create9Ex = HRESULT(WINAPI*)(UINT, IDirect3D9Ex**);
 	auto create = (Create9Ex)GetProcAddress(d3d9, "Direct3DCreate9Ex");
 	IDirect3D9Ex* d3d = nullptr;
-	int32_t index = 0;
+	int32_t index = -1;
 	if (create && SUCCEEDED(create(D3D_SDK_VERSION, &d3d)) && d3d) {
+		index = 0;
 		for (UINT i = 0; i < d3d->GetAdapterCount(); i++) {
 			LUID luid = {};
 			if (SUCCEEDED(d3d->GetAdapterLUID(i, &luid))
@@ -244,7 +245,7 @@ int32_t BaseSystem::GetD3D9AdapterIndex()
 	FreeLibrary(d3d9);
 	return index;
 #else
-	return 0;
+	return -1;
 #endif
 }
 
@@ -252,23 +253,23 @@ void BaseSystem::GetDXGIOutputInfo(int32_t* pnAdapterIndex, int32_t* pnAdapterOu
 {
 	GetDXGIOutputInfo(pnAdapterIndex);
 	if (pnAdapterOutputIndex)
-		*pnAdapterOutputIndex = 0;
+		*pnAdapterOutputIndex = pnAdapterIndex && *pnAdapterIndex < 0 ? -1 : 0;
 }
 
 void BaseSystem::GetDXGIOutputInfo(int32_t* adapterIndex)
 {
 	if (!adapterIndex)
 		return;
-	// The first adapter unless the OpenXR runtime names another
-	*adapterIndex = 0;
+	// The adapter the OpenXR runtime names; -1 (an error) where it names none
+	*adapterIndex = -1;
 #ifdef SUPPORT_DX
 	uint64_t luid = 0;
-	OC_SOFT_CHECK_VOID(_RuntimeAdapterLuid(&luid), "GetDXGIOutputInfo: the OpenXR runtime names no D3D adapter, answering adapter 0");
+	OC_SOFT_CHECK_VOID(_RuntimeAdapterLuid(&luid), "GetDXGIOutputInfo: the OpenXR runtime names no D3D adapter");
 	int32_t index = _DxgiAdapterIndexOf(luid);
-	OC_SOFT_CHECK_VOID(index >= 0, "GetDXGIOutputInfo: no adapter has the OpenXR runtime's LUID, answering adapter 0");
+	OC_SOFT_CHECK_VOID(index >= 0, "GetDXGIOutputInfo: no adapter has the OpenXR runtime's LUID");
 	*adapterIndex = index;
 #else
-	OC_UNSUPPORTED_VOID("GetDXGIOutputInfo: this build has no D3D support, answering adapter 0");
+	OC_UNSUPPORTED_VOID("GetDXGIOutputInfo: this build has no D3D support");
 #endif
 }
 

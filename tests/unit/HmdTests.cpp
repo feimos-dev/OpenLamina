@@ -188,3 +188,21 @@ TEST_CASE("Distortion comes back as given")
 	CHECK(set[1].v == 0.4f);
 	CHECK_FALSE(system.ComputeDistortionSet(vr::Eye_Right, vr::EVRDistortionChannel::Blue, false, 2, nullptr, set));
 }
+
+#ifndef SUPPORT_DX
+TEST_CASE("Without D3D the adapter queries answer -1")
+{
+	BaseSystem system;
+	CHECK(system.GetD3D9AdapterIndex() == -1);
+
+	int32_t adapter = 7, output = 7;
+	system.GetDXGIOutputInfo(&adapter, &output);
+	CHECK(adapter == -1);
+	CHECK(output == -1);
+
+	adapter = output = 7;
+	BaseExtendedDisplay().GetDXGIOutputInfo(&adapter, &output);
+	CHECK(adapter == -1);
+	CHECK(output == -1);
+}
+#endif
