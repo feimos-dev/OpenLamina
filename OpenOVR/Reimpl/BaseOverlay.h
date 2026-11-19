@@ -168,6 +168,10 @@ private:
 
 	// This doesn't do a whole lot, since OOVR does this for every overlay
 	vr::VROverlayHandle_t highQualityOverlay = vr::k_ulOverlayHandleInvalid;
+	// The overlay that has gamepad focus (SetGamepadFocusOverlay)
+	vr::VROverlayHandle_t gamepadFocusOverlay = vr::k_ulOverlayHandleInvalid;
+	// The overlay that loses gamepad focus is told, and the one that gains it. A live handle or none; under the layers' lock.
+	void ChangeGamepadFocus(vr::VROverlayHandle_t to);
 
 	// Whether a handle is an overlay that exists
 	bool IsLiveOverlay(const OverlayData* overlay);

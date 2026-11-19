@@ -110,6 +110,15 @@ public:
 		e.data.overlay.overlayHandle = (VROverlayHandle_t)(uintptr_t)this;
 		QueueEvent(e);
 	}
+	// An event about this overlay itself: its handle in the data
+	void QueueOverlayEvent(uint32_t type)
+	{
+		VREvent_t e{};
+		e.eventType = type;
+		e.trackedDeviceIndex = k_unTrackedDeviceIndexInvalid;
+		e.data.overlay.overlayHandle = (VROverlayHandle_t)(uintptr_t)this;
+		QueueEvent(e);
+	}
 	// Whether a dashboard overlay was last told it's the one shown
 	bool shownInDashboard = false;
 
@@ -263,9 +272,6 @@ static constexpr uint64_t kOverlayFlagIsPremultiplied = 1uLL << 21;
 static constexpr uint64_t kOverlayFlagIgnoreTextureAlpha = 1uLL << 22;
 // How wide a texture of 8 pixels or less must look to be taken for a fade between scenes: 45 degrees
 static constexpr float kFadeSquareAngle = 0.785f;
-
-// The overlay that has gamepad focus (SetGamepadFocusOverlay)
-static VROverlayHandle_t gamepadFocusOverlay = k_ulOverlayHandleInvalid;
 
 struct BaseOverlay::Sharing {
 	RemotePointer remote;
@@ -1538,8 +1544,14 @@ void BaseOverlay::_UpdatePointer()
 			if (t.handle == target)
 				on = &t;
 		if (p.running && hit && on) {
-			const XrPosef point = overlay_maths::PointOn(on->placement, hit->u, hit->v);
 			OverlayData* o = validOverlays.count((OverlayData*)(uintptr_t)target) ? (OverlayData*)(uintptr_t)target : nullptr;
+			float u = hit->u, v = hit->v;
+			// A cursor position the program set, in the overlay's mouse coordinates, replaces where the laser is
+			if (o && o->cursorOverridden && o->mouseScale.v[0] > 0 && o->mouseScale.v[1] > 0) {
+				u = o->cursorOverride.v[0] / o->mouseScale.v[0];
+				v = o->cursorOverride.v[1] / o->mouseScale.v[1];
+			}
+			const XrPosef point = overlay_maths::PointOn(on->placement, u, v);
 			OverlayData* cursor = o && validOverlays.count((OverlayData*)(uintptr_t)o->cursor) ? (OverlayData*)(uintptr_t)o->cursor : nullptr;
 			if (cursor && cursor->visible) {
 				std::lock_guard<std::mutex> cursors(cursorPointsLock);
@@ -2621,10 +2633,11 @@ EVROverlayError BaseOverlay::GetOverlayInputMethod(VROverlayHandle_t ulOverlayHa
 
 EVROverlayError BaseOverlay::SetOverlayInputMethod(VROverlayHandle_t ulOverlayHandle, VROverlayInputMethod eInputMethod)
 {
-	USEH();
-
+	// Before the layers' lock: loading the input takes the session lock
 	if (eInputMethod == VROverlayInputMethod_Mouse)
 		EnsurePointerInput();
+	USEH_LOCKED();
+
 	overlay->inputMethod = eInputMethod;
 
 	return VROverlayError_None;
@@ -2639,7 +2652,7 @@ EVROverlayError BaseOverlay::GetOverlayMouseScale(VROverlayHandle_t ulOverlayHan
 }
 EVROverlayError BaseOverlay::SetOverlayMouseScale(VROverlayHandle_t ulOverlayHandle, const HmdVector2_t* pvecMouseScale)
 {
-	USEH();
+	USEH_LOCKED();
 
 	if (pvecMouseScale)
 		overlay->mouseScale = *pvecMouseScale;
@@ -2826,38 +2839,74 @@ bool BaseOverlay::IsHoverTargetOverlay(VROverlayHandle_t ulOverlayHandle)
 }
 VROverlayHandle_t BaseOverlay::GetGamepadFocusOverlay()
 {
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	return gamepadFocusOverlay;
+}
+void BaseOverlay::ChangeGamepadFocus(VROverlayHandle_t to)
+{
+	if (to == gamepadFocusOverlay)
+		return;
+	if (gamepadFocusOverlay != k_ulOverlayHandleInvalid)
+		((OverlayData*)gamepadFocusOverlay)->QueueOverlayEvent(VREvent_OverlayGamepadFocusLost);
+	gamepadFocusOverlay = to;
+	if (to != k_ulOverlayHandleInvalid)
+		((OverlayData*)to)->QueueOverlayEvent(VREvent_OverlayGamepadFocusGained);
 }
 EVROverlayError BaseOverlay::SetGamepadFocusOverlay(VROverlayHandle_t ulNewFocusOverlay)
 {
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	if (ulNewFocusOverlay != k_ulOverlayHandleInvalid) {
 		OverlayData* overlay = (OverlayData*)ulNewFocusOverlay;
 		if (!validOverlays.count(overlay))
 			return VROverlayError_InvalidHandle;
 	}
-	gamepadFocusOverlay = ulNewFocusOverlay;
+	ChangeGamepadFocus(ulNewFocusOverlay);
 	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::SetOverlayNeighbor(EOverlayDirection eDirection, VROverlayHandle_t ulFrom, VROverlayHandle_t ulTo)
 {
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	OverlayData* overlay = (OverlayData*)ulFrom;
 	if (!overlay || !validOverlays.count(overlay))
 		return VROverlayError_InvalidHandle;
-	if (ulTo == k_ulOverlayHandleInvalid)
-		overlay->neighbours.erase((int)eDirection);
-	else
-		overlay->neighbours[(int)eDirection] = ulTo;
+	OverlayData* to = (OverlayData*)ulTo;
+	if (ulTo != k_ulOverlayHandleInvalid && (!to || !validOverlays.count(to)))
+		return VROverlayError_InvalidHandle;
+	if ((int)eDirection < 0 || (int)eDirection >= 4)
+		return VROverlayError_InvalidParameter;
+	// Up and down, left and right: each end points back at the other
+	const int direction = (int)eDirection, opposite = direction ^ 1;
+	// Whatever pointed at each other in these directions no longer does
+	auto unlink = [&](OverlayData* from, int dir, int back) {
+		auto it = from->neighbours.find(dir);
+		if (it == from->neighbours.end())
+			return;
+		if (validOverlays.count((OverlayData*)it->second)) {
+			OverlayData* other = (OverlayData*)it->second;
+			auto backIt = other->neighbours.find(back);
+			if (backIt != other->neighbours.end() && backIt->second == (VROverlayHandle_t)(uintptr_t)from)
+				other->neighbours.erase(backIt);
+		}
+		from->neighbours.erase(it);
+	};
+	unlink(overlay, direction, opposite);
+	if (to) {
+		unlink(to, opposite, direction);
+		overlay->neighbours[direction] = ulTo;
+		to->neighbours[opposite] = ulFrom;
+	}
 	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::MoveGamepadFocusToNeighbor(EOverlayDirection eDirection, VROverlayHandle_t ulFrom)
 {
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	OverlayData* overlay = (OverlayData*)ulFrom;
 	if (!overlay || !validOverlays.count(overlay))
 		return VROverlayError_InvalidHandle;
 	auto it = overlay->neighbours.find((int)eDirection);
 	if (it == overlay->neighbours.end())
 		return VROverlayError_NoNeighbor;
-	gamepadFocusOverlay = it->second;
+	ChangeGamepadFocus(it->second);
 	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::SetOverlayDualAnalogTransform(VROverlayHandle_t ulOverlay, EDualAnalogWhich eWhich, const HmdVector2_t& vCenter, float fRadius)
@@ -2903,13 +2952,13 @@ EVROverlayError BaseOverlay::TriggerLaserMouseHapticVibration(VROverlayHandle_t 
 }
 EVROverlayError BaseOverlay::SetOverlayCursor(VROverlayHandle_t ulOverlayHandle, VROverlayHandle_t ulCursorHandle)
 {
-	USEH();
+	USEH_LOCKED();
 	overlay->cursor = ulCursorHandle;
 	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::SetOverlayCursorPositionOverride(VROverlayHandle_t ulOverlayHandle, const HmdVector2_t* pvCursor)
 {
-	USEH();
+	USEH_LOCKED();
 	if (!pvCursor)
 		return VROverlayError_InvalidParameter;
 	overlay->cursorOverridden = true;
@@ -2918,7 +2967,7 @@ EVROverlayError BaseOverlay::SetOverlayCursorPositionOverride(VROverlayHandle_t 
 }
 EVROverlayError BaseOverlay::ClearOverlayCursorPositionOverride(VROverlayHandle_t ulOverlayHandle)
 {
-	USEH();
+	USEH_LOCKED();
 	overlay->cursorOverridden = false;
 	return VROverlayError_None;
 }

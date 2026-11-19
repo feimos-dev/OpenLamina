@@ -183,3 +183,43 @@ TEST_CASE("An_intersection_mask_has_at_most_32_primitives_of_known_types")
 	prims[0].m_nPrimitiveType = (OOVR_EVROverlayIntersectionMaskPrimitiveType)7;
 	CHECK(overlays.SetOverlayIntersectionMask(h, prims.data(), 1, size) == VROverlayError_BadMaskPrimitive);
 }
+
+TEST_CASE("Neighbours_link_both_ways_and_clear_both_ends")
+{
+	BaseOverlay overlays;
+	const VROverlayHandle_t a = Make(overlays, "oc.test.nb.a");
+	const VROverlayHandle_t b = Make(overlays, "oc.test.nb.b");
+	CHECK(overlays.SetOverlayNeighbor(OverlayDirection_Right, a, b) == VROverlayError_None);
+	CHECK(overlays.MoveGamepadFocusToNeighbor(OverlayDirection_Left, b) == VROverlayError_None);
+	CHECK(overlays.GetGamepadFocusOverlay() == a);
+	CHECK(overlays.MoveGamepadFocusToNeighbor(OverlayDirection_Right, a) == VROverlayError_None);
+	CHECK(overlays.GetGamepadFocusOverlay() == b);
+
+	CHECK(overlays.SetOverlayNeighbor(OverlayDirection_Right, a, k_ulOverlayHandleInvalid) == VROverlayError_None);
+	CHECK(overlays.MoveGamepadFocusToNeighbor(OverlayDirection_Right, a) == VROverlayError_NoNeighbor);
+	CHECK(overlays.MoveGamepadFocusToNeighbor(OverlayDirection_Left, b) == VROverlayError_NoNeighbor);
+
+	CHECK(overlays.SetOverlayNeighbor(OverlayDirection_Up, a, (VROverlayHandle_t)0x1234) == VROverlayError_InvalidHandle);
+	CHECK(overlays.SetOverlayNeighbor(OverlayDirection_Up, (VROverlayHandle_t)0x1234, b) == VROverlayError_InvalidHandle);
+}
+
+TEST_CASE("Moving_gamepad_focus_tells_both_overlays")
+{
+	BaseOverlay overlays;
+	const VROverlayHandle_t a = Make(overlays, "oc.test.focus.a");
+	const VROverlayHandle_t b = Make(overlays, "oc.test.focus.b");
+	VREvent_t e{};
+	CHECK(overlays.SetGamepadFocusOverlay(a) == VROverlayError_None);
+	REQUIRE(overlays.PollNextOverlayEvent(a, &e, sizeof(e)));
+	CHECK(e.eventType == VREvent_OverlayGamepadFocusGained);
+	CHECK(overlays.SetGamepadFocusOverlay(b) == VROverlayError_None);
+	REQUIRE(overlays.PollNextOverlayEvent(a, &e, sizeof(e)));
+	CHECK(e.eventType == VREvent_OverlayGamepadFocusLost);
+	REQUIRE(overlays.PollNextOverlayEvent(b, &e, sizeof(e)));
+	CHECK(e.eventType == VREvent_OverlayGamepadFocusGained);
+	CHECK(overlays.SetGamepadFocusOverlay((VROverlayHandle_t)0x1234) == VROverlayError_InvalidHandle);
+	CHECK(overlays.GetGamepadFocusOverlay() == b);
+	// Destroying the focused overlay leaves none
+	CHECK(overlays.DestroyOverlay(b) == VROverlayError_None);
+	CHECK(overlays.GetGamepadFocusOverlay() == k_ulOverlayHandleInvalid);
+}
