@@ -222,6 +222,8 @@ public:
 	PREPEND void PumpEvents() APPEND;                                                                                                              \
 	/** Returns true if the runtime is focused and receiving input */                                                                              \
 	PREPEND bool IsInputAvailable() APPEND;                                                                                                        \
+	/** Returns true if the application had input focus and has lost it (to the runtime's menu, say) */                                           \
+	PREPEND bool IsInputFocusLost() APPEND;                                                                                                        \
 	/** Returns true if the application graphics device is being used */                                                                           \
 	PREPEND bool IsGraphicsConfigured() APPEND;                                                                                                    \
 	PREPEND void OnOverlayTexture(const vr::Texture_t* texture) APPEND;

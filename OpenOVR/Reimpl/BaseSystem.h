@@ -27,6 +27,15 @@ private:
 
 	std::queue<event_info_t> events;
 	std::mutex events_mutex;
+	// Events kept at most this many: a program that never polls drops the oldest
+	static constexpr size_t maxQueuedEvents = 4096;
+	// The devices the game has been told are active (their Activated event queued, no Deactivated since)
+	std::array<std::atomic<bool>, vr::k_unMaxTrackedDeviceCount> announcedDevices{};
+	std::atomic<bool> startupDevicesAnnounced{ false };
+	// Pushes onto the queue, dropping the oldest event when it's full; events_mutex held
+	void PushEventLocked(const event_info_t& e);
+	// Queues an Activated event for each connected device the game hasn't been told of
+	void AnnounceConnectedDevices();
 	uint64_t storeEventCursor = 0; // the next of other programs' events (SharedStore) to take
 	vr::VRControllerState_t lastLegacyStates[2] = {}; // for the legacy button events
 

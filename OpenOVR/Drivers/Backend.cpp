@@ -186,6 +186,11 @@ bool BackendManager::IsInputAvailable()
 	return backend->IsInputAvailable();
 }
 
+bool BackendManager::IsInputFocusLost()
+{
+	return backend->IsInputFocusLost();
+}
+
 bool BackendManager::IsGraphicsConfigured()
 {
 	return backend->IsGraphicsConfigured();

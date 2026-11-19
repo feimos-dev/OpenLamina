@@ -1649,6 +1649,11 @@ bool XrBackend::IsInputAvailable()
 	return sessionState == XR_SESSION_STATE_FOCUSED;
 }
 
+bool XrBackend::IsInputFocusLost()
+{
+	return inputFocusHad && sessionState != XR_SESSION_STATE_FOCUSED;
+}
+
 // VREvent_InputFocusCaptured or _Released
 static void PostFocusChange(bool captured)
 {
@@ -1701,6 +1706,8 @@ void XrBackend::PumpEvents()
 				continue;
 			const XrSessionState previous = sessionState;
 			sessionState = changed->state;
+			if (sessionState == XR_SESSION_STATE_FOCUSED)
+				inputFocusHad = true;
 
 			// Input focus (sessionEvents): lost from FOCUSED to VISIBLE (the runtime's menu over the game, say), back
 			// at FOCUSED. Not while OpenLamina ends the session itself (a restart). Each change is told once, whichever
@@ -1900,6 +1907,7 @@ void XrBackend::OnSessionCreated()
 	RestartFrameTiming();
 
 	sessionState = XR_SESSION_STATE_UNKNOWN;
+	inputFocusHad = false;
 	sessionActive = false;
 	renderingFrame = false;
 	frameAwaitingBegin = false;
@@ -2721,6 +2729,9 @@ void XrBackend::BindInfoSet()
 			    [&path_name](std::string s) -> bool {
 				    return s.find("/click") != s.npos && s.find(path_name) != s.npos;
 			    });
+			// A profile with no click input for this hand binds nothing for it
+			if (click_path == profile->GetValidInputPaths().end())
+				continue;
 			XrPath path = XR_NULL_PATH;
 			OC_XR_LOG(xrStringToPath(xr_instance, click_path->c_str(), &path));
 			if (infoAction != XR_NULL_HANDLE && path != XR_NULL_PATH) // one bad entry would lose the profile's suggestion

@@ -64,6 +64,7 @@ public:
 	void ForceBoundsVisible(bool) override {}
 	void PumpEvents() override {}
 	bool IsInputAvailable() override { return false; }
+	bool IsInputFocusLost() override { return false; }
 	bool IsGraphicsConfigured() override { return false; }
 	void OnOverlayTexture(const vr::Texture_t*) override {}
 };

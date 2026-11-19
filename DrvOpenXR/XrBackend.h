@@ -52,6 +52,8 @@ public:
 	// What the game has been told of the session, as SteamVR tells it: whether it lost input focus (sessionEvents), and
 	// the IPD (NaN until the session's first)
 	std::atomic<bool> inputFocusLost{ false };
+	// The session has been FOCUSED: only then is leaving that state the runtime taking input
+	std::atomic<bool> inputFocusHad{ false };
 	std::atomic<float> toldIpd{ NAN };
 	// The app's graphics device couldn't be bound: the session stays on the temporary device
 	std::atomic<bool> appGraphicsUnusable{ false };

@@ -11,6 +11,7 @@
  {"interface": "IVROverlay_\\d+", "method": "PollNextOverlayEvent", "field": "out", "reason": "which events are queued depends on the session's history"},
  {"interface": "IVRSystem_\\d+", "method": "Get(String|Bool|Float|Int32|Uint64|Matrix34|Array)TrackedDeviceProperty", "field": "ret", "reason": "device properties: the null driver's model, serial and tracking system, not the OpenXR runtime's"},
  {"interface": "IVRSystem_\\d+", "method": "Get(String|Bool|Float|Int32|Uint64|Matrix34|Array)TrackedDeviceProperty", "field": "out", "reason": "device properties (see above)"},
+ {"interface": "IVRSystem_\\d+", "method": "ShouldApplicationPause|IsSteamVRDrawingControllers|ShouldApplicationReduceRenderingWork", "field": "ret", "reason": "SteamVR answers true before the application has had input focus; OpenLamina answers false until it has had it and lost it, so an application that stops while paused can still get there"},
  {"interface": "IVRSystem_\\d+", "method": "GetRuntimeVersion", "field": "ret", "reason": "SteamVR's version string against OpenLamina's"},
  {"interface": "IVRChaperone_\\d+", "method": "GetPlayAreaSize|GetPlayAreaRect|GetBoundsColor", "field": "out", "reason": "the play area is the PC's own room setup"},
  {"interface": "IVRChaperone_\\d+", "method": "AreBoundsVisible", "field": "ret", "reason": "depends on where the (absent) user stands"},

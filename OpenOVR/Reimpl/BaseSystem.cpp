@@ -620,17 +620,19 @@ bool BaseSystem::IsInputAvailable()
 
 bool BaseSystem::IsSteamVRDrawingControllers()
 {
-	return !IsInputAvailable();
+	// Not before the first frame is shown: a game that stops submitting while it's told to pause never gets there
+	return BackendManager::Instance().IsInputFocusLost();
 }
 
 bool BaseSystem::ShouldApplicationPause()
 {
-	return !IsInputAvailable();
+	return BackendManager::Instance().IsInputFocusLost();
 }
 
 bool BaseSystem::ShouldApplicationReduceRenderingWork()
 {
-	return !IsInputAvailable();
+	// Nothing tells OpenLamina the runtime is short of rendering time
+	return false;
 }
 
 void BaseSystem::_OnPostFrame()
@@ -664,10 +666,37 @@ void BaseSystem::_OnPostFrame()
 	}
 }
 
+void BaseSystem::PushEventLocked(const event_info_t& e)
+{
+	if (events.size() >= maxQueuedEvents) {
+		OOVR_LOG_ONCEF("The event queue is full (%zu events, the program isn't polling): dropping the oldest", maxQueuedEvents);
+		events.pop();
+	}
+	events.push(e);
+}
+
 void BaseSystem::_EnqueueEvent(const VREvent_t& e)
 {
+	if (e.trackedDeviceIndex < announcedDevices.size()) {
+		if (e.eventType == VREvent_TrackedDeviceActivated)
+			announcedDevices[e.trackedDeviceIndex] = true;
+		else if (e.eventType == VREvent_TrackedDeviceDeactivated)
+			announcedDevices[e.trackedDeviceIndex] = false;
+	}
 	std::unique_lock lock(events_mutex);
-	events.push(e);
+	PushEventLocked(e);
+}
+
+void BaseSystem::AnnounceConnectedDevices()
+{
+	for (vr::TrackedDeviceIndex_t i = 0; i < announcedDevices.size(); i++) {
+		if (announcedDevices[i] || !IsTrackedDeviceConnected(i))
+			continue;
+		VREvent_t e{};
+		e.eventType = VREvent_TrackedDeviceActivated;
+		e.trackedDeviceIndex = i;
+		_EnqueueEvent(e);
+	}
 }
 
 void BaseSystem::_PostEvent(EVREventType type, TrackedDeviceIndex_t device, const VREvent_Data_t& data, bool alsoToOtherPrograms)
@@ -731,7 +760,7 @@ void BaseSystem::CheckControllerEvents(TrackedDeviceIndex_t hand, VRControllerSt
 			VREvent_t e = ev_base;
 			e.eventType = newState ? VREvent_ButtonPress : VREvent_ButtonUnpress;
 			std::unique_lock lock(events_mutex);
-			events.push(event_info_t(e, pose));
+			PushEventLocked(event_info_t(e, pose));
 		}
 
 		// Did the user touch or break contact with the button?
@@ -742,7 +771,7 @@ void BaseSystem::CheckControllerEvents(TrackedDeviceIndex_t hand, VRControllerSt
 			VREvent_t e = ev_base;
 			e.eventType = newState ? VREvent_ButtonTouch : VREvent_ButtonUntouch;
 			std::unique_lock lock(events_mutex);
-			events.push(event_info_t(e, pose));
+			PushEventLocked(event_info_t(e, pose));
 		}
 	}
 
@@ -761,6 +790,10 @@ bool BaseSystem::PollNextEventWithPose(ETrackingUniverseOrigin eOrigin, VREvent_
 		return false;
 	memset(pEvent, 0, uncbVREvent);
 
+	// The devices there already are when the program first asks: it builds its device list from their events
+	if (!startupDevicesAnnounced.exchange(true))
+		AnnounceConnectedDevices();
+
 	// Other programs' events first join the queue
 	std::vector<StoreEvent> others = SharedStore::Get().PollEvents(storeEventCursor);
 
@@ -768,7 +801,7 @@ bool BaseSystem::PollNextEventWithPose(ETrackingUniverseOrigin eOrigin, VREvent_
 	for (const StoreEvent& s : others) {
 		// OpenLamina's own (a pointer on an overlay) are taken by those they're for, never the game
 		if (!OcIsPrivateEvent(s.eventType))
-			events.push(OcUnpackEvent(s.eventType, s.data));
+			PushEventLocked(OcUnpackEvent(s.eventType, s.data));
 	}
 
 	if (events.empty()) {
@@ -915,7 +948,7 @@ vr::EVRFirmwareError BaseSystem::PerformFirmwareUpdate(vr::TrackedDeviceIndex_t 
 
 void BaseSystem::AcknowledgeQuit_Exiting()
 {
-	OOVR_SOFT_ABORT("No implementation");
+	// Nothing waits for it: OpenLamina never ends a program
 }
 
 void BaseSystem::AcknowledgeQuit_UserPrompt()

@@ -6,6 +6,7 @@
 #include "Reimpl/BaseSystem.h"
 
 #include <map>
+#include <vector>
 
 namespace {
 
@@ -32,6 +33,7 @@ public:
 class SlotsBackend : public IBackend {
 public:
 	std::map<vr::TrackedDeviceIndex_t, std::shared_ptr<FakeDevice>> devices;
+	bool lost = false;
 
 	std::shared_ptr<IHMD> GetPrimaryHMD() override { return nullptr; }
 	std::shared_ptr<ITrackedDevice> GetDevice(vr::TrackedDeviceIndex_t index) override
@@ -54,6 +56,7 @@ public:
 	void ForceBoundsVisible(bool) override {}
 	void PumpEvents() override {}
 	bool IsInputAvailable() override { return false; }
+	bool IsInputFocusLost() override { return lost; }
 	bool IsGraphicsConfigured() override { return false; }
 	void OnOverlayTexture(const vr::Texture_t*) override {}
 };
@@ -187,4 +190,84 @@ TEST_CASE("Poses are located as far ahead as asked")
 	// Out of range or not a number is held to the range
 	CHECK(xr_utils::PoseTimeForPrediction(100.0f, now, 0) == now + 1000000000);
 	CHECK(std::llabs(xr_utils::PoseTimeForPrediction(std::nanf(""), now, 0) - (now - 100000000)) < 10);
+}
+
+namespace {
+std::vector<vr::VREvent_t> Drain(BaseSystem& system)
+{
+	std::vector<vr::VREvent_t> out;
+	vr::VREvent_t e{};
+	while (system.PollNextEvent(&e, sizeof(e)))
+		out.push_back(e);
+	return out;
+}
+}
+
+TEST_CASE("The devices present at the first poll are activated")
+{
+	WithSlots slots;
+	BaseSystem system;
+	slots.Add(0, vr::TrackedControllerRole_Invalid, 0)->cls = vr::TrackedDeviceClass_HMD;
+	slots.Add(2, vr::TrackedControllerRole_RightHand, 0);
+	slots.Add(7, vr::TrackedControllerRole_Invalid, 0)->cls = vr::TrackedDeviceClass_GenericTracker;
+
+	std::vector<vr::VREvent_t> first = Drain(system);
+	REQUIRE(first.size() == 3);
+	CHECK(first[0].eventType == vr::VREvent_TrackedDeviceActivated);
+	CHECK(first[0].trackedDeviceIndex == 0);
+	CHECK(first[1].trackedDeviceIndex == 2);
+	CHECK(first[2].trackedDeviceIndex == 7);
+
+	// A device that joins later is its backend's to announce
+	slots.Add(3, vr::TrackedControllerRole_LeftHand, 0);
+	CHECK(Drain(system).empty());
+}
+
+TEST_CASE("A device already announced is not announced again at the first poll")
+{
+	WithSlots slots;
+	BaseSystem system;
+	slots.Add(1, vr::TrackedControllerRole_LeftHand, 0);
+	slots.Add(2, vr::TrackedControllerRole_RightHand, 0);
+	vr::VREvent_t activated{};
+	activated.eventType = vr::VREvent_TrackedDeviceActivated;
+	activated.trackedDeviceIndex = 1;
+	system._EnqueueEvent(activated);
+
+	std::vector<vr::VREvent_t> events = Drain(system);
+	REQUIRE(events.size() == 2);
+	CHECK(events[0].trackedDeviceIndex == 1);
+	CHECK(events[1].trackedDeviceIndex == 2);
+}
+
+TEST_CASE("The event queue keeps the newest events when nobody polls")
+{
+	WithSlots slots;
+	BaseSystem system;
+	Drain(system);
+	for (uint32_t i = 0; i < 6000; i++) {
+		vr::VREvent_t e{};
+		e.eventType = vr::VREvent_ButtonPress;
+		e.data.controller.button = i;
+		system._EnqueueEvent(e);
+	}
+	std::vector<vr::VREvent_t> events = Drain(system);
+	REQUIRE(events.size() == 4096);
+	CHECK(events.front().data.controller.button == 6000 - 4096);
+	CHECK(events.back().data.controller.button == 5999);
+}
+
+TEST_CASE("The application is told to pause only after it had input focus and lost it")
+{
+	WithSlots slots;
+	BaseSystem system;
+	// Before the first frame is shown (or ever focused): no pause, no controllers drawn over the game
+	CHECK_FALSE(system.ShouldApplicationPause());
+	CHECK_FALSE(system.IsSteamVRDrawingControllers());
+	CHECK_FALSE(system.ShouldApplicationReduceRenderingWork());
+
+	slots.backend->lost = true;
+	CHECK(system.ShouldApplicationPause());
+	CHECK(system.IsSteamVRDrawingControllers());
+	CHECK_FALSE(system.ShouldApplicationReduceRenderingWork());
 }
