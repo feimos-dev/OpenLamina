@@ -27,6 +27,8 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -162,6 +164,8 @@ class Runner:
         cmd = [self.conformance, "--runtime", self.runtime, "--out", str(raw)] + extra
         if self.args.real_runtime:
             cmd.append("--real-runtime")
+        if self.args.keep_running:
+            self.keep_running()
         env = dict(os.environ)
         env.update(self.env)
         env["OC_STORE_DIR"] = str(self.out / "store" / (store or Path(raw).stem))
@@ -170,6 +174,29 @@ class Runner:
             return unelevated.run_medium(cmd, env, None, timeout)
         # In a memory-limited job (unelevated.py): a runaway child fails alone
         return unelevated.run_limited(cmd, env, None, timeout, capture=True)[0]
+
+    keep_lock = threading.Lock()
+
+    def keep_running(self):
+        """--keep-running: SteamVR quits all of its programs when the scene application it counts as its first exits
+        without shutting down, and a SteamVR started by a test program loses its shared namespace once that program's
+        first clients are gone (a later Init waits forever). So before each child, start SteamVR on its own if its
+        server isn't running, unelevated through explorer.exe, and give it time to settle."""
+        exe, server = self.args.keep_running, "vrserver.exe"
+
+        def running():
+            out = subprocess.run(["tasklist", "/fi", f"imagename eq {server}", "/nh"], capture_output=True, text=True)
+            return server.lower() in out.stdout.lower()
+
+        with Runner.keep_lock:
+            if running():
+                return
+            subprocess.run(["explorer.exe", exe])
+            for _ in range(90):
+                if running():
+                    break
+                time.sleep(1)
+            time.sleep(8)
 
     @staticmethod
     def take_crash(raw, record):
@@ -486,6 +513,7 @@ def main():
     ap.add_argument("--ci", action="store_true")
     ap.add_argument("--allow-failures", action="store_true")
     ap.add_argument("--real-runtime", action="store_true")
+    ap.add_argument("--keep-running", metavar="EXE", help="with --real-runtime: start this (SteamVR's vrstartup.exe) before any child when its server isn't running")
     ap.add_argument("--repeat", type=int, default=1, help=f"run each case this many times (at most {MAX_REPEAT})")
     ap.add_argument("--case-arg", action="append", metavar="NAME=VALUE", help="passed to every case (repeatable)")
     ap.add_argument("--apptypes", help="the interfaces only under these app types (numbers, comma-separated), with valid arguments")
