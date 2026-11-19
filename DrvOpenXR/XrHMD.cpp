@@ -380,6 +380,7 @@ bool XrHMD::GetControllerState(vr::VRControllerState_t* state)
 
 #define TRY_PROFILE_PROP(type)                                                     \
 	do {                                                                           \
+		std::shared_lock profileLock(profile_mutex);                               \
 		if (profile) {                                                             \
 			std::optional<type> ret = profile->GetProperty<type>(prop, HAND_NONE); \
 			if (ret.has_value())                                                   \
