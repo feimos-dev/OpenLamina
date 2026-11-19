@@ -4,43 +4,11 @@
 #include "stdafx.h"
 
 #include "Misc/Process.h"
-#include "steamvr_abi.h"
 #include "Reimpl/BaseOverlay.h"
 
 #include <string>
 
 using namespace vr;
-
-// BaseOverlay links the client core, which calls the runtime's entry points; nothing here calls them
-VR_INTERFACE void* VR_CALLTYPE VR_GetGenericInterface(const char*, vr::EVRInitError* error)
-{
-	if (error)
-		*error = VRInitError_Init_InterfaceNotFound;
-	return nullptr;
-}
-VR_INTERFACE const char* VR_CALLTYPE VR_GetVRInitErrorAsEnglishDescription(vr::EVRInitError)
-{
-	return "";
-}
-VR_INTERFACE const char* VR_CALLTYPE VR_GetVRInitErrorAsSymbol(vr::EVRInitError)
-{
-	return "";
-}
-VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(vr::EVRInitError* error, vr::EVRApplicationType, const char*)
-{
-	if (error)
-		*error = VRInitError_Init_HmdNotFound;
-	return 0;
-}
-VR_INTERFACE bool VR_CALLTYPE VR_IsHmdPresent()
-{
-	return false;
-}
-VR_INTERFACE bool VR_CALLTYPE VR_IsInterfaceVersionValid(const char*)
-{
-	return false;
-}
-VR_INTERFACE void VR_CALLTYPE VR_ShutdownInternal() {}
 
 namespace {
 
