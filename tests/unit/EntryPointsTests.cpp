@@ -265,18 +265,4 @@ TEST_CASE("SteamVR is found from the config folder")
 	fs::remove_all(base);
 }
 
-// The runtime's entry points BaseClientCore forwards to (the runtime library itself is loaded by the tests above)
-VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(vr::EVRInitError* peError, vr::EVRApplicationType, const char*)
-{
-	if (peError)
-		*peError = vr::VRInitError_Init_NotInitialized;
-	return 0;
-}
-VR_INTERFACE void VR_CALLTYPE VR_ShutdownInternal() {}
-VR_INTERFACE bool VR_CALLTYPE VR_IsInterfaceVersionValid(const char*) { return false; }
-VR_INTERFACE void* VR_CALLTYPE VR_GetGenericInterface(const char*, vr::EVRInitError*) { return nullptr; }
-VR_INTERFACE bool VR_CALLTYPE VR_IsHmdPresent() { return false; }
-VR_INTERFACE const char* VR_CALLTYPE VR_GetVRInitErrorAsEnglishDescription(vr::EVRInitError) { return ""; }
-VR_INTERFACE const char* VR_CALLTYPE VR_GetVRInitErrorAsSymbol(vr::EVRInitError) { return ""; }
-
 #endif

@@ -131,6 +131,7 @@ add_executable(oc_unit_tests
 	unit/BaseDriverTests.cpp
 	unit/BaseIOBufferTests.cpp
 	unit/BaseNotificationsTests.cpp
+	unit/ClientCoreStandIns.cpp
 	${OC_TEST_RESOURCES}
 )
 target_include_directories(oc_unit_tests PRIVATE
