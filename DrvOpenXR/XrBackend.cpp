@@ -698,13 +698,30 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 			XrGraphicsBindingOpenGLXlibKHR binding = { XR_TYPE_GRAPHICS_BINDING_OPENGL_XLIB_KHR };
 			binding.xDisplay = glXGetCurrentDisplay();
 			int configCount = 0;
-			// clang-format off
-			const int configAttribs[] = {
-				GLX_CONFIG_CAVEAT, GLX_NONE,
-				None,
-			};
-			// clang-format on
-			GLXFBConfig* const configs = glXChooseFBConfig(binding.xDisplay, DefaultScreen(binding.xDisplay), configAttribs, &configCount);
+			GLXFBConfig* configs = nullptr;
+			// The config of the game's own context, so the session's context matches its drawable
+			int appConfigId = 0;
+			if (GLXContext appContext = glXGetCurrentContext(); appContext && glXQueryContext(binding.xDisplay, appContext, GLX_FBCONFIG_ID, &appConfigId) == Success) {
+				// clang-format off
+				const int idAttribs[] = {
+					GLX_FBCONFIG_ID, appConfigId,
+					None,
+				};
+				// clang-format on
+				configs = glXChooseFBConfig(binding.xDisplay, DefaultScreen(binding.xDisplay), idAttribs, &configCount);
+			}
+			if (configs == nullptr || configCount < 1) {
+				if (configs)
+					XFree(configs);
+				OOVR_LOG("The game's GLXFBConfig couldn't be found: using any usable one");
+				// clang-format off
+				const int configAttribs[] = {
+					GLX_CONFIG_CAVEAT, GLX_NONE,
+					None,
+				};
+				// clang-format on
+				configs = glXChooseFBConfig(binding.xDisplay, DefaultScreen(binding.xDisplay), configAttribs, &configCount);
+			}
 			if (configs == nullptr || configCount < 1)
 				return giveUp("No usable GLXFBConfig found");
 			binding.glxFBConfig = configs[0];
