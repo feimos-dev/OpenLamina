@@ -104,6 +104,9 @@ protected:
 		auto it = binding.parameters.find(name);
 		return it == binding.parameters.end() ? fallback : it->second;
 	}
+	// A click threshold the binding gives is used on the source's value even where the source has a click of its own
+	// (Half-Life: Alyx grabs at 0.8 of an Index trigger's pull, before its click)
+	bool ClickThresholdGiven() const { return binding.parameters.contains("click_activate_threshold"); }
 	std::string Raw(const std::string& component) const { return binding.path + "/" + component; }
 
 	// Records an input's state this frame, and writes it to its action if it's bound to one
@@ -197,7 +200,7 @@ private:
 		}
 		std::optional<float> click = in.Get(Raw("click"));
 		std::optional<float> analog = force == "force" ? in.Get(Raw("force")) : in.Get(Raw("value"));
-		if (force == "click" && click)
+		if (force == "click" && click && !(ClickThresholdGiven() && in.Get(Raw("value"))))
 			state = *click >= 0.5f;
 		else if (analog)
 			state = Hysteresis(state, *analog, Param("click_activate_threshold"), Param("click_deactivate_threshold"));
@@ -226,7 +229,7 @@ public:
 		std::optional<float> click = in.Get(Raw("click"));
 		std::optional<float> value = in.Get(Raw("value"));
 		std::optional<float> force = in.Get(Raw("force"));
-		if (click)
+		if (click && !(ClickThresholdGiven() && value))
 			pressed = *click >= 0.5f;
 		else if (value)
 			pressed = Hysteresis(pressed, *value, Param("click_activate_threshold"), Param("click_deactivate_threshold"));
