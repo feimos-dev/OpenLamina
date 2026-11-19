@@ -65,14 +65,14 @@ public:
 
 	const string key;
 	string name;
-	HmdColor_t colour;
+	HmdColor_t colour = { 1, 1, 1, 1 };
 
 	float widthMeters = 1; // default 1 meter
 	float curvature = 0;
 
-	float autoCurveDistanceRangeMin, autoCurveDistanceRangeMax; // WTF does this do?
+	float autoCurveDistanceRangeMin = 0, autoCurveDistanceRangeMax = 0;
 	EColorSpace colourSpace = ColorSpace_Auto;
-	bool visible = false; // TODO check against SteamVR
+	bool visible = false;
 	VRTextureBounds_t textureBounds = { 0, 0, 1, 1 };
 	VROverlayInputMethod inputMethod = VROverlayInputMethod_None; // Mouse: the lasers send it mouse events
 	// HandleControllerOverlayInteractionAsMouse: a pointer target for this many more of the lasers' updates
@@ -168,11 +168,14 @@ public:
 		XrCompositionLayerCylinderKHR cylinder;
 	} compositionLayer;
 
+	// The overlay's colour and alpha as the layer's colour scale (chained to compositionLayer where the runtime has it)
+	XrCompositionLayerColorScaleBiasKHR colourScale{ XR_TYPE_COMPOSITION_LAYER_COLOR_SCALE_BIAS_KHR };
+
 	std::weak_ptr<Compositor> compositor;
 	// SetOverlayRaw's image (empty for a texture overlay), shown through a swapchain filled from memory
 	Image rawImage;
 	std::unique_ptr<CpuSwapchain> raw;
-	float distance;
+	float distance = 0;
 	uint32_t sortOrder = 0;
 
 	// Transform
@@ -215,12 +218,12 @@ public:
 	// through its parent overlays (valid: the overlays that exist)
 	bool ComputeOverlayTransform(vr::ETrackingUniverseOrigin trackingSpace, const std::set<OverlayData*>& valid, glm::mat4& out) const;
 
-	// The texture's width over its height (a flipped texture is drawn with a negative height), 1 without one
+	// The texture's width over its height, with its texels' aspect (a flipped texture is drawn with a negative height),
+	// 1 without one
 	float AspectRatio() const
 	{
 		const XrExtent2Di& extent = compositionLayer.quad.subImage.imageRect.extent;
-		const int32_t height = std::abs(extent.height);
-		return height > 0 && extent.width > 0 ? (float)extent.width / (float)height : 1.0f;
+		return overlay_maths::QuadAspect(extent.width, extent.height, texelAspect);
 	}
 
 	// Where the overlay is drawn in the tracking space; false if it can't be drawn
@@ -250,6 +253,12 @@ public:
 // k_unVROverlayMaxKeyLength and k_unVROverlayMaxNameLength, the same in every SDK version: with the terminator
 static constexpr uint32_t kOverlayMaxKeyLength = 128;
 static constexpr uint32_t kOverlayMaxNameLength = 128;
+
+// VROverlayFlags as masks (see LaserMouse.h for the input ones)
+static constexpr uint64_t kOverlayFlagIsPremultiplied = 1uLL << 21;
+static constexpr uint64_t kOverlayFlagIgnoreTextureAlpha = 1uLL << 22;
+// How wide a texture of 8 pixels or less must look to be taken for a fade between scenes: 45 degrees
+static constexpr float kFadeSquareAngle = 0.785f;
 
 // The overlay that has gamepad focus (SetGamepadFocusOverlay)
 static VROverlayHandle_t gamepadFocusOverlay = k_ulOverlayHandleInvalid;
@@ -1630,20 +1639,11 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 			}
 #endif
 
-			// Quick hack to get around Boneworks creating overlays and setting them to an opacity of
-			// zero to hide them. Leave 1% of margin in case of weird float issues.
-			// if (overlay.colour.a < 0.01)
-			//	continue;
+			// Games hide an overlay by setting its alpha to zero; a layer that faint isn't worth submitting
+			if (!(overlay.colour.a >= 0.01f))
+				continue;
 
 			if ((uint64_t)overlay.compositionLayer.quad.subImage.swapchain == 0) {
-				continue;
-			}
-
-			const XrRect2Di& srcSize = overlay.compositionLayer.quad.subImage.imageRect;
-			const int32_t srcHeight = std::abs(srcSize.extent.height);
-			if (srcHeight <= 8 && srcSize.extent.width <= 8) {
-				// Hack for F1 22 which creates a low res texture to fade between scenes
-				// but ends up just leaving a black square that takes up half the screen.
 				continue;
 			}
 
@@ -1678,6 +1678,32 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 			}
 
 			overlay.distance = glm::distance(position, hmdPosition);
+
+			// A tiny texture stretched across a wide view is a fade between scenes that would leave a flat square over
+			// half the screen; a small one, such as a tint, is drawn
+			const XrRect2Di& srcSize = overlay.compositionLayer.quad.subImage.imageRect;
+			if (std::abs(srcSize.extent.height) <= 8 && srcSize.extent.width <= 8
+			    && overlay_maths::SubtendedAngle(placement.width, overlay.distance) >= kFadeSquareAngle)
+				continue;
+
+			// Straight alpha, unless the overlay says its texture is premultiplied; the texture's alpha is ignored if asked
+			XrCompositionLayerFlags layerFlags = 0;
+			if (!(overlay.flags & kOverlayFlagIgnoreTextureAlpha))
+				layerFlags |= XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+			const bool premultiplied = (overlay.flags & kOverlayFlagIsPremultiplied) != 0;
+			if (!premultiplied)
+				layerFlags |= XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
+			overlay.compositionLayer.base.layerFlags = layerFlags;
+
+			// The overlay's colour and alpha, as the layer's colour scale
+			overlay.compositionLayer.base.next = nullptr;
+			if (xr_ext->ColorScaleBiasKHR_Available()) {
+				overlay.colourScale = { XR_TYPE_COMPOSITION_LAYER_COLOR_SCALE_BIAS_KHR };
+				overlay.colourScale.colorScale = overlay_maths::ColourScale(overlay.colour.r, overlay.colour.g, overlay.colour.b, overlay.colour.a, premultiplied);
+				overlay.colourScale.colorBias = { 0, 0, 0, 0 };
+				overlay.compositionLayer.base.next = &overlay.colourScale;
+			}
+
 			size_t i;
 
 			// Sort the overlays: later layers are drawn on top, so by sort order, then the farthest first
@@ -1771,8 +1797,7 @@ EVROverlayError BaseOverlay::FindOverlay(const char* pchOverlayKey, VROverlayHan
 		}
 	}
 
-	// TODO is this the correct return value
-	return VROverlayError_InvalidParameter;
+	return VROverlayError_UnknownOverlay;
 }
 
 bool BaseOverlay::RemoteOverlayEntry(VROverlayHandle_t handle, Json::Value& entry)
@@ -1849,7 +1874,7 @@ EVROverlayError BaseOverlay::CreateOverlay(const char* pchOverlayKey, const char
 
 	data->compositionLayer.base.type = XR_TYPE_COMPOSITION_LAYER_QUAD;
 	data->compositionLayer.base.next = NULL;
-	data->compositionLayer.base.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+	data->compositionLayer.base.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT | XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
 	data->compositionLayer.base.space = xr_space_from_ref_space_type(BaseSystem::currentSpace);
 
 	// Still same for quad + cylinder
@@ -2034,10 +2059,14 @@ EVROverlayError BaseOverlay::GetOverlayFlag(VROverlayHandle_t ulOverlayHandle, V
 {
 	Json::Value remote;
 	if (RemoteOverlayEntry(ulOverlayHandle, remote)) {
+		if (!pbEnabled)
+			return VROverlayError_InvalidParameter;
 		*pbEnabled = (remote["flags"].asUInt64() & (1uLL << eOverlayFlag)) != 0uLL;
 		return VROverlayError_None;
 	}
 	USEH();
+	if (!pbEnabled)
+		return VROverlayError_InvalidParameter;
 
 	*pbEnabled = (overlay->flags & (1uLL << eOverlayFlag)) != 0uLL;
 
@@ -2056,6 +2085,8 @@ EVROverlayError BaseOverlay::SetOverlayColor(VROverlayHandle_t ulOverlayHandle, 
 EVROverlayError BaseOverlay::GetOverlayColor(VROverlayHandle_t ulOverlayHandle, float* pfRed, float* pfGreen, float* pfBlue)
 {
 	USEH();
+	if (!pfRed || !pfGreen || !pfBlue)
+		return VROverlayError_InvalidParameter;
 
 	*pfRed = overlay->colour.r;
 	*pfGreen = overlay->colour.g;
@@ -2074,6 +2105,8 @@ EVROverlayError BaseOverlay::SetOverlayAlpha(VROverlayHandle_t ulOverlayHandle, 
 EVROverlayError BaseOverlay::GetOverlayAlpha(VROverlayHandle_t ulOverlayHandle, float* pfAlpha)
 {
 	USEH();
+	if (!pfAlpha)
+		return VROverlayError_InvalidParameter;
 
 	*pfAlpha = overlay->colour.a;
 
@@ -2106,6 +2139,8 @@ EVROverlayError BaseOverlay::SetOverlaySortOrder(VROverlayHandle_t ulOverlayHand
 }
 EVROverlayError BaseOverlay::GetOverlaySortOrder(VROverlayHandle_t ulOverlayHandle, uint32_t* punSortOrder)
 {
+	if (!punSortOrder)
+		return VROverlayError_InvalidParameter;
 	USEH();
 	*punSortOrder = overlay->sortOrder;
 	return VROverlayError_None;
@@ -2122,10 +2157,14 @@ EVROverlayError BaseOverlay::GetOverlayWidthInMeters(VROverlayHandle_t ulOverlay
 {
 	Json::Value remote;
 	if (RemoteOverlayEntry(ulOverlayHandle, remote)) {
+		if (!pfWidthInMeters)
+			return VROverlayError_InvalidParameter;
 		*pfWidthInMeters = remote["width"].asFloat();
 		return VROverlayError_None;
 	}
 	USEH();
+	if (!pfWidthInMeters)
+		return VROverlayError_InvalidParameter;
 
 	*pfWidthInMeters = overlay->widthMeters;
 
@@ -2145,6 +2184,8 @@ EVROverlayError BaseOverlay::SetOverlayCurvature(VROverlayHandle_t ulOverlayHand
 EVROverlayError BaseOverlay::GetOverlayCurvature(VROverlayHandle_t ulOverlayHandle, float* pfCurvature)
 {
 	USEH();
+	if (!pfCurvature)
+		return VROverlayError_InvalidParameter;
 
 	*pfCurvature = overlay->curvature;
 
@@ -2162,6 +2203,8 @@ EVROverlayError BaseOverlay::SetOverlayAutoCurveDistanceRangeInMeters(VROverlayH
 EVROverlayError BaseOverlay::GetOverlayAutoCurveDistanceRangeInMeters(VROverlayHandle_t ulOverlayHandle, float* pfMinDistanceInMeters, float* pfMaxDistanceInMeters)
 {
 	USEH();
+	if (!pfMinDistanceInMeters || !pfMaxDistanceInMeters)
+		return VROverlayError_InvalidParameter;
 
 	*pfMinDistanceInMeters = overlay->autoCurveDistanceRangeMin;
 	*pfMaxDistanceInMeters = overlay->autoCurveDistanceRangeMax;
@@ -2179,6 +2222,8 @@ EVROverlayError BaseOverlay::SetOverlayTextureColorSpace(VROverlayHandle_t ulOve
 EVROverlayError BaseOverlay::GetOverlayTextureColorSpace(VROverlayHandle_t ulOverlayHandle, EColorSpace* peTextureColorSpace)
 {
 	USEH();
+	if (!peTextureColorSpace)
+		return VROverlayError_InvalidParameter;
 
 	*peTextureColorSpace = overlay->colourSpace;
 
@@ -2198,6 +2243,8 @@ EVROverlayError BaseOverlay::SetOverlayTextureBounds(VROverlayHandle_t ulOverlay
 EVROverlayError BaseOverlay::GetOverlayTextureBounds(VROverlayHandle_t ulOverlayHandle, VRTextureBounds_t* pOverlayTextureBounds)
 {
 	USEH();
+	if (!pOverlayTextureBounds)
+		return VROverlayError_InvalidParameter;
 
 	*pOverlayTextureBounds = overlay->textureBounds;
 
@@ -2240,10 +2287,14 @@ EVROverlayError BaseOverlay::GetOverlayTransformType(VROverlayHandle_t ulOverlay
 	// Another program's overlay is read as it's placed in the standing space
 	Json::Value remote;
 	if (RemoteOverlayEntry(ulOverlayHandle, remote)) {
+		if (!peTransformType)
+			return VROverlayError_InvalidParameter;
 		*peTransformType = VROverlayTransform_Absolute;
 		return VROverlayError_None;
 	}
 	USEH();
+	if (!peTransformType)
+		return VROverlayError_InvalidParameter;
 
 	*peTransformType = overlay->transformType;
 
@@ -2252,6 +2303,8 @@ EVROverlayError BaseOverlay::GetOverlayTransformType(VROverlayHandle_t ulOverlay
 EVROverlayError BaseOverlay::SetOverlayTransformAbsolute(VROverlayHandle_t ulOverlayHandle, ETrackingUniverseOrigin eTrackingOrigin, const HmdMatrix34_t* pmatTrackingOriginToOverlayTransform)
 {
 	USEH_LOCKED();
+	if (!pmatTrackingOriginToOverlayTransform)
+		return VROverlayError_InvalidParameter;
 
 	// Drawn in whatever origin the frame uses (ChangeOrigin)
 	overlay->transformType = VROverlayTransform_Absolute;
@@ -2274,12 +2327,15 @@ EVROverlayError BaseOverlay::GetOverlayTransformAbsolute(VROverlayHandle_t ulOve
 		return VROverlayError_None;
 	}
 	USEH();
+	if (!pmatTrackingOriginToOverlayTransform)
+		return VROverlayError_InvalidParameter;
 
 	if (overlay->transformType != VROverlayTransform_Absolute)
 		return VROverlayError_WrongTransformType;
 
-	if (peTrackingOrigin && overlay->absoluteOrigin >= 0)
-		*peTrackingOrigin = (ETrackingUniverseOrigin)overlay->absoluteOrigin;
+	// Whichever origin the frame uses, until one is given
+	if (peTrackingOrigin)
+		*peTrackingOrigin = overlay->absoluteOrigin >= 0 ? (ETrackingUniverseOrigin)overlay->absoluteOrigin : FrameOrigin();
 	O2S_om34(overlay->overlayTransform, *pmatTrackingOriginToOverlayTransform);
 
 	return VROverlayError_None;
@@ -2287,6 +2343,8 @@ EVROverlayError BaseOverlay::GetOverlayTransformAbsolute(VROverlayHandle_t ulOve
 EVROverlayError BaseOverlay::SetOverlayTransformTrackedDeviceRelative(VROverlayHandle_t ulOverlayHandle, TrackedDeviceIndex_t unTrackedDevice, const HmdMatrix34_t* pmatTrackedDeviceToOverlayTransform)
 {
 	USEH_LOCKED();
+	if (!pmatTrackedDeviceToOverlayTransform)
+		return VROverlayError_InvalidParameter;
 
 	overlay->transformType = VROverlayTransform_TrackedDeviceRelative;
 	overlay->overlayRelative = false;

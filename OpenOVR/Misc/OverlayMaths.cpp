@@ -206,6 +206,30 @@ Chain ResolveChain(const void* overlay, const std::function<ChainLink(const void
 	return Chain::TooDeep;
 }
 
+float QuadAspect(int32_t texelsWide, int32_t texelsHigh, float texelAspect)
+{
+	const int32_t high = texelsHigh < 0 ? -texelsHigh : texelsHigh;
+	if (high <= 0 || texelsWide <= 0)
+		return 1.0f;
+	const float aspect = (float)texelsWide / (float)high;
+	return texelAspect > 0 && std::isfinite(texelAspect) ? aspect * texelAspect : aspect;
+}
+
+XrColor4f ColourScale(float r, float g, float b, float a, bool premultiplied)
+{
+	auto clamp = [](float v) { return v >= 0 ? (v <= 1 ? v : 1.0f) : 0.0f; }; // NaN gives 0
+	a = clamp(a);
+	const float fade = premultiplied ? a : 1.0f;
+	return XrColor4f{ clamp(r) * fade, clamp(g) * fade, clamp(b) * fade, a };
+}
+
+float SubtendedAngle(float width, float distance)
+{
+	if (!(width > 0) || !(distance >= 0))
+		return 0;
+	return 2 * std::atan2(width / 2, distance);
+}
+
 XrPosef ComposePoses(const XrPosef& a, const XrPosef& b)
 {
 	return Compose(a, b);

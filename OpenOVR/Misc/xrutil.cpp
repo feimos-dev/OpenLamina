@@ -62,6 +62,8 @@ XrExt::XrExt(XrGraphicsApiSupportedFlags apis, const std::vector<const char*>& e
 			supportsDepthKHR = true;
 		if (strcmp(ext, XR_KHR_COMPOSITION_LAYER_EQUIRECT2_EXTENSION_NAME) == 0)
 			supportsEquirect2KHR = true;
+		if (strcmp(ext, XR_KHR_COMPOSITION_LAYER_COLOR_SCALE_BIAS_EXTENSION_NAME) == 0)
+			supportsColorScaleBiasKHR = true;
 		if (strcmp(ext, OC_XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME) == 0)
 			refreshRate = true;
 		if (strcmp(ext, OC_XR_EXT_USER_PRESENCE_EXTENSION_NAME) == 0)

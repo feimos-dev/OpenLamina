@@ -213,3 +213,47 @@ TEST_CASE("Point_on_overlay_and_cursor_hotspot")
 	CHECK(cursor.position.x == doctest::Approx(0.05f));
 	CHECK(cursor.position.y == doctest::Approx(0.9f));
 }
+
+TEST_CASE("Quad_aspect_follows_the_texels")
+{
+	CHECK(QuadAspect(200, 100, 1) == doctest::Approx(2.0f));
+	// Texels twice as wide as tall make the quad twice as wide for the same texture
+	CHECK(QuadAspect(200, 100, 2) == doctest::Approx(4.0f));
+	CHECK(QuadAspect(200, -100, 0.5f) == doctest::Approx(1.0f));
+	// Nothing sensible: square
+	CHECK(QuadAspect(0, 100, 1) == 1.0f);
+	CHECK(QuadAspect(100, 0, 1) == 1.0f);
+	CHECK(QuadAspect(200, 100, 0) == doctest::Approx(2.0f));
+	CHECK(QuadAspect(200, 100, -3) == doctest::Approx(2.0f));
+	CHECK(QuadAspect(200, 100, std::nanf("")) == doctest::Approx(2.0f));
+}
+
+TEST_CASE("Colour_scale_is_the_overlay_colour_and_alpha")
+{
+	XrColor4f c = ColourScale(0.5f, 0.25f, 1, 0.5f, false);
+	CHECK(c.r == doctest::Approx(0.5f));
+	CHECK(c.g == doctest::Approx(0.25f));
+	CHECK(c.b == doctest::Approx(1));
+	CHECK(c.a == doctest::Approx(0.5f));
+
+	// A premultiplied texture fades its colour with its alpha
+	c = ColourScale(1, 1, 1, 0.5f, true);
+	CHECK(c.r == doctest::Approx(0.5f));
+	CHECK(c.a == doctest::Approx(0.5f));
+
+	// Kept in range
+	c = ColourScale(2, -1, std::nanf(""), 3, false);
+	CHECK(c.r == 1);
+	CHECK(c.g == 0);
+	CHECK(c.b == 0);
+	CHECK(c.a == 1);
+}
+
+TEST_CASE("Subtended_angle_of_a_quad")
+{
+	CHECK(SubtendedAngle(2, 1) == doctest::Approx(kPi / 2));
+	CHECK(SubtendedAngle(0.01f, 5) < 0.01f);
+	CHECK(SubtendedAngle(1, 0) == doctest::Approx(kPi));
+	CHECK(SubtendedAngle(0, 1) == 0);
+	CHECK(SubtendedAngle(1, -1) == 0);
+}

@@ -96,6 +96,7 @@ public:
 	bool EyeGaze_Available() { return supportsEyeGaze; }
 	bool DepthKHR_Available() { return supportsDepthKHR; }
 	bool Equirect2KHR_Available() { return supportsEquirect2KHR; }
+	bool ColorScaleBiasKHR_Available() { return supportsColorScaleBiasKHR; }
 	bool UserPresence_Available() { return supportsUserPresence; }
 	bool xrGetVisibilityMaskKHR_Available() { return pfnXrGetVisibilityMaskKHR != nullptr; }
 	bool xrMndxXdevSpace_Available()
@@ -288,6 +289,7 @@ private:
 	bool supportsEyeGaze = false;
 	bool supportsDepthKHR = false;
 	bool supportsEquirect2KHR = false;
+	bool supportsColorScaleBiasKHR = false;
 	bool supportsUserPresence = false;
 
 #if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
