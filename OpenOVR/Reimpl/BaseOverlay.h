@@ -36,10 +36,12 @@ enum OOVR_VROverlayTransformType {
 	VROverlayTransform_SystemOverlay = 2,
 	VROverlayTransform_TrackedComponent = 3,
 	VROverlayTransform_Cursor = 4,
+	VROverlayTransform_DashboardTab = 5,
+	VROverlayTransform_DashboardThumb = 6,
 	VROverlayTransform_Projection = 8,
 };
 
-/** Overlay control settings */
+/** Overlay control settings, as the bit numbers the oldest interfaces pass (OverlayData stores each as the mask 1 << n) */
 enum OOVR_VROverlayFlags {
 	VROverlayFlags_None = 0,
 
@@ -167,6 +169,9 @@ private:
 	// This doesn't do a whole lot, since OOVR does this for every overlay
 	vr::VROverlayHandle_t highQualityOverlay = vr::k_ulOverlayHandleInvalid;
 
+	// Whether a handle is an overlay that exists
+	bool IsLiveOverlay(const OverlayData* overlay);
+
 	// List of layers, with the first being reserved for the main scene
 	std::vector<XrCompositionLayerBaseHeader*> layerHeaders;
 	// The overlays behind the overlay layers in layerHeaders, in the same order
@@ -177,9 +182,6 @@ private:
 
 	// Cached copy of the keyboard contents, available after it is closed
 	std::string keyboardCache;
-
-	// True if we're modifying the input in any way
-	bool usingInput = false;
 
 	std::recursive_mutex layersLock;
 
@@ -282,9 +284,6 @@ public:
 	// with their layers is built and ended (on the game's thread, or OpenLamina's own frames' thread). Taken after the
 	// session lock (shared), never before it.
 	std::recursive_mutex& _LayersLock() { return layersLock; }
-
-	// If an overlay needs input, this grabs the input and returns whether the input should preceed to the application
-	bool _HandleOverlayInput(vr::EVREye role, vr::TrackedDeviceIndex_t controllerDeviceIndex, vr::VRControllerState_t state);
 
 	// ---------------------------------------------
 	// Overlay management methods
@@ -523,7 +522,7 @@ public:
 	vr::EVROverlayError SetOverlayFlagMask(vr::VROverlayHandle_t ulOverlayHandle, uint32_t flagMask, bool bEnabled);
 	vr::EVROverlayError GetOverlayFlagMask(vr::VROverlayHandle_t ulOverlayHandle, uint32_t flagMask, bool* pbEnabled);
 
-	/** IVROverlay_001-006 (SDK 0.9.2 to 0.9.11): the overlay's gamma, kept and answered (2.2 for a linear texture) */
+	/** IVROverlay_001-006 (SDK 0.9.2 to 0.9.11): the overlay's gamma, kept and answered as set (1.0 until then) */
 	vr::EVROverlayError SetOverlayGamma(vr::VROverlayHandle_t ulOverlayHandle, float fGamma);
 	vr::EVROverlayError GetOverlayGamma(vr::VROverlayHandle_t ulOverlayHandle, float* pfGamma);
 

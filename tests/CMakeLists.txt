@@ -118,6 +118,7 @@ add_executable(oc_unit_tests
 	unit/DepthRangeTests.cpp
 	unit/OwnFrameLoopTests.cpp
 	unit/OverlayMathsTests.cpp
+	unit/OverlayStateTests.cpp
 	unit/LaserMouseTests.cpp
 	unit/RemotePointerTests.cpp
 	unit/DashboardTests.cpp
