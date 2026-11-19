@@ -260,11 +260,11 @@ TEST_CASE("Subtended_angle_of_a_quad")
 
 TEST_CASE("Draw_order_puts_the_high_quality_overlay_on_top_then_sort_order_then_the_nearest")
 {
-	const DrawOrder far{ false, 0, 3 }, near{ false, 0, 1 }, sorted{ false, 2, 5 }, high{ true, 0, 9 };
-	CHECK(DrawnBefore(far, near));
-	CHECK_FALSE(DrawnBefore(near, far));
-	CHECK(DrawnBefore(near, sorted));
-	CHECK_FALSE(DrawnBefore(sorted, near));
+	const DrawOrder farther{ false, 0, 3 }, nearer{ false, 0, 1 }, sorted{ false, 2, 5 }, high{ true, 0, 9 };
+	CHECK(DrawnBefore(farther, nearer));
+	CHECK_FALSE(DrawnBefore(nearer, farther));
+	CHECK(DrawnBefore(nearer, sorted));
+	CHECK_FALSE(DrawnBefore(sorted, nearer));
 	CHECK(DrawnBefore(sorted, high));
 	CHECK_FALSE(DrawnBefore(high, sorted));
 	CHECK_FALSE(DrawnBefore(high, high));
