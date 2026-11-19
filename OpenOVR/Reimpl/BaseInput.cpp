@@ -433,6 +433,10 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 		bindingFiles.clear();
 		evaluatedThisSync.clear();
 		legacyEvaluators.clear();
+		{
+			std::lock_guard<std::mutex> queueGuard(hapticQueueLock);
+			pendingHaptics.clear();
+		}
 		actions.Reset();
 		actionSets.Reset();
 		usingLegacyInput = false;
@@ -1576,6 +1580,7 @@ EVRInputError BaseInput::UpdateActionState(VR_ARRAY_COUNT(unSetCount) VRActiveAc
 	syncInfo.countActiveActionSets = aas.size();
 	OC_XR_LOG(xrSyncActions(xr_session.get(), &syncInfo));
 	syncSerial++;
+	FlushDueHaptics();
 
 	for (size_t i = 0; i < allSubactionPaths.size(); i++) {
 		auto handDevice = BackendManager::Instance().GetBackendInstance()->GetDeviceByHand(static_cast<ITrackedDevice::TrackedDeviceType>(i));
@@ -1604,6 +1609,7 @@ void BaseInput::InternalUpdate()
 	syncInfo.countActiveActionSets = rawInputsSet != XR_NULL_HANDLE ? 2 : 1;
 	OC_XR_LOG(xrSyncActions(xr_session.get(), &syncInfo));
 	syncSerial++;
+	FlushDueHaptics();
 }
 
 EVRInputError BaseInput::GetDigitalActionData(VRActionHandle_t action, InputDigitalActionData_t* pActionData, uint32_t unActionDataSize,
@@ -2284,6 +2290,34 @@ EVRInputError BaseInput::DecompressSkeletalBoneData(const void* pvCompressedBuff
 	return DecompressBones(pvCompressedBuffer, unCompressedBufferSize, eTransformSpace, pTransformArray);
 }
 
+void BaseInput::ApplyHaptic(const PendingHaptic& pulse)
+{
+	XrHapticActionInfo info = { XR_TYPE_HAPTIC_ACTION_INFO };
+	info.action = pulse.action;
+	info.subactionPath = pulse.subactionPath;
+	XrHapticVibration vibration = { XR_TYPE_HAPTIC_VIBRATION };
+	vibration.frequency = pulse.frequency;
+	vibration.duration = pulse.duration;
+	vibration.amplitude = pulse.amplitude;
+	OC_XR_LOG(xrApplyHapticFeedback(xr_session.get(), &info, (XrHapticBaseHeader*)&vibration));
+}
+
+void BaseInput::FlushDueHaptics()
+{
+	std::vector<PendingHaptic> due;
+	{
+		std::lock_guard<std::mutex> queueGuard(hapticQueueLock);
+		if (pendingHaptics.empty())
+			return;
+		const double now = EvaluatorClock();
+		auto firstLater = std::stable_partition(pendingHaptics.begin(), pendingHaptics.end(), [&](const PendingHaptic& p) { return p.due <= now; });
+		due.assign(pendingHaptics.begin(), firstLater);
+		pendingHaptics.erase(pendingHaptics.begin(), firstLater);
+	}
+	for (const PendingHaptic& pulse : due)
+		ApplyHaptic(pulse);
+}
+
 EVRInputError BaseInput::TriggerHapticVibrationAction(VRActionHandle_t action, float fStartSecondsFromNow, float fDurationSeconds,
     float fFrequency, float fAmplitude, VRInputValueHandle_t ulRestrictToDevice)
 {
@@ -2295,14 +2329,13 @@ EVRInputError BaseInput::TriggerHapticVibrationAction(VRActionHandle_t action, f
 		return VRInputError_WrongType;
 	}
 
-	// TODO check the subaction stuff works properly
-	XrPath subactionPath = XR_NULL_PATH;
+	// A device that isn't a hand has nothing to vibrate
+	int restrictedHand = -1;
 	if (ulRestrictToDevice != vr::k_ulInvalidInputValueHandle) {
-		std::shared_ptr<ITrackedDevice> dev = ivhToDev(ulRestrictToDevice);
-		if (dev && dev->GetHand() != ITrackedDevice::HAND_NONE) {
-			LegacyControllerActions& ctrl = legacyControllers[dev->GetHand()];
-			subactionPath = ctrl.handPathXr;
-		}
+		const InputValueHandle* ivh = cast_IVH(ulRestrictToDevice);
+		if (!ivh)
+			return VRInputError_InvalidHandle;
+		restrictedHand = ivh->type == InputSource::HAND_LEFT ? 0 : ivh->type == InputSource::HAND_RIGHT ? 1 : 2;
 	}
 
 	// The active sets' haptic bindings pick the hands, each scaling the amplitude. A hand ulRestrictToDevice names,
@@ -2314,21 +2347,27 @@ EVRInputError BaseInput::TriggerHapticVibrationAction(VRActionHandle_t action, f
 			for (BindingEvaluator::HapticTarget& t : ev->HapticsFor(act->manifestName))
 				targets.push_back(std::move(t));
 	}
+	const bool delayed = std::isfinite(fStartSecondsFromNow) && fStartSecondsFromNow > 0;
 	for (size_t i = 0; i < allSubactionPathNames.size() && i < allSubactionPaths.size(); i++) {
-		if (subactionPath != XR_NULL_PATH && allSubactionPaths[i] != subactionPath)
+		if (restrictedHand >= 0 && (size_t)restrictedHand != i)
 			continue;
 		auto target = std::find_if(targets.begin(), targets.end(),
 		    [&](const BindingEvaluator::HapticTarget& t) { return t.path.starts_with(allSubactionPathNames[i] + "/"); });
 		if (target == targets.end())
 			continue;
-		XrHapticActionInfo handInfo = { XR_TYPE_HAPTIC_ACTION_INFO };
-		handInfo.action = act->xr;
-		handInfo.subactionPath = allSubactionPaths[i];
-		XrHapticVibration handVibration = { XR_TYPE_HAPTIC_VIBRATION };
-		handVibration.frequency = fFrequency == 0.0f ? XR_FREQUENCY_UNSPECIFIED : fFrequency;
-		handVibration.duration = (int)(fDurationSeconds * 1000000000.0f);
-		handVibration.amplitude = std::clamp(fAmplitude * target->amplitudeScale, 0.0f, 1.0f);
-		OC_XR_LOG(xrApplyHapticFeedback(xr_session.get(), &handInfo, (XrHapticBaseHeader*)&handVibration));
+		PendingHaptic pulse;
+		pulse.action = act->xr;
+		pulse.subactionPath = allSubactionPaths[i];
+		pulse.frequency = fFrequency > 0 && std::isfinite(fFrequency) ? fFrequency : XR_FREQUENCY_UNSPECIFIED;
+		pulse.duration = HapticDuration(fDurationSeconds);
+		pulse.amplitude = HapticAmplitude(fAmplitude, target->amplitudeScale);
+		if (delayed) {
+			pulse.due = EvaluatorClock() + fStartSecondsFromNow;
+			std::lock_guard<std::mutex> queueGuard(hapticQueueLock);
+			pendingHaptics.push_back(pulse);
+		} else {
+			ApplyHaptic(pulse);
+		}
 	}
 	return VRInputError_None;
 }

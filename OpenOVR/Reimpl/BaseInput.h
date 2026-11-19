@@ -4,7 +4,9 @@
 // FIXME don't do that, it's ugly and slows down the build when modifying headers
 
 #include "Drivers/Backend.h"
+#include <algorithm>
 #include <atomic>
+#include <cmath>
 #include <map>
 #include <mutex>
 #include <memory>
@@ -543,6 +545,7 @@ private:
 		Optional,
 	};
 
+public:
 	enum class ActionType {
 		Boolean = 0,
 		Vector1,
@@ -554,6 +557,23 @@ private:
 		EyeTracking,
 	};
 
+	/** A haptic pulse's duration for a game's seconds: the shortest the runtime offers for none (or a bad value), and
+	 * never past an hour, so the nanoseconds fit the 64-bit count. */
+	static XrDuration HapticDuration(float seconds)
+	{
+		if (!std::isfinite(seconds) || seconds <= 0)
+			return XR_MIN_HAPTIC_DURATION;
+		return (XrDuration)(std::min((double)seconds, 3600.0) * 1e9);
+	}
+
+	/** A haptic pulse's amplitude: the game's, scaled by its binding, kept within OpenXR's 0 to 1. */
+	static float HapticAmplitude(float amplitude, float scale)
+	{
+		float value = amplitude * scale;
+		return std::isnan(value) ? 0.0f : std::clamp(value, 0.0f, 1.0f);
+	}
+
+private:
 	enum class ActionSetUsage {
 		LeftRight = 0, // User can bind each side separately
 		Single, // What's bound to one controller is bound to the other
@@ -790,6 +810,21 @@ private:
 	};
 	std::map<std::string, LegacyEvaluator> legacyEvaluators; // by controller type
 	void UpdateEvaluators(const VRActiveActionSet_t* sets, uint32_t count);
+
+	// Haptic pulses a game asked to start later, applied at the first sync once they're due
+	struct PendingHaptic {
+		double due = 0;
+		XrAction action = XR_NULL_HANDLE;
+		XrPath subactionPath = XR_NULL_PATH;
+		XrDuration duration = 0;
+		float frequency = 0;
+		float amplitude = 0;
+	};
+	std::mutex hapticQueueLock;
+	std::vector<PendingHaptic> pendingHaptics;
+	void ApplyHaptic(const PendingHaptic& pulse);
+	/** Applies the queued pulses that are due. Call it with the session lock held. */
+	void FlushDueHaptics();
 	/** This sync's digital or analog output for an action from the evaluators, matching ulRestrictToDevice (a copy,
 	 * taken under evaluatorLock) */
 	std::optional<DigitalOut> EvaluatedDigital(const Action& action, VRInputValueHandle_t restrictToDevice) const;
