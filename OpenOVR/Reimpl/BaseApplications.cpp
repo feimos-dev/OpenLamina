@@ -353,7 +353,7 @@ EVRApplicationError BaseApplications::GetApplicationKeyByProcessId(uint32_t unPr
 	return CopyOut(key, pchAppKeyBuffer, unAppKeyBufferLen) ? VRApplicationError_None : VRApplicationError_BufferTooSmall;
 }
 
-EVRApplicationError BaseApplications::Launch(const AppManifestEntry& app, const std::string& extraArguments)
+EVRApplicationError BaseApplications::Launch(const AppManifestEntry& app, const std::string& extraArguments, uint32_t* startedPid)
 {
 	if (app.isTemplate)
 		return VRApplicationError_IsTemplate;
@@ -371,6 +371,8 @@ EVRApplicationError BaseApplications::Launch(const AppManifestEntry& app, const 
 			return VRApplicationError_LaunchFailed;
 	}
 
+	if (pid && startedPid)
+		*startedPid = *pid;
 	OOVR_LOGF("Launched application %s", app.appKey.c_str());
 	uint64_t now = UnixSeconds();
 	UpdateApplications(Store(), [&](Json::Value& doc) {
@@ -402,7 +404,7 @@ EVRApplicationError BaseApplications::LaunchTemplateApplication(const char* pchT
 	if (Find(pchNewAppKey))
 		return VRApplicationError_AppKeyAlreadyExists;
 
-	// The template with the overridden keys (named as in a manifest), as a temporary application of this process
+	// The template with the overridden keys (named as in a manifest), as a temporary application, kept while the program started for it runs
 	Json::Value app = templ->ToJson();
 	app["app_key"] = pchNewAppKey;
 	app["is_template"] = false;
@@ -426,7 +428,16 @@ EVRApplicationError BaseApplications::LaunchTemplateApplication(const char* pchT
 	});
 	if (written)
 		PostApplicationListUpdated();
-	return Launch(AppManifestEntry::FromJson(app), "");
+	uint32_t started = 0;
+	EVRApplicationError error = Launch(AppManifestEntry::FromJson(app), "", &started);
+	if (error == VRApplicationError_None && started) {
+		// The instance lasts as long as the program started for it, not the one that asked
+		UpdateApplications(Store(), [&](Json::Value& doc) {
+			if (doc["manifests"].isMember(path))
+				doc["manifests"][path]["owner_pid"] = started;
+		});
+	}
+	return error;
 }
 EVRApplicationError BaseApplications::LaunchApplicationFromMimeType(const char* pchMimeType, const char* pchArgs)
 {

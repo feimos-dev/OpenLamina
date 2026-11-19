@@ -621,3 +621,39 @@ TEST_CASE("Process_id_taken_over_by_another_program_is_not_the_application")
 	CHECK_FALSE(doc["pids"].isMember(std::to_string(other)));
 	CHECK_FALSE(doc["pid_starts"].isMember(std::to_string(other)));
 }
+
+TEST_CASE("Template_instance_belongs_to_the_program_started_for_it")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	BaseApplications apps(store);
+
+	fs::path manifest = dir.path / "template.vrmanifest";
+	Json::Value app(Json::objectValue);
+	app["app_key"] = "oc.test.template";
+	app["launch_type"] = "binary";
+	app["binary_path"] = OC_ECHO_APP;
+	app["arguments"] = "marker.txt x";
+	app["working_directory"] = PathToUtf8(dir.path);
+	app["is_template"] = true;
+	Json::Value root(Json::objectValue);
+	root["applications"].append(app);
+	std::ofstream(manifest) << root.toStyledString();
+	REQUIRE(apps.AddApplicationManifest(PathToUtf8(manifest).c_str()) == VRApplicationError_None);
+
+	REQUIRE(apps.LaunchTemplateApplication("oc.test.template", "oc.test.instance", nullptr, 0) == VRApplicationError_None);
+	Json::Value doc = store.Read(StoreDoc::Applications);
+	uint32_t owner = doc["manifests"]["template:oc.test.instance"]["owner_pid"].asUInt();
+	CHECK(owner != oc_current_pid());
+	CHECK(doc["pids"][std::to_string(owner)].asString() == "oc.test.instance");
+
+	// It ends with that program
+	bool ended = false;
+	for (int i = 0; i < 50 && !ended; i++) {
+		ended = !SharedStore::IsProcessAlive(owner);
+		if (!ended)
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	}
+	CHECK(ended);
+	CHECK_FALSE(apps.IsApplicationInstalled("oc.test.instance"));
+}

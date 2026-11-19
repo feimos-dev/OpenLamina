@@ -244,7 +244,7 @@ public:
 private:
 	SharedStore& Store();
 	std::optional<AppManifestEntry> Find(const char* pchAppKey);
-	EVRApplicationError Launch(const AppManifestEntry& app, const std::string& extraArguments);
+	EVRApplicationError Launch(const AppManifestEntry& app, const std::string& extraArguments, uint32_t* startedPid = nullptr);
 
 	SharedStore* store = nullptr;
 };
