@@ -79,6 +79,9 @@ struct OOVR_RenderModel_t {
 struct OOVR_RenderModel_TextureMap_t {
 	uint16_t unWidth, unHeight; // width and height of the texture map in pixels
 	const uint8_t* rubTextureMapData; // Map texture data. All textures are RGBA with 8 bits per channel per pixel. Data size is width * height * 4ub
+	// Newer SDKs read these two after the data pointer; older ones stop before them
+	int format; // 0 = RGBA8_SRGB
+	uint16_t unMipLevels;
 };
 
 #if defined(__linux__) || defined(__APPLE__)
@@ -124,8 +127,11 @@ static bool IsKnownRenderModel(const char* name)
 
 // Copies value into an app's buffer, cut short and terminated if it doesn't fit; returns the size needed with the
 // terminator, as SteamVR does
-static uint32_t CopyOutModelString(const string& value, char* buffer, uint32_t size)
+// BufferTooSmall in *error (when given) if the buffer can't hold the string and its terminator
+static uint32_t CopyOutModelString(const string& value, char* buffer, uint32_t size, EVRRenderModelError* error = nullptr)
 {
+	if (error && size < value.size() + 1)
+		*error = VRRenderModelError_BufferTooSmall;
 	if (buffer && size) {
 		size_t n = std::min<size_t>(value.size(), size - 1);
 		memcpy(buffer, value.data(), n);
@@ -395,7 +401,14 @@ EVRRenderModelError BaseRenderModels::LoadRenderModel_Async(const char* pchRende
 	if (!pchRenderModelName || !renderModel)
 		return VRRenderModelError_InvalidArg;
 	*renderModel = nullptr;
-	OOVR_LOGF("LoadRenderModel_Async %s", pchRenderModelName);
+	{
+		// Games load models every frame: log each name once
+		static std::mutex loggedLock;
+		static std::set<string> logged;
+		std::lock_guard<std::mutex> guard(loggedLock);
+		if (logged.insert(pchRenderModelName).second)
+			OOVR_LOGF("LoadRenderModel_Async %s", pchRenderModelName);
+	}
 	string name = pchRenderModelName;
 
 	// SteamVR's model of that name, as SteamVR answers it; else (no SteamVR, or a model it can't load) OpenLamina's own
@@ -445,7 +458,7 @@ EVRRenderModelError BaseRenderModels::LoadRenderModel_Async(const char* pchRende
 		return VRRenderModelError_NotSupported;
 	} else {
 		// A model OpenComposite doesn't have: games then draw none, or their own
-		OC_UNSUPPORTED(VRRenderModelError_NotSupported, "LoadRenderModel_Async: no render model '%s'", pchRenderModelName);
+		OC_UNSUPPORTED(VRRenderModelError_InvalidModel, "LoadRenderModel_Async: no render model '%s'", pchRenderModelName);
 	}
 
 	string resource = loadResource(rid);
@@ -618,6 +631,8 @@ EVRRenderModelError BaseRenderModels::LoadTexture_Async(TextureID_t textureId, R
 	*texture = new RenderModel_TextureMap_t();
 	AddLive(LiveTextures(), *texture);
 	RenderModel_TextureMap_t& tx = **texture;
+	tx.format = 0;
+	tx.unMipLevels = 1;
 
 	// A SteamVR model's texture
 	if (std::shared_ptr<const Image> steamvr = SteamVRTexture(textureId)) {
@@ -772,45 +787,14 @@ void BaseRenderModels::FreeTextureD3D11(void* pD3D11Texture2D)
 
 uint32_t BaseRenderModels::GetRenderModelName(uint32_t unRenderModelIndex, VR_OUT_STRING() char* pchRenderModelName, uint32_t unRenderModelNameLen)
 {
-	const char* renderModelName = nullptr;
-	uint32_t strLen = 0;
-
-	OOVR_LOGF("GetRenderModelName %d", unRenderModelIndex);
-
-	// With SteamVR: its models, then OpenLamina's own; the size with the terminator, as SteamVR answers
-	if (!SteamVRRenderModelNames().empty()) {
-		const std::vector<string>& names = AllModelNames();
-		if (unRenderModelIndex >= names.size()) {
-			if (pchRenderModelName && unRenderModelNameLen)
-				pchRenderModelName[0] = 0;
-			return 0;
-		}
-		return CopyOutModelString(names[unRenderModelIndex], pchRenderModelName, unRenderModelNameLen);
+	// SteamVR's models if it is installed, then OpenLamina's own; the size with the terminator, as SteamVR answers
+	const std::vector<string>& names = AllModelNames();
+	if (unRenderModelIndex >= names.size()) {
+		if (pchRenderModelName && unRenderModelNameLen)
+			pchRenderModelName[0] = 0;
+		return 0;
 	}
-
-	switch (unRenderModelIndex) {
-	case 0:
-		renderModelName = "renderLeftHand";
-		strLen = strlen(renderModelName);
-		break;
-	case 1:
-		renderModelName = "renderRightHand";
-		strLen = strlen(renderModelName);
-		break;
-	case 2:
-		renderModelName = "vive_tracker";
-		strLen = strlen(renderModelName);
-		break;
-	default:
-		break;
-	}
-
-	if (pchRenderModelName && renderModelName && unRenderModelNameLen > 0) {
-		strncpy(pchRenderModelName, renderModelName, unRenderModelNameLen - 1);
-		pchRenderModelName[unRenderModelNameLen - 1] = '\0';
-	}
-
-	return strLen;
+	return CopyOutModelString(names[unRenderModelIndex], pchRenderModelName, unRenderModelNameLen);
 }
 
 uint32_t BaseRenderModels::GetRenderModelCount()
@@ -826,11 +810,8 @@ uint32_t BaseRenderModels::GetComponentCount(const char* pchRenderModelName)
 			return (uint32_t)model->components.size();
 	}
 
-	// Left at zero for now until I can properly test it, and add textures
-	return oovr_global_configuration.RenderCustomHands() ? 1 : 0;
-
-	// This means there are no moving components (eg buttons thumbstick etc) which
-	//  can be animated via the Component functions, which thus shouldn't be called.
+	// OpenLamina's own models have one static component, named after the model
+	return pchRenderModelName && IsKnownRenderModel(pchRenderModelName) ? 1 : 0;
 }
 
 uint32_t BaseRenderModels::GetComponentName(const char* pchRenderModelName, uint32_t unComponentIndex,
@@ -912,8 +893,16 @@ bool BaseRenderModels::GetComponentStateForDevicePath(const char* pchRenderModel
     vr::VRInputValueHandle_t devicePath, const OOVR_RenderModel_ControllerMode_State_t* pState,
     OOVR_RenderModel_ComponentState_t* pComponentState)
 {
-	// todo: make use of devicePath
-	return GetComponentState(pchRenderModelName, pchComponentName, nullptr, pState, pComponentState);
+	// The controller state of the device the path names, so the model's buttons and sticks move with it
+	vr::VRControllerState_t state{};
+	const vr::VRControllerState_t* controllerState = nullptr;
+	if (BaseInput* input = GetUnsafeBaseInput()) {
+		BaseInput::InputOriginInfo_t info{};
+		if (input->GetOriginTrackedDeviceInfo(devicePath, &info, sizeof(info)) == vr::VRInputError_None
+		    && input->GetLegacyControllerState(info.trackedDeviceIndex, &state))
+			controllerState = &state;
+	}
+	return GetComponentState(pchRenderModelName, pchComponentName, controllerState, pState, pComponentState);
 }
 
 bool BaseRenderModels::GetComponentState(const char* pchRenderModelName, const char* pchComponentName,
@@ -1002,21 +991,9 @@ bool BaseRenderModels::GetComponentState(const char* pchRenderModelName, const c
 	if (success)
 		return true;
 
-	// Log a warning about this component, but only do so once
-	if (!warnedAboutComponents.contains(componentName)) {
-		OOVR_LOGF("Unknown component %s - returning a fake identity component", componentName.c_str());
-		warnedAboutComponents.insert(componentName);
-	}
-
-	vr::HmdMatrix34_t ident{};
-	ident.m[0][0] = ident.m[1][1] = ident.m[2][2] = 1;
-
-	pComponentState->mTrackingToComponentLocal = ident;
-	pComponentState->mTrackingToComponentRenderModel = ident;
-
-	pComponentState->uProperties = VRComponentProperty_IsVisible | VRComponentProperty_IsStatic;
-
-	return true;
+	OOVR_LOG_ONCE("GetComponentState: unknown component");
+	ZeroMemory(pComponentState, sizeof(*pComponentState));
+	return false;
 }
 
 bool BaseRenderModels::TryGetComponentState(ITrackedDevice::TrackedDeviceType hand, const std::string& componentName, OOVR_RenderModel_ComponentState_t* result)
@@ -1108,11 +1085,11 @@ uint32_t BaseRenderModels::GetRenderModelThumbnailURL(const char* pchRenderModel
 		string url;
 		if (!model->thumbnail.empty())
 			url = FileUrl(model->folder / PathFromUtf8(model->thumbnail));
-		return CopyOutModelString(url, pchThumbnailURL, unThumbnailURLLen);
+		return CopyOutModelString(url, pchThumbnailURL, unThumbnailURLLen, peError);
 	}
 
 	if (peError)
-		*peError = VRRenderModelError_NotSupported;
+		*peError = pchRenderModelName && IsKnownRenderModel(pchRenderModelName) ? VRRenderModelError_NotSupported : VRRenderModelError_InvalidModel;
 	if (pchThumbnailURL && unThumbnailURLLen)
 		pchThumbnailURL[0] = 0;
 	// OpenComposite's models have no thumbnails
@@ -1130,11 +1107,11 @@ uint32_t BaseRenderModels::GetRenderModelOriginalPath(const char* pchRenderModel
 			stem = stem.substr(stem.find('}') + 1);
 		std::filesystem::path file = model->folder / PathFromUtf8(stem + ".obj");
 		std::u8string native = file.make_preferred().u8string();
-		return CopyOutModelString(string(native.begin(), native.end()), pchOriginalPath, unOriginalPathLen);
+		return CopyOutModelString(string(native.begin(), native.end()), pchOriginalPath, unOriginalPathLen, peError);
 	}
 
 	if (peError)
-		*peError = VRRenderModelError_NotSupported;
+		*peError = pchRenderModelName && IsKnownRenderModel(pchRenderModelName) ? VRRenderModelError_NotSupported : VRRenderModelError_InvalidModel;
 	if (pchOriginalPath && unOriginalPathLen)
 		pchOriginalPath[0] = 0;
 	// OpenComposite's models are built into the DLL: no path

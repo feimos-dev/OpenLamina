@@ -12,6 +12,8 @@
   "textured": true,
   "texture_ret": 0,
   "texture": "2x2",
+  "texture_format": 0,
+  "texture_mips": 1,
   "first_pixel": "ff0000ff",
   "d3d11_ret": 0,
   "d3d11_texture": "2x2"
@@ -52,9 +54,23 @@
   "broken_textured": false,
   "hand_ret": 0,
   "hand_has_vertices": true,
-  "unknown_ret": 200,
+  "unknown_ret": 301,
   "unknown_null": true,
-  "outside_ret": 200,
+  "outside_ret": 301,
   "outside_null": true
+ },
+ "render-models/answers/-/-": {
+  "name_size_matches": true,
+  "name_out_of_range": 0,
+  "unknown_components": 0,
+  "unknown_has_component": false,
+  "hand_components": 1,
+  "unknown_state": false,
+  "unknown_thumbnail": 0,
+  "unknown_thumbnail_error": 301,
+  "unknown_original": 0,
+  "unknown_original_error": 301,
+  "short_buffer_error": 306,
+  "short_buffer_needs_more": true
  }
 }
