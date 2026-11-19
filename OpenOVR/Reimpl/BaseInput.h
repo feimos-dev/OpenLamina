@@ -557,6 +557,12 @@ public:
 		EyeTracking,
 	};
 
+	/** GetDigitalActionData's answer for an action of this type: only a boolean action is read as digital. */
+	static EVRInputError DigitalReadError(ActionType type)
+	{
+		return type == ActionType::Boolean ? vr::VRInputError_None : vr::VRInputError_WrongType;
+	}
+
 	/** A haptic pulse's duration for a game's seconds: the shortest the runtime offers for none (or a bad value), and
 	 * never past an hour, so the nanoseconds fit the 64-bit count. */
 	static XrDuration HapticDuration(float seconds)

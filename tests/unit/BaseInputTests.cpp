@@ -60,3 +60,11 @@ TEST_CASE("Haptic_amplitude_clamped")
 	CHECK(BaseInput::HapticAmplitude(-3.0f, 1.0f) == 0.0f);
 	CHECK(BaseInput::HapticAmplitude(std::numeric_limits<float>::quiet_NaN(), 1.0f) == 0.0f);
 }
+
+TEST_CASE("Only_boolean_actions_read_as_digital")
+{
+	using T = BaseInput::ActionType;
+	CHECK(BaseInput::DigitalReadError(T::Boolean) == vr::VRInputError_None);
+	for (T type : { T::Vector1, T::Vector2, T::Vector3, T::Vibration, T::Pose, T::Skeleton, T::EyeTracking })
+		CHECK(BaseInput::DigitalReadError(type) == vr::VRInputError_WrongType);
+}

@@ -1625,8 +1625,8 @@ EVRInputError BaseInput::GetDigitalActionData(VRActionHandle_t action, InputDigi
 	if (!pActionData || unActionDataSize != sizeof(*pActionData))
 		return VRInputError_InvalidParam;
 
-	if (act->type == ActionType::EyeTracking)
-		return VRInputError_WrongType;
+	if (EVRInputError err = DigitalReadError(act->type); err != VRInputError_None)
+		return err;
 
 	// Held by the dashboard: inactive (zeroed above)
 	if (HeldByDashboard())
