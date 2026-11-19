@@ -525,6 +525,14 @@ const std::map<std::string, Factory>& Factories()
 
 std::unique_ptr<ModeBinding> CreateModeBinding(const SourceBinding& binding, std::vector<std::string>& warnings)
 {
+	// "none" binds nothing; SteamVR's files spell the radial menu "radial_menu"
+	if (binding.mode == "none")
+		return nullptr;
+	if (binding.mode == "radial_menu") {
+		SourceBinding radial = binding;
+		radial.mode = "radial";
+		return CreateModeBinding(radial, warnings);
+	}
 	auto it = Factories().find(binding.mode);
 	if (it == Factories().end()) {
 		warnings.push_back(binding.path + ": mode '" + binding.mode + "' isn't one OpenComposite evaluates, skipped");
