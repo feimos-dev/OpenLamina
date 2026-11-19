@@ -4,6 +4,7 @@
 #include "generated/interfaces/IVRSystem_017.h"
 #include "openxr/openxr.h"
 #include <memory>
+#include <chrono>
 #include <queue>
 #include <mutex>
 
@@ -14,6 +15,7 @@ private:
 	struct event_info_t {
 		vr::VREvent_t ev{};
 		vr::TrackedDevicePose_t pose{};
+		std::chrono::steady_clock::time_point queuedAt = std::chrono::steady_clock::now();
 
 		event_info_t(vr::VREvent_t ev)
 		    : ev(ev) {}
