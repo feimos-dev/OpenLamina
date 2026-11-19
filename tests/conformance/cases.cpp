@@ -1479,6 +1479,90 @@ void ChaperoneOffsetsCase(CaseContext& c)
 	c.core->Cleanup();
 }
 
+// A controller's system button held, and pressed (expect/recentre.json, with scripts/recentre.json and
+// ini/recentre.ini: dashboardButton=system). The head stands away from the stage's origin, turned; the right system
+// button is held from frame 20 to 150 (over a second), then the head moves and the left one is held from frame 180 to
+// 310: each hold recentres once (on the stand-in, whose stage can't be moved, the seated origin goes under the head)
+// with a pulse on that controller, and opens no dashboard. Then the left button is pressed from frame 340 to 350, which
+// opens the dashboard when it is let go, and the right one from 370 to 380, which closes it.
+void RecentreCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	vr::EVRInitError le;
+	auto* ov = (vr::IVROverlay_028::IVROverlay*)c.core->GetGenericInterface("IVROverlay_028", &le);
+	Json::Value events(Json::arrayValue);
+	auto head = [&](vr::ETrackingUniverseOrigin origin) {
+		vr::TrackedDevicePose_t poses[16]{};
+		f.sys->GetDeviceToAbsoluteTrackingPose(origin, 0, poses, 16);
+		return poses[vr::k_unTrackedDeviceIndex_Hmd].mDeviceToAbsoluteTracking;
+	};
+	auto position = [](const vr::HmdMatrix34_t& m) {
+		Json::Value out(Json::arrayValue);
+		for (int i = 0; i < 3; i++)
+			out.append(Milli(m.m[i][3]));
+		return out;
+	};
+	// Looking along the origin's -Z, level
+	auto facesForward = [](const vr::HmdMatrix34_t& m) {
+		return std::fabs(m.m[0][2]) < 0.01f && std::fabs(m.m[1][2]) < 0.01f && m.m[2][2] > 0.99f;
+	};
+	Json::Value r;
+	for (int frame = 1; frame <= 400; frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+		// The old input read, so that the controllers' actions are there
+		vr::VRControllerState_t state{};
+		f.sys->GetControllerState(1, &state, sizeof(state));
+		f.comp->Submit(vr::Eye_Left, tex.get(), nullptr, vr::Submit_Default);
+		f.comp->Submit(vr::Eye_Right, tex.get(), nullptr, vr::Submit_Default);
+		vr::VREvent_t ev{};
+		while (f.sys->PollNextEvent(&ev, sizeof(ev))) {
+			const char* name = ev.eventType == vr::VREvent_SeatedZeroPoseReset ? "seated zero pose reset"
+			    : ev.eventType == vr::VREvent_ChaperoneUniverseHasChanged      ? "chaperone universe changed"
+			    : ev.eventType == vr::VREvent_DashboardActivated               ? "dashboard activated"
+			    : ev.eventType == vr::VREvent_DashboardDeactivated             ? "dashboard deactivated"
+			                                                                   : nullptr;
+			if (name && events.size() < 16)
+				events.append(name);
+		}
+		if (frame == 15)
+			r["standing_head_before"] = position(head(vr::TrackingUniverseStanding));
+		if (frame == 100)
+			r["events_before_a_second_held"] = (int)events.size();
+		if (frame == 165 || frame == 325) {
+			// After each hold: the head is the seated origin, the standing space is as it was, no dashboard
+			const char* which = frame == 165 ? "first" : "second";
+			const vr::HmdMatrix34_t seated = head(vr::TrackingUniverseSeated);
+			Json::Value after;
+			after["seated_head"] = position(seated);
+			after["seated_head_faces_forward"] = facesForward(seated);
+			after["standing_head"] = position(head(vr::TrackingUniverseStanding));
+			after["dashboard_open"] = (ov && ov->IsDashboardVisible());
+			after["events"] = events;
+			r[which] = after;
+		}
+		if (frame == 360)
+			r["dashboard_open_after_press"] = (ov && ov->IsDashboardVisible());
+		if (frame == 395)
+			r["dashboard_open_after_second_press"] = (ov && ov->IsDashboardVisible());
+	}
+	r["events"] = events;
+	c.core->Cleanup();
+	// One pulse on each controller, at its hold
+	Json::Value dump = ReadStandInDump();
+	if (!dump.isNull()) {
+		Json::Value pulses(Json::arrayValue);
+		for (const Json::Value& h : dump["haptics"])
+			if (pulses.size() < 16)
+				pulses.append(h["action"]);
+		r["pulses"] = pulses;
+	}
+	c.Record("recentre", r);
+}
+
 // Events from calls (expect/events.json), on the stand-in with scripts/legacy_click.json: the Index profile's
 // right trigger clicked from frame 10 to 20. The game reads the legacy input (GetControllerState at frame 2), so the
 // legacy button events come; ResetSeatedZeroPose's event is the next one polled after it.
@@ -3126,6 +3210,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "chaperone-read", ChaperoneReadCase },
 		{ "chaperone-offsets", ChaperoneOffsetsCase },
 		{ "events", EventsCase },
+		{ "recentre", RecentreCase },
 		{ "input-frames", InputFramesCase },
 		{ "binding-info", BindingInfoCase },
 		{ "eye-gaze", EyeGazeCase },

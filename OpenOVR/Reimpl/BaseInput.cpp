@@ -3728,9 +3728,10 @@ bool BaseInput::HeldByDashboard()
 	return heldByDashboard;
 }
 
-bool BaseInput::GetDashboardButton(bool system)
+bool BaseInput::GetDashboardButton(bool system, int hand)
 {
-	const int hand = 0;
+	if (hand < 0 || hand > 1 || (!system && hand != 0))
+		return false;
 	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
 	if (!hasLoadedActions || legacyInputsSet == XR_NULL_HANDLE || !xr_session.get())
@@ -3744,9 +3745,9 @@ bool BaseInput::GetDashboardButton(bool system)
 		XrActionStateBoolean state = { XR_TYPE_ACTION_STATE_BOOLEAN };
 		return XR_SUCCEEDED(xrGetActionStateBoolean(xr_session.get(), &getInfo, &state)) && state.isActive && state.currentState;
 	};
-	// The system button of either controller, as SteamVR's dashboard opens
+	// The controller's system button, as SteamVR's dashboard opens
 	if (system)
-		return held(legacyControllers[0].dashboard, XR_NULL_PATH) || held(legacyControllers[1].dashboard, XR_NULL_PATH);
+		return held(legacyControllers[hand].dashboard, XR_NULL_PATH);
 	// The left controller's menu button
 	if (useEvaluator && rawInputsSet != XR_NULL_HANDLE) {
 		const XrPath subaction = (size_t)hand < allSubactionPaths.size() ? allSubactionPaths[hand] : XR_NULL_PATH;

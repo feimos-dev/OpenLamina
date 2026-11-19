@@ -127,7 +127,7 @@ namespace RuntimeSwitcher.Core
                 "OpenLamina's dashboard shows the dashboard overlays of the tools running beside the game, and a " +
                 "\"Quit game\" button. The same button closes it. The system button works on controllers that " +
                 "have one (Index, Vive wands) where the OpenXR runtime passes it on; the left menu button is B on " +
-                "Index controllers.",
+                "Index controllers. With \"System button, pressed\", holding it for a second recentres instead.",
                 "off", "Nothing (no dashboard)", "system", "System button, pressed", "system_long",
                 "System button, held", "menu", "Left menu button, pressed", "menu_long", "Left menu button, held"),
             Bool(Tools, "laserMouse", true, "Point at overlays with the controllers",

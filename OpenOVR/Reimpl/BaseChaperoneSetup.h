@@ -35,6 +35,23 @@ public:
 	 * and libmonado told it. Without libmonado nothing moves. */
 	static std::optional<vr::HmdMatrix34_t> ApplyZeroPoses(Json::Value& offsets, const ChaperoneData& committed, LibMonado& monado);
 
+	/** A recentred stage's origin, as a pose in the stage now: on the floor under the head, turned about the vertical
+	 * to face the way the head faces. The floor's height and the up direction stay. headInStage is the head's pose
+	 * in the stage. */
+	static vr::HmdMatrix34_t RecentredOrigin(const vr::HmdMatrix34_t& headInStage);
+
+	/** Moves the runtime's stage to a new origin (a pose in the stage now), through libmonado: the offset it has
+	 * now, with the origin on top of it. A record in the Offsets document of the offset it has now follows it (its
+	 * zero pose stays), so that a room setup committed later still replaces the zero pose applied, and one that
+	 * commits the same zero pose again moves nothing. Returns the offset the stage had before, when it moved it;
+	 * nothing moves without libmonado or its get call. */
+	static std::optional<vr::HmdMatrix34_t> MoveStage(Json::Value& offsets, const vr::HmdMatrix34_t& origin, LibMonado& monado);
+
+	/** A recentre asked for by the user: on Monado with libmonado and applyZeroPoses, the stage moves to
+	 * RecentredOrigin for every program, and every OpenLamina program is told as after a committed room setup.
+	 * False if the stage didn't move. */
+	static bool RecentreStage(const vr::HmdMatrix34_t& headInStage);
+
 	/** Reverts the working copy to match the live chaperone calibration.
 	 * To modify existing data this MUST be do WHILE getting a non-error ChaperoneCalibrationStatus.
 	 * Only after this should you do gets and sets on the existing data. */

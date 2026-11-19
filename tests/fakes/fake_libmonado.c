@@ -9,6 +9,7 @@
  *                        "set_reference_space_offset <type> <px> <py> <pz> <qx> <qy> <qz> <qw>"
  *   FAKE_MND_NO_OFFSETS  set: the reference space offset calls fail with MND_ERROR_INVALID_OPERATION (-2)
  *   FAKE_MND_NO_GET      set: only the get call of the reference space offsets fails (as without libmonado 1.3)
+ *   FAKE_MND_NO_SET      set: only the set call of the reference space offsets fails
  * Three devices: 0 "Fake HMD" (head), 1 "Fake Left" (left), 2 "Fake Right" (right); serials SN0, SN1, SN2.
  * fake_mnd_battery_calls() answers how often the battery was asked for. Each reference space's offset is kept
  * (identity at first) and given back, while the library stays loaded; fake_mnd_restart() puts them back to identity,
@@ -146,7 +147,7 @@ static fake_pose offsets[5] = {
 FAKE_API int mnd_root_set_reference_space_offset(void* root, int type, const fake_pose* offset)
 {
 	(void)root;
-	if (type < 0 || type > 4 || fake_getenv("FAKE_MND_NO_OFFSETS"))
+	if (type < 0 || type > 4 || fake_getenv("FAKE_MND_NO_OFFSETS") || fake_getenv("FAKE_MND_NO_SET"))
 		return -2; /* MND_ERROR_INVALID_OPERATION */
 	offsets[type] = *offset;
 	const char* log = fake_getenv("FAKE_MND_LOG");

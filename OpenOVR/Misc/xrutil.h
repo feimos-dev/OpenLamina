@@ -55,6 +55,8 @@ public:
 
 	XrSpace floorSpace = XR_NULL_HANDLE;
 	XrSpace seatedSpace = XR_NULL_HANDLE;
+	// seatedSpace's pose in LOCAL: identity until ResetSeatedZeroPose moves it
+	XrPosef seatedPose = { { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
 	XrSpace viewSpace = XR_NULL_HANDLE;
 
 	XrSystemProperties systemProperties = { XR_TYPE_SYSTEM_PROPERTIES };

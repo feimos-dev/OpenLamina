@@ -515,3 +515,172 @@ TEST_CASE("No_libmonado_keeps_offsets_only")
 	SetEnv("FAKE_MND_NO_OFFSETS", nullptr);
 	CHECK(offsets.empty());
 }
+
+namespace {
+// A head's pose in the stage: at a place, turned left by a yaw (degrees), then tipped up by a pitch
+vr::HmdMatrix34_t HeadAt(float x, float y, float z, float yawDegrees, float pitchDegrees = 0)
+{
+	const float yaw = yawDegrees * 3.14159265f / 180, pitch = pitchDegrees * 3.14159265f / 180;
+	const float cy = std::cos(yaw), sy = std::sin(yaw), cp = std::cos(pitch), sp = std::sin(pitch);
+	// Ry(yaw) * Rx(pitch)
+	vr::HmdMatrix34_t m{};
+	m.m[0][0] = cy, m.m[0][1] = sy * sp, m.m[0][2] = sy * cp, m.m[0][3] = x;
+	m.m[1][0] = 0, m.m[1][1] = cp, m.m[1][2] = -sp, m.m[1][3] = y;
+	m.m[2][0] = -sy, m.m[2][1] = cy * sp, m.m[2][2] = cy * cp, m.m[2][3] = z;
+	return m;
+}
+
+void CheckYawOnly(const vr::HmdMatrix34_t& m, float x, float z, float yawDegrees)
+{
+	const float yaw = yawDegrees * 3.14159265f / 180;
+	CHECK(m.m[0][3] == doctest::Approx(x));
+	CHECK(m.m[1][3] == doctest::Approx(0)); // on the floor
+	CHECK(m.m[2][3] == doctest::Approx(z));
+	// Up stays up
+	CHECK(m.m[1][1] == doctest::Approx(1));
+	CHECK(m.m[0][1] == doctest::Approx(0));
+	CHECK(m.m[2][1] == doctest::Approx(0));
+	CHECK(m.m[1][0] == doctest::Approx(0));
+	CHECK(m.m[1][2] == doctest::Approx(0));
+	CHECK(m.m[0][0] == doctest::Approx(std::cos(yaw)));
+	CHECK(m.m[0][2] == doctest::Approx(std::sin(yaw)));
+	CHECK(m.m[2][0] == doctest::Approx(-std::sin(yaw)));
+	CHECK(m.m[2][2] == doctest::Approx(std::cos(yaw)));
+}
+} // namespace
+
+TEST_CASE("Recentred_origin_is_under_the_head_turned_about_the_vertical")
+{
+	// Level, facing -Z: under the head, not turned
+	CheckYawOnly(BaseChaperoneSetup::RecentredOrigin(HeadAt(0.5f, 1.7f, -0.25f, 0)), 0.5f, -0.25f, 0);
+	// Turned 90 degrees left
+	CheckYawOnly(BaseChaperoneSetup::RecentredOrigin(HeadAt(1, 1.2f, 2, 90)), 1, 2, 90);
+	// Turned and looking 40 degrees up, or 60 down: the turn alone
+	CheckYawOnly(BaseChaperoneSetup::RecentredOrigin(HeadAt(-1, 1.7f, 0.5f, -30, 40)), -1, 0.5f, -30);
+	CheckYawOnly(BaseChaperoneSetup::RecentredOrigin(HeadAt(0, 1.7f, 0, 135, -60)), 0, 0, 135);
+	// Looking straight down or up: the way the head's top, or its bottom, points
+	CheckYawOnly(BaseChaperoneSetup::RecentredOrigin(HeadAt(0, 1.7f, 0, 45, -90)), 0, 0, 45);
+	CheckYawOnly(BaseChaperoneSetup::RecentredOrigin(HeadAt(0, 1.7f, 0, 45, 90)), 0, 0, 45);
+	// Tilted to the side too (a roll of 20 degrees after a turn of 90)
+	vr::HmdMatrix34_t rolled = HeadAt(0, 1.7f, 0, 90);
+	const float c = std::cos(0.349f), s = std::sin(0.349f);
+	for (int r = 0; r < 3; r++) {
+		const float x = rolled.m[r][0], y = rolled.m[r][1];
+		rolled.m[r][0] = x * c + y * s;
+		rolled.m[r][1] = y * c - x * s;
+	}
+	CheckYawOnly(BaseChaperoneSetup::RecentredOrigin(rolled), 0, 0, 90);
+}
+
+TEST_CASE("Recentre_moves_the_stage_on_top_of_its_offset")
+{
+	FakeLibMonado fake("1", "0,0,0");
+	OffsetLog log;
+	LibMonado mnd("Monado(XRT) by Collabora et al");
+	REQUIRE(mnd.Available());
+	RestartMonado();
+	Json::Value offsets(Json::objectValue);
+	// The head 1 m right of the stage's origin, 1.7 m up, turned 90 degrees left
+	const vr::HmdMatrix34_t origin = BaseChaperoneSetup::RecentredOrigin(HeadAt(1, 1.7f, 0, 90));
+	std::optional<vr::HmdMatrix34_t> before = BaseChaperoneSetup::MoveStage(offsets, origin, mnd);
+	REQUIRE(before.has_value());
+	CHECK(before->m[0][3] == 0.0f);
+	std::vector<std::string> lines = log.Lines();
+	REQUIRE(lines.size() == 1);
+	CHECK(Moved(lines[0], kStage, { 1, 0, 0, 0, kHalf, 0, kHalf }));
+	// Nothing was recorded before, and nothing is: no zero pose is applied
+	CHECK(offsets.empty());
+
+	// Again, with the head now 1 m ahead of the new origin (along its -Z, the room's -X), not turned: on top of the
+	// first, not in its place
+	BaseChaperoneSetup::MoveStage(offsets, BaseChaperoneSetup::RecentredOrigin(HeadAt(0, 1.7f, -1, 0)), mnd);
+	lines = log.Lines();
+	REQUIRE(lines.size() == 2);
+	CHECK(Moved(lines[1], kStage, { 0, 0, 0, 0, kHalf, 0, kHalf }));
+	RestartMonado();
+}
+
+TEST_CASE("Recentre_keeps_an_offset_set_by_another_program")
+{
+	// The stage 0.5 m up when the game starts (another program's offset): the floor stays where that put it
+	FakeLibMonado fake("1", "0,0,0");
+	OffsetLog log;
+	LibMonado mnd("Monado(XRT) by Collabora et al");
+	REQUIRE(mnd.Available());
+	RestartMonado();
+	REQUIRE(mnd.SetReferenceSpaceOffset(kStage, HalfMetreUp()));
+	Json::Value offsets(Json::objectValue);
+	BaseChaperoneSetup::MoveStage(offsets, BaseChaperoneSetup::RecentredOrigin(HeadAt(0, 1.7f, -2, 0, 30)), mnd);
+	std::vector<std::string> lines = log.Lines();
+	REQUIRE(lines.size() == 2);
+	CHECK(Moved(lines[1], kStage, { 0, 0.5f, -2, 0, 0, 0, 1 }));
+	RestartMonado();
+}
+
+TEST_CASE("Recentre_after_a_committed_zero_pose")
+{
+	FakeLibMonado fake("1", "0,0,0");
+	OffsetLog log;
+	LibMonado mnd("Monado(XRT) by Collabora et al");
+	REQUIRE(mnd.Available());
+	RestartMonado();
+	Json::Value offsets(Json::objectValue);
+	// A room setup's zero pose 2 m forward, then a recentre with the head 1 m to the right of it
+	BaseChaperoneSetup::ApplyZeroPoses(offsets, RoomTwoMetresForward(), mnd);
+	BaseChaperoneSetup::MoveStage(offsets, BaseChaperoneSetup::RecentredOrigin(HeadAt(1, 1.7f, 0, 0)), mnd);
+	std::vector<std::string> lines = log.Lines();
+	REQUIRE(lines.size() == 2);
+	CHECK(Moved(lines[1], kStage, { 1, 0, -2, 0, 0, 0, 1 }));
+	// The record follows: the same zero pose, the offset as recentred
+	CHECK(ChaperoneData::MatrixFromJson(offsets["stage"]["zero"]).m[2][3] == -2.0f);
+	CHECK(ChaperoneData::MatrixFromJson(offsets["stage"]["offset"]).m[0][3] == doctest::Approx(1));
+
+	// The same room committed again moves nothing: the recentre stays
+	CHECK_FALSE(BaseChaperoneSetup::ApplyZeroPoses(offsets, RoomTwoMetresForward(), mnd).has_value());
+	CHECK(log.Lines().size() == 2);
+	// Another room replaces the zero pose and keeps the recentre
+	ChaperoneData threeForward = RoomTwoMetresForward();
+	threeForward.standingZero.m[2][3] = -3;
+	BaseChaperoneSetup::ApplyZeroPoses(offsets, threeForward, mnd);
+	lines = log.Lines();
+	REQUIRE(lines.size() == 3);
+	CHECK(Moved(lines[2], kStage, { 1, 0, -3, 0, 0, 0, 1 }));
+	RestartMonado();
+}
+
+TEST_CASE("Recentre_without_libmonado_or_its_get_call_moves_nothing")
+{
+	OffsetLog log;
+	const vr::HmdMatrix34_t origin = BaseChaperoneSetup::RecentredOrigin(HeadAt(1, 1.7f, 0, 90));
+	Json::Value offsets(Json::objectValue);
+	SetEnv("OC_TEST_LIBMONADO_PATH", "no-such-libmonado.dll");
+	{
+		LibMonado none("Monado(XRT) by Collabora et al");
+		REQUIRE_FALSE(none.Available());
+		CHECK_FALSE(BaseChaperoneSetup::MoveStage(offsets, origin, none).has_value());
+	}
+	SetEnv("OC_TEST_LIBMONADO_PATH", nullptr);
+
+	// Without the get call the offset now isn't known, so there's nothing to put the recentre on top of
+	FakeLibMonado fake("1", "0,0,0");
+	LibMonado mnd("Monado(XRT) by Collabora et al");
+	REQUIRE(mnd.Available());
+	RestartMonado();
+	SetEnv("FAKE_MND_NO_GET", "1");
+	CHECK_FALSE(BaseChaperoneSetup::MoveStage(offsets, origin, mnd).has_value());
+	SetEnv("FAKE_MND_NO_GET", nullptr);
+	// Monado giving the offset and refusing the new one
+	SetEnv("FAKE_MND_NO_SET", "1");
+	CHECK_FALSE(BaseChaperoneSetup::MoveStage(offsets, origin, mnd).has_value());
+	SetEnv("FAKE_MND_NO_SET", nullptr);
+	// Monado refusing both calls
+	SetEnv("FAKE_MND_NO_OFFSETS", "1");
+	{
+		LibMonado refusing("Monado(XRT) by Collabora et al");
+		REQUIRE(refusing.Available());
+		CHECK_FALSE(BaseChaperoneSetup::MoveStage(offsets, origin, refusing).has_value());
+	}
+	SetEnv("FAKE_MND_NO_OFFSETS", nullptr);
+	CHECK(log.Lines().empty());
+	CHECK(offsets.empty());
+}

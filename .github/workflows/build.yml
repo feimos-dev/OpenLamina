@@ -229,6 +229,9 @@ jobs:
           # OpenLamina's dashboard over the game, with an overlay app's dashboard overlay (two programs)
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases dashboard,dashboard-overlay --jobs 2 --script tests/conformance/scripts/dashboard.json --ini tests/conformance/ini/dashboard.ini --manifest tests/unit/data/manifest_basic.json --expect tests/conformance/expect/dashboard.json --out conformance/dashboard
           if ($LASTEXITCODE) { $failed++ }
+          # A controller's system button held recentres and opens no dashboard; pressed, it opens and closes the dashboard
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases recentre --script tests/conformance/scripts/recentre.json --ini tests/conformance/ini/recentre.ini --expect tests/conformance/expect/recentre.json --out conformance/recentre
+          if ($LASTEXITCODE) { $failed++ }
           # A render scale another program sets reaches the game at its next frame (two programs)
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases settings-live,settings-live-setter --jobs 2 --script tests/conformance/scripts/helper_apps.json --expect tests/conformance/expect/settings_live.json --out conformance/settings-live
           if ($LASTEXITCODE) { $failed++ }
@@ -264,6 +267,8 @@ jobs:
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --shipped-defaults --cases message-overlay --script tests/conformance/scripts/message_box.json --expect tests/conformance/expect/message_overlay.json --out conformance/defaults-message-overlay
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --shipped-defaults --cases bounds --script tests/conformance/scripts/bounds.json --expect tests/conformance/expect/bounds.json --out conformance/defaults-bounds
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --shipped-defaults --cases recentre --script tests/conformance/scripts/recentre.json --expect tests/conformance/expect/recentre.json --out conformance/defaults-recentre
           if ($LASTEXITCODE) { $failed++ }
           # A message box in OpenLamina's own frames, answered with the laser
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases message-overlay --script tests/conformance/scripts/message_box.json --ini tests/conformance/ini/own_frames.ini --expect tests/conformance/expect/message_overlay.json --out conformance/message-overlay

@@ -93,6 +93,7 @@ Upstream merge requests are linked as !*n* with their authors. Everything else w
   OpenLamina program runs. On Linux a background application gets a scene session.
 - A dashboard of OpenLamina's own opens over the game with a controller's system button (`dashboardButton`): the
   dashboard overlays of the overlay applications running beside it, a tab for each, and a button to quit the game.
+  Holding the system button for a second recentres instead, as in SteamVR.
 - A render scale another program sets (`supersampleScale`, the game's `resolutionScale`) reaches the game at its next
   frame, with the event SteamVR sends for it, so a game that asks for the recommended size again renders at the new one.
 
@@ -318,6 +319,7 @@ The available options are:
 	* Where an overlay application's layers go among other programs' (`XrSessionCreateInfoOverlayEXTX::sessionLayersPlacement`): higher numbers are drawn over lower ones.
 * `dashboardButton` - `system`, `system_long`, `menu`, `menu_long` or `off`, default `system`.
 	* What opens OpenLamina's dashboard over the game: either controller's system button pressed (`system`) or held for 0.6 s (`system_long`), as SteamVR's opens, on controllers that have one (Index, Vive wands) and runtimes that hand it to applications (Monado does); or the left controller's menu button pressed (`menu`) or held for 0.6 s (`menu_long`), which on Index controllers is the B button. It shows the dashboard overlays (`CreateDashboardOverlay`) of the overlay applications running beside the game in a panel ahead of you, a tab for each and a "Quit game" button, pointed at with the lasers. While it's open the game gets `VREvent_DashboardActivated`, its input is held (its actions read inactive), and the same button closes it again. With `off` there is no dashboard.
+	* With `system`, the dashboard opens or closes when the button is let go, and holding it for 1 s recentres instead, with a short pulse on that controller: the origin goes under the headset and forward becomes the way it faces (turned about the vertical only; the floor stays where it is). On Monado, with its `libmonado` and `applyZeroPoses`, that moves Monado's stage on top of the offset it has, so the standing space moves for every program using Monado until Monado restarts, and OpenLamina programs get `VREvent_ChaperoneUniverseHasChanged` and `VREvent_ChaperoneDataHasChanged`; the boundary `drawBounds` draws (the runtime's stage bounds, or a room setup's play area) moves with it. The seated origin is reset as well (`VREvent_SeatedZeroPoseReset`). On other runtimes, and without `applyZeroPoses`, only the seated origin is reset and the standing space stays. The other values never recentre.
 * `drawBounds` - boolean, default `true`.
 	* A grid wall on the play area's edge (the stage's bounds the runtime reports, else the room setup's play area, as `IVRChaperoneSetup` commits it) when the HMD or a controller comes within 0.4 m of it, fading in as it comes closer. For runtimes that show no boundary of their own.
 * `sessionEvents` - boolean, default `true`.

@@ -330,6 +330,8 @@ XrResult XRAPI_CALL ApplyHapticFeedback(XrSession session, const XrHapticActionI
 		Json::Value entry;
 		entry["frame"] = (Json::UInt64)s->framesWaited;
 		entry["path"] = RtPathString(info->subactionPath);
+		auto action = St().actions.find((RtAction*)info->action);
+		entry["action"] = action != St().actions.end() ? action->second->name : std::string();
 		entry["amplitude"] = v->amplitude;
 		entry["duration_ns"] = (Json::Int64)v->duration;
 		entry["frequency"] = v->frequency;
