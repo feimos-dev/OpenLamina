@@ -31,6 +31,15 @@ public:
 	// On the program's thread: what was kept for the owner's Direct3D textures is let go (it shows none any more)
 	void Forget(const void* owner);
 
+	// On the program's thread: a texture of the program's device that the device reads too, for a program that reads
+	// its overlay's texture back (GetOverlayTexture) and then writes it without another call. program is a new texture
+	// of like's device, size and format with like's first layer copied in, shared by a DXGI handle; session is the same
+	// texture opened on the device. Both are referenced for the caller. False, with why, if it can't be made.
+	bool MakeLive(ID3D11Texture2D* like, ID3D11Texture2D** program, ID3D11Texture2D** session, std::string* why);
+	// A texture shared by a DXGI handle (TextureType_DXGISharedHandle) opened on the device, referenced for the caller;
+	// nullptr, with why, if it can't be opened
+	ID3D11Texture2D* OpenShared(void* handle, std::string* why);
+
 	// The device it copies onto
 	ID3D11Device* Device() const { return device; }
 

@@ -9,6 +9,10 @@
 #include <set>
 #include <vector>
 
+namespace Json {
+class Value;
+}
+
 // IVROverlay_001-003 (SDK 0.9.2 to 0.9.5) declare their own handle and error types, the same as today's
 typedef vr::VROverlayHandle_t OOVR_VROverlayHandle_t;
 typedef vr::EVROverlayError OOVR_VROverlayError;
@@ -212,6 +216,11 @@ private:
 	void TakeRemotePointerEvents();
 	// An overlay application while a scene app is running: the scene app's instance points, and this one doesn't
 	bool SceneAppPoints() const;
+	// A handle FindOverlay gave for another program's overlay: its entry in the store's Overlays document. False if the
+	// handle isn't such a one, or its program has ended or no longer has the overlay.
+	bool RemoteOverlayEntry(vr::VROverlayHandle_t handle, Json::Value& entry);
+	// Where such an entry's overlay is, in origin; false if it isn't placed
+	bool RemoteOverlayPlacement(const Json::Value& entry, vr::ETrackingUniverseOrigin origin, overlay_maths::Placement& out);
 
 	// The dashboard: the scene app's (its button, its frame and tabs), and the store's state of it, which every
 	// program's dashboard overlays follow (BaseOverlay.cpp)

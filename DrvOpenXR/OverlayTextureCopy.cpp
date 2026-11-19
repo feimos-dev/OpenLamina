@@ -537,6 +537,83 @@ ID3D11Texture2D* OverlayTextureCopy::CopyIn(const vr::Texture_t* tex, const vr::
 	}
 }
 
+bool OverlayTextureCopy::MakeLive(ID3D11Texture2D* like, ID3D11Texture2D** program, ID3D11Texture2D** session, std::string* why)
+{
+	std::string ignored;
+	if (!why)
+		why = &ignored;
+	*program = nullptr;
+	*session = nullptr;
+	if (!like || !device || !impl->context) {
+		*why = "no texture, or no D3D11 device of OpenLamina's";
+		return false;
+	}
+	ComPtr<ID3D11Device> programDevice;
+	like->GetDevice(&programDevice);
+	if (!programDevice || AdapterOf(programDevice.Get()) != impl->adapter) {
+		*why = "the D3D11 texture is on another graphics adapter than the runtime's";
+		return false;
+	}
+	D3D11_TEXTURE2D_DESC sd{};
+	like->GetDesc(&sd);
+	if (sd.SampleDesc.Count > 1) {
+		*why = "a multisampled D3D11 texture can't be shared";
+		return false;
+	}
+	// Shared the plain way (no keyed mutex): the program writes it as any texture of its own, and flushes
+	D3D11_TEXTURE2D_DESC d = sd;
+	d.MipLevels = 1;
+	d.ArraySize = 1;
+	d.Usage = D3D11_USAGE_DEFAULT;
+	d.BindFlags = D3D11_BIND_SHADER_RESOURCE | D3D11_BIND_RENDER_TARGET;
+	d.CPUAccessFlags = 0;
+	d.MiscFlags = D3D11_RESOURCE_MISC_SHARED;
+	ComPtr<ID3D11Texture2D> made;
+	ComPtr<IDXGIResource> resource;
+	HANDLE handle = nullptr;
+	if (FAILED(programDevice->CreateTexture2D(&d, nullptr, &made)) || FAILED(made.As(&resource)) || FAILED(resource->GetSharedHandle(&handle)) || !handle) {
+		*why = "no shared D3D11 texture of its format on the program's device";
+		return false;
+	}
+	ComPtr<ID3D11Texture2D> opened;
+	if (FAILED(device->OpenSharedResource(handle, IID_PPV_ARGS(&opened)))) {
+		*why = "the shared D3D11 texture can't be opened on OpenLamina's device";
+		return false;
+	}
+	ComPtr<ID3D11DeviceContext> programContext;
+	programDevice->GetImmediateContext(&programContext);
+	programContext->CopySubresourceRegion(made.Get(), 0, 0, 0, 0, like, D3D11CalcSubresource(0, 0, sd.MipLevels), nullptr);
+	programContext->Flush();
+	*program = made.Detach();
+	*session = opened.Detach();
+	return true;
+}
+
+ID3D11Texture2D* OverlayTextureCopy::OpenShared(void* handle, std::string* why)
+{
+	std::string ignored;
+	if (!why)
+		why = &ignored;
+	if (!handle) {
+		*why = "no shared handle";
+		return nullptr;
+	}
+	if (!device) {
+		*why = "no D3D11 device of OpenLamina's";
+		return nullptr;
+	}
+	// A handle from IDXGIResource::GetSharedHandle, else one from IDXGIResource1::CreateSharedHandle
+	ComPtr<ID3D11Texture2D> opened;
+	if (FAILED(device->OpenSharedResource((HANDLE)handle, IID_PPV_ARGS(&opened))) || !opened) {
+		opened.Reset();
+		if (!impl->device1 || FAILED(impl->device1->OpenSharedResource1((HANDLE)handle, IID_PPV_ARGS(&opened))) || !opened) {
+			*why = "the shared handle can't be opened as a D3D11 texture on OpenLamina's device";
+			return nullptr;
+		}
+	}
+	return opened.Detach();
+}
+
 #else // without D3D11: no texture can be copied
 
 struct OverlayTextureCopy::Impl {
@@ -555,6 +632,22 @@ ID3D11Texture2D* OverlayTextureCopy::CopyIn(const vr::Texture_t*, const vr::VRTe
 {
 	if (why)
 		*why = "textures are copied through D3D11, which this platform lacks";
+	return nullptr;
+}
+
+bool OverlayTextureCopy::MakeLive(ID3D11Texture2D*, ID3D11Texture2D** program, ID3D11Texture2D** session, std::string* why)
+{
+	*program = nullptr;
+	*session = nullptr;
+	if (why)
+		*why = "textures are shared through D3D11, which this platform lacks";
+	return false;
+}
+
+ID3D11Texture2D* OverlayTextureCopy::OpenShared(void*, std::string* why)
+{
+	if (why)
+		*why = "textures are shared through D3D11, which this platform lacks";
 	return nullptr;
 }
 
