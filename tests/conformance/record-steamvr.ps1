@@ -23,7 +23,8 @@ param(
     [switch]$WhatIf,
     # Only the init-matrix case, and no expected file: to check SteamVR starts with the null driver
     [switch]$Probe,
-    [int]$Jobs = 4
+    # One at a time: a test program that ends SteamVR would otherwise take the others running beside it down too
+    [int]$Jobs = 1
 )
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
@@ -99,10 +100,14 @@ try {
         $pathsJson | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath $pathsFile -Encoding utf8
     }
 
-    # 5. The run
+    # 5. The run. SteamVR is started on its own before every test program that would otherwise find it gone
+    # (--keep-running): started by a test program, its shared namespace goes away with that program's first clients and
+    # a later Init waits forever; and it quits everything when the scene application it counts as its first exits
+    # without shutting down, which some calls of the matrix do.
     $vrclient = Join-Path $steamvr 'bin\vrclient_x64.dll'
     & python -I (Join-Path $here 'run.py') --runtime $vrclient --conformance $Conformance --xr-runtime none `
-        --real-runtime --allow-failures --jobs $Jobs --out $Out @($Probe ? @('--cases', 'init-matrix') : @())
+        --real-runtime --keep-running (Join-Path $steamvr 'bin\win64\vrstartup.exe') --allow-failures --jobs $Jobs `
+        --out $Out @($Probe ? @('--cases', 'init-matrix') : @())
     if ($LASTEXITCODE -ne 0) { throw "run.py failed ($LASTEXITCODE)" }
 }
 catch {
