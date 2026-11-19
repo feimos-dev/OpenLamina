@@ -16,7 +16,6 @@
 
 // Specific to OCOVR
 #include "Drivers/Backend.h"
-#include "Drivers/DriverManager.h"
 #include "DrvOpenXR.h"
 
 HMODULE openovr_module_id;
