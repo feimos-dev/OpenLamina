@@ -3,8 +3,8 @@
   <!--
     OpenLamina.exe, the Windows app that installer/OpenLamina.iss installs next to the OpenLamina folder's
     bin\: switches OpenVR games between OpenLamina and SteamVR, sends single programs to either (per-app settings),
-    and offers new releases of github.com/feimos-dev/OpenLamina. Built by scripts/ci/build-installer.ps1; Tests\ checks
-    Core\ (dotnet test RuntimeSwitcher/Tests).
+    changes the common options of openlamina.ini, and offers new releases of github.com/feimos-dev/OpenLamina. Built
+    by scripts/ci/build-installer.ps1; Tests\ checks Core\ (dotnet test RuntimeSwitcher/Tests).
 
     .NET Framework 4.8, which Windows 10 (1903 and later) and 11 come with, so nothing else is installed. It builds with
     the .NET SDK anywhere, Linux too, from the reference assemblies package.
