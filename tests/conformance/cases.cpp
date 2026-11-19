@@ -3270,6 +3270,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		std::map<std::string, CaseFn> m = cases;
 		m.insert(GfxCases().begin(), GfxCases().end());
 		m.insert(HelperCases().begin(), HelperCases().end());
+		m.insert(CoverageCases().begin(), CoverageCases().end());
 		return m;
 	}();
 	return all;

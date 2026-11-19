@@ -19,7 +19,7 @@ add_custom_command(
 		${GENERATED_DIR}/conformance/callers.gen.cpp
 	DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/conformance/gen_callers.py ${CMAKE_SOURCE_DIR}/scripts/libparse.py
 		${CMAKE_CURRENT_SOURCE_DIR}/conformance/interfaces.txt ${CMAKE_CURRENT_SOURCE_DIR}/conformance/unsafe_methods.txt
-		${CMAKE_CURRENT_SOURCE_DIR}/conformance/not_implemented.txt ${GENERATED_DIR}/interfaces/vrtypes.h
+		${CMAKE_CURRENT_SOURCE_DIR}/conformance/custom_interfaces.txt ${CMAKE_CURRENT_SOURCE_DIR}/conformance/not_implemented.txt ${GENERATED_DIR}/interfaces/vrtypes.h
 	COMMENT "Generating the conformance callers..."
 )
 add_library(oc_callers STATIC
@@ -55,6 +55,7 @@ add_executable(oc_conformance
 	conformance/cases.cpp
 	conformance/gfx_cases.cpp
 	conformance/helper_cases.cpp
+	conformance/coverage_cases.cpp
 	conformance/gfx/GfxApi.h
 	conformance/crash_report.cpp
 )
