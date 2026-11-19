@@ -101,8 +101,10 @@ EVRScreenshotError BaseScreenshots::HookScreenshot(VR_ARRAY_COUNT(numTypes) cons
 {
 	if (numTypes < 0 || (numTypes > 0 && !pSupportedTypes))
 		return VRScreenshotError_RequestFailed;
+	// There are only a handful of screenshot types: a longer list only repeats them, so no more than that is read
+	constexpr int kMaxTypes = 8;
 	std::lock_guard<std::mutex> guard(lock);
-	hooked.assign(pSupportedTypes, pSupportedTypes + numTypes);
+	hooked.assign(pSupportedTypes, pSupportedTypes + (numTypes < kMaxTypes ? numTypes : kMaxTypes));
 	isHooked = true;
 	return VRScreenshotError_None;
 }

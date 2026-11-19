@@ -205,6 +205,10 @@ TEST_CASE("Screenshots_are_requested_of_a_game_that_hooked_them")
 
 	const vr::EVRScreenshotType types[] = { vr::VRScreenshotType_Stereo };
 	CHECK(screenshots.HookScreenshot(types, 1) == Error::VRScreenshotError_None);
+	// A count far longer than any list of types: only the first few are read, nothing is allocated for the rest
+	const vr::EVRScreenshotType many[8] = { vr::VRScreenshotType_Stereo, vr::VRScreenshotType_Stereo, vr::VRScreenshotType_Stereo, vr::VRScreenshotType_Stereo,
+		vr::VRScreenshotType_Stereo, vr::VRScreenshotType_Stereo, vr::VRScreenshotType_Stereo, vr::VRScreenshotType_Stereo };
+	CHECK(screenshots.HookScreenshot(many, 0x7fffffff) == Error::VRScreenshotError_None);
 	// A type it didn't hook
 	CHECK(screenshots.RequestScreenshot(&handle, vr::VRScreenshotType_Cubemap, "preview", "vr") == Error::VRScreenshotError_RequestFailed);
 
