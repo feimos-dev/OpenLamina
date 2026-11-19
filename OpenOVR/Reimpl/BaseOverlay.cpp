@@ -1724,12 +1724,13 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 
 			size_t i;
 
-			// Sort the overlays: later layers are drawn on top, so by sort order, then the farthest first
+			// Sort the overlays: later layers are drawn on top, so the high quality overlay last, then by sort order, then
+			// the farthest first
+			const overlay_maths::DrawOrder order{ highQualityOverlay == (VROverlayHandle_t)(uintptr_t)&overlay, overlay.sortOrder, overlay.distance };
 			for (i = firstOverlay; i < layerHeaders.size(); i++) {
 				const OverlayData* d = layerOverlays[i - firstOverlay];
-				if (d->sortOrder > overlay.sortOrder)
-					break;
-				if (d->sortOrder == overlay.sortOrder && d->distance < overlay.distance)
+				const overlay_maths::DrawOrder other{ highQualityOverlay == (VROverlayHandle_t)(uintptr_t)d, d->sortOrder, d->distance };
+				if (overlay_maths::DrawnBefore(order, other))
 					break;
 			}
 			// Finally, add it to the list of layers to be sent to LibOVR

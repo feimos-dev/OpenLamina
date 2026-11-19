@@ -103,6 +103,16 @@ struct ChainLink {
 // Resolves an overlay's transform through its parents, the farthest first; transforms are ordinary glm matrices
 Chain ResolveChain(const void* overlay, const std::function<ChainLink(const void*)>& link, glm::mat4& out);
 
+// What decides the order overlays are drawn in: the high quality overlay on top of the rest, then by sort order, then
+// the farthest first
+struct DrawOrder {
+	bool highQuality;
+	uint32_t sortOrder;
+	float distance;
+};
+// Whether a is drawn before (under) b
+bool DrawnBefore(const DrawOrder& a, const DrawOrder& b);
+
 // A quad's width over its height from its texture's size in texels. A flipped texture has a negative height. A texel
 // aspect of 2 means texels twice as wide as tall; a size or aspect that makes no sense gives 1.
 float QuadAspect(int32_t texelsWide, int32_t texelsHigh, float texelAspect);

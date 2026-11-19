@@ -206,6 +206,15 @@ Chain ResolveChain(const void* overlay, const std::function<ChainLink(const void
 	return Chain::TooDeep;
 }
 
+bool DrawnBefore(const DrawOrder& a, const DrawOrder& b)
+{
+	if (a.highQuality != b.highQuality)
+		return b.highQuality;
+	if (a.sortOrder != b.sortOrder)
+		return a.sortOrder < b.sortOrder;
+	return a.distance > b.distance;
+}
+
 float QuadAspect(int32_t texelsWide, int32_t texelsHigh, float texelAspect)
 {
 	const int32_t high = texelsHigh < 0 ? -texelsHigh : texelsHigh;
