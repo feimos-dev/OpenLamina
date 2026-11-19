@@ -210,6 +210,8 @@ bool XrHMD::ComputeDistortion(vr::EVREye eEye, float fU, float fV, vr::Distortio
 vr::HmdMatrix34_t XrHMD::GetEyeToHeadTransform(vr::EVREye eEye)
 {
 	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
+	// The views from the last frame that had both, shared by every thread asking
+	static std::mutex viewsMutex;
 	static XrTime time = ~0; // Don't set to zero by default, otherwise we'll return an identity matrix before the first frame
 	static XrView views[XruEyeCount] = { { XR_TYPE_VIEW }, { XR_TYPE_VIEW } };
 
@@ -220,6 +222,7 @@ vr::HmdMatrix34_t XrHMD::GetEyeToHeadTransform(vr::EVREye eEye)
 	if (eEye < 0 || (int)eEye >= 2)
 		eEye = vr::Eye_Left;
 
+	std::lock_guard<std::mutex> viewsLock(viewsMutex);
 	if (time != xr_gbl->GetBestTime()) {
 		const XruCachedViews& cachedViews = xr_gbl->GetCachedViews(xr_gbl->viewSpace);
 		const XrViewState& viewState = cachedViews.viewState;
