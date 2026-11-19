@@ -406,3 +406,23 @@ TEST_CASE("Settings_own_defaults_without_steamvr")
 	CHECK_FALSE(settings.GetBool("steamvr", "directMode", &error));
 	CHECK(error == VRSettingsError_None);
 }
+
+TEST_CASE("Settings_long_keys_are_not_stored")
+{
+	TempDir dir;
+	SteamVRFiles files(false);
+	SharedStore store(dir.path);
+	BaseSettings settings(store);
+	BaseSettings::EVRSettingsError error = VRSettingsError_None;
+
+	const std::string longName(129, 'k'), limitName(128, 'k');
+	settings.SetInt32("oc_test", longName.c_str(), 1, &error);
+	CHECK(error == VRSettingsError_WriteFailed);
+	settings.SetInt32(longName.c_str(), "key", 1, &error);
+	CHECK(error == VRSettingsError_WriteFailed);
+	CHECK(store.Read(StoreDoc::Settings).empty());
+
+	settings.SetInt32("oc_test", limitName.c_str(), 1, &error);
+	CHECK(error == VRSettingsError_None);
+	CHECK(settings.GetInt32("oc_test", limitName.c_str(), &error) == 1);
+}

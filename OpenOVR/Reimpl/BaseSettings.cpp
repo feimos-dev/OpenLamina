@@ -312,6 +312,11 @@ void BaseSettings::Set(const char* pchSection, const char* pchSettingsKey, const
 		return;
 	}
 	std::string section = pchSection, key = pchSettingsKey;
+	// Keys have a length limit, so a program can't grow the document with enormous ones
+	if (section.size() > kk::k_unMaxSettingsKeyLength || key.size() > kk::k_unMaxSettingsKeyLength) {
+		SetError(peError, VRSettingsError_WriteFailed);
+		return;
+	}
 	bool written = Store().Update(StoreDoc::Settings, [&](Json::Value& data) {
 		if (!data.isObject())
 			data = Json::Value(Json::objectValue);
