@@ -22,9 +22,9 @@
 #
 # Thus the purpose of this script is to parse the already-split interface header files and generate the
 # version-specific 'stub' classes that forward everything to the BaseXYZ class. For each interface the
-# user lists all the versions available in the 'CVR' (can't remember how it got that name) file for an
-# interface, such as CVRSettings. This is a valid C++ file, but special macros (which expand to nothing
-# during preprocessing but are parsed by this script) can be used to control the stub generation.
+# user lists all the versions available in the 'CVR' file for an interface, such as CVRSettings. This is a valid C++
+# file, but special macros (which expand to nothing during preprocessing but are parsed by this script) can be used to
+# control the stub generation.
 
 import io
 import re
@@ -77,9 +77,6 @@ interfaces_list = [
     "IOBuffer",
     "DriverManager",
     "Paths",
-
-    # Driver interfaces
-    #"ServerDriverHost",
 ]
 
 bases_header_fn = output_dir / "static_bases.gen.h"
@@ -168,7 +165,7 @@ with open(bases_header_fn, "w", newline='\n') as bases_header:
     bases_header.write("#include <memory>\n")
 
     for iface in interfaces:
-        # Here we assume all the versions are of the same type (normal, API, driver, etc)
+        # Every version of an interface shares one Base class, so the first one names it
         basename = iface.versions[0].basename()
         getter = iface.versions[0].getter_name()
 

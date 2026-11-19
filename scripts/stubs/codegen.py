@@ -7,6 +7,11 @@ from stubs.interface_spec import InterfaceSpec
 cflag_spec = re.compile(r"\[(?P<name>\w+)\]\s*=\s*(?P<value>.*)")
 
 
+def _in_namespace(type_name: str, namespace: str) -> bool:
+    """True if type_name names something inside namespace (a `Namespace::` prefix, not just a substring)."""
+    return re.search(r"(?<![\w:])" + re.escape(namespace) + "::", type_name) is not None
+
+
 def write_header(header, iface):
     header.write("#pragma once\n")
     header.write('#include "BaseCommon.h"\n')
@@ -32,9 +37,6 @@ public:
     {cname}();
     // Interface methods:
 """.replace("    ", "\t").strip())
-    # Note we're doing this strip-then-write-newline dance to get the files to be exactly the same as the old
-    # ones as the easy way to make sure nothing breaks during the transition.
-    # Later on this can be pulled out, a little whitespace doesn't matter.
     fi.write("\n")
 
     for func in iface.functions:
@@ -91,7 +93,7 @@ std::shared_ptr<{cls}> GetCreate{getter_name}() {{
             for a in f.args:
                 # A type from the version's own namespace is cast to the Base class's copy of it (OOVR_Name), except
                 # those deleted_types.h puts there, which the Base class takes as they are
-                if namespace in a.type and not is_deleted_type(ver, a.type):
+                if _in_namespace(a.type, namespace) and not is_deleted_type(ver, a.type):
                     casttype = a.type.replace(namespace + "::", "OOVR_")
                     nargs.append("(%s) %s" % (casttype, a.name))
                 else:
@@ -101,7 +103,7 @@ std::shared_ptr<{cls}> GetCreate{getter_name}() {{
 
             # Generate the code for the return, with a cast if necessary
             return_str = "return"
-            if namespace in f.return_type:
+            if _in_namespace(f.return_type, namespace):
                 return_str += f" ({f.return_type})"
 
             const = " const" if f.const else ""
