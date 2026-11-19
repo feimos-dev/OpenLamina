@@ -24,24 +24,6 @@
 #include "Reimpl/BaseInput.h"
 #include "generated/static_bases.gen.h"
 
-std::string InteractionProfile::TranslateAction(const std::string& inputPath) const
-{
-	if (!pathTranslationMap.empty() && !IsInputPathValid(inputPath)) {
-		std::string ret = inputPath;
-		for (auto& [key, val] : pathTranslationMap) {
-			size_t loc = ret.find(key);
-			if (loc != std::string::npos) {
-				// translate action!
-				ret = ret.substr(0, loc) + val + ret.substr(loc + key.size());
-			}
-		}
-		OOVR_LOGF("Translated path %s to %s for profile %s", inputPath.c_str(), ret.c_str(), GetPath().c_str());
-		return ret;
-	}
-	// either this path is already valid or it's invalid and not translatable
-	return inputPath;
-}
-
 std::vector<std::pair<std::string, std::string>> InteractionProfile::RawComponents() const
 {
 	// Every /user/hand/<hand>/input/<source>/<component> path: a parent (/input/thumbstick) or a pose isn't a raw input

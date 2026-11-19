@@ -170,10 +170,10 @@ struct OOVR_VRSkeletalSummaryData_t {
 };
 
 struct OOVR_InputBindingInfo_t {
-	char rchDevicePathName[128]; // Corresponds to ActionSource.svrDevicePathName
-	char rchInputPathName[128]; // Corresponds to ActionSource.svrInputPathName
-	char rchModeName[128]; // Corresponds to ActionSource.mode in string form, eg 'button'
-	char rchSlotName[128]; // Corresponds to ActionSource.slot
+	char rchDevicePathName[128]; // The device path of the bound source, eg '/user/hand/left'
+	char rchInputPathName[128]; // The input path of the bound source, eg '/input/trigger'
+	char rchModeName[128]; // The binding's mode in string form, eg 'button'
+	char rchSlotName[128]; // The binding's slot, eg 'click'
 
 	/**
 	 * The type of the physical input that the user actuates. For example a button bound to the thumbstick click
@@ -479,8 +479,8 @@ public: // INTERNAL FUNCTIONS
 	};
 	/**
 	 * One hand's (0 the left, 1 the right) pointer: its aim pose located in base at time, its trigger and its
-	 * thumbstick (or trackpad), as of the last sync. From the old input's actions under inputEvaluator=direct, from the
-	 * raw inputs under steamvr. False before any actions are loaded, or while the hand's aim isn't tracked.
+	 * thumbstick (or trackpad), as of the last sync, from the raw inputs. False before any actions are loaded, or while
+	 * the hand's aim isn't tracked.
 	 * Takes the session lock (shared), then evaluatorLock.
 	 */
 	bool GetHandPointer(int hand, XrSpace base, XrTime time, HandPointer& out);
@@ -492,8 +492,7 @@ public: // INTERNAL FUNCTIONS
 	/**
 	 * Whether the button that opens the dashboard is held on a hand (0 the left, 1 the right), as of the last sync.
 	 * system: that controller's system button, where the runtime hands it to applications. Otherwise the left
-	 * controller's menu button (never the right's): the old input's system and menu buttons under
-	 * inputEvaluator=direct, the raw inputs under steamvr. False before any actions are loaded.
+	 * controller's menu button (never the right's), from the raw inputs. False before any actions are loaded.
 	 */
 	bool GetDashboardButton(bool system, int hand);
 	/**
@@ -562,130 +561,6 @@ private:
 		XrActionSet xr = XR_NULL_HANDLE;
 	};
 
-	enum class ActionSourceMode {
-		// Some may be missing, there's no documentation on this that I could find
-		BUTTON,
-		DPAD,
-		NONE, // What? Occurs in NMS, probably more experimentation is required
-		JOYSTICK,
-		TRIGGER,
-	};
-
-	/**
-	 * Represents an action source, as declared in the default mappings JSON (NOT the actions manifest).
-	 *
-	 * This describes a specific control on a specific device (eg, the 'a' button on the left hand),
-	 * the 'output' (physical mode of interaction, such as clicking a button) and which Action it maps to.
-	 * <p/>
-	 * TODO document how this maps to OpenXR.
-	 * <p/>
-	 * This is defined like so in the JSON (one of these could define many ActionSources if they had
-	 * multiple other inputs aside from 'click'):
-	 *
-	 * @code
-	 * {
-	 *   "inputs": {
-	 *     "click": {
-	 *       "output": "/actions/main/in/Test1"
-	 *     }
-	 *   },
-	 *   "mode": "button",
-	 *   "path": "/user/hand/left/input/trackpad"
-	 * }
-	 * @endcode
-	 */
-	// TODO delete this and move the documentation to OOVR_InputBindingInfo_t
-	struct ActionSource {
-		~ActionSource(); // Must be defined non-inline to avoid it ending up in stubs.gen.cpp
-
-		std::string svrPathName; // Full SteamVR path name for this input, eg '/user/hand/left/input/trackpad'
-		std::string svrDevicePathName; // The device path from svrPathName, eg '/user/hand/left'
-		std::string svrInputPathName; // The input path from svrPathName, eg '/input/trigger'
-		ActionSourceMode mode; // The 'mode' that this input is operating in, such as to toggle a joystick between analogue and dpad mode
-
-		// The 'slot' such as 'click' in the example above, defines what type of physical action the user must take to
-		// trigger this (eg touch vs press for a capacitive button).
-		// TODO convert this to an enum
-		std::string slot;
-	};
-
-	struct DpadBindingInfo {
-		// Possible dpad directions
-		enum class Direction {
-			NORTH,
-			SOUTH,
-			EAST,
-			WEST,
-			CENTER
-		};
-
-		// mapping from OpenVR name to Direction
-		inline static const std::unordered_map<std::string, Direction> directionMap = {
-			{ "north", Direction::NORTH },
-			{ "east", Direction::EAST },
-			{ "south", Direction::SOUTH },
-			{ "west", Direction::WEST },
-			{ "center", Direction::CENTER }
-		};
-
-		// Map from dpad binding parent names to their corresponding actions
-		// An example parent name might be "righttrackpad-vive_controller"
-		struct ParentActions {
-			XrAction vectorAction = XR_NULL_HANDLE;
-			XrAction clickAction = XR_NULL_HANDLE;
-			XrAction touchAction = XR_NULL_HANDLE;
-		};
-		inline static std::unordered_map<std::string, ParentActions> parents;
-
-		// Deadzone for dpad.
-		static constexpr float dpadDeadzoneRadius = 0.5;
-
-		// These are angles for the different dpad segments.
-		// For example, the north dpad area exists between 45deg and 135deg, the east between -45deg and 45deg, etc
-		// The actual units for the angles are in radians, but they are labeled as degrees since I find degrees more intuitive to understand for humans.
-		static constexpr float angle45deg = std::numbers::pi / 4;
-		static constexpr float angle135deg = 3 * std::numbers::pi / 4;
-
-		// The direction for this binding.
-		Direction direction = Direction::NORTH;
-
-		// Is a click required for this binding
-		// false implies that a touch is required instead
-		bool click = false;
-
-		// The previous state for the dpad binding.
-		bool lastState = false;
-
-		// If custom thresholds are used for click action, which needs to be read as float (useful for Index touchpads)
-		bool customClickThresholds = false;
-
-		// Those thresholds, kept here rather than in the action's own, which its other bindings use.
-		// TODO: it's unclear what the actual threshold values used by SteamVR are, and they're not configurable in bindings json
-		static constexpr float clickActivateThreshold = 0.33f;
-		static constexpr float clickDeactivateThreshold = 0.2f;
-
-		// Triggers the haptic action in the current action set once this becomes clicked (useful for Index touchpads)
-		bool triggerHapticOnClick = false;
-	};
-
-	struct DClickBindingInfo {
-		// the maximum allowed time between the first click and the second click for the double binding to trigger
-		static constexpr XrDuration max_dclick_pause = 500 * 1'000'000; /* 500ms */
-
-		// the source click action this double click bindings is listening on
-		XrAction click_action;
-
-		// when a click is received, it's timestamp is saved to be compared with the following click
-		// when a second click is received (in the max_dclick_pause time window) it's reset back to 0
-		XrTime first_click_time;
-
-		// the previous state of the double click binding
-		bool last_state;
-
-		// the timestamp of the last press counted, so a press read twice in one frame counts once
-		XrTime last_press_time = 0;
-	};
-
 	enum class PoseBindingPoint {
 		RAW, // From /raw or /aim - this is the pose returned by WaitGetPoses
 		BASE, // This is the pose from the 'base' component
@@ -699,28 +574,6 @@ private:
 	struct PoseBindingInfo {
 		PoseBindingPoint point = PoseBindingPoint::RAW;
 		ITrackedDevice::TrackedDeviceType hand = ITrackedDevice::HAND_LEFT;
-	};
-
-	struct ActionPerProfileData {
-	public:
-		// used for extending float value range: if this reports a value above 0, the value read by this action is one plus that value
-		XrAction stackedValueExtension = XR_NULL_HANDLE;
-
-		// list of dpad directions to check
-		// first member of the pair is the parent name, the second is the corresponding binding info
-		using DpadGrouping = std::pair<std::string, DpadBindingInfo>;
-		std::vector<DpadGrouping> dpadBindings;
-
-		// list of double click input bindings
-		std::vector<DClickBindingInfo> dclickBindings;
-
-		// contains all subaction paths which are forced by bindings to always return true (for boolean queries)
-		std::vector<XrPath> forcedSubactionPaths;
-		// parameters to modify how some inputs behave. There's probably a cleaner way to do this, but whatever
-		float click_activate_threshold = 0.7;
-		float click_deactivate_threshold = 0.55;
-		float deadzone = 0.0;
-		float maxzone = 1.0;
 	};
 
 	struct Action {
@@ -746,47 +599,17 @@ private:
 		double createdAt = 0; // when the manifest made it, on the evaluator's clock (its fUpdateTime until it changes)
 
 		XrAction xr = XR_NULL_HANDLE;
-		// used for extending float value range: if this reports a value above 0, the value read by this action is one plus that value
-		XrAction stackedValueExtension = XR_NULL_HANDLE;
-
 		// If this is a skeletal action, what hand it's bound to - this is set in the actions
 		// manifest itself, not a binding file.
 		ITrackedDevice::TrackedDeviceType skeletalHand = ITrackedDevice::HAND_NONE;
-
-		// The action sources (paths like /user/hand/left/input/select/click, specifying an output of a physical
-		// control) this action is bound to. This is cached, and is updated by activeOriginFromSubaction.
-		XrPath sources[sources_size] = {};
-		std::string sourceNames[sources_size] = {};
-		uint32_t sourcesCount = 0; // Number of sources in the above that are defined
-		uint64_t nextSourcesUpdate = 0; // For caching, the next value of syncSerial this should update at
 
 		// Only used in the case of Pose actions, this is the action space for each subaction path
 		// The indexes match up with allSubactionPaths
 		std::vector<XrSpace> actionSpaces;
 
-		// Only used in float/vector actions, for calculating deltas
-		struct {
-			float x = 0;
-			float y = 0;
-			float z = 0;
-		} previousState;
-
-		// The syncSerial from when previousState was populated.
-		uint64_t previousSerial = 0;
-
-		struct {
-			float x = 0;
-			float y = 0;
-		} deltaState;
-
 		// If this is a pose action, we calculate it from the legacy pose inputs rather than giving it
 		// it's own OpenXR action, since it may need some special transforms to make it line up properly.
 		std::unordered_map<const InteractionProfile*, PoseBindingInfo> poseBindingsLeft, poseBindingsRight;
-
-		std::unordered_map<const InteractionProfile*, ActionPerProfileData> perProfileData;
-		static const ActionPerProfileData defaultActionData;
-
-		std::unordered_map<XrPath, XrBool32> analog_to_digital_last_state_subaction;
 	};
 
 	enum class InputSource {
@@ -891,9 +714,6 @@ private:
 	// See GetSyncSerial
 	uint64_t syncSerial = 0;
 
-	// For some reason, the behavior is different for digital input actions
-	uint64_t syncSerialDigital = 0;
-
 	// Set under the exclusive session lock; read without it on the way in to LoadEmptyManifestIfRequired
 	std::atomic<bool> hasLoadedActions = false;
 	std::string loadedActionsPath;
@@ -912,24 +732,21 @@ private:
 	std::unordered_map<std::string, std::unique_ptr<InputValueHandle>> inputHandleRegistry;
 	std::mutex inputHandleRegistryLock; // GetInputSourceHandle is called from any thread
 
-	std::unordered_map<std::string, XrAction> indexGripExtensionActions;
-
 	XrActionSet legacyInputsSet = XR_NULL_HANDLE;
 
 	// In the legacy set when XR_EXT_eye_gaze_interaction is enabled: the gaze pose, and its space in this session
 	XrAction eyeGazeAction = XR_NULL_HANDLE;
 	XrSpace eyeGazeSpace = XR_NULL_HANDLE;
 
-	// inputEvaluator=steamvr: an action set with one action per raw input (by its OpenXR component, such as
-	// /input/trigger/click, for every hand), each profile's raw inputs and its binding file's evaluator, and the
-	// evaluators the last UpdateActionState updated
-	bool useEvaluator = false;
+	// An action set with one action per raw input (by its OpenXR component, such as /input/trigger/click, for every
+	// hand), each profile's raw inputs and its binding file's evaluator, and the evaluators the last UpdateActionState
+	// updated
 	XrActionSet rawInputsSet = XR_NULL_HANDLE;
 	std::map<std::string, XrAction> rawActions;
 	std::map<const InteractionProfile*, std::vector<std::pair<std::string, std::string>>> rawComponents;
 	std::map<const InteractionProfile*, std::unique_ptr<BindingEvaluator>> evaluators;
 	std::vector<const BindingEvaluator*> evaluatedThisSync;
-	// Each profile's binding file, whatever inputEvaluator is: what GetActionBindingInfo and GetActionOrigins answer
+	// Each profile's binding file: what GetActionBindingInfo and GetActionOrigins answer
 	std::map<const InteractionProfile*, BindingFile> bindingFiles;
 	// Guards everything above and the legacy evaluators: a game reads input on its own thread while OpenComposite
 	// reads the old input after each frame on the thread that submits.
@@ -940,7 +757,9 @@ private:
 	mutable std::recursive_mutex evaluatorLock;
 	void CreateRawActions();
 	void SuggestRawInputs(const InteractionProfile& profile, std::vector<XrActionSuggestedBinding>& bindings);
-	void SuggestRawBindings(const InteractionProfile& profile, const std::string& bindingsPath, std::vector<XrActionSuggestedBinding>& bindings);
+	/** Suggests the profile's raw inputs and makes its binding file's evaluator, if the file binds an input the
+	 * controller has to one of the manifest's actions or bindings holds a haptic; false (nothing done) if not */
+	bool SuggestRawBindings(const InteractionProfile& profile, const std::string& bindingsPath, std::vector<XrActionSuggestedBinding>& bindings);
 	/** An input action's bindings on the controllers in use, from their binding files; nothing if no controller in
 	 * use has one, or for a pose, a skeleton or a vibration. Takes evaluatorLock. */
 	std::optional<std::vector<ActionBinding>> BindingsFromFiles(const Action& action);
@@ -981,9 +800,6 @@ private:
 
 	void LoadBindingsSet(const InteractionProfile& profile, const std::string& bindingsPath);
 
-	void LoadDpadAction(const InteractionProfile& profile, const std::string& importBasePath, const std::string& inputName, const std::string& subMode, Action* action, std::vector<XrActionSuggestedBinding>& bindings, bool isKnuckles);
-	void LoadDClickAction(const InteractionProfile& profile, const std::string& importBasePath, Action* action, std::vector<XrActionSuggestedBinding>& bindings);
-
 	void CreateLegacyActions();
 	// Suggests a profile's bindings (suggested points at bindings); refused with the system button's among them, again
 	// without those
@@ -1005,21 +821,6 @@ private:
 	static std::shared_ptr<ITrackedDevice> ivhToDev(VRInputValueHandle_t handle);
 	static bool checkRestrictToDevice(vr::VRInputValueHandle_t restrict, XrPath subactionPath);
 	static ITrackedDevice::TrackedDeviceType ParseAndRemoveHandPrefix(std::string& toModify);
-
-	/**
-	 * Get the 'activeOrigin' corresponding to a particular sub-action path on a given action.
-	 *
-	 * in OpenVR the application knows exactly what input source caused the action, while on OpenXR
-	 * we only know what subaction caused it. So if you have two buttons on the same controller
-	 * bound, we can't tell which one was pressed. Therefore this will pick one in an arbitrary but
-	 * consistent manner.
-	 */
-	VRInputValueHandle_t activeOriginFromSubaction(Action* action, const char* subactionPath);
-
-	/**
-	 * Get the state for a digital action, which could be bound to a DPad action.
-	 */
-	XrResult getBooleanOrDpadData(const InteractionProfile* profile, Action& action, const XrActionStateGetInfo* getInfo, XrActionStateBoolean* state);
 
 	/**
 	 * Uses the finger tracking extensions to generate a skeletal summary.
