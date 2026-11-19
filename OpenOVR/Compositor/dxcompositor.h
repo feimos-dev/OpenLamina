@@ -1,6 +1,5 @@
 #pragma once
 
-// TODO Turtle1331 should this be here or distributed among dx*compositor.h?
 #include "compositor.h"
 
 // DirectX headers for use in dx*compositor.cpp

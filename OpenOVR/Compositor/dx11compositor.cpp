@@ -648,52 +648,6 @@ void DX11Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 	SwapchainCallFailed(xrReleaseSwapchainImage(chain, &releaseInfo), "xrReleaseSwapchainImage");
 }
 
-void DX11Compositor::InvokeCubemap(const vr::Texture_t* textures)
-{
-	CheckCreateSwapChain(&textures[0], 0, 0, true);
-
-#ifdef OC_XR_PORT
-	// Not yet: SetSkyboxOverride answers RequestFailed
-	OOVR_LOG_ONCE("Cube map skyboxes aren't supported yet");
-	lastResult = XR_ERROR_RUNTIME_FAILURE;
-	return;
-	ID3D11Texture2D* tex = nullptr;
-#else
-	int currentIndex = 0;
-	OOVR_FAILED_OVR_ABORT(ovr_GetTextureSwapChainCurrentIndex(OVSS, chain, &currentIndex));
-
-	OOVR_FAILED_OVR_ABORT(ovr_GetTextureSwapChainBufferDX(OVSS, chain, currentIndex, IID_PPV_ARGS(&tex)));
-#endif
-
-	ID3D11Texture2D* faceSrc;
-
-	// Front
-	faceSrc = (ID3D11Texture2D*)textures[0].handle;
-	context->CopySubresourceRegion(tex, 5, 0, 0, 0, faceSrc, 0, nullptr);
-
-	// Back
-	faceSrc = (ID3D11Texture2D*)textures[1].handle;
-	context->CopySubresourceRegion(tex, 4, 0, 0, 0, faceSrc, 0, nullptr);
-
-	// Left
-	faceSrc = (ID3D11Texture2D*)textures[2].handle;
-	context->CopySubresourceRegion(tex, 0, 0, 0, 0, faceSrc, 0, nullptr);
-
-	// Right
-	faceSrc = (ID3D11Texture2D*)textures[3].handle;
-	context->CopySubresourceRegion(tex, 1, 0, 0, 0, faceSrc, 0, nullptr);
-
-	// Top
-	faceSrc = (ID3D11Texture2D*)textures[4].handle;
-	context->CopySubresourceRegion(tex, 2, 0, 0, 0, faceSrc, 0, nullptr);
-
-	// Bottom
-	faceSrc = (ID3D11Texture2D*)textures[5].handle;
-	context->CopySubresourceRegion(tex, 3, 0, 0, 0, faceSrc, 0, nullptr);
-
-	tex->Release();
-}
-
 bool DX11Compositor::CopyDepth(const vr::Texture_t* depth)
 {
 	auto* src = (ID3D11Texture2D*)depth->handle;

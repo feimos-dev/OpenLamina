@@ -13,8 +13,6 @@ public:
 	// Override
 	void CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, std::optional<XruEye> eye, vr::EVRSubmitFlags submitFlags) override;
 
-	void InvokeCubemap(const vr::Texture_t* textures) override;
-	virtual bool SupportsCubemap() override { return false; }
 
 	bool ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTextureBounds_t* bounds, Image& out) override;
 

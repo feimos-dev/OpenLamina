@@ -57,9 +57,6 @@ public:
 
 	void Invoke(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, XrSwapchainSubImage& subImage, std::optional<XruEye> eye = std::nullopt, vr::EVRSubmitFlags submitFlags = vr::Submit_Default);
 
-	virtual void InvokeCubemap(const vr::Texture_t* textures) = 0;
-	virtual bool SupportsCubemap() { return false; }
-
 	virtual XrSwapchain GetSwapChain() { return chain; };
 
 	/**

@@ -698,11 +698,4 @@ bool VkCompositor::ReadbackToCpu(const vr::Texture_t* texture, const vr::VRTextu
 	return !out.Empty();
 }
 
-void VkCompositor::InvokeCubemap(const vr::Texture_t* textures)
-{
-	// Not yet: SetSkyboxOverride answers RequestFailed
-	OOVR_LOG_ONCE("VkCompositor::InvokeCubemap: Not yet supported!");
-	lastResult = XR_ERROR_RUNTIME_FAILURE;
-}
-
 #endif

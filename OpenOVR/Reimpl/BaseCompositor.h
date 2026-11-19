@@ -175,11 +175,6 @@ public:
 	/** Creates API specific Compositor */
 	static std::unique_ptr<Compositor> CreateCompositorAPI(const vr::Texture_t* texture);
 
-#if defined(SUPPORT_DX) && defined(SUPPORT_DX11) && !defined(OC_XR_PORT)
-	// TODO clean this up, and make the keyboard work with OpenGL and Vulkan too
-	static DX11Compositor* dxcomp;
-#endif
-
 public:
 	// OpenVR interface methods from here on:
 

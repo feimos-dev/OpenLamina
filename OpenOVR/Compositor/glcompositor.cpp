@@ -393,13 +393,6 @@ bool GLBaseCompositor::ReadbackToCpu(const vr::Texture_t* texture, const vr::VRT
 #endif
 }
 
-void GLBaseCompositor::InvokeCubemap(const vr::Texture_t* textures)
-{
-	// Not yet: SetSkyboxOverride answers RequestFailed
-	OOVR_LOG_ONCE("GLCompositor::InvokeCubemap: Not yet supported!");
-	lastResult = XR_ERROR_RUNTIME_FAILURE;
-}
-
 void GLBaseCompositor::CheckCreateSwapChain(int width, int height, vr::EColorSpace c_space, GLsizei rawformat)
 {
 	// The same texture as last time: the swapchain is kept

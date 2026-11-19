@@ -601,13 +601,6 @@ void DX12Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 	fenceValues[currentIndex] = fenceValue;
 }
 
-void DX12Compositor::InvokeCubemap(const vr::Texture_t* textures)
-{
-	CheckCreateSwapChain(&textures[0], 0, 0, true);
-
-	OOVR_SOFT_ABORT("TODO cubemap");
-}
-
 bool DX12Compositor::CheckChainCompatible(D3D12_RESOURCE_DESC& inputDesc, vr::EColorSpace colourSpace)
 {
 	bool usable = true;
