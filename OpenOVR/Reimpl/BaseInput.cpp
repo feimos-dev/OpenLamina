@@ -2434,12 +2434,6 @@ EVRInputError BaseInput::GetActionOrigins(VRActionSetHandle_t actionSetHandle, V
 	if (act->type == ActionType::EyeTracking)
 		return VRInputError_InvalidHandle;
 
-	if (act->type == ActionType::Skeleton || act->type == ActionType::Pose) {
-		// TODO what should this do?
-		OOVR_SOFT_ABORT("Skeleton and pose action origins not implemented, returning error");
-		return VRInputError_InvalidHandle;
-	}
-
 	if (!originsOut && originOutCount)
 		return VRInputError_InvalidParam;
 	if (originsOut)
@@ -2449,24 +2443,52 @@ EVRInputError BaseInput::GetActionOrigins(VRActionSetHandle_t actionSetHandle, V
 	XrBoundSourcesForActionEnumerateInfo info = { XR_TYPE_BOUND_SOURCES_FOR_ACTION_ENUMERATE_INFO };
 	info.action = act->xr;
 
-	// The hands the binding files bind it on; OpenXR's bound sources for a vibration, or if no controller in use has a file
+	// Each hand's binding file (or the hand itself, with no file) gives the inputs, or for a pose and a skeleton the
+	// hands, that write the action
+	if (act->type == ActionType::Skeleton || act->type == ActionType::Pose) {
+		std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
+		bool anyFile = false;
+		for (size_t h = 0; h < allSubactionPathNames.size() && h < handInteractionProfiles.size(); h++) {
+			const InteractionProfile* profile = handInteractionProfiles[h];
+			if (!profile) {
+				auto device = BackendManager::Instance().GetBackendInstance()->GetDeviceByHand(static_cast<ITrackedDevice::TrackedDeviceType>(h));
+				profile = device ? device->GetInteractionProfile() : nullptr;
+			}
+			auto file = bindingFiles.find(profile);
+			if (file == bindingFiles.end())
+				continue;
+			anyFile = true;
+			for (const std::string& device : PoseDevicesForAction(file->second, act->manifestName))
+				sources.insert(device);
+		}
+		if (!anyFile) {
+			if (act->type == ActionType::Skeleton)
+				sources.insert(act->skeletalHand == ITrackedDevice::HAND_LEFT ? "/user/hand/left" : "/user/hand/right");
+			else
+				for (const std::string& hand : allSubactionPathNames)
+					sources.insert(hand);
+		}
+	}
+
+	// The inputs the binding files bind it on; OpenXR's bound sources for a vibration, or if no controller in use has a file
 	std::optional<std::vector<ActionBinding>> fromFiles = BindingsFromFiles(*act);
 	if (fromFiles)
 		for (const ActionBinding& b : *fromFiles)
-			sources.insert(b.device);
+			sources.insert(b.device + b.input);
 
 	// 20 will be more than enough, saves a second call
 	XrPath tmp[20];
 	uint32_t count = 0;
 	// On failure (or a count beyond tmp, from SIZE_INSUFFICIENT) the sources are none, or tmp's worth
-	XrResult enumResult = fromFiles || info.action == XR_NULL_HANDLE ? XR_SUCCESS : xrEnumerateBoundSourcesForAction(xr_session.get(), &info, std::size(tmp), &count, tmp);
+	const bool isPose = act->type == ActionType::Skeleton || act->type == ActionType::Pose;
+	XrResult enumResult = fromFiles || isPose || info.action == XR_NULL_HANDLE ? XR_SUCCESS : xrEnumerateBoundSourcesForAction(xr_session.get(), &info, std::size(tmp), &count, tmp);
 	if (XR_FAILED(enumResult)) {
 		OOVR_LOG_ONCE("GetActionOrigins: xrEnumerateBoundSourcesForAction failed");
 		count = 0;
 	}
 	count = std::min<uint32_t>(count, (uint32_t)std::size(tmp));
 
-	// Now for each source find the /user/hand/abc substring that it starts with
+	// Now for each source its input (a vibration's is its hand)
 	char buff[XR_MAX_PATH_LENGTH + 1] = {};
 	for (uint32_t i = 0; i < count; i++) {
 		uint32_t len = 0;
@@ -2475,6 +2497,10 @@ EVRInputError BaseInput::GetActionOrigins(VRActionSetHandle_t actionSetHandle, V
 
 		// len counts the terminator
 		std::string path(buff, strnlen(buff, std::min<size_t>(len, XR_MAX_PATH_LENGTH)));
+		if (path.find("/input/") != std::string::npos) {
+			sources.insert(OriginFromInputPath(path));
+			continue;
+		}
 		size_t endOfHandPos = path.find('/', strlen("/user/hand/") + 1);
 		if (endOfHandPos != std::string::npos)
 			path.erase(endOfHandPos);
@@ -2514,35 +2540,13 @@ EVRInputError BaseInput::GetOriginLocalizedName(VRInputValueHandle_t origin, VR_
 	if (!pchNameArray || unNameArraySize == 0)
 		return VRInputError_MaxCapacityReached;
 
-	std::string name;
-
-	if (unStringSectionsToInclude & VRInputString_Hand) {
-		switch (dev->GetHand()) {
-		case ITrackedDevice::HAND_LEFT:
-			name += "Left Hand ";
-			break;
-		case ITrackedDevice::HAND_RIGHT:
-			name += "Right Hand ";
-			break;
-		default:
-			name += "Unknown Hand ";
-			break;
-		}
-	}
-
-	if (unStringSectionsToInclude & VRInputString_ControllerType) {
-		name += "OpenXR Controller ";
-	}
-
-	if (unStringSectionsToInclude & VRInputString_InputSource) {
-		// TODO: what should go here?
-		// name += "Something ";
-	}
-
-	if (name.size() > 0) {
-		// Remove trailing space
-		name.erase(name.size() - 1);
-	}
+	const InputValueHandle* ivh = cast_IVH(origin);
+	const InteractionProfile* profile = dev->GetInteractionProfile();
+	std::optional<const char*> controllerType = profile ? profile->GetOpenVRName() : std::nullopt;
+	int hand = dev->GetHand() == ITrackedDevice::HAND_LEFT ? 0 : dev->GetHand() == ITrackedDevice::HAND_RIGHT ? 1 : -1;
+	std::string name = OriginLocalizedName(hand, controllerType ? *controllerType : "", ivh->path,
+	    (unStringSectionsToInclude & VRInputString_Hand) != 0, (unStringSectionsToInclude & VRInputString_ControllerType) != 0,
+	    (unStringSectionsToInclude & VRInputString_InputSource) != 0);
 
 	const char* str = name.c_str();
 
@@ -2572,7 +2576,8 @@ EVRInputError BaseInput::GetOriginTrackedDeviceInfo(VRInputValueHandle_t origin,
 
 	info->trackedDeviceIndex = dev->DeviceIndex();
 	info->devicePath = origin;
-	strcpy_arr(info->rchRenderModelComponentName, "getorigintrackeddeviceinfo_testing"); // TODO figure out how this should work
+	// The component of the render model the origin's input moves; none for a hand
+	strcpy_arr(info->rchRenderModelComponentName, OriginComponentName(cast_IVH(origin)->path).c_str());
 
 	return VRInputError_None;
 }
@@ -2741,8 +2746,7 @@ EVRInputError BaseInput::GetBindingVariant(vr::VRInputValueHandle_t ulDevicePath
 		return VRInputError_MaxCapacityReached;
 	}
 
-	OOVR_SOFT_ABORT("GetBindingVariant not implemented");
-
+	// No binding file carries a variant: the empty string SteamVR answers for bindings without one
 	*pchVariantArray = 0;
 	return VRInputError_None;
 }

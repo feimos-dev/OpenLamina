@@ -11,6 +11,6 @@
   "mode": "toggle_button",
   "slot": "click",
   "source_type": "trigger",
-  "origin_is_the_right_hand": true
+  "origin_is_the_right_trigger": true
  }
 }
