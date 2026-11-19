@@ -3,8 +3,10 @@
 
 #include "stdafx.h"
 
+#include "Misc/ProgramEvents.h"
 #include "Misc/SharedStore.h"
 #include "Misc/SteamVRSettings.h"
+#include "Reimpl/BaseClientCore.h"
 #include "Reimpl/BaseSettings.h"
 #include "../DrvOpenXR/DeviceIdentity.h"
 
@@ -14,6 +16,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -60,6 +63,27 @@ struct AppId {
 			unsetenv("SteamAppId");
 #endif
 	}
+};
+
+// The application type for one test
+struct AppType {
+	vr::EVRApplicationType saved = BaseClientCore::appType;
+	explicit AppType(vr::EVRApplicationType type) { BaseClientCore::appType = type; }
+	~AppType() { BaseClientCore::appType = saved; }
+};
+
+std::vector<vr::VREvent_t> postedEvents;
+void RecordEvent(const vr::VREvent_t& event)
+{
+	postedEvents.push_back(event);
+}
+struct EventRecorder {
+	EventRecorder()
+	{
+		postedEvents.clear();
+		OcSetLocalEventSink(&RecordEvent);
+	}
+	~EventRecorder() { OcSetLocalEventSink(nullptr); }
 };
 
 std::string GetString(BaseSettings& settings, const char* section, const char* key, BaseSettings::EVRSettingsError* error)
@@ -296,4 +320,89 @@ TEST_CASE("Settings_last_known_hmd_agrees_with_properties")
 	// The default row has no model number; the answer OpenComposite always gave
 	CHECK(hmd.modelNumber.empty());
 	CHECK(GetString(settings, "LastKnown", "HMDModel", &error) == "Oculus Quest2");
+}
+
+TEST_CASE("Settings_scene_application_can_not_set_bool")
+{
+	TempDir dir;
+	SteamVRFiles files(false);
+	SharedStore store(dir.path);
+	BaseSettings settings(store);
+	BaseSettings::EVRSettingsError error = VRSettingsError_None;
+
+	{
+		AppType scene(vr::VRApplication_Scene);
+		settings.SetBool("oc_test", "flag", true, &error);
+		CHECK(error == VRSettingsError_AccessDenied);
+		CHECK_FALSE(store.Read(StoreDoc::Settings).isMember("oc_test"));
+		CHECK(std::string(settings.GetSettingsErrorNameFromEnum(error)) == "VRSettingsError_AccessDenied");
+
+		// The other types of write, and a missing pointer for the error, are as before
+		settings.SetInt32("oc_test", "count", 3, &error);
+		CHECK(error == VRSettingsError_None);
+		settings.SetBool("oc_test", "flag", true);
+		CHECK_FALSE(store.Read(StoreDoc::Settings)["oc_test"].isMember("flag"));
+	}
+	{
+		AppType overlay(vr::VRApplication_Overlay);
+		settings.SetBool("oc_test", "flag", true, &error);
+		CHECK(error == VRSettingsError_None);
+		CHECK(settings.GetBool("oc_test", "flag", &error));
+	}
+}
+
+TEST_CASE("Settings_changes_are_announced")
+{
+	TempDir dir;
+	SteamVRFiles files(false);
+	SharedStore store(dir.path);
+	BaseSettings settings(store);
+	EventRecorder recorder;
+
+	settings.SetFloat("steamvr", "ipdOffset", 0.1f);
+	REQUIRE(postedEvents.size() == 1);
+	CHECK(postedEvents[0].eventType == vr::VREvent_SteamVRSectionSettingChanged);
+
+	settings.SetString("dashboard", "x", "y");
+	settings.SetInt32("oc_test", "count", 1);
+	REQUIRE(postedEvents.size() == 3);
+	CHECK(postedEvents[1].eventType == vr::VREvent_DashboardSectionSettingChanged);
+	CHECK(postedEvents[2].eventType == vr::VREvent_OtherSectionSettingChanged);
+
+	settings.RemoveKeyInSection("collisionBounds", "k");
+	settings.RemoveSection("LastKnown");
+	REQUIRE(postedEvents.size() == 5);
+	CHECK(postedEvents[3].eventType == vr::VREvent_OtherSectionSettingChanged);
+	CHECK(postedEvents[4].eventType == vr::VREvent_LastKnownSectionSettingChanged);
+
+	// A write that was refused announces nothing
+	settings.SetInt32(nullptr, "count", 1);
+	CHECK(postedEvents.size() == 5);
+}
+
+TEST_CASE("Settings_own_defaults_without_steamvr")
+{
+	TempDir dir;
+	SteamVRFiles files(false);
+	SharedStore store(dir.path);
+	BaseSettings settings(store);
+	BaseSettings::EVRSettingsError error = VRSettingsError_IPCFailed;
+
+	// The audio device keys answer empty, as a PC with no device set does, with no error
+	CHECK(GetString(settings, "audio", "onPlaybackDevice", &error).empty());
+	CHECK(error == VRSettingsError_None);
+	CHECK(GetString(settings, "audio", "onRecordDevice", &error).empty());
+	CHECK(error == VRSettingsError_None);
+	CHECK(settings.GetBool("steamvr", "directMode", &error));
+	CHECK(error == VRSettingsError_None);
+	CHECK(settings.GetFloat("steamvr", "ipdOffset", &error) == 0.0f);
+	CHECK(error == VRSettingsError_None);
+
+	// SteamVR's own files still win
+	TempDir other;
+	fs::path defaults = other.path / "default.vrsettings";
+	std::ofstream(defaults) << "{ \"steamvr\": { \"directMode\": false } }";
+	SteamVRSettingsUseFiles(fs::path(other.path / "none"), defaults);
+	CHECK_FALSE(settings.GetBool("steamvr", "directMode", &error));
+	CHECK(error == VRSettingsError_None);
 }

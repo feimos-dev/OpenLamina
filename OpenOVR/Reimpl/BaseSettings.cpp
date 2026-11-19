@@ -5,8 +5,10 @@
 #include "Drivers/Backend.h"
 #include "Misc/Config.h"
 #include "Misc/Numbers.h"
+#include "Misc/ProgramEvents.h"
 #include "Misc/SharedStore.h"
 #include "Misc/SteamVRSettings.h"
+#include "BaseClientCore.h"
 #include "../DrvOpenXR/DeviceIdentity.h"
 #include "generated/interfaces/IVRSettings_001.h"
 #include "generated/interfaces/IVRSettings_002.h"
@@ -16,6 +18,7 @@
 #include <cstdlib>
 #include <limits>
 #include <string>
+#include <vector>
 
 // Settings live in the store's Settings document, as {"<section>": {"<key>": value}}, shared by every
 // OpenComposite program of the user. Gets fall back to OpenComposite's live answers, then SteamVR's own files, then the
@@ -123,6 +126,73 @@ void SetError(OOVR_EVRSettingsError* peError, OOVR_EVRSettingsError error)
 		*peError = error;
 }
 
+// The event that tells programs a setting of this section changed
+vr::EVREventType SectionChangedEvent(const std::string& section)
+{
+	if (section == kk::k_pch_SteamVR_Section)
+		return vr::VREvent_SteamVRSectionSettingChanged;
+	if (section == kk::k_pch_Lighthouse_Section)
+		return vr::VREvent_LighthouseSectionSettingChanged;
+	if (section == kk::k_pch_Null_Section)
+		return vr::VREvent_NullSectionSettingChanged;
+	if (section == kk::k_pch_UserInterface_Section)
+		return vr::VREvent_UserInterfaceSectionSettingChanged;
+	if (section == kk::k_pch_Notifications_Section)
+		return vr::VREvent_NotificationsSectionSettingChanged;
+	if (section == kk::k_pch_Keyboard_Section)
+		return vr::VREvent_KeyboardSectionSettingChanged;
+	if (section == kk::k_pch_Perf_Section)
+		return vr::VREvent_PerfSectionSettingChanged;
+	if (section == kk::k_pch_Dashboard_Section)
+		return vr::VREvent_DashboardSectionSettingChanged;
+	if (section == kk::k_pch_WebInterface_Section)
+		return vr::VREvent_WebInterfaceSectionSettingChanged;
+	if (section == kk::k_pch_Trackers_Section)
+		return vr::VREvent_TrackersSectionSettingChanged;
+	if (section == kk::k_pch_LastKnown_Section)
+		return vr::VREvent_LastKnownSectionSettingChanged;
+	if (section == kk::k_pch_DismissedWarnings_Section)
+		return vr::VREvent_DismissedWarningsSectionSettingChanged;
+	if (section == "GpuSpeed")
+		return vr::VREvent_GpuSpeedSectionSettingChanged;
+	if (section == "driver_holographic")
+		return vr::VREvent_WindowsMRSectionSettingChanged;
+	return vr::VREvent_OtherSectionSettingChanged;
+}
+
+void NoticeSettingChanged(const std::string& section)
+{
+	OcPostEvent(SectionChangedEvent(section), vr::k_unTrackedDeviceIndexInvalid, vr::VREvent_Data_t{}, true);
+}
+
+// The values Get* answer for settings nobody has set, when SteamVR's files don't have them either
+struct DefaultSetting {
+	const char* section;
+	const char* key;
+	Json::Value value;
+};
+
+const std::vector<DefaultSetting>& DefaultSettings()
+{
+	static const std::vector<DefaultSetting> table = {
+		// True if the user is using external speakers (not attached to their head)
+		{ kk::k_pch_SteamVR_Section, kk::k_pch_SteamVR_UsingSpeakers_Bool, Json::Value(false) },
+		// direct_mode, not the DirectMode section: there's no windowed mode
+		{ kk::k_pch_SteamVR_Section, kk1::k_pch_SteamVR_DirectMode_Bool, Json::Value(true) },
+		{ kk::k_pch_SteamVR_Section, kk::k_pch_SteamVR_RetailDemo_Bool, Json::Value(false) },
+		{ kk::k_pch_SteamVR_Section, kk1::k_pch_SteamVR_AllowReprojection_Bool, Json::Value(true) },
+		// The key's older name, gone from the headers
+		{ kk::k_pch_SteamVR_Section, "allowInterleavedReprojection", Json::Value(true) },
+		{ kk::k_pch_SteamVR_Section, kk::k_pch_SteamVR_IpdOffset_Float, Json::Value(0.0) },
+		{ kk::k_pch_SteamVR_Section, kk::k_pch_SteamVR_GridColor_String, Json::Value("") },
+		{ kk::k_pch_CollisionBounds_Section, kk::k_pch_CollisionBounds_FadeDistance_Float, Json::Value(1.0) },
+		// SteamVR's audio device switching (Sansar reads it): OpenXR has no audio devices
+		{ kk::k_pch_audio_Section, kk1::k_pch_audio_OnPlaybackDevice_String, Json::Value("") },
+		{ kk::k_pch_audio_Section, kk1::k_pch_audio_OnRecordDevice_String, Json::Value("") },
+	};
+	return table;
+}
+
 } // namespace
 
 SharedStore& BaseSettings::Store()
@@ -185,37 +255,14 @@ std::optional<Json::Value> BaseSettings::Lookup(const std::string& section, cons
 	if (auto v = SteamVRSettingValue(section, key))
 		return v;
 
-	// 4. The answers OpenComposite always gave
-	if (section == kk::k_pch_SteamVR_Section) {
-		// True if the user is using external speakers (not attached to their head)
-		if (key == kk::k_pch_SteamVR_UsingSpeakers_Bool)
-			return Json::Value(false);
-		// direct_mode, not the DirectMode section: there's no windowed mode
-		if (key == kk1::k_pch_SteamVR_DirectMode_Bool)
-			return Json::Value(true);
-		if (key == kk::k_pch_SteamVR_RetailDemo_Bool) // The Lab reads it
-			return Json::Value(false);
-		// allowInterleavedReprojection was the key's older name, gone from the headers
-		if (key == kk1::k_pch_SteamVR_AllowReprojection_Bool || key == "allowInterleavedReprojection")
-			return Json::Value(true);
-		if (key == kk::k_pch_SteamVR_IpdOffset_Float)
-			return Json::Value(0.0);
-		// Under SteamVR it was an empty string
-		if (key == kk::k_pch_SteamVR_GridColor_String)
-			return Json::Value("");
-	} else if (section == kk::k_pch_CollisionBounds_Section) {
-		if (key == kk::k_pch_CollisionBounds_FadeDistance_Float)
-			return Json::Value(1.0); // made up, and not used
-	} else if (section.rfind("steam.app.", 0) == 0) {
-		if (key == "resolutionScale")
-			return Json::Value(100.0);
-	} else if (section == kk::k_pch_audio_Section) {
-		// SteamVR's audio device switching (Sansar reads it): OpenXR has no audio devices
-		if (key == kk1::k_pch_audio_OnPlaybackDevice_String || key == kk1::k_pch_audio_OnRecordDevice_String) {
-			OOVR_SOFT_ABORT("k_pch_audio_Section unimplemented");
-			return Json::Value("");
-		}
+	// 4. OpenComposite's own defaults
+	for (const DefaultSetting& d : DefaultSettings()) {
+		if (section == d.section && key == d.key)
+			return d.value;
 	}
+	// A game's resolution setting, in percent
+	if (section.rfind("steam.app.", 0) == 0 && key == "resolutionScale")
+		return Json::Value(100.0);
 
 	return std::nullopt;
 }
@@ -273,10 +320,16 @@ void BaseSettings::Set(const char* pchSection, const char* pchSettingsKey, const
 		data[section][key] = value;
 	});
 	SetError(peError, written ? VRSettingsError_None : VRSettingsError_WriteFailed);
+	if (written)
+		NoticeSettingChanged(section);
 }
 
 void BaseSettings::SetBool(const char* pchSection, const char* pchSettingsKey, bool bValue, EVRSettingsError* peError)
 {
+	if (pchSection && pchSettingsKey && BaseClientCore::appType == vr::VRApplication_Scene) {
+		SetError(peError, VRSettingsError_AccessDenied);
+		return;
+	}
 	Set(pchSection, pchSettingsKey, Json::Value(bValue), peError);
 }
 void BaseSettings::SetInt32(const char* pchSection, const char* pchSettingsKey, int32_t nValue, EVRSettingsError* peError)
@@ -397,6 +450,8 @@ void BaseSettings::RemoveSection(const char* pchSection, EVRSettingsError* peErr
 			data.removeMember(section);
 	});
 	SetError(peError, written ? VRSettingsError_None : VRSettingsError_WriteFailed);
+	if (written)
+		NoticeSettingChanged(section);
 }
 
 void BaseSettings::RemoveKeyInSection(const char* pchSection, const char* pchSettingsKey, EVRSettingsError* peError)
@@ -415,4 +470,6 @@ void BaseSettings::RemoveKeyInSection(const char* pchSection, const char* pchSet
 		}
 	});
 	SetError(peError, written ? VRSettingsError_None : VRSettingsError_WriteFailed);
+	if (written)
+		NoticeSettingChanged(section);
 }

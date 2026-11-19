@@ -178,7 +178,6 @@
  {"interface": "IVRRenderModels_\\d+", "method": "GetComponentStateForDevicePath", "field": "out", "reason": "render models from the user's SteamVR install"},
  {"interface": "IVRScreenshots_\\d+", "method": "UpdateScreenshotProgress", "field": "ret", "reason": "screenshots, answered without a runtime"},
  {"interface": "IVRScreenshots_\\d+", "method": "SubmitScreenshot", "field": "ret", "reason": "screenshots, answered without a runtime"},
- {"interface": "IVRSettings_\\d+", "method": "SetBool", "field": "out", "reason": "SteamVR answered 6, an error openvr.h has no name for, to SetBool of an empty key and once of steamvr.supersampleScale; OpenLamina stores it"},
  {"interface": "IVRSystem_\\d+", "method": "DriverDebugRequest", "field": "ret", "reason": "the system interface: device and system properties are OpenLamina's own"},
  {"interface": "IVRDebug_001", "method": "BeginVrProfilerEvent", "field": "out", "reason": "profiler event handles are numbers each runtime picks"},
  {"interface": "IVRSpatialAnchors_001", "method": "CreateSpatialAnchorFromPose", "field": "out", "reason": "anchor handles are numbers each runtime picks"},
