@@ -117,3 +117,37 @@ TEST_CASE("A_grip_that_clicks_is_a_button")
 	CHECK(BindingsForAction(vive, "/actions/main/in/grab")[0].sourceType == "button");
 	CHECK(BindingsForAction(vive, "/actions/main/in/move")[0].sourceType == "trackpad");
 }
+
+TEST_CASE("An_origin_names_the_render_model_component_of_its_input")
+{
+	CHECK(OriginComponentName("/user/hand/left/input/trigger") == "trigger");
+	CHECK(OriginComponentName("/user/hand/right/input/thumbstick/click") == "thumbstick");
+	CHECK(OriginComponentName("/user/hand/right").empty());
+	CHECK(OriginFromInputPath("/user/hand/right/input/trigger/value") == "/user/hand/right/input/trigger");
+	CHECK(OriginFromInputPath("/user/hand/right/output/haptic") == "/user/hand/right/output/haptic");
+}
+
+TEST_CASE("An_origin_is_named_from_the_pieces_asked_for")
+{
+	const std::string path = "/user/hand/right/input/trigger";
+	CHECK(OriginLocalizedName(1, "oculus_touch", path, true, true, true) == "Right Hand Oculus Touch Trigger");
+	CHECK(OriginLocalizedName(0, "knuckles", path, true, false, false) == "Left Hand");
+	CHECK(OriginLocalizedName(0, "knuckles", path, false, true, true) == "Index Controller Trigger");
+	CHECK(OriginLocalizedName(0, "", "/user/hand/left", true, true, true) == "Left Hand OpenXR Controller");
+	CHECK(OriginLocalizedName(0, "oculus_touch", "/user/hand/left/input/a/click", false, false, true) == "A Button");
+	CHECK(OriginLocalizedName(0, "oculus_touch", path, false, false, false).empty());
+}
+
+TEST_CASE("A_pose_is_bound_on_the_hands_the_file_names")
+{
+	BindingFile file = ParseBindingFile(R"({ "controller_type": "knuckles", "bindings": { "/actions/main": {
+		"poses": [ { "output": "/actions/main/in/Hand", "path": "/user/hand/right/pose/raw" } ],
+		"skeleton": [ { "output": "/actions/main/in/skel", "path": "/user/hand/left/input/skeleton/left" } ] } } })");
+	std::vector<std::string> pose = PoseDevicesForAction(file, "/actions/main/in/hand");
+	REQUIRE(pose.size() == 1);
+	CHECK(pose[0] == "/user/hand/right");
+	std::vector<std::string> skeleton = PoseDevicesForAction(file, "/actions/main/in/skel");
+	REQUIRE(skeleton.size() == 1);
+	CHECK(skeleton[0] == "/user/hand/left");
+	CHECK(PoseDevicesForAction(file, "/actions/main/in/none").empty());
+}

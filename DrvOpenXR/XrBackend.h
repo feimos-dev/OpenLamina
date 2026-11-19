@@ -10,6 +10,7 @@
 
 #include "XrDriverPrivate.h"
 
+#include "../OpenOVR/Misc/Fade.h"
 #include "OwnFrameLoop.h"
 #include "XrController.h"
 #include "XrHMD.h"
@@ -52,6 +53,12 @@ public:
 	// What the game has been told of the session, as SteamVR tells it: whether it lost input focus (sessionEvents), and
 	// the IPD (NaN until the session's first)
 	std::atomic<bool> inputFocusLost{ false };
+	// The session has been FOCUSED: only then is leaving that state the runtime taking input
+	std::atomic<bool> inputFocusHad{ false };
+	// The headset's standby, as the game was told of it (the session stopping), and the domains (bit n for
+	// XrPerfSettingsDomainEXT n) the runtime reports above normal load
+	std::atomic<bool> standbyTold{ false };
+	std::atomic<uint32_t> perfStrainedDomains{ 0 };
 	std::atomic<float> toldIpd{ NAN };
 	// The app's graphics device couldn't be bound: the session stays on the temporary device
 	std::atomic<bool> appGraphicsUnusable{ false };
@@ -71,6 +78,10 @@ public:
 	 * that failed): VREvent_Quit is queued once, and no more frames are begun. There's no reconnecting.
 	 */
 	void OnSessionLost();
+	/** Pumps events until done() is true, for at most timeoutMs: whether it was */
+	bool WaitForEvents(const std::function<bool()>& done, int timeoutMs);
+	/** The runtime ends the session on its own: VREvent_DriverRequestedQuit, then OnSessionLost */
+	void OnRuntimeQuit();
 	bool IsSessionLost() const { return sessionLost; }
 	/** The session is lost, not running, or stopping, exiting or about to be lost: nothing can be shown in it any more */
 	bool IsSessionEnded() const
@@ -183,6 +194,12 @@ private:
 
 	std::vector<std::shared_ptr<XrGenericTracker>> generic_trackers;
 	std::shared_mutex generic_trackers_mutex;
+	// The session the trackers' spaces belong to, and the xdev list generation they were made from
+	XrSession generic_trackers_session = XR_NULL_HANDLE;
+	std::atomic<uint64_t> generic_trackers_generation{ UINT64_MAX };
+	std::atomic<int64_t> generic_trackers_polled_ms{ 0 };
+	// Makes the trackers again when the runtime's list of devices has changed (looked at about once a second)
+	void PollGenericTrackers();
 
 	// False if the texture can't be used (logged): no session switch then, or the switch was undone
 	bool CheckOrInitCompositors(const vr::Texture_t* tex);
@@ -191,6 +208,8 @@ private:
 	// game's frames are copied into once it has asked for one (mirrorWanted); under mirrorLock
 	void* mirrorTexture[XruEyeCount]{};
 	bool mirrorWanted = false;
+	// The format of each eye's frames (a DXGI_FORMAT), for a mirror texture made after them
+	int mirrorFormat[XruEyeCount]{};
 	std::mutex mirrorLock;
 	std::set<void*> mirrorViews; // handed out by GetMirrorTextureD3D11 and not yet released
 	// A frame's texture of the eye, submitted with these bounds; with none, the eye's mirror texture is let go
@@ -212,8 +231,24 @@ private:
 	// The game's last projection layer, for OpenLamina's own frames; under frameOwner
 	XrCompositionLayerProjection lastProjection{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
 	XrCompositionLayerProjectionView lastProjectionViews[2]{};
-	bool haveLastProjection = false;
+	std::atomic<bool> haveLastProjection{ false };
 	bool SkyboxShown();
+	// The layers of the frame being ended, under frameOwner
+	std::vector<const XrCompositionLayerBaseHeader*> frameLayers;
+	// The scene fade as a layer: a quad over the whole view, its texels the fade's colour and alpha. Under frameOwner.
+	std::unique_ptr<CpuSwapchain> fadeSwapchain;
+	uint8_t fadeTexel[4]{};
+	XrCompositionLayerQuad fadeLayer{ XR_TYPE_COMPOSITION_LAYER_QUAD };
+	// The fade layer for the fade as it is now, or nullptr while nothing is faded (or it can't be drawn)
+	XrCompositionLayerBaseHeader* BuildFadeLayer();
+	// A skybox asked for while the session wasn't running, shown at the next frame's start; under pendingSkyboxLock
+	std::mutex pendingSkyboxLock;
+	SkyboxRequest pendingSkybox;
+	bool EquirectSkyboxAvailable() const;
+	// The session lock held (shared) and the session running
+	IBackend::openvr_enum_t ShowSkybox(const vr::Texture_t* textures, uint32_t count);
+	IBackend::openvr_enum_t ShowSkyboxQuad(const vr::Texture_t* texture);
+	void ShowPendingSkybox();
 	// The skybox from lat-long textures or cube faces; an OpenVR compositor error
 	int SetEquirectSkybox(const vr::Texture_t* textures, uint32_t count);
 	std::vector<std::shared_ptr<Compositor>> overlay_compositors;
@@ -306,10 +341,15 @@ private:
 	// Keep track of if eye textures have been submitted and if we need to create a projection layer for them
 	bool submittedEyeTextures = false;
 
-	// If the app is using PostPresentHandoff then we need to delay when we submit frame data through xrEndFrame
-	// until after all frame and layer data has been submitted and PostPresentHandoff is called. Otherwise we
-	// might miss overlay elements for GUI or HUDs
-	bool postPresentStatus = false;
+	// Whether the runtime shows the frame in flight (xrWaitFrame's shouldRender); under frameOwner
+	bool frameShouldRender = true;
+	// The space the frame's views were located in, which its projection layer is labelled with
+	XrReferenceSpaceType frameSpace = XR_REFERENCE_SPACE_TYPE_STAGE;
+	// The eyes submitted in the frame in flight
+	bool eyeSubmitted[XruEyeCount] = {};
+	// The game cleared its last frame (ClearLastSubmittedFrame), or suspended rendering: its eye textures aren't shown
+	std::atomic<bool> sceneCleared{ false };
+	std::atomic<bool> renderingSuspended{ false };
 
 	// Number of frames rendered for use in frame timing data
 	uint32_t nFrameIndex = 0;

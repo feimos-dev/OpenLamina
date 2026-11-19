@@ -7,6 +7,9 @@
 #include "Misc/Input/IndexControllerInteractionProfile.h"
 #include "logging.h"
 
+#include <chrono>
+#include <filesystem>
+#include <fstream>
 #include <string>
 #include <vector>
 
@@ -37,4 +40,74 @@ TEST_CASE("Log sink sees lines")
 	for (const std::string& l : sink_lines)
 		seen = seen || l.find("hello-sink") != std::string::npos;
 	CHECK(seen);
+}
+
+namespace {
+// An openlamina.ini in a fresh working directory, for the Config built while it is there
+struct IniInDir {
+	std::filesystem::path old = std::filesystem::current_path();
+	std::filesystem::path dir;
+
+	explicit IniInDir(const std::string& text)
+	{
+		dir = std::filesystem::temp_directory_path() / ("oc_ini_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+		std::filesystem::create_directories(dir);
+		std::ofstream(dir / "openlamina.ini") << text;
+		std::filesystem::current_path(dir);
+		sink_lines.clear();
+	}
+	~IniInDir()
+	{
+		std::filesystem::current_path(old);
+		std::error_code ec;
+		std::filesystem::remove_all(dir, ec);
+	}
+	bool Logged(const char* part) const
+	{
+		for (const std::string& l : sink_lines)
+			if (l.find(part) != std::string::npos)
+				return true;
+		return false;
+	}
+};
+} // namespace
+
+TEST_CASE("Config scales must be numbers above 0")
+{
+	oovr_log_set_test_sink(test_sink);
+	{
+		IniInDir ini("supersampleRatio=\nhiddenMeshVerticalScale=0\n");
+		Config c;
+		CHECK(c.SupersampleRatio() == 1.0f);
+		CHECK(c.HiddenMeshVerticalScale() == 1.0f);
+		CHECK(ini.Logged("supersampleRatio on line 1"));
+		CHECK(ini.Logged("hiddenMeshVerticalScale on line 2"));
+	}
+	{
+		IniInDir ini("supersampleRatio=-1\nhiddenMeshVerticalScale=abc\n");
+		Config c;
+		CHECK(c.SupersampleRatio() == 1.0f);
+		CHECK(c.HiddenMeshVerticalScale() == 1.0f);
+	}
+	{
+		IniInDir ini("supersampleRatio=1.5\nhiddenMeshVerticalScale=0.8\n");
+		Config c;
+		CHECK(c.SupersampleRatio() == 1.5f);
+		CHECK(c.HiddenMeshVerticalScale() == doctest::Approx(0.8f));
+	}
+	oovr_log_set_test_sink(nullptr);
+}
+
+TEST_CASE("Config reads keys outside any section or in default, and refuses other sections")
+{
+	oovr_log_set_test_sink(test_sink);
+	{
+		IniInDir ini("supersampleRatio=1.2\n[default]\nhaptics=off\n[other]\nsupersampleRatio=2\nkeyboard=off\n");
+		Config c;
+		CHECK(c.SupersampleRatio() == doctest::Approx(1.2f));
+		CHECK_FALSE(c.Haptics());
+		CHECK(c.Keyboard());
+		CHECK(ini.Logged("in section [other] ignored"));
+	}
+	oovr_log_set_test_sink(nullptr);
 }

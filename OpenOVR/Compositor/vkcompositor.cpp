@@ -98,6 +98,7 @@ void VkCompositor::DestroyStage()
 
 VkCompositor::~VkCompositor()
 {
+	FreeImageBuffers();
 	DestroyStage();
 	// destroying command pool also frees command buffers
 	if (appCommandPool)
@@ -137,7 +138,7 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 	}
 
 	bool usable = chain != XR_NULL_HANDLE && tex->m_nWidth == createInfo.width && tex->m_nHeight == createInfo.height
-	    && tex->m_nSampleCount == createInfo.sampleCount && (int64_t)tex->m_nFormat == createInfoFormat && texture->eColorSpace == createColourSpace;
+	    && tex->m_nSampleCount == createSourceSamples && (int64_t)tex->m_nFormat == createInfoFormat && texture->eColorSpace == createColourSpace;
 
 	if (!usable) {
 		OOVR_LOG("Generating new swap chain");
@@ -147,10 +148,7 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 			xrDestroySwapchain(chain);
 
 		// Free old command buffers if necessary
-		if (!appCommandBuffers.empty()) {
-			vkFreeCommandBuffers(appDevice, appCommandPool, appCommandBuffers.size(), appCommandBuffers.data());
-			appCommandBuffers.clear();
-		}
+		FreeImageBuffers();
 		DestroyStage();
 
 		// Make eye render buffer
@@ -161,7 +159,9 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 		createInfo.width = tex->m_nWidth;
 		createInfo.height = tex->m_nHeight;
 		createInfo.mipCount = 1;
-		createInfo.sampleCount = tex->m_nSampleCount;
+		// A runtime that has no multisampled swapchains of that count gets a single-sampled one, the image resolved into it
+		createSourceSamples = tex->m_nSampleCount;
+		createInfo.sampleCount = xr_main_view(XruEyeLeft).maxSwapchainSampleCount < tex->m_nSampleCount ? 1 : tex->m_nSampleCount;
 		createInfo.arraySize = 1;
 
 		// The runtime's format for it: its own, or one it's blitted into (vkCmdBlitImage converts)
@@ -221,14 +221,8 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 			return;
 		}
 
-		appCommandBuffers.resize(chainLength);
-		VkCommandBufferAllocateInfo bufInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
-		bufInfo.commandPool = appCommandPool;
-		bufInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-		bufInfo.commandBufferCount = chainLength;
-		if (vkAllocateCommandBuffers(appDevice, &bufInfo, appCommandBuffers.data()) != VK_SUCCESS) {
-			OOVR_LOG("vkAllocateCommandBuffers failed: this eye is left out");
-			appCommandBuffers.clear();
+		if (!AllocateImageBuffers(chainLength)) {
+			OOVR_LOG("Vulkan command buffers for the swapchain couldn't be made: this eye is left out");
 			swapchainImages.clear();
 			xrDestroySwapchain(chain);
 			chain = XR_NULL_HANDLE;
@@ -249,6 +243,12 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 	beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
 
 	XrSwapchainImageReleaseInfo releaseInfo{ XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
+	// The buffer's last submission has to be over before it's recorded again
+	if (!WaitForImageBuffer(currentIndex)) {
+		xrReleaseSwapchainImage(chain, &releaseInfo);
+		lastResult = XR_ERROR_RUNTIME_FAILURE;
+		return;
+	}
 	// A failed Vulkan call still gives the image back, unwritten, so the swapchain isn't stuck
 	auto vkFailed = [&](VkResult res, const char* what) {
 		if (res == VK_SUCCESS)
@@ -285,8 +285,9 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 	    0, nullptr,
 	    1, &barrier);
 
-	uint32_t arrayLayer = 0;
-	if (submitFlags & vr::Submit_VulkanTextureWithArrayData) {
+	// The layer shown: SubmitWithArrayIndex's, else the one the game's array data names
+	uint32_t arrayLayer = submitSlice ? *submitSlice : 0;
+	if (!submitSlice && (submitFlags & vr::Submit_VulkanTextureWithArrayData)) {
 		auto tex = static_cast<vr::VRVulkanTextureArrayData_t*>(texture->handle);
 		arrayLayer = tex->m_unArrayIndex;
 	}
@@ -360,9 +361,8 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 		bool image_is_multisampled = xr_main_view(XruEyeLeft).maxSwapchainSampleCount < tex->m_nSampleCount;
 
 		if (image_is_multisampled) {
-			// HACK: As of July 2022 Monado does not support multisampling, so we can't just copy the image.
-			// Instead, we do vkCmdResolveImage into the swapchain image. (note, this doesn't support depth textures)
-			// Todo - how do we tell which runtimes support multisampling?
+			// The swapchain has one sample (the runtime has no multisampling of the game's count): resolve into it.
+			// (This doesn't support depth textures.)
 
 			vkCmdResolveImage( //
 			    currentCommandBuffer, // commandbuffer
@@ -405,7 +405,7 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 	submitInfo.commandBufferCount = 1;
 	submitInfo.pCommandBuffers = &currentCommandBuffer;
 
-	if (vkFailed(vkQueueSubmit(tex->m_pQueue, 1, &submitInfo, VK_NULL_HANDLE), "vkQueueSubmit"))
+	if (vkFailed(vkQueueSubmit(tex->m_pQueue, 1, &submitInfo, imageFences.at(currentIndex)), "vkQueueSubmit"))
 		return;
 
 	// Release the swapchain - OpenXR will use the last-released image in a swapchain
@@ -431,8 +431,7 @@ bool VkCompositor::CopyDepth(const vr::Texture_t* depth)
 		}
 		if (!appCommandBuffers.empty()) {
 			vkQueueWaitIdle(appQueue);
-			vkFreeCommandBuffers(appDevice, appCommandPool, (uint32_t)appCommandBuffers.size(), appCommandBuffers.data());
-			appCommandBuffers.clear();
+			FreeImageBuffers();
 		}
 		if (!MakeDepthChain(*format, tex->m_nWidth, tex->m_nHeight))
 			return false;
@@ -443,13 +442,7 @@ bool VkCompositor::CopyDepth(const vr::Texture_t* depth)
 			swapchainImages.assign(count, { XR_TYPE_SWAPCHAIN_IMAGE_VULKAN_KHR });
 			listed = !SwapchainCallFailed(xrEnumerateSwapchainImages(chain, count, &count, (XrSwapchainImageBaseHeader*)swapchainImages.data()), "xrEnumerateSwapchainImages (depth)");
 		}
-		VkCommandBufferAllocateInfo bufInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
-		bufInfo.commandPool = appCommandPool;
-		bufInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-		bufInfo.commandBufferCount = count;
-		appCommandBuffers.resize(count);
-		if (!listed || vkAllocateCommandBuffers(appDevice, &bufInfo, appCommandBuffers.data()) != VK_SUCCESS) {
-			appCommandBuffers.clear();
+		if (!listed || !AllocateImageBuffers(count)) {
 			swapchainImages.clear();
 			xrDestroySwapchain(chain);
 			chain = XR_NULL_HANDLE;
@@ -464,6 +457,10 @@ bool VkCompositor::CopyDepth(const vr::Texture_t* depth)
 	VkCommandBuffer cmd = appCommandBuffers[index];
 	VkCommandBufferBeginInfo beginInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
 	beginInfo.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+	if (!WaitForImageBuffer(index)) {
+		xrReleaseSwapchainImage(chain, &releaseInfo);
+		return false;
+	}
 	if (vkBeginCommandBuffer(cmd, &beginInfo) != VK_SUCCESS) {
 		xrReleaseSwapchainImage(chain, &releaseInfo);
 		return false;
@@ -490,11 +487,65 @@ bool VkCompositor::CopyDepth(const vr::Texture_t* depth)
 	VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
 	submitInfo.commandBufferCount = 1;
 	submitInfo.pCommandBuffers = &cmd;
-	if (vkEndCommandBuffer(cmd) != VK_SUCCESS || vkQueueSubmit(appQueue, 1, &submitInfo, VK_NULL_HANDLE) != VK_SUCCESS) {
+	if (vkEndCommandBuffer(cmd) != VK_SUCCESS || vkQueueSubmit(appQueue, 1, &submitInfo, imageFences.at(index)) != VK_SUCCESS) {
 		xrReleaseSwapchainImage(chain, &releaseInfo);
 		return false;
 	}
 	return !SwapchainCallFailed(xrReleaseSwapchainImage(chain, &releaseInfo), "xrReleaseSwapchainImage (depth)");
+}
+
+bool VkCompositor::AllocateImageBuffers(uint32_t count)
+{
+	appCommandBuffers.resize(count);
+	VkCommandBufferAllocateInfo bufInfo = { VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+	bufInfo.commandPool = appCommandPool;
+	bufInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+	bufInfo.commandBufferCount = count;
+	if (vkAllocateCommandBuffers(appDevice, &bufInfo, appCommandBuffers.data()) != VK_SUCCESS) {
+		appCommandBuffers.clear();
+		return false;
+	}
+	// Signalled, as if their last submission were over
+	VkFenceCreateInfo fenceInfo = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+	fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+	imageFences.assign(count, VK_NULL_HANDLE);
+	for (VkFence& fence : imageFences) {
+		if (vkCreateFence(appDevice, &fenceInfo, nullptr, &fence) != VK_SUCCESS) {
+			FreeImageBuffers();
+			return false;
+		}
+	}
+	return true;
+}
+
+void VkCompositor::FreeImageBuffers()
+{
+	// Not freed under a submission that still runs
+	for (VkFence fence : imageFences) {
+		if (fence)
+			vkWaitForFences(appDevice, 1, &fence, VK_TRUE, 1000000000ull);
+	}
+	for (VkFence fence : imageFences) {
+		if (fence)
+			vkDestroyFence(appDevice, fence, nullptr);
+	}
+	imageFences.clear();
+	if (!appCommandBuffers.empty() && appCommandPool)
+		vkFreeCommandBuffers(appDevice, appCommandPool, (uint32_t)appCommandBuffers.size(), appCommandBuffers.data());
+	appCommandBuffers.clear();
+}
+
+bool VkCompositor::WaitForImageBuffer(uint32_t index)
+{
+	if (index >= imageFences.size())
+		return false;
+	VkFence fence = imageFences[index];
+	if (vkWaitForFences(appDevice, 1, &fence, VK_TRUE, 5000000000ull) != VK_SUCCESS) {
+		OOVR_LOG_ONCE("A Vulkan copy didn't finish within 5 s: frame left out");
+		return false;
+	}
+	// Unsignalled until the next submission with it
+	return vkResetFences(appDevice, 1, &fence) == VK_SUCCESS;
 }
 
 uint32_t VkFindMemoryType(VkPhysicalDevice physicalDevice, uint32_t typeBits, VkMemoryPropertyFlags properties)
@@ -696,13 +747,6 @@ bool VkCompositor::ReadbackToCpu(const vr::Texture_t* texture, const vr::VRTextu
 	vkUnmapMemory(appDevice, owned.bufferMemory);
 	FlipImage(out, region.flipX, region.flipY);
 	return !out.Empty();
-}
-
-void VkCompositor::InvokeCubemap(const vr::Texture_t* textures)
-{
-	// Not yet: SetSkyboxOverride answers RequestFailed
-	OOVR_LOG_ONCE("VkCompositor::InvokeCubemap: Not yet supported!");
-	lastResult = XR_ERROR_RUNTIME_FAILURE;
 }
 
 #endif

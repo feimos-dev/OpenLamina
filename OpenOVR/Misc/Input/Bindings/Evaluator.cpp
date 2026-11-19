@@ -87,6 +87,10 @@ ActionOutputs Combine(const std::vector<std::pair<std::string, DigitalOut>>& dig
 		a.dx = a.x - last.x;
 		a.dy = a.y - last.y;
 		a.dz = a.z - last.z;
+		if (a.dx != 0 || a.dy != 0 || a.dz != 0)
+			a.changeTime = frameTime;
+		else
+			a.changeTime = last.changeTime;
 	}
 	return outputs;
 }

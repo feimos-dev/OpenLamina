@@ -11,6 +11,8 @@ vr::ETrackedPropertyError BasePaths::StringToHandle(OOVR_PathHandle_t* pHandle, 
 	std::lock_guard<std::mutex> guard(lock);
 	auto it = handles.find(pchPath);
 	if (it == handles.end()) {
+		if (paths.size() >= kMaxPaths)
+			return vr::TrackedProp_InvalidOperation;
 		paths.emplace_back(pchPath);
 		it = handles.emplace(pchPath, (OOVR_PathHandle_t)paths.size()).first;
 	}

@@ -3,6 +3,7 @@
 #define BASE_IMPL
 
 #include "Misc/Config.h"
+#include "Misc/Fade.h"
 #include "Misc/FrameStats.h"
 #include "Misc/MirrorWindow.h"
 
@@ -19,6 +20,9 @@ using glm::vec3;
 using glm::vec4;
 
 #include "BaseCompositor.h"
+#if defined(SUPPORT_GL)
+#include "../Compositor/glcompositor.h"
+#endif
 #include "BaseOverlay.h"
 
 // For the left and right hand constants - TODO move them to their own file
@@ -60,15 +64,12 @@ void BaseCompositor::SetTrackingSpace(ETrackingUniverseOrigin eOrigin)
 	}
 
 	BaseSystem::currentSpace = origin;
+	trackingUniverse = (int)eOrigin;
 }
 
 ETrackingUniverseOrigin BaseCompositor::GetTrackingSpace()
 {
-	if (BaseSystem::currentSpace == XR_REFERENCE_SPACE_TYPE_LOCAL) {
-		return TrackingUniverseSeated;
-	} else {
-		return TrackingUniverseStanding;
-	}
+	return UniverseAnswer((ETrackingUniverseOrigin)trackingUniverse.load(), BaseSystem::currentSpace);
 }
 
 ovr_enum_t BaseCompositor::WaitGetPoses(TrackedDevicePose_t* renderPoseArray, uint32_t renderPoseArrayCount,
@@ -195,10 +196,6 @@ ovr_enum_t BaseCompositor::GetLastPoseForTrackedDeviceIndex(TrackedDeviceIndex_t
 	return VRCompositorError_None;
 }
 
-#if !defined(OC_XR_PORT) && defined(SUPPORT_DX) && defined(SUPPORT_DX11)
-DX11Compositor* BaseCompositor::dxcomp;
-#endif
-
 std::unique_ptr<Compositor> BaseCompositor::CreateCompositorAPI(const vr::Texture_t* texture)
 {
 	std::unique_ptr<Compositor> comp;
@@ -294,6 +291,10 @@ ovr_enum_t BaseCompositor::Submit(EVREye eye, const Texture_t* texture, const VR
 	}
 	if (!texture || (eye != Eye_Left && eye != Eye_Right))
 		return VRCompositorError_InvalidTexture;
+	if (!BoundsAreNumbers(bounds)) {
+		OOVR_LOG_ONCE("Texture bounds that aren't numbers: Submit refused");
+		return VRCompositorError_InvalidBounds;
+	}
 
 	bool isFirstEye = !leftEyeSubmitted && !rightEyeSubmitted;
 	ovr_enum_t result = VRCompositorError_None;
@@ -338,8 +339,8 @@ ovr_enum_t BaseCompositor::Submit(EVREye eye, const Texture_t* texture, const VR
 			result = (ovr_enum_t)BackendManager::Instance().StoreEyeTexture(eye, texture, bounds, submitFlags, isFirstEye);
 
 		if (leftEyeSubmitted && rightEyeSubmitted) {
-			if (!isNullRender)
-				BackendManager::Instance().SubmitFrames(isInSkybox, false);
+			if (!isNullRender && SubmitEndsFrame(explicitTimingMode, usesPostPresentHandoff))
+				BackendManager::Instance().SubmitFrames(isInSkybox);
 
 			leftEyeSubmitted = false;
 			rightEyeSubmitted = false;
@@ -362,8 +363,10 @@ ovr_enum_t BaseCompositor::SubmitWithArrayIndex(vr::EVREye eye, const vr::Textur
 
 void BaseCompositor::ClearLastSubmittedFrame()
 {
-	// At this point we should show the loading screen and show Guardian, and undo this when the
-	// next frame comes along. TODO implement since it would improve loading screens, but it's certainly not critical
+	// Nothing of the game's last frame is shown until it submits again
+	if (IsHelperSession())
+		return;
+	BackendManager::Instance().ClearSubmittedFrame();
 }
 
 void BaseCompositor::PostPresentHandoff()
@@ -376,14 +379,15 @@ void BaseCompositor::PostPresentHandoff()
 	//
 	// Some apps provide a GUI through layers that are submitted after any eye textures are submitted. The app then
 	// calls PostPresentHandOff to signal that all data is submitted and compositor can start work. Mimick this by
-	// calling SubmitFrames with a flag to say it is called from this function.
+	// ending the frame here for a game that calls this, and not at its second Submit.
 
 	// An overlay or background application has no frame of its own to end
 	if (IsHelperSession())
 		return;
+	usesPostPresentHandoff = true;
 	// As in Submit: the session isn't restarted while the frame is ended
 	auto lock = xr_session.lock_shared();
-	BackendManager::Instance().SubmitFrames(isInSkybox, true);
+	BackendManager::Instance().SubmitFrames(isInSkybox);
 }
 
 bool BaseCompositor::GetFrameTiming(OOVR_Compositor_FrameTiming* pTiming, uint32_t unFramesAgo)
@@ -396,7 +400,7 @@ bool BaseCompositor::GetFrameTiming(OOVR_Compositor_FrameTiming* pTiming, uint32
 		uint32_t got = FrameStats::Get().Timings(recent.data(), count);
 		if (got > 0) {
 			uint32_t size = std::min<uint32_t>(pTiming->m_nSize, sizeof(OOVR_Compositor_FrameTiming));
-			memcpy(pTiming, &recent[got - 1], size);
+			memcpy(pTiming, &recent[0], size);
 			pTiming->m_nSize = size;
 			return true;
 		}
@@ -451,6 +455,7 @@ void BaseCompositor::GetCumulativeStats(OOVR_Compositor_CumulativeStats* pStats,
 			stats.m_nNumDroppedFrames = scene["frame_stats"]["dropped"].asUInt();
 			stats.m_nNumReprojectedFrames = scene["frame_stats"]["reprojected"].asUInt();
 		}
+		memset(pStats, 0, nStatsSizeInBytes);
 		memcpy(pStats, &stats, std::min<size_t>(nStatsSizeInBytes, sizeof(stats)));
 		return;
 	}
@@ -459,34 +464,26 @@ void BaseCompositor::GetCumulativeStats(OOVR_Compositor_CumulativeStats* pStats,
 
 void BaseCompositor::FadeToColor(float fSeconds, float fRed, float fGreen, float fBlue, float fAlpha, bool bBackground)
 {
-	fadeTime = fSeconds;
-	fadeColour.r = fRed;
-	fadeColour.g = fGreen;
-	fadeColour.b = fBlue;
-	fadeColour.a = fAlpha;
-
-	// TODO what does background do?
+	// Drawn over the scene by the backend. The background's fade is kept and answered, but not drawn.
+	CompositorFades::Get().FadeToColour(CompositorClockSeconds(), fSeconds, { fRed, fGreen, fBlue, fAlpha }, bBackground);
 }
 
 HmdColor_t BaseCompositor::GetCurrentFadeColor(bool bBackground)
 {
-	return fadeColour;
+	return CompositorFades::Get().ColourAt(CompositorClockSeconds(), bBackground);
 }
 
 void BaseCompositor::FadeGrid(float fSeconds, bool bFadeIn)
 {
-	// This is the app telling SteamVR to fade from the rendered scene into the skybox, eg before the
-	//  app loads a new level (this is how the default SteamVR Unity plugin works).
-	//
-	// Let's not bother implementing the fade (that would be a LOT of work), and just skip straight over.
+	// The app fading from the scene into the skybox, eg before it loads a new level. Once the grid is fully in, the
+	// skybox override is shown in place of the scene; no grid is drawn.
+	CompositorFades::Get().FadeGrid(CompositorClockSeconds(), fSeconds, bFadeIn);
 	isInSkybox = bFadeIn;
-
-	// TODO suppress input while in this mode
 }
 
 float BaseCompositor::GetCurrentGridAlpha()
 {
-	return isInSkybox ? 1.0f : 0.0f;
+	return CompositorFades::Get().GridAlphaAt(CompositorClockSeconds());
 }
 
 ovr_enum_t BaseCompositor::SetSkyboxOverride(const Texture_t* pTextures, uint32_t unTextureCount)
@@ -494,6 +491,9 @@ ovr_enum_t BaseCompositor::SetSkyboxOverride(const Texture_t* pTextures, uint32_
 	// The scene app's: SteamVR answers an overlay or background application DoNotHaveFocus
 	if (IsHelperSession())
 		return VRCompositorError_DoNotHaveFocus;
+	// One lat-long texture, a stereo pair or six cube faces
+	if (!SkyboxTexturesValid(pTextures, unTextureCount))
+		return VRCompositorError_InvalidTexture;
 	return BackendManager::Instance().SetSkyboxOverride(pTextures, unTextureCount);
 }
 
@@ -652,6 +652,14 @@ bool BaseCompositor::IsFullscreen()
 
 uint32_t BaseCompositor::GetCurrentSceneFocusProcess()
 {
+	// An overlay or background application's: the scene application's, as it put in the store
+	if (IsHelperSession()) {
+		Json::Value scene = SharedStore::Get().Read(StoreDoc::Scene);
+		const uint32_t pid = scene["pid"].isUInt() ? scene["pid"].asUInt() : 0;
+		if (pid && SharedStore::IsSameProcessAlive(pid, scene["start"].isUInt64() ? scene["start"].asUInt64() : 0))
+			return pid;
+		return 0;
+	}
 	return oc_current_pid();
 }
 
@@ -708,10 +716,10 @@ void BaseCompositor::ForceReconnectProcess()
 
 void BaseCompositor::SuspendRendering(bool bSuspend)
 {
-	// TODO
-	// I'm not sure what the purpose of this function is. If you know, please tell me.
-	// - ZNix
-	// STUBBED();
+	// The game's frames aren't shown while suspended; it keeps submitting them as usual
+	if (IsHelperSession())
+		return;
+	BackendManager::Instance().SetRenderingSuspended(bSuspend);
 }
 
 ovr_enum_t BaseCompositor::GetMirrorTextureD3D11(EVREye eEye, void* pD3D11DeviceOrResource, void** ppD3D11ShaderResourceView)
@@ -740,23 +748,43 @@ ovr_enum_t BaseCompositor::GetMirrorTextureGL(EVREye eEye, glUInt_t* pglTextureI
 		*pglTextureId = 0;
 	if (pglSharedTextureHandle)
 		*pglSharedTextureHandle = nullptr;
-	OC_UNSUPPORTED(VRCompositorError_RequestFailed, "GetMirrorTextureGL: no OpenGL mirror texture");
+#if defined(SUPPORT_GL)
+	if (eEye != Eye_Left && eEye != Eye_Right)
+		return VRCompositorError_RequestFailed;
+	// In the game's context (the one current on this thread), at the size the game renders at
+	uint32_t width = 0, height = 0;
+	BackendManager::Instance().GetPrimaryHMD()->GetRecommendedRenderTargetSize(&width, &height);
+	const GLuint texture = GLMirrorGet((int)eEye, width, height);
+	if (!texture)
+		return VRCompositorError_RequestFailed;
+	if (pglTextureId)
+		*pglTextureId = texture;
+	// The handle is the texture's own name: the mirror lives in the game's context, so there's nothing to share
+	if (pglSharedTextureHandle)
+		*pglSharedTextureHandle = (glSharedTextureHandle_t)(uintptr_t)texture;
+	return VRCompositorError_None;
+#else
+	OC_UNSUPPORTED(VRCompositorError_RequestFailed, "GetMirrorTextureGL: this build has no OpenGL support");
+#endif
 }
 
 bool BaseCompositor::ReleaseSharedGLTexture(glUInt_t glTextureId, glSharedTextureHandle_t glSharedTextureHandle)
 {
-	// GetMirrorTextureGL hands nothing out
-	return false;
+#if defined(SUPPORT_GL)
+	return GLMirrorRelease(glTextureId);
+#else
+	return false; // GetMirrorTextureGL handed nothing out
+#endif
 }
 
 void BaseCompositor::LockGLSharedTextureForAccess(glSharedTextureHandle_t glSharedTextureHandle)
 {
-	// GetMirrorTextureGL hands nothing out, so there's nothing to lock
+	// The texture is in the game's own context, written by its own Submit calls: nothing to lock
 }
 
 void BaseCompositor::UnlockGLSharedTextureForAccess(glSharedTextureHandle_t glSharedTextureHandle)
 {
-	// GetMirrorTextureGL hands nothing out, so there's nothing to unlock
+	// Nothing was locked
 }
 
 uint32_t BaseCompositor::GetVulkanInstanceExtensionsRequired(char* pchValue, uint32_t unBufferSize)
@@ -764,6 +792,11 @@ uint32_t BaseCompositor::GetVulkanInstanceExtensionsRequired(char* pchValue, uin
 	if (pchValue && unBufferSize)
 		pchValue[0] = 0;
 #if defined(SUPPORT_VK)
+#if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+	// A runtime with D3D11 but no Vulkan gets the game's frames through D3D11, which needs the game's Vulkan to share memory
+	if (!xr_ext->xrGetVulkanInstanceExtensionsKHR_Available() && xr_ext->xrGetD3D11GraphicsRequirementsKHR_Available())
+		return ExtensionListSize(InteropVulkanExtensions(false), pchValue, unBufferSize);
+#endif
 	// Without a buffer, only the size is asked for (a runtime writes into whatever buffer it's given)
 	// Whaddya know, the OpenXR, Oculus and Valve methods work almost identically...
 	uint32_t size = 0;
@@ -781,6 +814,10 @@ uint32_t BaseCompositor::GetVulkanDeviceExtensionsRequired(VkPhysicalDevice_T* p
 	if (pchValue && unBufferSize)
 		pchValue[0] = 0;
 #if defined(SUPPORT_VK)
+#if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+	if (!xr_ext->xrGetVulkanDeviceExtensionsKHR_Available() && xr_ext->xrGetD3D11GraphicsRequirementsKHR_Available())
+		return ExtensionListSize(InteropVulkanExtensions(true), pchValue, unBufferSize);
+#endif
 	uint32_t size = 0;
 	XrResult res = xr_ext->xrGetVulkanDeviceExtensionsKHR(xr_instance, xr_system, pchValue ? unBufferSize : 0, &size, pchValue);
 	if (res != XR_ERROR_SIZE_INSUFFICIENT)
@@ -795,14 +832,16 @@ void BaseCompositor::SetExplicitTimingMode(ovr_enum_t eTimingMode)
 {
 	// Explicit timing means the application calls SubmitExplicitTimingData each
 	// frame, and in return we're not allowed to use their Vulkan queue
-	// during WaitGetPoses. We don't do any of that anyway, so nothing needs to
-	// be done here.
+	// during WaitGetPoses. We never use their queue there, so only the mode is kept.
+	explicitTimingMode = (int32_t)eTimingMode;
 }
 
 ovr_enum_t BaseCompositor::SubmitExplicitTimingData()
 {
 	// In SteamVR this records a more accurate timestamp for tracking via the GPU's
-	// clock, Oculus doesn't support that so noop here is fine.
+	// clock, which OpenXR has no equivalent for, so there is nothing to record.
+	if (explicitTimingMode == 0) // the implicit timing mode
+		return VRCompositorError_RequestFailed;
 	return VRCompositorError_None;
 }
 
@@ -835,8 +874,21 @@ void BaseCompositor::ClearStageOverride()
 
 bool BaseCompositor::GetCompositorBenchmarkResults(Compositor_BenchmarkResults* pBenchmarkResults, uint32_t nSizeOfBenchmarkResults)
 {
-	OOVR_SOFT_ABORT("Compositor benchmarking not implemented");
-	return false;
+	if (!pBenchmarkResults)
+		return true;
+
+	// No benchmark is run: the measured rate is taken to be the recommended one
+	uint32_t width = 0, height = 0;
+	BackendManager::Instance().GetPrimaryHMD()->GetRecommendedRenderTargetSize(&width, &height);
+	vr::ETrackedPropertyError err = vr::TrackedProp_Success;
+	float hz = BackendManager::Instance().GetPrimaryHMD()->GetFloatTrackedDeviceProperty(vr::Prop_DisplayFrequency_Float, &err);
+	float rate = err == vr::TrackedProp_Success ? MegaPixelsPerSecond(width, height, hz) : 0.0f;
+
+	// An older struct is as long as its size says
+	vr::Compositor_BenchmarkResults results{ rate, rate };
+	memset(pBenchmarkResults, 0, nSizeOfBenchmarkResults);
+	memcpy(pBenchmarkResults, &results, std::min<size_t>(nSizeOfBenchmarkResults, sizeof(results)));
+	return true;
 }
 
 ovr_enum_t BaseCompositor::GetLastPosePredictionIDs(uint32_t* pRenderPosePredictionID, uint32_t* pGamePosePredictionID)

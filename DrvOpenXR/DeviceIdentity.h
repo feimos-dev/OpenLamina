@@ -1,11 +1,13 @@
 #pragma once
 
 // What each tracked device says it is: the property answers that name it, from one table instead of fixed values
-// spread over the device classes. An HMD takes the row of its OpenXR system's name, else the default row.
+// spread over the device classes. An HMD takes the row of its OpenXR system's name; hardware without a row reports what
+// the runtime says it is (its system name, and libmonado's device name and serial), and a missing row is no error.
 
 #include "../OpenOVR/Misc/Input/InteractionProfile.h"
 
 #include <cstdint>
+#include <optional>
 #include <string>
 
 struct DeviceIdentity {
@@ -16,11 +18,24 @@ struct DeviceIdentity {
 	vr::ETrackedControllerRole role = vr::TrackedControllerRole_Invalid;
 };
 
-/** The row for the OpenXR system of that name, else the default row (an Oculus HMD's answers) */
-const DeviceIdentity& HmdIdentity(const std::string& xrSystemName);
+/** A device as libmonado names it; an empty string is one it doesn't give */
+struct RuntimeDevice {
+	std::string name, serial;
+};
 
-/** A controller of that profile in that hand: the profile's OpenVR name and render models, its buttons */
-DeviceIdentity ControllerIdentity(const InteractionProfile& profile, vr::ETrackedControllerRole role);
+/** The HMD of the OpenXR system of that name: its row if the table has one, else what the runtime says (the system
+ * name as the manufacturer and model number, the device's name and serial where libmonado gives them) on the generic
+ * answers that games branch on (tracking system, controller type, render model). With no system name (no runtime
+ * yet) the generic answers alone. */
+DeviceIdentity HmdIdentity(const std::string& xrSystemName, const RuntimeDevice& device = {});
+
+/** A controller of that profile in that hand: the profile's OpenVR name and render models, its buttons. The serial is
+ * the runtime's where libmonado gives one, else one that is the hand's own. */
+DeviceIdentity ControllerIdentity(const InteractionProfile& profile, vr::ETrackedControllerRole role, const std::string& runtimeSerial = std::string());
+
+/** The type of an axis (Prop_Axis0Type_Int32 + axis) for a profile's OpenVR name that OpenComposite has a legacy
+ * binding for (knuckles, oculus_touch, vive_controller); nothing for another */
+std::optional<vr::EVRControllerAxisType> AxisTypeFor(const std::string& openVrName, int axis);
 
 /** A tracker (XR_MNDX_xdev_space): the generic tracker answers, with its serial */
 DeviceIdentity TrackerIdentity(const std::string& xdevName, const std::string& serial);

@@ -43,6 +43,15 @@ python tests/conformance/run.py --runtime build/bin/vrclient_x64.dll --conforman
   gets `tests/unit/data/steamvr` (a fixture of our own, not Valve's files) as SteamVR's install through
   `OC_TEST_STEAMVR_DIR` (`CASE_ENV` in `run.py`).
 
+The versions of `custom_interfaces.txt` (our own headers: `IVRPaths`, `IVRMailbox_001`, `IVRControlPanel_006`,
+`IVRInputInternal_002`) are called like those of `interfaces.txt`. After an interface's own methods, the same methods
+are called through its function table (`GetGenericInterface("FnTable:<version>")`); those records are named
+`FnTable:<version>` and continue the interface's index. `coverage_cases.cpp` has the cases for what no generated caller
+reaches: the C exports of `openvr_api` (`c-api-exports`), the client core's other methods and `IVRClientCore_002`
+(`client-core-methods`), a held init token and interface pointer (`init-held`), the interfaces of each application type
+(`app-type-interfaces`), `IVRMailbox_001` (`mailbox`), `IVRNotifications_002` (`notifications`) and the interfaces
+that keep state across a Shutdown and Init, with SteamVR's resource files (`state-and-resources`).
+
 `out/summary.txt` has the counts per status (`ok`, `ended`: OpenLamina ended the program, `crashed`, `timeout`) and
 every record that wasn't ok; `out/results.json` has every record. When a child ends early the runner starts it again
 after the call that ended it, so one bad call doesn't hide the rest. When a child crashes, `crash_report.cpp` writes

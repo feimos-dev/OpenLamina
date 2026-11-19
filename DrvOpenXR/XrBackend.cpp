@@ -41,10 +41,12 @@
 #include "../OpenOVR/Reimpl/BaseSystem.h"
 #include "../OpenOVR/Compositor/DepthRange.h"
 #include "../OpenOVR/Misc/Equirect.h"
+#include "../OpenOVR/Misc/Fade.h"
 #include "../OpenOVR/Misc/Config.h"
 #include "../OpenOVR/Misc/FrameStats.h"
 #include "../OpenOVR/Misc/MirrorWindow.h"
 #include "../OpenOVR/Misc/Process.h"
+#include "../OpenOVR/Misc/xrmoreutils.h"
 #include "../OpenOVR/Misc/ProgramEvents.h"
 #include "../OpenOVR/Misc/SharedStore.h"
 #include "../OpenOVR/Reimpl/BaseSettings.h"
@@ -212,10 +214,20 @@ void XrBackend::GetDeviceToAbsoluteTrackingPose(
     vr::TrackedDevicePose_t* poseArray,
     uint32_t poseArrayCount)
 {
+	PollGenericTrackers();
+
+	// All the devices are located at the one time, as far ahead as the program asked
+	XrTime poseTime = 0;
+	{
+		auto sessionLock = xr_session.lock_shared();
+		if (xr_gbl)
+			poseTime = xr_utils::PoseTimeForPrediction(predictedSecondsToPhotonsFromNow, xr_time_now(), xr_gbl->nextPredictedFrameTime);
+	}
+
 	for (uint32_t i = 0; i < poseArrayCount; ++i) {
 		std::shared_ptr<ITrackedDevice> dev = GetDevice(i);
 		if (dev) {
-			dev->GetPose(toOrigin, &poseArray[i], ETrackingStateType::TrackingStateType_Rendering);
+			dev->GetPose(toOrigin, &poseArray[i], ETrackingStateType::TrackingStateType_Rendering, poseTime);
 		} else {
 			poseArray[i] = BackendManager::InvalidPose();
 		}
@@ -330,7 +342,7 @@ static std::string AdapterName(uint64_t luid)
 
 // Whether the game's device, on the adapter gameLuid, is on the OpenXR runtime's adapter (or the runtime names
 // none). One soft failure if not: the session is still tried, as a runtime may copy across adapters, and Submit answers
-// SharedTexturesNotSupported if it or its swapchains then fail.
+// TextureIsOnWrongDevice if it or its swapchains then fail.
 static bool OnRuntimeAdapter(uint64_t gameLuid)
 {
 	uint64_t runtimeLuid = 0;
@@ -338,7 +350,7 @@ static bool OnRuntimeAdapter(uint64_t gameLuid)
 		return true;
 	std::string game = AdapterName(gameLuid), runtime = AdapterName(runtimeLuid);
 	OC_SOFT_CHECK(false, false, "The game renders on %s, but the OpenXR runtime on %s: trying the session anyway "
-	                            "(if it or its swapchains fail, Submit answers SharedTexturesNotSupported)",
+	                            "(if it or its swapchains fail, Submit answers TextureIsOnWrongDevice)",
 	    game.c_str(), runtime.c_str());
 	return false;
 }
@@ -424,8 +436,8 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 			appGraphicsUnusable = true;
 			return false;
 #else
-			if (!((D3D12TextureData_t*)tex->handle)->m_pResource) {
-				OOVR_LOG_ONCE("D3D12 texture data without a resource");
+			if (!((D3D12TextureData_t*)tex->handle)->m_pResource || !((D3D12TextureData_t*)tex->handle)->m_pCommandQueue) {
+				OOVR_LOG_ONCE("D3D12 texture data without a resource or a command queue");
 				return false;
 			}
 			{
@@ -603,11 +615,6 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 			if (XR_FAILED(DrvOpenXR::SetupSession()))
 				return giveUp("the OpenXR runtime refused a session on the game's D3D12 device");
 
-#ifdef _DEBUG
-			ComPtr<ID3D12Debug> debugController;
-			D3D12GetDebugInterface(IID_PPV_ARGS(&debugController));
-			debugController->EnableDebugLayer();
-#endif
 			// The ComPtr releases the device: no explicit Release here
 			break;
 		}
@@ -697,13 +704,30 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 			XrGraphicsBindingOpenGLXlibKHR binding = { XR_TYPE_GRAPHICS_BINDING_OPENGL_XLIB_KHR };
 			binding.xDisplay = glXGetCurrentDisplay();
 			int configCount = 0;
-			// clang-format off
-			const int configAttribs[] = {
-				GLX_CONFIG_CAVEAT, GLX_NONE,
-				None,
-			};
-			// clang-format on
-			GLXFBConfig* const configs = glXChooseFBConfig(binding.xDisplay, DefaultScreen(binding.xDisplay), configAttribs, &configCount);
+			GLXFBConfig* configs = nullptr;
+			// The config of the game's own context, so the session's context matches its drawable
+			int appConfigId = 0;
+			if (GLXContext appContext = glXGetCurrentContext(); appContext && glXQueryContext(binding.xDisplay, appContext, GLX_FBCONFIG_ID, &appConfigId) == Success) {
+				// clang-format off
+				const int idAttribs[] = {
+					GLX_FBCONFIG_ID, appConfigId,
+					None,
+				};
+				// clang-format on
+				configs = glXChooseFBConfig(binding.xDisplay, DefaultScreen(binding.xDisplay), idAttribs, &configCount);
+			}
+			if (configs == nullptr || configCount < 1) {
+				if (configs)
+					XFree(configs);
+				OOVR_LOG("The game's GLXFBConfig couldn't be found: using any usable one");
+				// clang-format off
+				const int configAttribs[] = {
+					GLX_CONFIG_CAVEAT, GLX_NONE,
+					None,
+				};
+				// clang-format on
+				configs = glXChooseFBConfig(binding.xDisplay, DefaultScreen(binding.xDisplay), configAttribs, &configCount);
+			}
 			if (configs == nullptr || configCount < 1)
 				return giveUp("No usable GLXFBConfig found");
 			binding.glxFBConfig = configs[0];
@@ -771,6 +795,9 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 
 void XrBackend::WaitForTrackingData()
 {
+	// A game that waits for frames before its first submit still sees the session become ready
+	PumpEvents();
+
 	// Make sure the OpenXR session is active before doing anything else, and if not then skip
 	if (!sessionActive) {
 		renderingFrame = false;
@@ -791,6 +818,13 @@ void XrBackend::WaitForTrackingData()
 		return;
 	}
 
+	// A skybox set before the session ran is shown now, ahead of this frame
+	ShowPendingSkybox();
+
+	// A frame the game gave one eye (or ended no other way) is ended with what it has before the next begins
+	if (renderingFrame && submittedEyeTextures)
+		SubmitFrames(false);
+
 	// The game's frame from here to its xrEndFrame (SubmitFrames): an own frame in flight is ended first
 	std::unique_lock<std::mutex> owner(frameOwner);
 	if (ownFrames)
@@ -808,6 +842,7 @@ void XrBackend::WaitForTrackingData()
 		auto waitReturned = std::chrono::steady_clock::now();
 		RecordFrameTiming(waitCall, waitReturned, state.predictedDisplayTime, state.predictedDisplayPeriod);
 		xr_gbl->nextPredictedFrameTime = state.predictedDisplayTime;
+		frameShouldRender = state.shouldRender != XR_FALSE;
 		frameAwaitingBegin = true;
 
 		FrameStats::Get().OnFrameStart();
@@ -816,9 +851,6 @@ void XrBackend::WaitForTrackingData()
 		if (GetFrameTiming(&timing, 0))
 			FrameStats::Get().OnAppFrame(timing, measuredDropped, waitReturned, displayPeriodMs);
 	}
-
-	// FIXME loop until this returns true?
-	// OOVR_FALSE_ABORT(state.shouldRender);
 
 	XrFrameBeginInfo beginInfo{ XR_TYPE_FRAME_BEGIN_INFO };
 	if (XrResult res = xrBeginFrame(xr_session.get(), &beginInfo); XR_FAILED(res)) {
@@ -837,7 +869,8 @@ void XrBackend::WaitForTrackingData()
 
 	xr_gbl->ClearCachedViews();
 
-	XrSpace projectionSpace = xr_space_from_ref_space_type(BaseSystem::currentSpace);
+	frameSpace = BaseSystem::currentSpace;
+	XrSpace projectionSpace = xr_space_from_ref_space_type(frameSpace);
 	const XruCachedViews& cachedViews = xr_gbl->GetCachedViews(projectionSpace);
 	const XrViewState& viewState = cachedViews.viewState;
 	const std::array<XrView, XruEyeCount>& views = cachedViews.views;
@@ -868,6 +901,9 @@ void XrBackend::WaitForTrackingData()
 		deferredRenderingStart = true;
 	} else {
 		renderingFrame = true;
+		submittedEyeTextures = false;
+		for (bool& submitted : eyeSubmitted)
+			submitted = false;
 	}
 }
 
@@ -875,8 +911,8 @@ void XrBackend::WaitForTrackingData()
 static constexpr IBackend::openvr_enum_t kCompositorNone = 0;
 static constexpr IBackend::openvr_enum_t kCompositorRequestFailed = 1;
 static constexpr IBackend::openvr_enum_t kCompositorInvalidTexture = 102;
+static constexpr IBackend::openvr_enum_t kCompositorTextureIsOnWrongDevice = 104;
 static constexpr IBackend::openvr_enum_t kCompositorUnsupportedFormat = 105;
-static constexpr IBackend::openvr_enum_t kCompositorSharedTexturesNotSupported = 106;
 
 IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
     vr::EVREye eye,
@@ -891,8 +927,18 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 	if (!CheckOrInitCompositors(texture)) {
 		// A texture OpenComposite can't use (logged): this eye is left out of the frame
 		projectionViews[eye].subImage.swapchain = XR_NULL_HANDLE;
-		return appOnOtherAdapter && appGraphicsUnusable ? kCompositorSharedTexturesNotSupported : kCompositorInvalidTexture;
+		return appOnOtherAdapter ? kCompositorTextureIsOnWrongDevice : kCompositorInvalidTexture;
 	}
+
+	// A game that submits without having waited for poses (or whose frame ended before this eye) gets a frame here, with
+	// the poses of now
+	if (sessionActive && !renderingFrame) {
+		deferredRenderingStart = false;
+		WaitForTrackingData();
+	}
+
+	if (submitFlags & vr::Submit_LensDistortionAlreadyApplied)
+		OOVR_LOG_ONCE("The game submits textures with the lens distortion already applied: they are shown as they are, and the runtime distorts them again");
 
 	XrCompositionLayerProjectionView& layer = projectionViews[eye];
 	layer.type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
@@ -950,7 +996,7 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 		if (res == XR_ERROR_VALIDATION_FAILURE)
 			result = kCompositorInvalidTexture; // the compositor's word for texture data it can't use
 		else if (XR_FAILED(res) && appOnOtherAdapter)
-			result = kCompositorSharedTexturesNotSupported; // a swapchain call failed for a device on another adapter
+			result = kCompositorTextureIsOnWrongDevice; // a swapchain call failed for a device on another adapter
 		else if (res == XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED)
 			result = kCompositorUnsupportedFormat;
 		else if (XR_FAILED(res))
@@ -958,6 +1004,9 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 
 		if (result == kCompositorNone) {
 			KeepForMirror(eye, texture, bounds);
+#if defined(SUPPORT_GL)
+			GLMirrorFrame((int)eye, texture, bounds, submitFlags);
+#endif
 			// The mirror window shows the left eye, read back while it's open
 			Image mirror;
 			if (eye == vr::Eye_Left && MirrorWindow::Get().WantsFrame() && comp.ReadbackToCpu(texture, bounds, mirror))
@@ -966,19 +1015,11 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 	}
 
 	submittedEyeTextures = true;
+	eyeSubmitted[eye] = true;
+	sceneCleared = false;
 
-	// TODO store view somewhere and use it for submitting our frame
-
-	// If WaitGetPoses was called before the first texture was submitted, we're in a kinda weird state
-	// The application will expect it can submit it's frames (and we do too) however xrBeginFrame was
-	// never called for this session - it was called for the early session, then when the first texture
-	// was published we switched to that, but this new session hasn't had xrBeginFrame called yet.
-	// To get around this, we set a flag if we should begin a frame but are still in the early session. At
-	// this point we can check for that flag and call xrBeginFrame a second time, on the right session.
-	if (deferredRenderingStart && usingApplicationGraphicsAPI) {
-		deferredRenderingStart = false;
-		WaitForTrackingData();
-	}
+	// WaitGetPoses called before the first texture was submitted began its frame on the early session, not this one:
+	// the frame above was begun on this session instead
 	return result;
 }
 
@@ -1063,21 +1104,16 @@ void XrBackend::SubmitDepth(vr::EVREye eye, const vr::Texture_t* texture, const 
 	projectionViews[eye].next = &d;
 }
 
-void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
+void XrBackend::SubmitFrames(bool showSkybox)
 {
 	// Always pump events, even if the session isn't active - this is what makes the session active
 	// in the first place.
 	PumpEvents();
 
-	// If we are getting calls from PostPresentHandOff then skip the calls from other functions as
-	//  there will be other data such as GUI layers to be added before ending the frame.
-	bool skipRender = postPresentStatus && !postPresent;
-	postPresentStatus = postPresent;
-
 	// Through this frame's xrEndFrame (see frameOwner)
 	std::unique_lock<std::mutex> owner(frameOwner);
 
-	if (!renderingFrame || skipRender)
+	if (!renderingFrame)
 		return;
 
 	// All data submitted, rendering has finished, frame can be ended.
@@ -1102,20 +1138,39 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 	// Only create the projection layer if we have a 3D environment to submit.
 	XrCompositionLayerProjection mainLayer{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
 	if (submittedEyeTextures) {
-		// We have eye textures so setup a projection layer
-		mainLayer.space = xr_space_from_ref_space_type(BaseSystem::currentSpace);
+		// We have eye textures so setup a projection layer, in the space its views were located in
+		mainLayer.space = xr_space_from_ref_space_type(frameSpace);
 		mainLayer.views = projectionViews;
 		mainLayer.viewCount = 2;
 
+		// An eye the game didn't submit shows the other's image
+		bool usable[XruEyeCount];
+		for (int i = 0; i < XruEyeCount; ++i)
+			usable[i] = projectionViews[i].subImage.swapchain != XR_NULL_HANDLE;
+		int source[XruEyeCount];
+		EyeImageSources(eyeSubmitted, usable, source);
+		const XrSwapchainSubImage images[XruEyeCount] = { projectionViews[0].subImage, projectionViews[1].subImage };
+		const void* depthFor[XruEyeCount] = { projectionViews[0].next, projectionViews[1].next };
+
 		app_layer = (XrCompositionLayerBaseHeader*)&mainLayer;
-		for (uint32_t i = 0; i < mainLayer.viewCount; ++i) {
+		for (int i = 0; i < XruEyeCount; ++i) {
 			XrCompositionLayerProjectionView& layer = projectionViews[i];
 			layer.type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
-			if (layer.subImage.swapchain == XR_NULL_HANDLE)
+			if (source[i] < 0) {
 				app_layer = nullptr;
+			} else if (source[i] != i) {
+				layer.subImage = images[source[i]];
+				layer.next = depthFor[source[i]];
+			}
 		}
 		submittedEyeTextures = false;
-		if (app_layer) {
+		for (bool& submitted : eyeSubmitted)
+			submitted = false;
+		// The game cleared its last frame or suspended rendering: the frame ends without its layer, and nothing of it is
+		// kept to show again
+		if (sceneCleared || renderingSuspended)
+			app_layer = nullptr;
+		else if (app_layer) {
 			// Kept for OpenLamina's own frames: its swapchains' last images and its views stay valid to submit again
 			lastProjection = mainLayer;
 			for (uint32_t i = 0; i < 2; i++) {
@@ -1127,7 +1182,23 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 		}
 	}
 
-	// If we have an overlay then add. Its layers stay as they are until the frame has ended.
+	// The scene (the game's layer, or the skybox in its place once the grid is fully in), the fade over it, then the
+	// overlays. The overlays' layers stay as they are until the frame has ended.
+	const ScenePlan plan = PlanScene(app_layer != nullptr, SkyboxShown(), CompositorFades::Get().GridAlphaAt(CompositorClockSeconds()));
+	frameLayers.clear();
+	if (plan.skybox) {
+		std::lock_guard<std::mutex> lock(skyboxLock);
+		for (int i = 0; i < skybox.layerCount; i++)
+			frameLayers.push_back((const XrCompositionLayerBaseHeader*)&skybox.layers[i]);
+	} else if (plan.scene) {
+		frameLayers.push_back(app_layer);
+	}
+	if (!frameLayers.empty()) {
+		if (XrCompositionLayerBaseHeader* fade = BuildFadeLayer())
+			frameLayers.push_back(fade);
+	}
+	const bool sceneShown = plan.scene;
+
 	BaseOverlay* overlay = GetUnsafeBaseOverlay();
 	std::unique_lock<std::recursive_mutex> overlayLock;
 	if (overlay) {
@@ -1137,11 +1208,14 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 		WithStoreDocuments([&] { overlay->_UpdateBounds(); });
 		WithStoreDocuments([&] { overlay->_UpdatePointer(); });
 		overlayLock = std::unique_lock(overlay->_LayersLock());
-		layer_count = overlay->_BuildLayers(app_layer, headers, true);
-	} else if (app_layer) {
-		layer_count = 1;
-		headers = &app_layer;
+		const int overlayCount = overlay->_BuildLayers(nullptr, headers, true);
+		frameLayers.insert(frameLayers.end(), headers, headers + overlayCount);
 	}
+	// A frame the runtime says isn't visible is ended with no layers
+	if (!frameShouldRender)
+		frameLayers.clear();
+	headers = frameLayers.data();
+	layer_count = (int)frameLayers.size();
 
 	// It's ok if no layers have been added at this point,
 	// it will just cause the display to be blanked
@@ -1149,7 +1223,7 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 	info.layerCount = layer_count;
 
 	XrResult endResult = xrEndFrame(xr_session.get(), &info);
-	if (XR_FAILED(endResult) && app_layer && layer_count > 1) {
+	if (XR_FAILED(endResult) && sceneShown && layer_count > 1) {
 		// A layer of the overlays' was refused. The game's frame isn't dropped for it: ended without each of those
 		// layers in turn, then with the game's layer alone.
 		const XrResult refusal = endResult;
@@ -1180,7 +1254,7 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 	}
 	OOVR_FAILED_XR_SOFT_ABORT(endResult);
 	// A present: the game's eye textures shown
-	if (XR_SUCCEEDED(endResult) && app_layer)
+	if (XR_SUCCEEDED(endResult) && app_layer && frameShouldRender)
 		FrameStats::Get().OnAppPresent();
 	frameBegun = false;
 	if (overlayLock.owns_lock())
@@ -1205,6 +1279,42 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 	frameSubmitTimeUs = (double)std::chrono::duration_cast<std::chrono::microseconds>(now).count() / 1000000.0;
 
 	nFrameIndex++;
+}
+
+XrCompositionLayerBaseHeader* XrBackend::BuildFadeLayer()
+{
+	const vr::HmdColor_t colour = CompositorFades::Get().ColourAt(CompositorClockSeconds(), false);
+	if (!FadeVisible(colour) || !xr_gbl)
+		return nullptr;
+
+	// The colour on the swapchain's texels (a small one: runtimes have a minimum size)
+	constexpr uint32_t side = 8;
+	uint8_t texel[4];
+	FadeTexel(colour, texel);
+	if (!fadeSwapchain)
+		fadeSwapchain = CpuSwapchain::Create(side, side);
+	if (!fadeSwapchain)
+		return nullptr;
+	if (!fadeSwapchain->Live() || memcmp(texel, fadeTexel, sizeof(texel)) != 0) {
+		Image image;
+		image.width = image.height = side;
+		image.rgba.resize((size_t)side * side * 4);
+		for (size_t i = 0; i < image.rgba.size(); i += 4)
+			memcpy(&image.rgba[i], texel, sizeof(texel));
+		if (!fadeSwapchain->Upload(image) || !fadeSwapchain->Live())
+			return nullptr;
+		memcpy(fadeTexel, texel, sizeof(texel));
+	}
+
+	fadeLayer = { XR_TYPE_COMPOSITION_LAYER_QUAD };
+	fadeLayer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT | XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
+	fadeLayer.space = xr_gbl->viewSpace;
+	fadeLayer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+	fadeLayer.subImage = fadeSwapchain->SubImage();
+	// Close in front of the eyes and wide enough to fill any field of view up to about 170 degrees across
+	fadeLayer.pose = { { 0.f, 0.f, 0.f, 1.f }, { 0.0f, 0.0f, -0.2f } };
+	fadeLayer.size = { 6.0f, 6.0f };
+	return (XrCompositionLayerBaseHeader*)&fadeLayer;
 }
 
 bool XrBackend::SkyboxShown()
@@ -1277,145 +1387,176 @@ int XrBackend::SetEquirectSkybox(const vr::Texture_t* textures, uint32_t count)
 	return 0;
 }
 
+bool XrBackend::EquirectSkyboxAvailable() const
+{
+	return ownFrames && xr_ext && xr_ext->Equirect2KHR_Available();
+}
+
 IBackend::openvr_enum_t XrBackend::SetSkyboxOverride(const vr::Texture_t* pTextures, uint32_t unTextureCount)
 {
-	// With equirect layers: one lat-long texture, a stereo pair or six cube faces, held and shown in OpenLamina's own
-	// frames while the game runs none (as SteamVR shows it), until ClearSkyboxOverride
-	if (ownFrames && xr_ext && xr_ext->Equirect2KHR_Available() && pTextures && (unTextureCount == 1 || unTextureCount == 2 || unTextureCount == 6)) {
-		if (!CheckOrInitCompositors(pTextures))
-			return 1; // VRCompositorError_RequestFailed
-		auto lock = xr_session.lock_shared();
-		if (!sessionActive || !usingApplicationGraphicsAPI)
-			return 0;
-		return SetEquirectSkybox(pTextures, unTextureCount);
-	}
+	if (!SkyboxTexturesValid(pTextures, unTextureCount))
+		return 102; // VRCompositorError_InvalidTexture
 
-	// Otherwise one texture (or the first of a stereo pair), shown at once as a quad (rFactor2's loading screens). Six
-	// faces are a cube map: one face as a flat picture would be wrong, so that's RequestFailed.
-	if (unTextureCount >= 6) {
+	// Six faces are a cube map, which only equirect layers can show: one face as a flat picture would be wrong
+	if (unTextureCount == 6 && !EquirectSkyboxAvailable()) {
 		OOVR_LOG_ONCE("SetSkyboxOverride with a cube map: not supported yet");
 		return 1; // VRCompositorError_RequestFailed
 	}
-	if (unTextureCount && pTextures) {
-		if (!CheckOrInitCompositors(pTextures))
-			return 1; // VRCompositorError_RequestFailed
 
-		if (!sessionActive || !usingApplicationGraphicsAPI)
-			return 0;
+	if (!CheckOrInitCompositors(pTextures))
+		return 1; // VRCompositorError_RequestFailed
 
-		// Taken after CheckOrInitCompositors, which may restart the session, and held to the end: a session restart
-		// on another thread replaces xr_gbl
-		auto lock = xr_session.lock_shared();
-		if (!sessionActive)
-			return 0; // a restart this thread waited behind left no running session
+	// Taken after CheckOrInitCompositors, which may restart the session, and held to the end: a session restart on
+	// another thread replaces xr_gbl
+	auto lock = xr_session.lock_shared();
+	if (!sessionActive || !usingApplicationGraphicsAPI) {
+		// The session hasn't started running yet (it has just been restarted on the game's device, say): shown once
+		// the game's frames begin
+		std::lock_guard<std::mutex> pending(pendingSkyboxLock);
+		pendingSkybox.Set(pTextures, unTextureCount);
+		return 0;
+	}
+	{
+		std::lock_guard<std::mutex> pending(pendingSkyboxLock);
+		pendingSkybox.Clear();
+	}
+	return ShowSkybox(pTextures, unTextureCount);
+}
 
-		// This frame is run here, from its xrWaitFrame to its xrEndFrame (see frameOwner)
-		std::unique_lock<std::mutex> owner(frameOwner);
-		if (ownFrames)
-			ownFrames->OnAppFrameStart();
+void XrBackend::ShowPendingSkybox()
+{
+	SkyboxRequest request;
+	{
+		std::lock_guard<std::mutex> pending(pendingSkyboxLock);
+		if (pendingSkybox.Empty() || !usingApplicationGraphicsAPI)
+			return;
+		request = pendingSkybox;
+		pendingSkybox.Clear();
+	}
+	ShowSkybox(request.Textures(), request.Count());
+}
 
-		// Make sure any unfinished frames don't call xrEndFrame after this call
-		renderingFrame = false;
+IBackend::openvr_enum_t XrBackend::ShowSkybox(const vr::Texture_t* pTextures, uint32_t unTextureCount)
+{
+	// With equirect layers: one lat-long texture, a stereo pair or six cube faces, held and shown in OpenLamina's own
+	// frames while the game runs none (as SteamVR shows it), until ClearSkyboxOverride
+	if (EquirectSkyboxAvailable())
+		return SetEquirectSkybox(pTextures, unTextureCount);
 
-		XrFrameWaitInfo waitInfo{ XR_TYPE_FRAME_WAIT_INFO };
-		XrFrameState state{ XR_TYPE_FRAME_STATE };
+	// Otherwise one texture (or the first of a stereo pair), shown at once as a quad (rFactor2's loading screens)
+	return ShowSkyboxQuad(pTextures);
+}
 
-		// A waited frame not yet begun (WaitForTrackingData's) is begun here instead
-		if (!frameAwaitingBegin) {
-			if (XrResult res = xrWaitFrame(xr_session.get(), &waitInfo, &state); XR_FAILED(res)) {
-				OOVR_LOG_ONCE("SetSkyboxOverride: xrWaitFrame failed");
-				OnFrameCallFailed(res);
-				return 1; // VRCompositorError_RequestFailed
-			}
-			xr_gbl->nextPredictedFrameTime = state.predictedDisplayTime;
-			frameAwaitingBegin = true;
-		}
+IBackend::openvr_enum_t XrBackend::ShowSkyboxQuad(const vr::Texture_t* pTextures)
+{
+	// This frame is run here, from its xrWaitFrame to its xrEndFrame (see frameOwner)
+	std::unique_lock<std::mutex> owner(frameOwner);
+	if (ownFrames)
+		ownFrames->OnAppFrameStart();
 
-		// Not one of the app's frames, so its display slot isn't a dropped frame
-		RestartFrameTiming();
+	// Make sure any unfinished frames don't call xrEndFrame after this call
+	renderingFrame = false;
 
-		// This submits a frame when a skybox override is set. This is designed around rFactor2 where the skybox is used as
-		// a loading screen and is frequently updated, and most other games probably behave in a similar manner. It'd be
-		// ideal to run a separate thread while the skybox override is set to submit frames if IVRCompositor->Submit is not
-		// being called frequently enough, and that'd need to be carefully synchronised with the main submit thread. That's
-		// not yet implemented since it's not currently worth the hassle, but if someone in the future wants to do it:
-		// TODO submit skybox frames in their own thread.
-		XrFrameBeginInfo beginInfo{ XR_TYPE_FRAME_BEGIN_INFO };
-		if (XrResult res = xrBeginFrame(xr_session.get(), &beginInfo); XR_FAILED(res)) {
-			OOVR_LOG_ONCE("SetSkyboxOverride: xrBeginFrame failed");
-			if (res == XR_ERROR_CALL_ORDER_INVALID)
-				frameAwaitingBegin = false;
+	XrFrameWaitInfo waitInfo{ XR_TYPE_FRAME_WAIT_INFO };
+	XrFrameState state{ XR_TYPE_FRAME_STATE };
+
+	// A waited frame not yet begun (WaitForTrackingData's) is begun here instead
+	if (!frameAwaitingBegin) {
+		if (XrResult res = xrWaitFrame(xr_session.get(), &waitInfo, &state); XR_FAILED(res)) {
+			OOVR_LOG_ONCE("SetSkyboxOverride: xrWaitFrame failed");
 			OnFrameCallFailed(res);
 			return 1; // VRCompositorError_RequestFailed
 		}
-		frameAwaitingBegin = false;
-		frameBegun = true;
-		frameCallFailures = 0;
-		// Every way out of here ends the frame
-		auto ended = [this] {
-			frameBegun = false;
-			if (ownFrames)
-				ownFrames->OnAppFrameEnd();
-		};
-
-		if (skybox_compositor == nullptr)
-			skybox_compositor = BaseCompositor::CreateCompositorAPI(pTextures);
-		if (skybox_compositor == nullptr) {
-			// No compositor for this texture: end the begun frame empty
-			XrFrameEndInfo empty{ XR_TYPE_FRAME_END_INFO };
-			empty.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-			empty.displayTime = xr_gbl->nextPredictedFrameTime;
-			xrEndFrame(xr_session.get(), &empty);
-			ended();
-			return 1; // VRCompositorError_RequestFailed
-		}
-
-		vr::VRTextureBounds_t bounds;
-		bounds.uMin = 0.0;
-		bounds.uMax = 1.0;
-		bounds.vMin = 1.0;
-		bounds.vMax = 0.0;
-
-		XrCompositionLayerQuad layerQuad = { XR_TYPE_COMPOSITION_LAYER_QUAD };
-		skybox_compositor->Invoke(pTextures, &bounds, layerQuad.subImage);
-		if (XR_FAILED(skybox_compositor->LastResult())) {
-			// No image this frame: end the begun frame empty
-			XrFrameEndInfo empty{ XR_TYPE_FRAME_END_INFO };
-			empty.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-			empty.displayTime = xr_gbl->nextPredictedFrameTime;
-			xrEndFrame(xr_session.get(), &empty);
-			ended();
-			return 1; // VRCompositorError_RequestFailed
-		}
-		layerQuad.type = XR_TYPE_COMPOSITION_LAYER_QUAD;
-		layerQuad.next = NULL;
-		layerQuad.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
-		layerQuad.space = xr_space_from_ref_space_type(BaseSystem::currentSpace);
-		layerQuad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-		layerQuad.pose = { { 0.f, 0.f, 0.f, 1.f },
-			{ 0.0f, 0.0f, -0.65f } };
-		layerQuad.size = { 1.0f, 1.0f / 1.333f };
-
-		XrCompositionLayerBaseHeader* layers[1];
-		layers[0] = (XrCompositionLayerBaseHeader*)&layerQuad;
-		XrFrameEndInfo info{ XR_TYPE_FRAME_END_INFO };
-		info.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-		info.displayTime = xr_gbl->nextPredictedFrameTime;
-		info.layers = layers;
-		info.layerCount = 1;
-
-		OOVR_FAILED_XR_SOFT_ABORT(xrEndFrame(xr_session.get(), &info));
-		ended();
-
-	} else {
-		OOVR_SOFT_ABORT("Unsupported texture count");
+		xr_gbl->nextPredictedFrameTime = state.predictedDisplayTime;
+		frameAwaitingBegin = true;
 	}
+
+	// Not one of the app's frames, so its display slot isn't a dropped frame
+	RestartFrameTiming();
+
+	// This submits a frame when a skybox override is set. This is designed around rFactor2 where the skybox is used as
+	// a loading screen and is frequently updated, and most other games probably behave in a similar manner. It'd be
+	// ideal to run a separate thread while the skybox override is set to submit frames if IVRCompositor->Submit is not
+	// being called frequently enough, and that'd need to be carefully synchronised with the main submit thread. That's
+	// not yet implemented since it's not currently worth the hassle, but if someone in the future wants to do it:
+	// TODO submit skybox frames in their own thread.
+	XrFrameBeginInfo beginInfo{ XR_TYPE_FRAME_BEGIN_INFO };
+	if (XrResult res = xrBeginFrame(xr_session.get(), &beginInfo); XR_FAILED(res)) {
+		OOVR_LOG_ONCE("SetSkyboxOverride: xrBeginFrame failed");
+		if (res == XR_ERROR_CALL_ORDER_INVALID)
+			frameAwaitingBegin = false;
+		OnFrameCallFailed(res);
+		return 1; // VRCompositorError_RequestFailed
+	}
+	frameAwaitingBegin = false;
+	frameBegun = true;
+	frameCallFailures = 0;
+	// Every way out of here ends the frame
+	auto ended = [this] {
+		frameBegun = false;
+		if (ownFrames)
+			ownFrames->OnAppFrameEnd();
+	};
+
+	if (skybox_compositor == nullptr)
+		skybox_compositor = BaseCompositor::CreateCompositorAPI(pTextures);
+	if (skybox_compositor == nullptr) {
+		// No compositor for this texture: end the begun frame empty
+		XrFrameEndInfo empty{ XR_TYPE_FRAME_END_INFO };
+		empty.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+		empty.displayTime = xr_gbl->nextPredictedFrameTime;
+		xrEndFrame(xr_session.get(), &empty);
+		ended();
+		return 1; // VRCompositorError_RequestFailed
+	}
+
+	vr::VRTextureBounds_t bounds;
+	bounds.uMin = 0.0;
+	bounds.uMax = 1.0;
+	bounds.vMin = 1.0;
+	bounds.vMax = 0.0;
+
+	XrCompositionLayerQuad layerQuad = { XR_TYPE_COMPOSITION_LAYER_QUAD };
+	skybox_compositor->Invoke(pTextures, &bounds, layerQuad.subImage);
+	if (XR_FAILED(skybox_compositor->LastResult())) {
+		// No image this frame: end the begun frame empty
+		XrFrameEndInfo empty{ XR_TYPE_FRAME_END_INFO };
+		empty.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+		empty.displayTime = xr_gbl->nextPredictedFrameTime;
+		xrEndFrame(xr_session.get(), &empty);
+		ended();
+		return 1; // VRCompositorError_RequestFailed
+	}
+	layerQuad.type = XR_TYPE_COMPOSITION_LAYER_QUAD;
+	layerQuad.next = NULL;
+	layerQuad.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+	// In front of the head, wherever it turns
+	layerQuad.space = xr_gbl->viewSpace;
+	layerQuad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+	layerQuad.pose = { { 0.f, 0.f, 0.f, 1.f },
+		{ 0.0f, 0.0f, -0.65f } };
+	layerQuad.size = { 1.0f, 1.0f / 1.333f };
+
+	XrCompositionLayerBaseHeader* layers[1];
+	layers[0] = (XrCompositionLayerBaseHeader*)&layerQuad;
+	XrFrameEndInfo info{ XR_TYPE_FRAME_END_INFO };
+	info.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+	info.displayTime = xr_gbl->nextPredictedFrameTime;
+	info.layers = layers;
+	info.layerCount = 1;
+
+	OOVR_FAILED_XR_SOFT_ABORT(xrEndFrame(xr_session.get(), &info));
+	ended();
 
 	return 0;
 }
 
 void XrBackend::ClearSkyboxOverride()
 {
+	{
+		std::lock_guard<std::mutex> pending(pendingSkyboxLock);
+		pendingSkybox.Clear();
+	}
 	std::lock_guard<std::mutex> lock(skyboxLock);
 	skybox.layerCount = 0;
 }
@@ -1524,13 +1665,14 @@ bool XrBackend::GetFrameTiming(OOVR_Compositor_FrameTiming* pTiming, uint32_t un
 
 		/** The following are all relative to this frame's SystemTimeInSeconds */
 		pTiming->m_flWaitGetPosesCalledMs = 0.0f;
-		pTiming->m_flNewPosesReadyMs = 0.0f;
+		pTiming->m_flNewPosesReadyMs = measuredWaitMs; // when xrWaitFrame returned
 		pTiming->m_flNewFrameReadyMs = 0.0f; // second call to IVRCompositor::Submit
 		pTiming->m_flCompositorUpdateStartMs = 0.0f;
 		pTiming->m_flCompositorUpdateEndMs = 0.0f;
 		pTiming->m_flCompositorRenderStartMs = 0.0f;
 
-		GetPrimaryHMD()->GetPose(vr::ETrackingUniverseOrigin::TrackingUniverseSeated, &pTiming->m_HmdPose, ETrackingStateType::TrackingStateType_Rendering);
+		const auto space = BaseSystem::currentSpace == XR_REFERENCE_SPACE_TYPE_LOCAL ? vr::TrackingUniverseSeated : vr::TrackingUniverseStanding;
+		GetPrimaryHMD()->GetPose(space, &pTiming->m_HmdPose, ETrackingStateType::TrackingStateType_Rendering);
 
 		return true;
 	}
@@ -1551,13 +1693,18 @@ void XrBackend::KeepForMirror(vr::EVREye eye, const vr::Texture_t* texture, cons
 		*mirror = nullptr;
 		return;
 	}
-	// Nothing is copied until the game asks for a mirror texture. A Direct3D 10 texture (or any other) has none.
-	if (!mirrorWanted || texture->eType != vr::TextureType_DirectX || !texture->handle
+	// A Direct3D 10 texture (or any other) has no mirror
+	if (texture->eType != vr::TextureType_DirectX || !texture->handle
 #if defined(SUPPORT_DX10)
 	    || DX10Compositor::AsD3D10Texture(texture)
 #endif
 	)
 		return;
+	// The format of the game's frames, which a mirror texture asked for later is made in; nothing is copied until it is
+	if (!mirrorWanted) {
+		mirrorFormat[eye] = (int)DX11Compositor::MirrorFormat(texture);
+		return;
+	}
 	DX11Compositor::MirrorUpdate(texture, bounds, mirror);
 #endif
 }
@@ -1574,7 +1721,7 @@ IBackend::openvr_enum_t XrBackend::GetMirrorTextureD3D11(vr::EVREye eEye, void* 
 	std::lock_guard<std::mutex> lock(mirrorLock);
 	mirrorWanted = true;
 	int result = DX11Compositor::MirrorView((ID3D11Texture2D**)&mirrorTexture[eEye], (IUnknown*)pD3D11DeviceOrResource, width, height,
-	    (ID3D11ShaderResourceView**)ppD3D11ShaderResourceView);
+	    (DXGI_FORMAT)mirrorFormat[eEye], (ID3D11ShaderResourceView**)ppD3D11ShaderResourceView);
 	if (result == 0)
 		mirrorViews.insert(*ppD3D11ShaderResourceView);
 	return result;
@@ -1638,6 +1785,16 @@ bool XrBackend::IsInputAvailable()
 	return sessionState == XR_SESSION_STATE_FOCUSED;
 }
 
+bool XrBackend::IsInputFocusLost()
+{
+	return inputFocusHad && sessionState != XR_SESSION_STATE_FOCUSED;
+}
+
+bool XrBackend::ShouldReduceRenderingWork()
+{
+	return perfStrainedDomains != 0;
+}
+
 // VREvent_InputFocusCaptured or _Released
 static void PostFocusChange(bool captured)
 {
@@ -1654,17 +1811,33 @@ static void PostPresenceChange(bool present)
 	    VREvent_Data_t{}, false);
 }
 
+// XR_EXT_local_floor's reference space type, which the bundled headers predate
+static const XrReferenceSpaceType kReferenceSpaceLocalFloor = (XrReferenceSpaceType)1000426000;
+
+// A device's role (which controller is the left hand, say) changed: no device in particular
+static void PostRoleChange()
+{
+	OcPostEvent(VREvent_TrackedDeviceRoleChanged, k_unTrackedDeviceIndexInvalid, VREvent_Data_t{}, false);
+}
+
+// The runtime ends the game's session by its own choice: the driver asks to quit, and the game is told to
+void XrBackend::OnRuntimeQuit()
+{
+	if (!sessionLost)
+		OcPostEvent(VREvent_DriverRequestedQuit, k_unTrackedDeviceIndexInvalid, VREvent_Data_t{}, false);
+	OnSessionLost();
+}
+
 void XrBackend::PumpEvents()
 {
 	// Poll for OpenXR events
-	// TODO filter by session?
 	while (true) {
 		XrEventDataBuffer ev = { XR_TYPE_EVENT_DATA_BUFFER };
 		XrResult res = xr_instance ? xrPollEvent(xr_instance, &ev) : XR_ERROR_HANDLE_INVALID;
 		if (XR_FAILED(res)) {
 			OOVR_LOG_ONCE("xrPollEvent failed: no events this frame");
 			if (res == XR_ERROR_INSTANCE_LOST)
-				OnSessionLost();
+				OnRuntimeQuit();
 			break;
 		}
 
@@ -1683,6 +1856,60 @@ void XrBackend::PumpEvents()
 			continue;
 		}
 
+		// The runtime dropped events before this one (the program polled too rarely): states may have changed unseen
+		if (ev.type == XR_TYPE_EVENT_DATA_EVENTS_LOST) {
+			OOVR_LOGF("The OpenXR runtime lost %u events", ((XrEventDataEventsLost*)&ev)->lostEventCount);
+			continue;
+		}
+
+		// The instance is going away (the runtime updating or shutting down): the game is told to quit while it can
+		if (ev.type == XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING) {
+			OOVR_LOG("The OpenXR instance will be lost");
+			if (!exitExpected)
+				OnRuntimeQuit();
+			continue;
+		}
+
+		// A reference space's origin moves (the user recentres or redraws the play area): the spaces follow by
+		// themselves, the game is told. The floor and the stage are the standing origin, the local space the seated one.
+		if (ev.type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING) {
+			auto* change = (XrEventDataReferenceSpaceChangePending*)&ev;
+			if (change->session != xr_session.get() || exitExpected)
+				continue;
+			switch ((int)change->referenceSpaceType) {
+			case (int)XR_REFERENCE_SPACE_TYPE_STAGE:
+			case (int)kReferenceSpaceLocalFloor:
+				OcPostEvent(VREvent_StandingZeroPoseReset, k_unTrackedDeviceIndex_Hmd, VREvent_Data_t{}, false);
+				OcPostEvent(VREvent_ChaperoneUniverseHasChanged, k_unTrackedDeviceIndexInvalid, VREvent_Data_t{}, false);
+				break;
+			case (int)XR_REFERENCE_SPACE_TYPE_LOCAL:
+				OcPostEvent(VREvent_SeatedZeroPoseReset, k_unTrackedDeviceIndex_Hmd, VREvent_Data_t{}, false);
+				break;
+			default:
+				break;
+			}
+			continue;
+		}
+
+		// XR_KHR_visibility_mask: the hidden area meshes are asked of the runtime on every call, so nothing is kept to
+		// drop
+		if (ev.type == XR_TYPE_EVENT_DATA_VISIBILITY_MASK_CHANGED_KHR)
+			continue;
+
+		// XR_EXT_performance_settings: the runtime's CPU or GPU load went above or back to normal
+		if (ev.type == XR_TYPE_EVENT_DATA_PERF_SETTINGS_EXT) {
+			auto* perf = (XrEventDataPerfSettingsEXT*)&ev;
+			OOVR_LOGF("The runtime's performance level for domain %d went from %d to %d", (int)perf->domain, (int)perf->fromLevel, (int)perf->toLevel);
+			if (perf->domain > 0 && perf->domain < 32) {
+				const uint32_t bit = 1u << (uint32_t)perf->domain;
+				if (perf->toLevel == XR_PERF_SETTINGS_NOTIF_LEVEL_NORMAL_EXT)
+					perfStrainedDomains &= ~bit;
+				else
+					perfStrainedDomains |= bit;
+			}
+			continue;
+		}
+
 		if (ev.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
 			auto* changed = (XrEventDataSessionStateChanged*)&ev;
 			// A state change for a session already destroyed (around a restart) is old news
@@ -1690,6 +1917,20 @@ void XrBackend::PumpEvents()
 				continue;
 			const XrSessionState previous = sessionState;
 			sessionState = changed->state;
+			if (sessionState == XR_SESSION_STATE_FOCUSED)
+				inputFocusHad = true;
+
+			// The headset in standby while its session is stopped (taken off, on runtimes that stop the session for it),
+			// out of it when the session is ready again (sessionEvents)
+			if (oovr_global_configuration.SessionEvents() && !exitExpected) {
+				if (sessionState == XR_SESSION_STATE_STOPPING && previous != XR_SESSION_STATE_UNKNOWN) {
+					if (!standbyTold.exchange(true))
+						OcPostEvent(VREvent_EnterStandbyMode, k_unTrackedDeviceIndex_Hmd, VREvent_Data_t{}, false);
+				} else if (sessionState == XR_SESSION_STATE_READY || sessionState == XR_SESSION_STATE_FOCUSED) {
+					if (standbyTold.exchange(false))
+						OcPostEvent(VREvent_LeaveStandbyMode, k_unTrackedDeviceIndex_Hmd, VREvent_Data_t{}, false);
+				}
+			}
 
 			// Input focus (sessionEvents): lost from FOCUSED to VISIBLE (the runtime's menu over the game, say), back
 			// at FOCUSED. Not while OpenLamina ends the session itself (a restart). Each change is told once, whichever
@@ -1750,13 +1991,12 @@ void XrBackend::PumpEvents()
 				// The runtime ending the session (the user quitting from its menu, say) is the game's cue to quit;
 				// OpenComposite ending it itself isn't
 				if (!exitExpected)
-					OnSessionLost();
+					OnRuntimeQuit();
 				break;
 			}
 			case XR_SESSION_STATE_LOSS_PENDING: {
 				// If the headset is unplugged or the user decides to exit the app
-				// TODO just kill the app after awhile, unless it sends a message to stop that - read the OpenVR wiki docs for more info
-				OnSessionLost();
+				OnRuntimeQuit();
 				break;
 			}
 			default:
@@ -1764,7 +2004,9 @@ void XrBackend::PumpEvents()
 				break;
 			}
 		} else if (ev.type == XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED) {
-			UpdateInteractionProfile();
+			// A session already destroyed (around a restart) has nothing to say about the controllers
+			if (((XrEventDataInteractionProfileChanged*)&ev)->session == xr_session.get())
+				UpdateInteractionProfile();
 		} else if (ev.type == OC_XR_TYPE_EVENT_DATA_DISPLAY_REFRESH_RATE_CHANGED_FB) {
 			// Prop_DisplayFrequency_Float asks the runtime again
 			auto* changed = (const OcXrEventDataDisplayRefreshRateChangedFB*)&ev;
@@ -1817,6 +2059,19 @@ void XrBackend::PumpEvents()
 	BaseInput* input = GetUnsafeBaseInput();
 	if (input && !exitExpected && !input->AreActionsLoaded() && sessionState == XR_SESSION_STATE_FOCUSED && !Hand(XrController::XCT_LEFT) && !Hand(XrController::XCT_RIGHT)) {
 		QueryForInteractionProfile();
+	}
+}
+
+bool XrBackend::WaitForEvents(const std::function<bool()>& done, int timeoutMs)
+{
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+	while (true) {
+		PumpEvents();
+		if (done())
+			return true;
+		if (std::chrono::steady_clock::now() >= deadline)
+			return false;
+		std::this_thread::sleep_for(std::chrono::milliseconds(5));
 	}
 }
 
@@ -1889,6 +2144,7 @@ void XrBackend::OnSessionCreated()
 	RestartFrameTiming();
 
 	sessionState = XR_SESSION_STATE_UNKNOWN;
+	inputFocusHad = false;
 	sessionActive = false;
 	renderingFrame = false;
 	frameAwaitingBegin = false;
@@ -1899,21 +2155,7 @@ void XrBackend::OnSessionCreated()
 
 	// Wait until we transition to the idle state.
 	// This sets the time, so OpenXR calls which use that will work correctly.
-	int count = 0;
-	while (sessionState == XR_SESSION_STATE_UNKNOWN && !sessionLost && count++ < 10) {
-		const int durationMs = 250;
-
-		OOVR_LOGF("No session transition yet received, waiting %dms ...", durationMs);
-
-#ifdef _WIN32
-		Sleep(durationMs);
-#else
-		struct timespec ts = { 0, durationMs * 1000000 };
-		nanosleep(&ts, &ts);
-#endif
-
-		PumpEvents();
-	}
+	WaitForEvents([this]() { return sessionState != XR_SESSION_STATE_UNKNOWN || sessionLost; }, 2500);
 	if (sessionState == XR_SESSION_STATE_UNKNOWN && !sessionLost)
 		OOVR_LOG("No session transition received yet: carrying on, later PumpEvents calls take the session's states");
 	if (sessionLost) {
@@ -2120,8 +2362,22 @@ bool XrBackend::RunOwnFramesWhile(const std::function<bool()>& keepGoing)
 
 void XrBackend::EndOpenAppFrame()
 {
-	// As if the game had submitted, keeping whether it ends its frames from PostPresentHandoff
-	SubmitFrames(false, postPresentStatus);
+	// As if the game had submitted
+	SubmitFrames(false);
+}
+
+void XrBackend::ClearSubmittedFrame()
+{
+	sceneCleared = true;
+	// Not shown again by OpenLamina's own frames either
+	haveLastProjection = false;
+}
+
+void XrBackend::SetRenderingSuspended(bool suspended)
+{
+	renderingSuspended = suspended;
+	if (suspended)
+		haveLastProjection = false;
 }
 
 void XrBackend::StopOwnFrames(bool forGood)
@@ -2258,6 +2514,7 @@ void XrBackend::PrepareForSessionShutdown()
 		c.reset();
 	}
 	skybox_compositor.reset();
+	fadeSwapchain.reset();
 	{
 		std::lock_guard<std::mutex> lock(skyboxLock);
 		skybox = Skybox();
@@ -2327,6 +2584,7 @@ void XrBackend::UpdateInteractionProfile()
 		{ .pathstr = "/user/hand/right", .controller = hand_right, .hand = XrController::XCT_RIGHT }
 	};
 
+	bool hmdProfileSet = false;
 	for (hand_info& info : hands) {
 		XrInteractionProfileState state{ XR_TYPE_INTERACTION_PROFILE_STATE };
 		XrPath path = XR_NULL_PATH;
@@ -2342,13 +2600,29 @@ void XrBackend::UpdateInteractionProfile()
 
 			for (const std::unique_ptr<InteractionProfile>& profile : InteractionProfile::GetProfileList()) {
 				if (profile->GetPath() == path_name) {
+					// The first hand with a known profile decides the headset's identity
+					if (!hmdProfileSet) {
+						hmd->SetInteractionProfile(profile.get());
+						hmdProfileSet = true;
+					}
+					std::shared_ptr<XrController> current = Hand(info.hand);
+					if (current && current->GetInteractionProfile() == profile.get())
+						break; // unchanged: keep the device and its state
+
 					OOVR_LOGF("%s - Using interaction profile: %s", info.pathstr, path_name);
+					BaseSystem* system = GetUnsafeBaseSystem();
+					const bool handAppeared = !current;
+					if (current && system) {
+						VREvent_t event = {
+							.eventType = VREvent_TrackedDeviceDeactivated,
+							.trackedDeviceIndex = (TrackedDeviceIndex_t)info.hand + 1
+						};
+						system->_EnqueueEvent(event);
+					}
 					{
 						std::unique_lock handsLock(hands_mutex);
 						info.controller = std::make_shared<XrController>(info.hand, *profile);
 					}
-					hmd->SetInteractionProfile(profile.get());
-					BaseSystem* system = GetUnsafeBaseSystem();
 					if (system) {
 						VREvent_t event = {
 							.eventType = VREvent_TrackedDeviceActivated,
@@ -2361,6 +2635,8 @@ void XrBackend::UpdateInteractionProfile()
 						};
 						system->_EnqueueEvent(event);
 					}
+					if (handAppeared)
+						PostRoleChange();
 					break;
 				}
 			}
@@ -2384,6 +2660,7 @@ void XrBackend::UpdateInteractionProfile()
 					};
 					system->_EnqueueEvent(event);
 				}
+				PostRoleChange();
 			}
 		}
 	}
@@ -2399,9 +2676,6 @@ void XrBackend::CreateGenericTrackers()
 	std::unique_lock lock(generic_trackers_mutex);
 
 	OOVR_LOGF("Checking for generic trackers...");
-
-	// should get cleared every time this function is run to avoid stale trackers
-	generic_trackers.clear();
 
 	// list containing all generic tracked devices
 	XrXDevListMNDX generic_tracker_list;
@@ -2481,54 +2755,135 @@ void XrBackend::CreateGenericTrackers()
 
 	OOVR_LOGF("Found %zu generic trackers", generic_tracker_ids.size());
 
-	OOVR_LOG("Creating generic trackers...");
+	uint64_t generation = 0;
+	if (XR_SUCCEEDED(xr_ext->xrGetXDevListGenerationNumberMNDX(generic_tracker_list, &generation)))
+		generic_trackers_generation = generation;
+
+	// A tracker the runtime still lists keeps its place, so the indices the program holds stay right. Its space goes
+	// with the session it was made in, so after a restart it is made again in the same place.
+	const bool sameSession = generic_trackers_session == xr_session.get();
+	generic_trackers_session = xr_session.get();
+
+	struct Wanted {
+		XrXDevIdMNDX id;
+		XrXDevPropertiesMNDX properties;
+		bool placed = false;
+	};
+	std::vector<Wanted> wanted;
 	for (const XrXDevIdMNDX id : generic_tracker_ids) {
-		int index = generic_trackers.size();
-
-		if (index >= MAX_GENERIC_TRACKERS) {
-			OOVR_LOGF("More trackers present than allowed (%d), skipping..", MAX_GENERIC_TRACKERS);
-			break;
-		}
-
 		cur_info.id = id;
-
 		OC_XR_LOG(xr_ext->xrGetXDevPropertiesMNDX(generic_tracker_list, &cur_info, &cur_properties));
+		wanted.push_back({ id, cur_properties });
+	}
 
-		std::string serial = cur_properties.serial;
-		std::string name = cur_properties.name;
+	BaseSystem* system = GetUnsafeBaseSystem();
+	auto sendEvent = [&](EVREventType type, TrackedDeviceIndex_t device) {
+		if (!system)
+			return;
+		VREvent_t event = {
+			.eventType = (uint32_t)type,
+			.trackedDeviceIndex = device
+		};
+		system->_EnqueueEvent(event);
+	};
 
-		OOVR_LOGF("Generic Tracker: %s, Serial: %s, Index: %d, ID: %" PRIu64, cur_properties.name, cur_properties.serial, index, id);
+	auto createTracker = [&](Wanted& want, uint32_t index) -> std::shared_ptr<XrGenericTracker> {
+		OOVR_LOGF("Generic Tracker: %s, Serial: %s, Index: %u, ID: %" PRIu64, want.properties.name, want.properties.serial, index, want.id);
 
-		// create space
 		XrSpace space = XR_NULL_HANDLE;
 		XrPosef pose = { .orientation = { 0, 0, 0, 1 }, .position = { 0, 0, 0 } };
 		XrCreateXDevSpaceInfoMNDX create_space_info = {
 			.type = XR_TYPE_CREATE_XDEV_SPACE_INFO_MNDX,
 			.next = NULL,
 			.xdevList = generic_tracker_list,
-			.id = id,
+			.id = want.id,
 			.offset = pose,
 		};
 
 		if (XR_FAILED(xr_ext->xrCreateXDevSpaceMNDX(xr_session.get(), &create_space_info, &space))) {
-			OOVR_LOGF("xrCreateXDevSpaceMNDX failed: no tracker for serial %s", cur_properties.serial);
+			OOVR_LOGF("xrCreateXDevSpaceMNDX failed: no tracker for serial %s", want.properties.serial);
+			return nullptr;
+		}
+		return std::make_shared<XrGenericTracker>(*profile, want.properties, index, space);
+	};
+
+	std::vector<std::shared_ptr<XrGenericTracker>> current = std::move(generic_trackers);
+	generic_trackers.assign(current.size(), nullptr);
+	for (size_t slot = 0; slot < current.size(); slot++) {
+		if (!current[slot])
+			continue;
+		const TrackedDeviceIndex_t deviceIndex = (TrackedDeviceIndex_t)slot + RESERVED_DEVICE_INDICES;
+		auto it = std::find_if(wanted.begin(), wanted.end(), [&](const Wanted& w) { return !w.placed && current[slot]->Serial() == w.properties.serial; });
+		if (it == wanted.end()) {
+			sendEvent(VREvent_TrackedDeviceDeactivated, deviceIndex);
 			continue;
 		}
-
-		generic_trackers.push_back(std::make_unique<XrGenericTracker>(*profile, cur_properties, index, space));
-
-		BaseSystem* system = GetUnsafeBaseSystem();
-		if (system) {
-			VREvent_t event = {
-				.eventType = VREvent_TrackedDeviceActivated,
-				.trackedDeviceIndex = (TrackedDeviceIndex_t)generic_trackers.at(index)->DeviceIndex()
-			};
-			system->_EnqueueEvent(event);
+		it->placed = true;
+		if (sameSession) {
+			generic_trackers[slot] = current[slot];
+		} else if ((generic_trackers[slot] = createTracker(*it, (uint32_t)slot))) {
+			sendEvent(VREvent_TrackedDeviceActivated, deviceIndex);
+		} else {
+			sendEvent(VREvent_TrackedDeviceDeactivated, deviceIndex);
 		}
 	}
+	// The old trackers' spaces go with their session when it was replaced
+	if (!sameSession) {
+		for (std::shared_ptr<XrGenericTracker>& old : current)
+			if (old)
+				old->ForgetSpace();
+	}
+	current.clear();
+
+	for (Wanted& want : wanted) {
+		if (want.placed)
+			continue;
+
+		// The first free place
+		size_t slot = 0;
+		while (slot < generic_trackers.size() && generic_trackers[slot])
+			slot++;
+		if (slot >= (size_t)MAX_GENERIC_TRACKERS) {
+			OOVR_LOGF("More trackers present than allowed (%d), skipping..", MAX_GENERIC_TRACKERS);
+			break;
+		}
+		if (slot == generic_trackers.size())
+			generic_trackers.push_back(nullptr);
+
+		if ((generic_trackers[slot] = createTracker(want, (uint32_t)slot)))
+			sendEvent(VREvent_TrackedDeviceActivated, (TrackedDeviceIndex_t)slot + RESERVED_DEVICE_INDICES);
+	}
+	while (!generic_trackers.empty() && !generic_trackers.back())
+		generic_trackers.pop_back();
 
 	// cleanup
 	xr_ext->xrDestroyXDevListMNDX(generic_tracker_list);
+}
+
+void XrBackend::PollGenericTrackers()
+{
+	if (sessionLost || !xr_ext || !xr_ext->xrMndxXdevSpace_Available())
+		return;
+
+	const int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+	int64_t last = generic_trackers_polled_ms;
+	if (nowMs - last < 1000 || !generic_trackers_polled_ms.compare_exchange_strong(last, nowMs))
+		return;
+
+	auto sessionLock = xr_session.lock_shared();
+	if (!xr_session.get())
+		return;
+
+	XrCreateXDevListInfoMNDX create_info = { .type = XR_TYPE_CREATE_XDEV_LIST_INFO_MNDX };
+	XrXDevListMNDX list = XR_NULL_HANDLE;
+	if (XR_FAILED(xr_ext->xrCreateXDevListMNDX(xr_session.get(), &create_info, &list)))
+		return;
+	uint64_t generation = 0;
+	bool changed = XR_SUCCEEDED(xr_ext->xrGetXDevListGenerationNumberMNDX(list, &generation)) && generation != generic_trackers_generation;
+	xr_ext->xrDestroyXDevListMNDX(list);
+
+	if (changed)
+		CreateGenericTrackers();
 }
 
 void XrBackend::MaybeRestartForInputs()
@@ -2616,6 +2971,9 @@ void XrBackend::BindInfoSet()
 			    [&path_name](std::string s) -> bool {
 				    return s.find("/click") != s.npos && s.find(path_name) != s.npos;
 			    });
+			// A profile with no click input for this hand binds nothing for it
+			if (click_path == profile->GetValidInputPaths().end())
+				continue;
 			XrPath path = XR_NULL_PATH;
 			OC_XR_LOG(xrStringToPath(xr_instance, click_path->c_str(), &path));
 			if (infoAction != XR_NULL_HANDLE && path != XR_NULL_PATH) // one bad entry would lose the profile's suggestion

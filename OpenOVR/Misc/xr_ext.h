@@ -40,9 +40,16 @@
 #include "../RuntimeExtensions/XR_MNDX_xdev_space.h"
 #include <openxr/openxr_platform.h>
 
+#include <set>
+#include <string>
 #include <vector>
 
 typedef uint32_t XrGraphicsApiSupportedFlags;
+
+// Extensions that only add an interaction profile, newer than the bundled OpenXR headers
+#define OC_XR_HTC_VIVE_COSMOS_CONTROLLER_INTERACTION_EXTENSION_NAME "XR_HTC_vive_cosmos_controller_interaction"
+#define OC_XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME "XR_HTC_vive_focus3_controller_interaction"
+#define OC_XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME "XR_BD_controller_interaction"
 
 // XR_FB_display_refresh_rate, which the bundled OpenXR headers predate (named apart from the newer headers' own)
 #define OC_XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME "XR_FB_display_refresh_rate"
@@ -92,6 +99,8 @@ public:
 	XrExt(XrGraphicsApiSupportedFlags apis, const std::vector<const char*>& extensions);
 
 	bool G2Controller_Available() { return supportsG2Controller; }
+	// Whether the instance was created with that extension
+	bool ExtensionEnabled(const std::string& name) { return enabledExtensions.contains(name); }
 	bool CylinderKHR_Available() { return supportsCylinderKHR; }
 	bool EyeGaze_Available() { return supportsEyeGaze; }
 	bool DepthKHR_Available() { return supportsDepthKHR; }
@@ -284,6 +293,7 @@ private:
 
 	OcPFN_xrGetDisplayRefreshRateFB pfnXrGetDisplayRefreshRateFB = nullptr;
 
+	std::set<std::string> enabledExtensions;
 	bool supportsG2Controller = false;
 	bool supportsCylinderKHR = false;
 	bool supportsEyeGaze = false;

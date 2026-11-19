@@ -3,9 +3,7 @@
 #include "BaseClientCore.h"
 #include "steamvr_abi.h"
 
-#include <codecvt>
 #include <fstream>
-#include <locale>
 
 #include "json/json.h"
 
@@ -21,7 +19,50 @@
 
 using namespace vr;
 
-static std::wstring_convert<std::codecvt_utf8<wchar_t>> CHAR_CONV;
+// UTF-8 to wchar_t (UTF-32 on Linux, UTF-16 on Windows); bytes that aren't valid UTF-8 become U+FFFD
+static wstring Utf8ToWide(const string& in)
+{
+	wstring out;
+	for (size_t i = 0; i < in.size();) {
+		const unsigned char c = (unsigned char)in[i];
+		uint32_t cp = 0xFFFD;
+		size_t len = 1;
+		if (c < 0x80) {
+			cp = c;
+		} else if (c >= 0xC2 && c < 0xE0) {
+			len = 2;
+			cp = c & 0x1F;
+		} else if (c >= 0xE0 && c < 0xF0) {
+			len = 3;
+			cp = c & 0x0F;
+		} else if (c >= 0xF0 && c < 0xF5) {
+			len = 4;
+			cp = c & 0x07;
+		}
+		if (len > 1) {
+			bool valid = i + len <= in.size();
+			for (size_t j = 1; valid && j < len; j++) {
+				const unsigned char cc = (unsigned char)in[i + j];
+				valid = (cc & 0xC0) == 0x80;
+				cp = (cp << 6) | (cc & 0x3F);
+			}
+			const uint32_t minimum[] = { 0, 0, 0x80, 0x800, 0x10000 };
+			if (!valid || cp < minimum[len] || cp > 0x10FFFF || (cp >= 0xD800 && cp < 0xE000)) {
+				cp = 0xFFFD;
+				len = 1;
+			}
+		}
+		i += len;
+		if (sizeof(wchar_t) == 2 && cp > 0xFFFF) {
+			cp -= 0x10000;
+			out.push_back((wchar_t)(0xD800 + (cp >> 10)));
+			out.push_back((wchar_t)(0xDC00 + (cp & 0x3FF)));
+		} else {
+			out.push_back((wchar_t)cp);
+		}
+	}
+	return out;
+}
 
 // applist.json, apps-config.json and openvrpaths.vrpath are shared with other programs: a broken or half-written
 // one reads as empty instead of ending the program, and writes replace the file in one step (Misc/JsonFile.h)
@@ -30,6 +71,7 @@ static bool ReadJson(const wstring& path, Json::Value& result)
 	return oc_read_json_file(std::filesystem::path(path), result);
 }
 
+#ifdef _WIN32
 // False if applist.json is there but couldn't be read: writing it back would delete every other program's entry
 static bool ReadAppList(const wstring& path, Json::Value& root)
 {
@@ -45,6 +87,7 @@ static void WriteJson(const wstring& path, const Json::Value& value)
 	// The game goes on if it fails: the list only records which programs loaded OpenComposite
 	oc_write_json_file(std::filesystem::path(path), value);
 }
+#endif
 
 enum Runtime {
 	Default = 0,
@@ -127,7 +170,7 @@ bool BaseClientCore::CheckAppEnabled()
 template <typename str_t>
 static void TrimPath(str_t& path)
 {
-	if (path.back() == '\\' || path.back() == '/') {
+	if (!path.empty() && (path.back() == '\\' || path.back() == '/')) {
 		path.erase(path.end() - 1);
 	}
 }
@@ -162,7 +205,7 @@ static wstring GetAppSettingsPath()
 
 	const char* pchHome = getenv("XDG_CONFIG_HOME");
 	if ((pchHome != NULL) && (pchHome[0] != '\0')) {
-		return CHAR_CONV.from_bytes(pchHome);
+		return Utf8ToWide(pchHome);
 	}
 
 	//
@@ -173,9 +216,9 @@ static wstring GetAppSettingsPath()
 		return L"";
 	}
 
-	wstring homeDir = CHAR_CONV.from_bytes(pchHome);
+	wstring homeDir = Utf8ToWide(pchHome);
 	TrimPath(homeDir);
-	path = homeDir + L".config";
+	path = homeDir + L"/.config";
 #else
 #error "Unsupported platform"
 #endif
@@ -188,6 +231,8 @@ static wstring GetAppSettingsPath()
 static wstring GetOpenVRConfigPath()
 {
 	wstring sConfigPath = GetAppSettingsPath();
+	if (sConfigPath.empty())
+		return {};
 
 #if defined(_WIN32) || defined(__linux__)
 	sConfigPath += L"/openvr";
@@ -202,6 +247,10 @@ static wstring GetOpenVRConfigPath()
 string BaseClientCore::GetAlternativeRuntimePath()
 {
 	wstring regPath = GetOpenVRConfigPath();
+	if (regPath.empty()) {
+		OOVR_LOG("Cannot start SteamVR: no config folder");
+		return {};
+	}
 
 #if defined(_WIN32) || defined(__unix__)
 	regPath += L"/openvrpaths.vrpath";
@@ -226,7 +275,7 @@ string BaseClientCore::GetAlternativeRuntimePath()
 		string path = runtimes[i].asString();
 		TrimPath(path);
 
-		if (EndsWith(path, string("\\SteamVR")))
+		if (EndsWith(path, string("\\SteamVR")) || EndsWith(path, string("/SteamVR")))
 			return path;
 	}
 
@@ -295,28 +344,11 @@ std::wstring BaseClientCore::GetDllDir()
 		return {};
 	string path = info.dli_fname;
 	path = path.substr(0, path.find_last_of('/') + 1);
-	return CHAR_CONV.from_bytes(path);
+	return Utf8ToWide(path);
 #else
 	wchar_t buffer[MAX_PATH];
 	DWORD len = GetModuleFileNameW(openovr_module_id, buffer, MAX_PATH);
 	wstring dllpath(buffer, len);
 	return dllpath.substr(0, dllpath.find_last_of('\\') + 1);
 #endif
-}
-
-void BaseClientCore::SetManifestPath(string filename)
-{
-	wstring listname = GetDllDir() + L"applist.json";
-	Json::Value root;
-	if (!ReadAppList(listname, root))
-		return;
-
-	Json::Value& tag = root[GetAppPath()];
-
-	// Don't need to update it
-	if (tag["manifest"] == filename)
-		return;
-
-	tag["manifest"] = filename;
-	WriteJson(listname, root);
 }

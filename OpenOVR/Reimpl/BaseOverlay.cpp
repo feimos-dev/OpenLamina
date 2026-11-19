@@ -1885,6 +1885,13 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 	return static_cast<int>(layerHeaders.size());
 }
 
+bool BaseOverlay::_IsOwnOverlay(VROverlayHandle_t handle)
+{
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	OverlayData* o = (OverlayData*)handle;
+	return o && validOverlays.count(o) && overlays.count(o->key);
+}
+
 EVROverlayError BaseOverlay::FindOverlay(const char* pchOverlayKey, VROverlayHandle_t* pOverlayHandle)
 {
 	if (!pchOverlayKey || !pOverlayHandle)

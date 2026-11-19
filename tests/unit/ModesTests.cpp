@@ -329,6 +329,20 @@ TEST_CASE("Scroll_smooth_delta")
 	CHECK(r.out.analog["/scroll"].x == doctest::Approx(0.2f));
 }
 
+TEST_CASE("Radial_menu_is_the_radial_mode")
+{
+	Runner r(Source("radial_menu", { { "0", "/top" }, { "1", "/right" } }, { { "segments", "4" } }, kPad));
+	r.Step(At(kPad, 0.9f, 0));
+	CHECK(r.Digital("/right"));
+}
+
+TEST_CASE("Mode_none_binds_nothing_without_a_warning")
+{
+	std::vector<std::string> warnings;
+	CHECK(CreateModeBinding(Source("none", {}), warnings) == nullptr);
+	CHECK(warnings.empty());
+}
+
 TEST_CASE("Radial_segments")
 {
 	Runner r(Source("radial", { { "0", "/top" }, { "1", "/right" }, { "2", "/bottom" }, { "3", "/left" } }, { { "segments", "4" } }, kPad));

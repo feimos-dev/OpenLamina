@@ -19,7 +19,6 @@ public:
 
 	void CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, std::optional<XruEye> eye, vr::EVRSubmitFlags submitFlags) override;
 
-	void InvokeCubemap(const vr::Texture_t* textures) override;
 
 	bool ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTextureBounds_t* bounds, Image& out) override;
 
@@ -31,6 +30,8 @@ private:
 	bool RunOnce(const std::function<void(VkCommandBuffer)>& record);
 	// The swapchain's format isn't the image's family: it's blitted in, which converts
 	bool convertFormat = false;
+	// The sample count of the texture the swapchain was made for
+	uint32_t createSourceSamples = 0;
 	// The colour space the swapchain was made for
 	vr::EColorSpace createColourSpace = vr::ColorSpace_Auto;
 	// An image whose values are sRGB already, in a format that isn't an sRGB one (most games' 8-bit textures), going into
@@ -52,4 +53,12 @@ private:
 	VkQueue appQueue = VK_NULL_HANDLE;
 	VkCommandPool appCommandPool = VK_NULL_HANDLE;
 	std::vector<VkCommandBuffer> appCommandBuffers{};
+	// A fence for each command buffer, signalled when its last submission is over
+	std::vector<VkFence> imageFences;
+	// Command buffers and fences for count swapchain images: false (with none left) if they can't be made
+	bool AllocateImageBuffers(uint32_t count);
+	// Frees them once their submissions are over
+	void FreeImageBuffers();
+	// Waits for the image's last submission and readies its fence for the next: false if it didn't finish
+	bool WaitForImageBuffer(uint32_t index);
 };

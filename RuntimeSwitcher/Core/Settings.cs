@@ -139,10 +139,6 @@ namespace RuntimeSwitcher.Core
                 "Automatic goes by your locale: UK for British English, US otherwise.",
                 "", "Automatic", "us", "US", "uk", "UK"),
 
-            new Setting(Input, "inputEvaluator", SettingKind.Choice, "steamvr", "Controller bindings",
-                "With SteamVR's binding modes, toggles, d-pads, chords and legacy input behave as in SteamVR. Try " +
-                "plain OpenXR bindings when a game's controls don't work.",
-                "direct", "As OpenXR bindings", "steamvr", "SteamVR's binding modes"),
             Bool(Input, "haptics", true, "Controller vibration", "Haptic feedback from games."),
             Bool(Input, "eyeTracking", true, "Give games the eye gaze",
                 "For games with eye-tracked foveated rendering, on headsets with an eye tracker."),

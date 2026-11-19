@@ -4,6 +4,7 @@
 
 #ifdef SUPPORT_VK
 
+#include <algorithm>
 #include <cstring>
 #include <string>
 
@@ -34,7 +35,7 @@ static void parseExtensionsStr(std::string extensionsStr, std::vector<std::strin
 
 TemporaryVk::TemporaryVk()
 {
-	// Call because we have to, TODO check we have a supported Vulkan version
+	// Call because we have to
 	// Any failure leaves usable false (logged), and XrBackend falls back to D3D11
 #define TMPVK_XR(expr)                                                     \
 	do {                                                                   \
@@ -47,8 +48,21 @@ TemporaryVk::TemporaryVk()
 	XrGraphicsRequirementsVulkanKHR req = { XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN_KHR };
 	TMPVK_XR(xr_ext->xrGetVulkanGraphicsRequirementsKHR(xr_instance, xr_system, &req));
 
+	// The runtime's lowest Vulkan version must be one the loader has
+	uint32_t loaderVersion = VK_API_VERSION_1_0;
+	if (auto enumerateVersion = (PFN_vkEnumerateInstanceVersion)vkGetInstanceProcAddr(nullptr, "vkEnumerateInstanceVersion"))
+		enumerateVersion(&loaderVersion);
+	if (!VulkanVersionMeetsXr(loaderVersion, req.minApiVersionSupported)) {
+		OOVR_LOGF("Temporary Vulkan device: the runtime needs Vulkan %u.%u, the loader has %u.%u", (unsigned)XR_VERSION_MAJOR(req.minApiVersionSupported),
+		    (unsigned)XR_VERSION_MINOR(req.minApiVersionSupported), VK_VERSION_MAJOR(loaderVersion), VK_VERSION_MINOR(loaderVersion));
+		return;
+	}
+
 	// Create a Vulkan instance that the runtime will find suitable
+	VkApplicationInfo appInfo{ VK_STRUCTURE_TYPE_APPLICATION_INFO };
+	appInfo.apiVersion = (std::max)((uint32_t)VK_API_VERSION_1_0, VK_MAKE_VERSION((uint32_t)XR_VERSION_MAJOR(req.minApiVersionSupported), (uint32_t)XR_VERSION_MINOR(req.minApiVersionSupported), 0));
 	VkInstanceCreateInfo createInfo{ VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
+	createInfo.pApplicationInfo = &appInfo;
 
 	uint32_t extCap = 0;
 	TMPVK_XR(xr_ext->xrGetVulkanInstanceExtensionsKHR(xr_instance, xr_system, 0, &extCap, nullptr));
@@ -84,11 +98,11 @@ TemporaryVk::TemporaryVk()
 	std::vector<VkQueueFamilyProperties> queueFamilyProps(queueFamilyCount);
 	vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, queueFamilyProps.data());
 
-	if (queueFamilyCount == 0) { // Just use the first queue type
-		OOVR_LOG("Temporary Vulkan device: the physical device has no queue families");
+	const int queueFamilyIdx = PickGraphicsQueueFamily(queueFamilyProps.data(), queueFamilyCount);
+	if (queueFamilyIdx < 0) {
+		OOVR_LOG("Temporary Vulkan device: the physical device has no queue family that can draw");
 		return;
 	}
-	int queueFamilyIdx = 0;
 
 	// Prepare the queue creation info
 	float priority = 1.0f;
