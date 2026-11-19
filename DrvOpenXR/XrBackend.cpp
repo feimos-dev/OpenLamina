@@ -2327,6 +2327,7 @@ void XrBackend::UpdateInteractionProfile()
 		{ .pathstr = "/user/hand/right", .controller = hand_right, .hand = XrController::XCT_RIGHT }
 	};
 
+	bool hmdProfileSet = false;
 	for (hand_info& info : hands) {
 		XrInteractionProfileState state{ XR_TYPE_INTERACTION_PROFILE_STATE };
 		XrPath path = XR_NULL_PATH;
@@ -2342,13 +2343,28 @@ void XrBackend::UpdateInteractionProfile()
 
 			for (const std::unique_ptr<InteractionProfile>& profile : InteractionProfile::GetProfileList()) {
 				if (profile->GetPath() == path_name) {
+					// The first hand with a known profile decides the headset's identity
+					if (!hmdProfileSet) {
+						hmd->SetInteractionProfile(profile.get());
+						hmdProfileSet = true;
+					}
+					std::shared_ptr<XrController> current = Hand(info.hand);
+					if (current && current->GetInteractionProfile() == profile.get())
+						break; // unchanged: keep the device and its state
+
 					OOVR_LOGF("%s - Using interaction profile: %s", info.pathstr, path_name);
+					BaseSystem* system = GetUnsafeBaseSystem();
+					if (current && system) {
+						VREvent_t event = {
+							.eventType = VREvent_TrackedDeviceDeactivated,
+							.trackedDeviceIndex = (TrackedDeviceIndex_t)info.hand + 1
+						};
+						system->_EnqueueEvent(event);
+					}
 					{
 						std::unique_lock handsLock(hands_mutex);
 						info.controller = std::make_shared<XrController>(info.hand, *profile);
 					}
-					hmd->SetInteractionProfile(profile.get());
-					BaseSystem* system = GetUnsafeBaseSystem();
 					if (system) {
 						VREvent_t event = {
 							.eventType = VREvent_TrackedDeviceActivated,
