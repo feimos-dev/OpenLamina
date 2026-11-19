@@ -4,6 +4,8 @@
   "returned_at_least_one": true,
   "odd_source_left_out": true,
   "no_blank_entries": true,
+  "toggle_err": 0,
+  "toggle_bindings": 1,
   "device": "/user/hand/right",
   "input": "/input/trigger",
   "mode": "toggle_button",

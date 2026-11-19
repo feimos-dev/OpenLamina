@@ -97,6 +97,18 @@ TEST_CASE("Mode_none_and_an_unbound_action_bind_nothing")
 	CHECK(BindingsForAction(Index(), "/actions/main/in/nothing").empty());
 }
 
+TEST_CASE("Index_fingers_are_triggers")
+{
+	BindingFile index = ParseBindingFile(R"({ "controller_type": "knuckles", "bindings": { "/actions/main": { "sources": [
+		{ "path": "/user/hand/left/input/finger/index", "mode": "trigger", "inputs": { "pull": { "output": "/actions/main/in/curl" } } },
+		{ "path": "/user/hand/left/input/pinch", "mode": "button", "inputs": { "click": { "output": "/actions/main/in/pinch" } } } ] } } })");
+	std::vector<ActionBinding> curl = BindingsForAction(index, "/actions/main/in/curl");
+	REQUIRE(curl.size() == 1);
+	CHECK(curl[0].input == "/input/finger/index");
+	CHECK(curl[0].sourceType == "trigger");
+	CHECK(BindingsForAction(index, "/actions/main/in/pinch")[0].sourceType == "pinch");
+}
+
 TEST_CASE("A_grip_that_clicks_is_a_button")
 {
 	BindingFile vive = ParseBindingFile(R"({ "controller_type": "vive_controller", "bindings": { "/actions/main": { "sources": [

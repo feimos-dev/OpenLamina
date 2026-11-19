@@ -3128,7 +3128,7 @@ EVRInputError BaseInput::GetActionOrigins(VRActionSetHandle_t actionSetHandle, V
 	XrBoundSourcesForActionEnumerateInfo info = { XR_TYPE_BOUND_SOURCES_FOR_ACTION_ENUMERATE_INFO };
 	info.action = act->xr;
 
-	// The hands the binding files bind it on; OpenXR's bound sources only if no controller in use has a file
+	// The hands the binding files bind it on; OpenXR's bound sources for a vibration, or if no controller in use has a file
 	std::optional<std::vector<ActionBinding>> fromFiles = BindingsFromFiles(*act);
 	if (fromFiles)
 		for (const ActionBinding& b : *fromFiles)

@@ -15,15 +15,20 @@ bool SplitSource(const std::string& path, std::string& device, std::string& inpu
 }
 
 // SteamVR takes this from the controller's driver; the inputs' names say as much for the controllers there are. A
-// grip is a trigger where it's squeezed (Index, Touch) and a button where it clicks (Vive, WMR), which the file's
-// controller type tells.
+// grip is a trigger where it's squeezed and a button where it clicks, which the file's controller type tells.
 std::string SourceType(const std::string& input, const std::string& controllerType)
 {
+	if (input.starts_with("/input/finger/"))
+		return "trigger";
 	const std::string name = input.substr(input.rfind('/') + 1);
 	if (name == "trigger")
 		return "trigger";
-	if (name == "grip")
-		return controllerType == "knuckles" || controllerType == "oculus_touch" ? "trigger" : "button";
+	if (name == "pinch")
+		return "pinch";
+	if (name == "grip") {
+		const bool clicks = controllerType == "vive_controller" || controllerType == "holographic_controller" || controllerType == "vive_tracker";
+		return clicks ? "button" : "trigger";
+	}
 	if (name == "joystick" || name == "thumbstick")
 		return "joystick";
 	if (name == "trackpad")

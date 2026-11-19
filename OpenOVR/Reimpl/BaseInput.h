@@ -931,9 +931,6 @@ private:
 	std::vector<const BindingEvaluator*> evaluatedThisSync;
 	// Each profile's binding file, whatever inputEvaluator is: what GetActionBindingInfo and GetActionOrigins answer
 	std::map<const InteractionProfile*, BindingFile> bindingFiles;
-	/** An action's bindings on the controllers in use, from their binding files; nothing if no controller in use has
-	 * one. Takes evaluatorLock. */
-	std::optional<std::vector<ActionBinding>> BindingsFromFiles(const Action& action);
 	// Guards everything above and the legacy evaluators: a game reads input on its own thread while OpenComposite
 	// reads the old input after each frame on the thread that submits.
 	// Lock order: the session lock (xr_session, shared or exclusive) is taken before evaluatorLock, never after. Every
@@ -944,6 +941,9 @@ private:
 	void CreateRawActions();
 	void SuggestRawInputs(const InteractionProfile& profile, std::vector<XrActionSuggestedBinding>& bindings);
 	void SuggestRawBindings(const InteractionProfile& profile, const std::string& bindingsPath, std::vector<XrActionSuggestedBinding>& bindings);
+	/** An input action's bindings on the controllers in use, from their binding files; nothing if no controller in
+	 * use has one, or for a pose, a skeleton or a vibration. Takes evaluatorLock. */
+	std::optional<std::vector<ActionBinding>> BindingsFromFiles(const Action& action);
 	/** One hand's raw inputs (index into allSubactionPaths) on a profile, by SteamVR path, into state */
 	void ReadRawInputs(size_t hand, const InteractionProfile& profile, RawInputState& state);
 	/** The old input's evaluator for a controller's profile, evaluated once per sync; null if it has none.

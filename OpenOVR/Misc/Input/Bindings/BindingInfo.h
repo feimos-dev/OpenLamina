@@ -17,5 +17,5 @@ struct ActionBinding {
 };
 
 /** The bindings of an action (its manifest name, lower-cased) on one device (/user/hand/left; empty for every
- * device), in the file's order. A source of mode none binds nothing. */
+ * device). A source of mode none binds nothing. */
 std::vector<ActionBinding> BindingsForAction(const BindingFile& file, const std::string& action, const std::string& device = {});

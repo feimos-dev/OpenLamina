@@ -1745,9 +1745,9 @@ void InputThreadsCase(CaseContext& c)
 	c.Record("threads", r);
 }
 
-// GetActionBindingInfo when the runtime reports a bound source that isn't an input path (expect/binding_info.json), on
-// the stand-in with scripts/bound_source_odd.json and --manifest manifest_toggle.json: the call answers, and the odd
-// source is left out
+// GetActionBindingInfo (expect/binding_info.json), on the stand-in with scripts/bound_source_odd.json and --manifest
+// manifest_toggle.json: an input action is told as the binding file binds it; a vibration from the runtime's bound
+// sources, which here include one that isn't an input path, and that one is left out
 void BindingInfoCase(CaseContext& c)
 {
 	using namespace vr::IVRInput_010;
@@ -1779,8 +1779,11 @@ void BindingInfoCase(CaseContext& c)
 	InputBindingInfo_t info[4]{};
 	uint32_t returned = 99;
 	Json::Value r;
-	r["err"] = (int)in->GetActionBindingInfo(toggle, info, sizeof(info[0]), 4, &returned);
-	// The real bindings come first; the odd source is the last one the stand-in lists
+	// The vibration is answered from the runtime's bound sources: the real bindings come first, the odd source is
+	// the last one the stand-in lists
+	vr::VRActionHandle_t haptic = 0;
+	in->GetActionHandle("/actions/main/out/haptic", &haptic);
+	r["err"] = (int)in->GetActionBindingInfo(haptic, info, sizeof(info[0]), 4, &returned);
 	r["returned_at_least_one"] = returned >= 1 && returned <= 4;
 	bool oddShown = false;
 	for (uint32_t i = 0; i < returned && i < 4; i++)
@@ -1790,7 +1793,11 @@ void BindingInfoCase(CaseContext& c)
 	for (uint32_t i = 0; i < returned && i < 4; i++)
 		noBlank = noBlank && info[i].rchDevicePathName[0] != 0;
 	r["no_blank_entries"] = noBlank;
-	// The binding as the binding file has it: a toggle_button on the right trigger
+	// The toggle is answered from the binding file: a toggle_button on the right trigger
+	memset(info, 0, sizeof(info));
+	returned = 99;
+	r["toggle_err"] = (int)in->GetActionBindingInfo(toggle, info, sizeof(info[0]), 4, &returned);
+	r["toggle_bindings"] = returned;
 	if (returned >= 1) {
 		r["device"] = info[0].rchDevicePathName;
 		r["input"] = info[0].rchInputPathName;
