@@ -14,6 +14,7 @@
 #include <thread>
 
 #ifdef _WIN32
+#include <io.h>
 #include <windows.h>
 #else
 #include <cerrno>
@@ -137,14 +138,29 @@ bool Replace(const fs::path& from, const fs::path& to)
 #endif
 }
 
-bool WriteFile(const fs::path& path, const std::string& text)
+// The largest document written: more is a runaway, not a setting
+constexpr size_t kMaxDocBytes = 16 * 1024 * 1024;
+
+// Writes the file, and with durable asks the disk to have it before returning, so that a crash or power loss after
+// the rename that follows doesn't leave a truncated document
+bool WriteFile(const fs::path& path, const std::string& text, bool durable = true)
 {
-	std::ofstream out(path, std::ios::binary | std::ios::trunc);
-	if (!out)
+#ifdef _WIN32
+	FILE* f = _wfopen(path.c_str(), L"wb");
+#else
+	FILE* f = fopen(path.c_str(), "wb");
+#endif
+	if (!f)
 		return false;
-	out << text;
-	out.close();
-	return !out.fail();
+	bool ok = fwrite(text.data(), 1, text.size(), f) == text.size() && fflush(f) == 0;
+	if (ok && durable) {
+#ifdef _WIN32
+		ok = _commit(_fileno(f)) == 0;
+#else
+		ok = fsync(fileno(f)) == 0;
+#endif
+	}
+	return fclose(f) == 0 && ok;
 }
 
 // The store folder of the program called folderName (OpenLamina, or OpenComposite before it)
@@ -473,8 +489,18 @@ Json::Value SharedStore::Read(StoreDoc doc)
 	ReadResult result = ReadShared(DocPath(doc), text, 4);
 	Json::Value root;
 	// A document that doesn't parse reads as empty; one of a later format is read as far as it's understood
-	if (result == ReadResult::Ok && ParseDoc(text, root) && root["data"].isObject())
+	if (result == ReadResult::Ok && ParseDoc(text, root) && root["data"].isObject()) {
 		data = root["data"];
+	} else if (result == ReadResult::Ok) {
+		// Not the document: its last good copy, if there is one
+		OOVR_LOGF("Store document %s doesn't parse", DocPath(doc).filename().string().c_str());
+		fs::path backup = DocPath(doc);
+		backup += ".bak";
+		std::string backupText;
+		Json::Value backupRoot;
+		if (ReadShared(backup, backupText, 4) == ReadResult::Ok && ParseDoc(backupText, backupRoot) && backupRoot["data"].isObject())
+			data = backupRoot["data"];
+	}
 
 	std::lock_guard<std::mutex> guard(lock);
 	Cached& cached = cache[doc];
@@ -503,7 +529,7 @@ bool SharedStore::Update(StoreDoc doc, const std::function<void(Json::Value& dat
 
 	fs::path path = DocPath(doc);
 	Json::Value data(Json::objectValue);
-	std::string text;
+	std::string text, backup;
 	switch (ReadShared(path, text, 200)) {
 	case ReadResult::Failed:
 		return false; // there but unreadable: writing now would lose what's in it
@@ -516,11 +542,22 @@ bool SharedStore::Update(StoreDoc doc, const std::function<void(Json::Value& dat
 				return false; // a later OpenComposite's: read, never written
 			if (root["data"].isObject())
 				data = root["data"];
+			// The document as it was is the last good copy, for if the next write is cut short
+			backup = text;
 		} else {
-			// Kept for a look, and replaced below
+			// Kept for a look, and replaced below, starting from the last good copy if there is one
 			fs::path bad = path;
 			bad += ".bad";
 			Replace(path, bad);
+			OOVR_LOGF("Store document %s doesn't parse; kept as %s", path.filename().string().c_str(), bad.filename().string().c_str());
+			fs::path good = path;
+			good += ".bak";
+			std::string goodText;
+			Json::Value goodRoot;
+			if (ReadShared(good, goodText, 4) == ReadResult::Ok && ParseDoc(goodText, goodRoot) && goodRoot["data"].isObject()) {
+				data = goodRoot["data"];
+				OOVR_LOGF("Store document %s restored from its last good copy", path.filename().string().c_str());
+			}
 		}
 		break;
 	}
@@ -541,8 +578,21 @@ bool SharedStore::Update(StoreDoc doc, const std::function<void(Json::Value& dat
 	writer["indentation"] = "\t";
 	fs::path tmp = path;
 	tmp += ".tmp";
-	if (!WriteFile(tmp, Json::writeString(writer, root)) || !Replace(tmp, path))
+	std::string out = Json::writeString(writer, root);
+	if (out.size() > kMaxDocBytes) {
+		OOVR_LOGF("Store document %s not written: it would be %zu bytes", path.filename().string().c_str(), out.size());
 		return false;
+	}
+	if (!backup.empty()) {
+		fs::path good = path;
+		good += ".bak";
+		WriteFile(good, backup, false);
+	}
+	if (!WriteFile(tmp, out) || !Replace(tmp, path)) {
+		std::error_code ec;
+		fs::remove(tmp, ec);
+		return false;
+	}
 
 	uint64_t generation = Load(header()->generations[(int)doc]) + 1;
 	Store(header()->generations[(int)doc], generation);
