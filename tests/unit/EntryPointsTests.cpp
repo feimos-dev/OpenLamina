@@ -91,6 +91,30 @@ TEST_CASE("A refused Init's Shutdown keeps another caller's session")
 	CHECK(err != vr::VRInitError_None);
 }
 
+TEST_CASE("A Utility app has the settings interface")
+{
+	Runtime rt;
+	auto init = rt.fn<InitFn>("VR_InitInternal2");
+	auto shutdown = rt.fn<ShutdownFn>("VR_ShutdownInternal");
+	auto generic = rt.fn<GenericFn>("VR_GetGenericInterface");
+	REQUIRE(init);
+	REQUIRE(shutdown);
+	REQUIRE(generic);
+
+	vr::EVRInitError err = vr::VRInitError_None;
+	REQUIRE(init(&err, vr::VRApplication_Utility, nullptr) != 0);
+
+	err = vr::VRInitError_Unknown;
+	CHECK(generic("IVRSettings_003", &err) != nullptr);
+	CHECK(err == vr::VRInitError_None);
+
+	// Interfaces that need the headset stay out of its reach
+	err = vr::VRInitError_None;
+	CHECK(generic("IVRCompositor_028", &err) == nullptr);
+	CHECK(err == vr::VRInitError_Init_NotAvailableToUtilityApps);
+	shutdown();
+}
+
 TEST_CASE("VR_GetRuntimePath fills the caller's buffer")
 {
 	Runtime rt;
