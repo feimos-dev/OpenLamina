@@ -1790,6 +1790,19 @@ void BindingInfoCase(CaseContext& c)
 	for (uint32_t i = 0; i < returned && i < 4; i++)
 		noBlank = noBlank && info[i].rchDevicePathName[0] != 0;
 	r["no_blank_entries"] = noBlank;
+	// The binding as the binding file has it: a toggle_button on the right trigger
+	if (returned >= 1) {
+		r["device"] = info[0].rchDevicePathName;
+		r["input"] = info[0].rchInputPathName;
+		r["mode"] = info[0].rchModeName;
+		r["slot"] = info[0].rchSlotName;
+		r["source_type"] = info[0].rchInputSourceType;
+	}
+	vr::VRInputValueHandle_t origins[4]{};
+	in->GetActionOrigins(set, toggle, origins, 4);
+	vr::VRInputValueHandle_t right = 0;
+	in->GetInputSourceHandle("/user/hand/right", &right);
+	r["origin_is_the_right_hand"] = origins[0] == right && origins[1] == vr::k_ulInvalidInputValueHandle;
 	c.Record("odd source", r);
 	c.core->Cleanup();
 }
