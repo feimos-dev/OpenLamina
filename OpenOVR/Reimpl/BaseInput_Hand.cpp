@@ -17,6 +17,7 @@
 #include <glm/gtx/string_cast.hpp>
 
 #include <chrono>
+#include <mutex>
 #include <optional>
 #include <ranges>
 
@@ -124,11 +125,18 @@ constexpr XrHandJointEXT metacarpalJoints[5] = {
 	XR_HAND_JOINT_LITTLE_METACARPAL_EXT
 };
 
+// A joint is usable only when both its position and its orientation are valid
+static bool JointValid(const XrHandJointLocationEXT& joint)
+{
+	constexpr XrSpaceLocationFlags needed = XR_SPACE_LOCATION_POSITION_VALID_BIT | XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+	return (joint.locationFlags & needed) == needed;
+}
+
 static bool ConvertWristPose(const std::vector<XrHandJointLocationEXT>& joints, bool isRight, VRBoneTransform_t* output, glm::mat4 transform)
 {
 	const XrHandJointLocationEXT& wrist = joints[XR_HAND_JOINT_WRIST_EXT];
 
-	if (wrist.locationFlags & (XR_SPACE_LOCATION_POSITION_VALID_BIT == 0))
+	if (!JointValid(wrist))
 		return false;
 	
 	// The wrist bone has it's own special transform, with all axes negated
@@ -200,7 +208,7 @@ static bool MetacarpalJointPass(const std::vector<XrHandJointLocationEXT>& joint
 		const XrHandJointLocationEXT& currentJoint = joints[joint];
 		const XrHandJointLocationEXT& parentJoint = joints[XR_HAND_JOINT_WRIST_EXT];
 
-		if (currentJoint.locationFlags & (XR_SPACE_LOCATION_POSITION_VALID_BIT == 0) || parentJoint.locationFlags & (XR_SPACE_LOCATION_POSITION_VALID_BIT == 0))
+		if (!JointValid(currentJoint) || !JointValid(parentJoint))
 			return false;
 
 		// Everything has to be done relative to its parent.
@@ -245,7 +253,7 @@ static bool FlexionJointPass(const std::vector<XrHandJointLocationEXT>& joints, 
 		const XrHandJointLocationEXT& currentJoint = joints[joint];
 		const XrHandJointLocationEXT& parentJoint = joints[parentId];
 
-		if (currentJoint.locationFlags & (XR_SPACE_LOCATION_POSITION_VALID_BIT == 0) || parentJoint.locationFlags & (XR_SPACE_LOCATION_POSITION_VALID_BIT == 0))
+		if (!JointValid(currentJoint) || !JointValid(parentJoint))
 			return false;
 
 		if (!GetJointRelative(currentJoint, parentJoint, isRight, output[joint]))
@@ -263,7 +271,7 @@ static bool AuxJointPass(const std::vector<XrHandJointLocationEXT>& joints, bool
 	for (int i = eBone_Aux_Thumb; i <= eBone_Aux_PinkyFinger; i++) {
 		currentJoint = joints[auxBoneMap[(HandSkeletonBone)i]];
 
-		if (currentJoint.locationFlags & (XR_SPACE_LOCATION_POSITION_VALID_BIT == 0) || joints[XR_HAND_JOINT_WRIST_EXT].locationFlags & (XR_SPACE_LOCATION_POSITION_VALID_BIT == 0))
+		if (!JointValid(currentJoint) || !JointValid(joints[XR_HAND_JOINT_WRIST_EXT]))
 			return false;
 
 		if (!GetJointRelative(currentJoint, joints[XR_HAND_JOINT_WRIST_EXT], isRight, output[i]))
@@ -358,6 +366,10 @@ static auto GetInterpolatedControllerState(const ITrackedDevice::TrackedDeviceTy
 		thumbTouch = output.gripPct != 1.0f || output.triggerPct == 1.0f;
 	}
 
+	// Games may read the skeleton from several threads
+	static std::mutex stateLock;
+	std::lock_guard<std::mutex> stateGuard(stateLock);
+
 	static std::array<std::chrono::high_resolution_clock::time_point, 2> lastTime{
 		std::chrono::high_resolution_clock::now(),
 		std::chrono::high_resolution_clock::now()
@@ -388,6 +400,9 @@ static auto GetInterpolatedControllerState(const ITrackedDevice::TrackedDeviceTy
 // OpenXR Hand Joints to OpenVR Hand Skeleton logic generously donated by danwillm from valve.
 bool BaseInput::XrHandJointsToSkeleton(const std::vector<XrHandJointLocationEXT>& joints, bool isRight, VRBoneTransform_t* output, glm::mat4 transform)
 {
+	if (joints.size() < XR_HAND_JOINT_COUNT_EXT)
+		return false;
+
 	// The root bone should just be left at identity
 	output[eBone_Root].orientation = vr::HmdQuaternionf_t{ /* w */ 1, 0, 0, 0 };
 	output[eBone_Root].position = vr::HmdVector4_t{ 0, 0, 0, 1 };
@@ -405,6 +420,24 @@ bool BaseInput::XrHandJointsToSkeleton(const std::vector<XrHandJointLocationEXT>
 		return false;
 
 	return true;
+}
+
+void BaseInput::ClearBones(VRBoneTransform_t* bones, uint32_t count)
+{
+	if (bones && count)
+		memset(bones, 0, sizeof(VRBoneTransform_t) * count);
+}
+
+EVRInputError BaseInput::CheckBoneArray(const VRBoneTransform_t* bones, uint32_t count)
+{
+	if (!bones || count < eBone_Count)
+		return VRInputError_BufferTooSmall;
+	return VRInputError_None;
+}
+
+bool BaseInput::IsSkeletonHand(ITrackedDevice::TrackedDeviceType hand)
+{
+	return hand == ITrackedDevice::HAND_LEFT || hand == ITrackedDevice::HAND_RIGHT;
 }
 
 void BaseInput::ParentSpaceSkeletonToModelSpace(VRBoneTransform_t* joints)

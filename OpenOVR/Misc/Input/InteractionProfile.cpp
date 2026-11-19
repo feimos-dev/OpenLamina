@@ -163,7 +163,7 @@ glm::mat4 InteractionProfile::GetGripToSteamVRTransform(ITrackedDevice::TrackedD
 
 std::optional<glm::mat4> InteractionProfile::GetComponentTransform(ITrackedDevice::TrackedDeviceType hand, const std::string& name) const
 {
-	std::unordered_map<std::string, glm::mat4> transforms = hand == ITrackedDevice::HAND_RIGHT ? rightComponentTransforms : leftComponentTransforms;
+	const std::unordered_map<std::string, glm::mat4>& transforms = hand == ITrackedDevice::HAND_RIGHT ? rightComponentTransforms : leftComponentTransforms;
 	const auto iter = transforms.find(name);
 	if (iter == transforms.end())
 		return {};
@@ -171,24 +171,40 @@ std::optional<glm::mat4> InteractionProfile::GetComponentTransform(ITrackedDevic
 		return iter->second;
 }
 
+std::optional<std::array<vr::VRBoneTransform_t, 31>> InteractionProfile::GetDefaultSkeletalReferencePose(ITrackedDevice::TrackedDeviceType hand, int pose)
+{
+	using PoseMap = std::unordered_map<int, std::array<vr::VRBoneTransform_t, 31>>;
+	static const PoseMap leftPoses = {
+		{ VRSkeletalReferencePose_BindPose, oculus::leftBindPose },
+		{ VRSkeletalReferencePose_OpenHand, oculus::leftOpenHandPose },
+		{ VRSkeletalReferencePose_Fist, oculus::leftFistPose },
+		{ VRSkeletalReferencePose_GripLimit, oculus::leftGripLimitPose },
+	};
+	static const PoseMap rightPoses = {
+		{ VRSkeletalReferencePose_BindPose, oculus::rightBindPose },
+		{ VRSkeletalReferencePose_OpenHand, oculus::rightOpenHandPose },
+		{ VRSkeletalReferencePose_Fist, oculus::rightFistPose },
+		{ VRSkeletalReferencePose_GripLimit, oculus::rightGripLimitPose },
+	};
+
+	if (hand != ITrackedDevice::HAND_LEFT && hand != ITrackedDevice::HAND_RIGHT)
+		return {};
+
+	const PoseMap& poses = hand == ITrackedDevice::HAND_LEFT ? leftPoses : rightPoses;
+	const auto iter = poses.find(pose);
+	if (iter == poses.end())
+		return {};
+	return iter->second;
+}
+
 std::optional<std::array<vr::VRBoneTransform_t, 31>> InteractionProfile::GetSkeletalReferencePose(ITrackedDevice::TrackedDeviceType hand, int pose) const
 {
-	auto poses = hand == ITrackedDevice::HAND_LEFT ? leftHandPoses : rightHandPoses;
+	const auto& poses = hand == ITrackedDevice::HAND_LEFT ? leftHandPoses : rightHandPoses;
 
 	// Fall back to oculus poses, which should be close enough for most controllers
 	if (poses.empty()) {
 		OOVR_LOG_ONCE("WARNING: No reference poses defined for interaction profile, using fallback.");
-		if (hand == ITrackedDevice::HAND_LEFT) {
-			poses[VRSkeletalReferencePose_BindPose] = oculus::leftBindPose;
-			poses[VRSkeletalReferencePose_OpenHand] = oculus::leftOpenHandPose;
-			poses[VRSkeletalReferencePose_Fist] = oculus::leftFistPose;
-			poses[VRSkeletalReferencePose_GripLimit] = oculus::leftGripLimitPose;
-		} else {
-			poses[VRSkeletalReferencePose_BindPose] = oculus::rightBindPose;
-			poses[VRSkeletalReferencePose_OpenHand] = oculus::rightOpenHandPose;
-			poses[VRSkeletalReferencePose_Fist] = oculus::rightFistPose;
-			poses[VRSkeletalReferencePose_GripLimit] = oculus::rightGripLimitPose;
-		}
+		return GetDefaultSkeletalReferencePose(hand, pose);
 	}
 
 	const auto iter = poses.find(pose);

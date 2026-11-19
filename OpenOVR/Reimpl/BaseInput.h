@@ -429,6 +429,21 @@ public:
 public: // INTERNAL FUNCTIONS
 	/** Each finger's bones from parent space into model space (the wrist and aux bones are the same in both) */
 	static void ParentSpaceSkeletonToModelSpace(VRBoneTransform_t* joints);
+
+	/**
+	 * Converts located hand joints to the 31 bones of an OpenVR hand, in parent space. Returns false, leaving
+	 * the output only partly written, when a joint it needs has no valid pose.
+	 */
+	static bool XrHandJointsToSkeleton(const std::vector<XrHandJointLocationEXT>& joints, bool isRight, VRBoneTransform_t* output, glm::mat4 transform);
+
+	/** Clears a caller's bone array; does nothing for a null array. */
+	static void ClearBones(VRBoneTransform_t* bones, uint32_t count);
+
+	/** The error to answer for a bone array that cannot take a whole skeleton, or None. */
+	static EVRInputError CheckBoneArray(const VRBoneTransform_t* bones, uint32_t count);
+
+	/** Whether a hand is one of the two a skeleton can belong to (an action that is not a skeleton has none). */
+	static bool IsSkeletonHand(ITrackedDevice::TrackedDeviceType hand);
 	/**
 	 * Bind all the inputs to the current OpenXR session. This must be called after swapping the session to keep
 	 * the inputs working.
@@ -811,8 +826,6 @@ private:
 	static int DeviceIndexToHandId(vr::TrackedDeviceIndex_t idx);
 
 	LegacyControllerActions legacyControllers[2] = {};
-
-	static bool XrHandJointsToSkeleton(const std::vector<XrHandJointLocationEXT>& joints, bool isRight, VRBoneTransform_t* output, glm::mat4 transform);
 
 	// Utility functions
 	Action* cast_AH(VRActionHandle_t);

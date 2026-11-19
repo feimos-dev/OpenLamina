@@ -154,6 +154,9 @@ public:
 	 */
 	std::optional<std::array<vr::VRBoneTransform_t, 31>> GetSkeletalReferencePose(ITrackedDevice::TrackedDeviceType hand, int) const;
 
+	/** The poses used for a hand when no profile is known, or the profile defines none. */
+	static std::optional<std::array<vr::VRBoneTransform_t, 31>> GetDefaultSkeletalReferencePose(ITrackedDevice::TrackedDeviceType hand, int pose);
+
 	/**
 	 * Build a list of suggested bindings for attaching the legacy actions to this profile.
 	 */

@@ -1884,9 +1884,11 @@ EVRInputError BaseInput::SetDominantHand(vr::ETrackedControllerRole eDominantHan
 }
 EVRInputError BaseInput::GetBoneCount(VRActionHandle_t action, uint32_t* pBoneCount)
 {
-	// Maybe we should check the action?
 	if (!pBoneCount)
 		return VRInputError_InvalidParam;
+	GET_ACTION_FROM_HANDLE(act, action);
+	if (!IsSkeletonHand(act->skeletalHand))
+		return VRInputError_InvalidSkeleton;
 	*pBoneCount = (int)eBone_Count;
 	return vr::VRInputError_None;
 }
@@ -1920,18 +1922,21 @@ EVRInputError BaseInput::GetSkeletalReferenceTransforms(VRActionHandle_t actionH
 {
 	GET_ACTION_FROM_HANDLE(act, actionHandle);
 
+	if (!IsSkeletonHand(act->skeletalHand))
+		return VRInputError_InvalidSkeleton;
+	if (EVRInputError err = CheckBoneArray(pTransformArray, unTransformArrayCount); err != VRInputError_None)
+		return err;
+
 	std::span<VRBoneTransform_t> out(pTransformArray, unTransformArrayCount);
 
-	// Find the interaction profile to retrieve hand pose
-	std::shared_ptr<ITrackedDevice> dev = BackendManager::Instance().GetDeviceByHand(act->skeletalHand);
-	if (!dev)
-		return vr::VRInputError_InvalidDevice;
+	// The poses don't change with the controller, so a hand with no controller (yet) gets the default ones
+	const InteractionProfile* profile = nullptr;
+	if (std::shared_ptr<ITrackedDevice> dev = BackendManager::Instance().GetDeviceByHand(act->skeletalHand))
+		profile = dev->GetInteractionProfile();
 
-	const InteractionProfile* profile = dev->GetInteractionProfile();
-	if (!profile)
-		return vr::VRInputError_InvalidDevice;
-
-	const std::optional<BoneArray> pose = profile->GetSkeletalReferencePose(act->skeletalHand, eReferencePose);
+	const std::optional<BoneArray> pose = profile
+	    ? profile->GetSkeletalReferencePose(act->skeletalHand, eReferencePose)
+	    : InteractionProfile::GetDefaultSkeletalReferencePose(act->skeletalHand, eReferencePose);
 	if (!pose.has_value()) {
 		OOVR_LOGF("WARNING: Couldn't find reference pose: %d, %d", act->skeletalHand, eReferencePose);
 		return vr::VRInputError_InvalidParam;
@@ -2000,7 +2005,7 @@ EVRInputError BaseInput::GetSkeletalBoneData(VRActionHandle_t actionHandle, EVRS
     EVRSkeletalMotionRange eMotionRange, VR_ARRAY_COUNT(unTransformArrayCount) VRBoneTransform_t* pTransformArray, uint32_t unTransformArrayCount)
 {
 	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
-	ZeroMemory(pTransformArray, sizeof(VRBoneTransform_t) * unTransformArrayCount);
+	ClearBones(pTransformArray, unTransformArrayCount);
 	GET_ACTION_FROM_HANDLE(action, actionHandle);
 
 	// FIXME remove
@@ -2036,7 +2041,12 @@ EVRInputError BaseInput::GetSkeletalBoneData(VRActionHandle_t actionHandle, EVRS
 	std::vector<XrHandJointLocationEXT> jointLocations(locations.jointCount);
 	locations.jointLocations = jointLocations.data();
 
-	OC_XR_LOG(xr_ext->xrLocateHandJointsEXT(handTrackers[(int)action->skeletalHand], &locateInfo, &locations));
+	if (handTrackers[(int)hand] == XR_NULL_HANDLE) {
+		dev->SetHandTrackingValid(false);
+		return getEstimatedBoneData(hand, eTransformSpace, eMotionRange, std::span<VRBoneTransform_t, eBone_Count>(pTransformArray, eBone_Count));
+	}
+
+	OC_XR_LOG(xr_ext->xrLocateHandJointsEXT(handTrackers[(int)hand], &locateInfo, &locations));
 
 	if (!locations.isActive) {
 		// Fallback to estimated bone data (e.g. for controllers)
@@ -2070,7 +2080,6 @@ EVRInputError BaseInput::GetSkeletalBoneData(VRActionHandle_t actionHandle, EVRS
 
 	dev->SetHandTrackingValid(true);
 
-	// For now, just return with non-active data
 	return vr::VRInputError_None;
 }
 EVRInputError BaseInput::GetSkeletalSummaryData(VRActionHandle_t actionHandle, EVRSummaryType eSummaryType, VRSkeletalSummaryData_t* pSkeletalSummaryData)
@@ -2082,6 +2091,9 @@ EVRInputError BaseInput::GetSkeletalSummaryData(VRActionHandle_t actionHandle, E
 		return VRInputError_InvalidParam;
 	ZeroMemory(pSkeletalSummaryData, sizeof(VRSkeletalSummaryData_t));
 
+	if (!IsSkeletonHand(action->skeletalHand))
+		return VRInputError_InvalidSkeleton;
+
 	if (xr_gbl && xr_gbl->handTrackingProperties.supportsHandTracking) {
 		return getRealSkeletalSummary(action->skeletalHand, pSkeletalSummaryData);
 	}
@@ -2092,7 +2104,7 @@ EVRInputError BaseInput::GetSkeletalSummaryData(VRActionHandle_t actionHandle, E
 EVRInputError BaseInput::getRealSkeletalSummary(ITrackedDevice::TrackedDeviceType hand, VRSkeletalSummaryData_t* pSkeletalSummaryData)
 {
 	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
-	if (!xr_gbl)
+	if (!xr_gbl || !IsSkeletonHand(hand) || handTrackers[hand] == XR_NULL_HANDLE)
 		return getEstimatedSkeletalSummary(hand, pSkeletalSummaryData);
 	XrHandJointsLocateInfoEXT locateInfo = { XR_TYPE_HAND_JOINTS_LOCATE_INFO_EXT };
 	locateInfo.baseSpace = xr_gbl->floorSpace;
