@@ -590,7 +590,7 @@ public:
 	{
 		if (!std::isfinite(seconds) || seconds <= 0)
 			return XR_MIN_HAPTIC_DURATION;
-		return (XrDuration)(std::min((double)seconds, 3600.0) * 1e9);
+		return (XrDuration)((std::min)((double)seconds, 3600.0) * 1e9);
 	}
 
 	/** A haptic pulse's amplitude: the game's, scaled by its binding, kept within OpenXR's 0 to 1. */
