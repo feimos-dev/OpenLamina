@@ -333,7 +333,7 @@ void BaseSystem::GetDeviceToAbsoluteTrackingPose(ETrackingUniverseOrigin toOrigi
 HmdMatrix34_t BaseSystem::GetSeatedZeroPoseToStandingAbsoluteTrackingPose()
 {
 	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
-	glm::mat4 m;
+	glm::mat4 m = glm::identity<glm::mat4>();
 	XrSpaceLocation location{ XR_TYPE_SPACE_LOCATION, nullptr, 0, {} };
 	if (!xr_gbl)
 		return G2S_m34(glm::identity<glm::mat4>());
@@ -350,8 +350,8 @@ HmdMatrix34_t BaseSystem::GetSeatedZeroPoseToStandingAbsoluteTrackingPose()
 
 HmdMatrix34_t BaseSystem::GetRawZeroPoseToStandingAbsoluteTrackingPose()
 {
-	// These *are* the same coordinate systems? They were in LibOVR, let's assume they're the same here too
-	return G2S_m34(glm::mat4());
+	// The raw space is mapped to the stage space, so the two coincide
+	return G2S_m34(glm::identity<glm::mat4>());
 }
 
 uint32_t BaseSystem::GetSortedTrackedDeviceIndicesOfClass(ETrackedDeviceClass targetClass,

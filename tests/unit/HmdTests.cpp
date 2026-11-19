@@ -344,3 +344,13 @@ TEST_CASE("Without views the projection is a finite 90 degree one")
 	CHECK(t == doctest::Approx(-1.0f));
 	CHECK(b == doctest::Approx(1.0f));
 }
+
+TEST_CASE("The zero poses are identity when nothing better is known")
+{
+	BaseSystem system;
+	for (const vr::HmdMatrix34_t& m : { system.GetRawZeroPoseToStandingAbsoluteTrackingPose(), system.GetSeatedZeroPoseToStandingAbsoluteTrackingPose() }) {
+		for (int r = 0; r < 3; r++)
+			for (int c = 0; c < 4; c++)
+				CHECK(m.m[r][c] == (r == c ? 1.0f : 0.0f));
+	}
+}
