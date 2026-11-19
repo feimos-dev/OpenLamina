@@ -18,15 +18,20 @@ static fs::path FromUtf8(const char* s)
 	return fs::path(std::u8string(str.begin(), str.end()));
 }
 
-// A resource name is relative and stays inside the resources folder
-static bool Contained(const fs::path& name)
+// A resource name is relative and stays inside the resources folder (an empty one names the folder itself)
+static bool Inside(const fs::path& name)
 {
-	if (name.empty() || name.is_absolute() || name.has_root_name())
+	if (name.is_absolute() || name.has_root_name() || name.has_root_directory())
 		return false;
 	for (const fs::path& part : name)
 		if (part == "..")
 			return false;
 	return true;
+}
+
+static bool Contained(const fs::path& name)
+{
+	return !name.empty() && Inside(name);
 }
 
 uint32_t BaseResources::LoadSharedResource(const char* pchResourceName, char* pchBuffer, uint32_t unBufferLen)
@@ -60,8 +65,12 @@ try {
 	std::optional<fs::path> steamvr = FindSteamVRInstall();
 	if (!steamvr)
 		return 0;
+	const fs::path dir = FromUtf8(pchResourceTypeDirectory);
+	const fs::path name = FromUtf8(pchResourceName);
+	if (!Inside(dir) || !Inside(name))
+		return 0;
 	// As SteamVR: the path the resource would have, whether or not it's there
-	fs::path full = *steamvr / "resources" / FromUtf8(pchResourceTypeDirectory) / FromUtf8(pchResourceName);
+	fs::path full = *steamvr / "resources" / dir / name;
 	std::u8string u8 = full.make_preferred().u8string();
 	std::string path(u8.begin(), u8.end());
 	uint32_t needed = (uint32_t)path.size() + 1;
