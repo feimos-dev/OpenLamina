@@ -182,10 +182,10 @@ TEST_CASE("The_interop_extension_list_fills_the_buffer_it_fits_in")
 	CHECK(BaseCompositor::ExtensionListSize(list, big.data(), (uint32_t)big.size()) == needed);
 	CHECK(std::string(big.data()) == list);
 	// Too small a buffer: what fits, ended, and the size to ask again with
-	char small[10];
-	CHECK(BaseCompositor::ExtensionListSize(list, small, sizeof(small)) == needed);
-	CHECK(strlen(small) == 9);
-	CHECK(strncmp(small, list, 9) == 0);
+	char tooShort[10];
+	CHECK(BaseCompositor::ExtensionListSize(list, tooShort, sizeof(tooShort)) == needed);
+	CHECK(strlen(tooShort) == 9);
+	CHECK(strncmp(tooShort, list, 9) == 0);
 	CHECK(std::string(BaseCompositor::InteropVulkanExtensions(true)).find("VK_KHR_external_memory_win32") != std::string::npos);
 }
 
