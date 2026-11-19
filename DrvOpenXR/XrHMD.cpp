@@ -21,8 +21,10 @@
 #include <atomic>
 #include <chrono>
 #include <cmath>
+#include <cstring>
 #include <thread>
 #include <mutex>
+#include <vector>
 
 // The session globals are briefly null while another thread restarts the session: wait up to 2 s for them. False if
 // there's still no session (it was lost, or a restart failed), so the caller answers without one.
@@ -313,47 +315,54 @@ vr::HiddenAreaMesh_t XrHMD::GetHiddenAreaMesh(vr::EVREye eEye, vr::EHiddenAreaMe
 	}
 
 	// Allocate memory for the mesh
-	mask.vertexCapacityInput = mask.vertexCountOutput;
-	mask.indexCapacityInput = mask.indexCountOutput;
-	mask.indices = new uint32_t[mask.indexCapacityInput];
-	mask.vertices = new XrVector2f[mask.vertexCapacityInput];
+	std::vector<uint32_t> indices(mask.indexCountOutput);
+	std::vector<XrVector2f> vertices(mask.vertexCountOutput);
+	mask.vertexCapacityInput = (uint32_t)vertices.size();
+	mask.indexCapacityInput = (uint32_t)indices.size();
+	mask.indices = indices.data();
+	mask.vertices = vertices.data();
 
 	// Now actually request the mask data
-	if (XR_FAILED(xr_ext->xrGetVisibilityMaskKHR(xr_session.get(), XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, eye, xrType, &mask))) {
-		delete[] mask.indices;
-		delete[] mask.vertices;
+	if (XR_FAILED(xr_ext->xrGetVisibilityMaskKHR(xr_session.get(), XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, eye, xrType, &mask))
+	    || mask.indexCountOutput > indices.size() || mask.vertexCountOutput > vertices.size()) {
 		return HiddenAreaMesh(nullptr, 0);
 	}
 
 	// Convert the data into something usable by SteamVR - it doesn't use indices
-	// FIXME memory allocation handling
-	auto* arr = new vr::HmdVector2_t[mask.indexCountOutput];
+	std::vector<vr::HmdVector2_t> mesh(mask.indexCountOutput);
 
 	float ftop, fbottom, fleft, fright;
 	GetProjectionRaw(eEye, &fleft, &fright, &ftop, &fbottom);
 
 	for (uint32_t i = 0; i < mask.indexCountOutput; i++) {
-		int index = mask.indices[i];
-		XrVector2f v = mask.vertices[index];
+		if (indices[i] >= mask.vertexCountOutput)
+			return HiddenAreaMesh(nullptr, 0);
+		XrVector2f v = vertices[indices[i]];
 
 		if (oovr_global_configuration.EnableHiddenMeshFix()) {
 			if (fabs(v.y - ftop) > 0.001 && fabs(v.y - fbottom) > 0.001) {
-				arr[i] = vr::HmdVector2_t{ (v.x - fleft) / (fright - fleft), (v.y * oovr_global_configuration.HiddenMeshVerticalScale() - ftop) / (fbottom - ftop) };
+				mesh[i] = vr::HmdVector2_t{ (v.x - fleft) / (fright - fleft), (v.y * oovr_global_configuration.HiddenMeshVerticalScale() - ftop) / (fbottom - ftop) };
 			} else {
-				arr[i] = vr::HmdVector2_t{ (v.x - fleft) / (fright - fleft), (v.y - ftop) / (fbottom - ftop) };
+				mesh[i] = vr::HmdVector2_t{ (v.x - fleft) / (fright - fleft), (v.y - ftop) / (fbottom - ftop) };
 			}
 		} else {
-			arr[i] = vr::HmdVector2_t{ v.x, v.y };
+			mesh[i] = vr::HmdVector2_t{ v.x, v.y };
 		}
 	}
 
 	uint32_t count = type == vr::k_eHiddenAreaMesh_LineLoop ? mask.indexCountOutput : mask.indexCountOutput / 3;
 
-	// Delete the buffers
-	delete[] mask.indices;
-	delete[] mask.vertices;
-
-	return HiddenAreaMesh(arr, count);
+	// The caller reads the vertices after this returns, with no call to say it's done: the HMD keeps each eye's and
+	// type's mesh, and a mesh that comes out the same as the last one stays where it is. The one before is kept too,
+	// for a caller still reading it when the mesh changes.
+	std::lock_guard<std::mutex> lock(hiddenMeshMutex);
+	HiddenMesh& kept = hiddenMeshes[eye][(int)type];
+	bool same = kept.current.size() == mesh.size() && std::memcmp(kept.current.data(), mesh.data(), mesh.size() * sizeof(vr::HmdVector2_t)) == 0;
+	if (!same) {
+		kept.previous = std::move(kept.current);
+		kept.current = std::move(mesh);
+	}
+	return HiddenAreaMesh(kept.current.data(), count);
 }
 
 void XrHMD::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDevicePose_t* pose, ETrackingStateType trackingState)

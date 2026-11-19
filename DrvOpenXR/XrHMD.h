@@ -12,6 +12,7 @@
 #include <cstring>
 #include <mutex>
 #include <optional>
+#include <vector>
 
 // This warning tells us that a method (GetPose) was overridden by one of our parent classes
 // Totally fine, that's the reason why we include XrTrackedDevice in the first place
@@ -23,6 +24,13 @@
 class XrHMD : public XrTrackedDevice, public IHMD {
 	const InteractionProfile* profile = nullptr;
 	std::shared_mutex profile_mutex;
+
+	// The hidden area meshes handed out, one per eye and type (the eye and the mesh type are both below 3)
+	struct HiddenMesh {
+		std::vector<vr::HmdVector2_t> current, previous;
+	};
+	std::mutex hiddenMeshMutex;
+	HiddenMesh hiddenMeshes[2][3];
 
 public:
 	/** What GetHiddenAreaMesh answers: the vertices and their triangle (or line loop) count, with the struct's padding
