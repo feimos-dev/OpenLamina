@@ -831,6 +831,15 @@ private:
 	// See GetSyncSerial
 	uint64_t syncSerial = 0;
 
+	// What each hand's legacy controller state was when it last changed, and its packet number then
+	struct LegacyPacket {
+		vr::VRControllerState_t last = {};
+		uint32_t packet = 0;
+		bool valid = false;
+	};
+	std::mutex legacyPacketLock;
+	LegacyPacket legacyPackets[2];
+
 	// Set under the exclusive session lock; read without it on the way in to LoadEmptyManifestIfRequired
 	std::atomic<bool> hasLoadedActions = false;
 	std::string loadedActionsPath;

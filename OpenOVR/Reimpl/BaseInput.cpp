@@ -2804,26 +2804,50 @@ bool BaseInput::checkRestrictToDevice(vr::VRInputValueHandle_t restrictToDevice,
 
 bool BaseInput::GetLegacyControllerState(vr::TrackedDeviceIndex_t controllerDeviceIndex, vr::VRControllerState_t* state)
 {
-	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
+	if (!state)
+		return false;
 	*state = {};
-
-	// FIXME implement packetNum
-	static int i = 0;
-	state->unPacketNum = i++; // Not exactly thread safe
-
-	// TODO for performance reasons, is it worth grabbing the results once and reusing them until xrSyncActions is called?
 
 	int hand = DeviceIndexToHandId(controllerDeviceIndex);
 	if (hand == -1)
 		return false;
 
-	// SteamVR's legacy binding file for the controller
-	if (rawInputsSet != XR_NULL_HANDLE) {
-		std::shared_ptr<ITrackedDevice> dev = BackendManager::Instance().GetDevice(controllerDeviceIndex);
-		std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
-		if (const BindingEvaluator* legacy = LegacyEvaluatorFor(dev ? dev->GetInteractionProfile() : nullptr))
-			ApplyLegacyOutputs(legacy->Outputs(), hand == 0 ? "left" : "right", *state);
+	bool axis3Free = true, axis4Free = true;
+	{
+		auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
+
+		// SteamVR's legacy binding file for the controller
+		if (rawInputsSet != XR_NULL_HANDLE) {
+			std::shared_ptr<ITrackedDevice> dev = BackendManager::Instance().GetDevice(controllerDeviceIndex);
+			std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
+			const InteractionProfile* profile = dev ? dev->GetInteractionProfile() : nullptr;
+			if (const BindingEvaluator* legacy = LegacyEvaluatorFor(profile)) {
+				const std::string handName = hand == 0 ? "left" : "right";
+				ApplyLegacyOutputs(legacy->Outputs(), handName, *state);
+				if (const BindingFile* file = LoadLegacyBindings(profile->GetOpenVRName().value_or("generic"))) {
+					axis3Free = LegacyAxisType(*file, handName, 3) == vr::k_eControllerAxis_None;
+					axis4Free = LegacyAxisType(*file, handName, 4) == vr::k_eControllerAxis_None;
+				}
+			}
+		}
 	}
+
+	// SteamVR writes the finger curls to the axes after the grip's
+	if (xr_gbl && xr_gbl->handTrackingProperties.supportsHandTracking && (axis3Free || axis4Free)) {
+		VRSkeletalSummaryData_t skeletonData{};
+		if (getRealSkeletalSummary((ITrackedDevice::TrackedDeviceType)hand, &skeletonData) == VRInputError_None)
+			ApplyLegacyFingerCurls(skeletonData.flFingerCurl, axis3Free, axis4Free, *state);
+	}
+
+	// The packet number moves on when the state does
+	std::lock_guard<std::mutex> packetGuard(legacyPacketLock);
+	LegacyPacket& last = legacyPackets[hand];
+	if (!last.valid || LegacyStateChanged(last.last, *state)) {
+		last.packet++;
+		last.last = *state;
+		last.valid = true;
+	}
+	state->unPacketNum = last.packet;
 	return true;
 }
 
@@ -2858,7 +2882,7 @@ void BaseInput::TriggerLegacyHapticPulse(vr::TrackedDeviceIndex_t controllerDevi
 	}
 	if (targets.empty())
 		return;
-	vibration.amplitude = std::clamp(targets.front().amplitudeScale, 0.0f, 1.0f);
+	vibration.amplitude = std::clamp(targets.front().amplitudeScale * LegacyHapticStrength(durationNanos / 1000), 0.0f, 1.0f);
 
 	OC_XR_LOG(xrApplyHapticFeedback(xr_session.get(), &info, (XrHapticBaseHeader*)&vibration));
 }
