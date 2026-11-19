@@ -11,6 +11,14 @@
 #include <set>
 #include <string>
 
+int RetryDelayAfterFailure(bool transient, bool sameTextureAsLastFailure, int& failuresInARow)
+{
+	if (transient)
+		return 0;
+	failuresInARow = sameTextureAsLastFailure ? (std::min)(failuresInARow + 1, 8) : 1;
+	return (std::min)((1 << (failuresInARow - 1)) - 1, 90);
+}
+
 Compositor::~Compositor()
 {
 	if (chain) {
@@ -24,7 +32,10 @@ void Compositor::Invoke(const vr::Texture_t* texture, const vr::VRTextureBounds_
 	if (bounds && bounds->vMin == 0.0f && bounds->vMax == 1.0f && bounds->uMin == 0.0f && bounds->uMax == 1.0f)
 		bounds = nullptr;
 	// After a failure the next tries come further apart (1, 3, 7, ... frames, at most 90), so a swapchain that can't be
-	// made isn't remade (and logged) at every Submit; one that fails once is tried again at the next
+	// made isn't remade (and logged) at every Submit; one that fails once is tried again at the next. Another texture
+	// than the one that failed is tried at once.
+	if (retryDelay > 0 && texture->handle != lastFailedHandle)
+		retryDelay = 0;
 	if (retryDelay > 0) {
 		retryDelay--;
 		lastResult = lastFailure;
@@ -34,11 +45,12 @@ void Compositor::Invoke(const vr::Texture_t* texture, const vr::VRTextureBounds_
 	lastResult = XR_SUCCESS;
 	submitSlice = SubmitArraySlice::Current();
 	copiedArea = {};
+	transientFailure = false;
 	CopyToSwapchain(texture, bounds, eye, submitFlags);
 	if (XR_FAILED(lastResult)) {
 		lastFailure = lastResult;
-		failuresInARow = std::min(failuresInARow + 1, 8);
-		retryDelay = std::min((1 << (failuresInARow - 1)) - 1, 90);
+		retryDelay = RetryDelayAfterFailure(transientFailure, texture->handle == lastFailedHandle, failuresInARow);
+		lastFailedHandle = texture->handle;
 	} else {
 		failuresInARow = 0;
 	}
@@ -93,6 +105,7 @@ bool Compositor::AcquireAndWait(uint32_t imageCount, uint32_t& index, int64_t ti
 	if (res == XR_TIMEOUT_EXPIRED) {
 		// Still the compositor's: this frame's image is skipped, and the next Invoke waits for it again
 		SwapchainCallFailed(res, "xrWaitSwapchainImage (timed out)");
+		transientFailure = true;
 		return false;
 	}
 	if (SwapchainCallFailed(res, "xrWaitSwapchainImage")) {

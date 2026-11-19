@@ -126,3 +126,47 @@ TEST_CASE("The_raw_tracking_universe_is_answered_as_set")
 	// The space moved to seated by other means: seated
 	CHECK(BaseCompositor::UniverseAnswer(vr::TrackingUniverseRawAndUncalibrated, XR_REFERENCE_SPACE_TYPE_LOCAL) == vr::TrackingUniverseSeated);
 }
+
+TEST_CASE("A_failed_texture_is_retried_at_once_unless_it_keeps_failing")
+{
+	int failures = 0;
+	// The first failure of a texture: tried again at the next Submit; then further apart
+	CHECK(RetryDelayAfterFailure(false, false, failures) == 0);
+	CHECK(RetryDelayAfterFailure(false, true, failures) == 1);
+	CHECK(RetryDelayAfterFailure(false, true, failures) == 3);
+	// A wait that timed out is never backed off, and doesn't count
+	CHECK(RetryDelayAfterFailure(true, true, failures) == 0);
+	CHECK(RetryDelayAfterFailure(false, true, failures) == 7);
+	// Another texture starts over
+	CHECK(RetryDelayAfterFailure(false, false, failures) == 0);
+	for (int i = 0; i < 20; i++)
+		RetryDelayAfterFailure(false, true, failures);
+	CHECK(RetryDelayAfterFailure(false, true, failures) == 90);
+}
+
+#if defined(SUPPORT_VK)
+#include "tmp_gfx/TemporaryVk.h"
+
+TEST_CASE("The_temporary_Vulkan_device_uses_a_queue_family_that_can_draw")
+{
+	VkQueueFamilyProperties families[3] = {};
+	families[0].queueFlags = VK_QUEUE_TRANSFER_BIT;
+	families[0].queueCount = 1;
+	families[1].queueFlags = VK_QUEUE_COMPUTE_BIT;
+	families[1].queueCount = 2;
+	families[2].queueFlags = VK_QUEUE_GRAPHICS_BIT | VK_QUEUE_TRANSFER_BIT;
+	families[2].queueCount = 1;
+	CHECK(PickGraphicsQueueFamily(families, 3) == 2);
+	CHECK(PickGraphicsQueueFamily(families, 2) == -1);
+	families[2].queueCount = 0;
+	CHECK(PickGraphicsQueueFamily(families, 3) == -1);
+}
+
+TEST_CASE("A_Vulkan_loader_older_than_the_runtime_needs_is_refused")
+{
+	CHECK(VulkanVersionMeetsXr(VK_MAKE_VERSION(1, 1, 0), XR_MAKE_VERSION(1, 0, 0)));
+	CHECK(VulkanVersionMeetsXr(VK_MAKE_VERSION(1, 3, 250), XR_MAKE_VERSION(1, 1, 0)));
+	CHECK_FALSE(VulkanVersionMeetsXr(VK_MAKE_VERSION(1, 0, 65), XR_MAKE_VERSION(1, 1, 0)));
+	CHECK(VulkanVersionMeetsXr(VK_MAKE_VERSION(2, 0, 0), XR_MAKE_VERSION(1, 3, 0)));
+}
+#endif
