@@ -152,10 +152,17 @@ bool BaseChaperone::GetMinMaxPoints(vr::HmdVector3_t& minPoint, vr::HmdVector3_t
 
 void BaseChaperone::ResetZeroPose(vr::ETrackingUniverseOrigin eTrackingUniverseOrigin)
 {
-	if (eTrackingUniverseOrigin != TrackingUniverseSeated) {
-		OOVR_LOG_ONCE("No implementation");
+	// The standing origin is the runtime's stage: moved under the head where the runtime allows it (Monado through
+	// libmonado), which every program follows
+	if (eTrackingUniverseOrigin == TrackingUniverseStanding) {
+		TrackedDevicePose_t head{};
+		if (std::shared_ptr<ITrackedDevice> hmd = BackendManager::Instance().GetDevice(vr::k_unTrackedDeviceIndex_Hmd))
+			hmd->GetPose(vr::TrackingUniverseStanding, &head, ETrackingStateType::TrackingStateType_Rendering);
+		if (head.bPoseIsValid && BaseChaperoneSetup::RecentreStage(head.mDeviceToAbsoluteTracking))
+			return;
 	}
 
-	// TODO do we have to do anything about the tracking origin?
-	GetUnsafeBaseSystem()->ResetSeatedZeroPose();
+	// Elsewhere the seated origin is all there is to reset
+	if (BaseSystem* system = GetUnsafeBaseSystem())
+		system->ResetSeatedZeroPose();
 }
