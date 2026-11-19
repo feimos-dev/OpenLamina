@@ -318,23 +318,14 @@ int VRKeyboard::KeySize() const
 
 int VRKeyboard::KeysTop() const
 {
-	// Below the text box, which a minimal keyboard hasn't
-	return mode == Mode::Minimal ? kPadding : kPadding + Pitch();
+	// Below the text box and the arrow keys' row, which a minimal keyboard has only with arrow keys
+	return mode == Mode::Minimal && !ShowsArrows() ? kPadding : kPadding + Pitch();
 }
 
 int VRKeyboard::CanvasHeight() const
 {
 	const float rows = layout ? std::max(1.0f, layout->GetHeight()) : 5.0f;
-	return KeysTop() + (int)(Pitch() * rows) + (ShowsArrows() ? Pitch() : 0);
-}
-
-VRKeyboard::Rect VRKeyboard::ArrowRect(int arrow) const
-{
-	// A row under the keys, at the right
-	const float rows = layout ? std::max(1.0f, layout->GetHeight()) : 5.0f;
-	const int y = KeysTop() + (int)(Pitch() * rows);
-	const int width = KeySize() * 2;
-	return Rect{ kWidth - kPadding - (4 - arrow) * (width + kPadding), y, width, KeySize() };
+	return KeysTop() + (int)(Pitch() * rows);
 }
 
 VRKeyboard::Rect VRKeyboard::KeyRect(const KeyboardLayout::Key& key) const
@@ -351,7 +342,16 @@ VRKeyboard::Rect VRKeyboard::KeyRect(const KeyboardLayout::Key& key) const
 
 VRKeyboard::Rect VRKeyboard::TextRect() const
 {
-	return Rect{ kPadding, kPadding, kWidth - 3 * kPadding - KeySize(), KeySize() };
+	// Between the left edge and the arrow keys, which are beside the close button
+	const int arrows = ShowsArrows() ? 4 * (KeySize() + kPadding) : 0;
+	return Rect{ kPadding, kPadding, kWidth - 3 * kPadding - KeySize() - arrows, KeySize() };
+}
+
+VRKeyboard::Rect VRKeyboard::ArrowRect(int arrow) const
+{
+	// The top row, left of the close button (at the right edge on a minimal keyboard, which has none)
+	const int right = mode == Mode::Minimal ? kWidth - kPadding : CloseRect().x - kPadding;
+	return Rect{ right - (4 - arrow) * (KeySize() + kPadding) + kPadding, kPadding, KeySize(), KeySize() };
 }
 
 VRKeyboard::Rect VRKeyboard::CloseRect() const

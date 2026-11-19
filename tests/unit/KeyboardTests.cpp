@@ -248,3 +248,13 @@ TEST_CASE("Arrow_keys_add_a_row_and_a_minimal_keyboard_shows_them_only_when_aske
 	VRKeyboard arrows(VRKeyboard::Mode::Minimal, false, VRKeyboard::kFlagMinimal | VRKeyboard::kFlagShowArrowKeys, "", 0, 0, Us());
 	CHECK(arrows.CanvasHeight() > plain.CanvasHeight());
 }
+
+TEST_CASE("Keyboard_keeps_its_size_so_its_keys_stay_where_they_were")
+{
+	REQUIRE(Us());
+	VRKeyboard kb(VRKeyboard::Mode::Normal, false, 0, "", 0, 0, Us());
+	CHECK(kb.CanvasWidth() == 1000);
+	CHECK(kb.CanvasHeight() == 404);
+	VRKeyboard minimal(VRKeyboard::Mode::Minimal, false, VRKeyboard::kFlagMinimal, "", 0, 0, Us());
+	CHECK(minimal.CanvasHeight() < 404);
+}
