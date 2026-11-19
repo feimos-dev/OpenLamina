@@ -20,6 +20,8 @@
 #include <string>
 #include <vector>
 
+class BaseApplications;
+
 class Dashboard {
 public:
 	// How its button opens it. ini dashboardButton=system|system_long|menu|menu_long|off: the button is a controller's
@@ -91,3 +93,7 @@ using ProcessAlive = std::function<bool(uint32_t pid, uint64_t start)>;
 bool DashboardDocOpen(const Json::Value& doc, const ProcessAlive& alive);
 // A request a scene app adopts: no scene app named, from a program that's still running, under 2 s old at nowWall
 bool DashboardDocRequest(const Json::Value& doc, double nowWall, const ProcessAlive& alive);
+
+// Starts the installed dashboard overlay programs whose auto-launch flag is set (those already running are left as
+// they are). Returns the app keys it tried to start.
+std::vector<std::string> StartAutolaunchOverlays(BaseApplications& apps);
