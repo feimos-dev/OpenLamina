@@ -331,12 +331,15 @@ std::optional<float> XrHMD::ViewsIpd()
 	return cachedViews.views[vr::Eye_Right].pose.position.x - cachedViews.views[vr::Eye_Left].pose.position.x;
 }
 
+// The average adult IPD, 64 mm, until the runtime's views say otherwise
+static const float kDefaultIpd = 0.064f;
+
 float XrHMD::GetIPD()
 {
 	if (!xr_gbl)
-		return 0.0064f;
+		return kDefaultIpd;
 
-	static float ipd = 0.0064;
+	static float ipd = kDefaultIpd;
 
 	// Without both views the last IPD stays
 	if (std::optional<float> views = ViewsIpd())

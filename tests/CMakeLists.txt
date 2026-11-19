@@ -124,6 +124,7 @@ add_executable(oc_unit_tests
 	unit/BoundsTests.cpp
 	unit/KeyboardTests.cpp
 	unit/RenderModelTests.cpp
+	unit/HmdTests.cpp
 	${OC_TEST_RESOURCES}
 )
 target_include_directories(oc_unit_tests PRIVATE
