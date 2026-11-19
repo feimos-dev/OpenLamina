@@ -316,6 +316,13 @@ void XrHMD::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDevicePose_t*
 		}
 		return;
 	}
+	if (!pose)
+		return;
+
+	// What stays when the runtime doesn't track the head: connected, but out of range
+	*pose = {};
+	pose->bDeviceIsConnected = true;
+	pose->eTrackingResult = vr::TrackingResult_Running_OutOfRange;
 	xr_utils::PoseFromSpace(pose, xr_gbl->viewSpace, origin);
 }
 
