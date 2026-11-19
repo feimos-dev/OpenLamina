@@ -425,8 +425,8 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 			appGraphicsUnusable = true;
 			return false;
 #else
-			if (!((D3D12TextureData_t*)tex->handle)->m_pResource) {
-				OOVR_LOG_ONCE("D3D12 texture data without a resource");
+			if (!((D3D12TextureData_t*)tex->handle)->m_pResource || !((D3D12TextureData_t*)tex->handle)->m_pCommandQueue) {
+				OOVR_LOG_ONCE("D3D12 texture data without a resource or a command queue");
 				return false;
 			}
 			{
@@ -604,11 +604,6 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 			if (XR_FAILED(DrvOpenXR::SetupSession()))
 				return giveUp("the OpenXR runtime refused a session on the game's D3D12 device");
 
-#ifdef _DEBUG
-			ComPtr<ID3D12Debug> debugController;
-			D3D12GetDebugInterface(IID_PPV_ARGS(&debugController));
-			debugController->EnableDebugLayer();
-#endif
 			// The ComPtr releases the device: no explicit Release here
 			break;
 		}

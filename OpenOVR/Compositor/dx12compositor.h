@@ -64,6 +64,6 @@ private:
 	ID3D12Resource* Resolved(const D3D12_RESOURCE_DESC& of, DXGI_FORMAT format);
 	// Waits for every image's last copy
 	void WaitForAllFrames();
-	// A command allocator, list and fence for each of count swapchain images
-	void MakeFrameLists(uint32_t count);
+	// A command allocator, list and fence for each of count swapchain images: false (with none left) if they can't be made
+	bool MakeFrameLists(uint32_t count);
 };
