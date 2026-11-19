@@ -52,6 +52,13 @@ public:
 	// The render scale GetRecommendedRenderTargetSize last answered with, 0 before it has
 	static float AnsweredRenderScale();
 
+	/** Whether a field of view can be a view's: finite angles short of a right angle, and some width and height */
+	static bool IsValidFov(const XrFovf& fov);
+
+	/** The off-axis projection (row-major, as OpenVR gives it) for a view's tangents: depth from -1 to 1 for the
+	 * near to the far plane, or from 0 to 1 for DirectX */
+	static vr::HmdMatrix44_t ProjectionFromTangents(float tanL, float tanR, float tanU, float tanD, float fNearZ, float fFarZ, EGraphicsAPIConvention convention);
+
 	/** The projection matrix for the specified eye */
 	vr::HmdMatrix44_t GetProjectionMatrix(vr::EVREye eEye, float fNearZ, float fFarZ, EGraphicsAPIConvention convention) override;
 

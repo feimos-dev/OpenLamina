@@ -79,60 +79,74 @@ void XrHMD::GetRecommendedRenderTargetSize(uint32_t* width, uint32_t* height)
 
 // from BaseSystem
 
-vr::HmdMatrix44_t XrHMD::GetProjectionMatrix(vr::EVREye eEye, float fNearZ, float fFarZ, EGraphicsAPIConvention convention)
+bool XrHMD::IsValidFov(const XrFovf& fov)
 {
-	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
-	if (eEye < 0 || (int)eEye >= 2)
-		eEye = vr::Eye_Left;
-
-	if (!xr_gbl)
-		return O2S_m4(glm::mat4(1.0f));
-	const XruCachedViews& cachedViews = xr_gbl->GetCachedViews(xr_gbl->seatedSpace);
-	const std::array<XrView, XruEyeCount>& views = cachedViews.views;
-	if (cachedViews.viewCount != XruEyeCount) {
-		// No views from the runtime (yet): an identity projection rather than an end
-		OOVR_LOG_ONCE("GetProjectionMatrix: the OpenXR runtime gave no views, answering identity");
-		return O2S_m4(glm::mat4(1.0f));
+	// Each angle short of a right angle, whose tangent is a number, and a view that has some size
+	const float limit = 1.5707f;
+	for (float angle : { fov.angleLeft, fov.angleRight, fov.angleUp, fov.angleDown }) {
+		if (!std::isfinite(angle) || std::fabs(angle) >= limit)
+			return false;
 	}
+	return fov.angleLeft < fov.angleRight && fov.angleDown < fov.angleUp;
+}
 
-	// Build the projection matrix
-	// It looks like there aren't any functions in glm that can take different l/r/t/b FOV values, so do it ourselves
-	// Also calculate the projection matrix as row major (so one column determines one value when multiplied with a
-	// vector) and then transpose it back to being a column-major vector.
-	const XrFovf& fov = views[eEye].fov;
+// The eye's field of view from the runtime's views. Where those aren't valid (before the first frame, a runtime that
+// reports zeros early on) the last valid one stays, and before any a 90 degree view.
+static XrFovf CurrentFov(vr::EVREye eye)
+{
+	static std::mutex fovMutex;
+	const float quarterTurn = 0.7853982f; // 45 degrees, whose tangent is 1
+	static XrFovf lastValid[XruEyeCount] = { { -quarterTurn, quarterTurn, quarterTurn, -quarterTurn },
+		{ -quarterTurn, quarterTurn, quarterTurn, -quarterTurn } };
 
-	float tanL = tanf(fov.angleLeft);
-	float tanR = tanf(fov.angleRight);
-	float tanU = tanf(fov.angleUp);
-	float tanD = tanf(fov.angleDown);
+	std::lock_guard<std::mutex> lock(fovMutex);
+	if (xr_gbl) {
+		const XruCachedViews cachedViews = xr_gbl->GetCachedViews(xr_gbl->seatedSpace);
+		if (cachedViews.viewCount == XruEyeCount) {
+			for (int i = 0; i < XruEyeCount; i++) {
+				if (XrHMD::IsValidFov(cachedViews.views[i].fov))
+					lastValid[i] = cachedViews.views[i].fov;
+			}
+		}
+	}
+	return lastValid[eye];
+}
+
+vr::HmdMatrix44_t XrHMD::ProjectionFromTangents(float tanL, float tanR, float tanU, float tanD, float fNearZ, float fFarZ, EGraphicsAPIConvention convention)
+{
 	float horizontalFov = -tanL + tanR;
 	float verticalFov = tanU - tanD;
 
 	// To make building these projections easier, we build them as row-major matrices then (for graphics
 	// APIs that use column-major matrices) transpose them at the end if needed.
-
-	// TODO verify!
+	// It looks like there aren't any functions in glm that can take different l/r/t/b FOV values, so do it ourselves
 	glm::mat4 m;
 	if (convention == API_DirectX) {
-		// https://docs.microsoft.com/en-us/windows/win32/dxtecharts/the-direct3d-transformation-pipeline
-		// https://www.scratchapixel.com/lessons/3d-basic-rendering/perspective-and-orthographic-projection-matrix/building-basic-perspective-projection-matrix
-		// Also copied from glm::perspectiveLH_ZO
+		// Depth from 0 at the near plane to 1 at the far plane, like glm::perspectiveLH_ZO
 		m[0] = glm::vec4(2 / horizontalFov, 0, (tanL + tanR) / horizontalFov, 0);
 		m[1] = glm::vec4(0, 2 / verticalFov, (tanU + tanD) / verticalFov, 0);
 		m[2] = glm::vec4(0, 0, -fFarZ / (fFarZ - fNearZ), -(fFarZ * fNearZ) / (fFarZ - fNearZ));
 		m[3] = glm::vec4(0, 0, -1, 0);
-
-		// Don't transpose, since D3D uses row-major matricies anyway.
 	} else {
-		// The same off-axis frustum as above (OpenVR's matrices are row-major for every API), with OpenGL's
-		// -1..1 depth range: glFrustum with l, r, t, b = near * tan(angle)
+		// The same off-axis frustum, with OpenGL's -1..1 depth range: glFrustum with l, r, t, b = near * tan(angle)
 		m[0] = glm::vec4(2 / horizontalFov, 0, (tanL + tanR) / horizontalFov, 0); // First row, determines X
 		m[1] = glm::vec4(0, 2 / verticalFov, (tanU + tanD) / verticalFov, 0); // Determines Y
 		m[2] = glm::vec4(0, 0, -(fNearZ + fFarZ) / (fFarZ - fNearZ), -(2 * fNearZ * fFarZ) / (fFarZ - fNearZ)); // Determines Z
 		m[3] = glm::vec4(0, 0, -1, 0); // Determines W
 	}
 
+	// OpenVR's matrices are row-major for every API
 	return O2S_m4(m);
+}
+
+vr::HmdMatrix44_t XrHMD::GetProjectionMatrix(vr::EVREye eEye, float fNearZ, float fFarZ, EGraphicsAPIConvention convention)
+{
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
+	if (eEye < 0 || (int)eEye >= 2)
+		eEye = vr::Eye_Left;
+
+	const XrFovf fov = CurrentFov(eEye);
+	return ProjectionFromTangents(tanf(fov.angleLeft), tanf(fov.angleRight), tanf(fov.angleUp), tanf(fov.angleDown), fNearZ, fFarZ, convention);
 }
 
 void XrHMD::GetProjectionRaw(vr::EVREye eEye, float* pfLeft, float* pfRight, float* pfTop, float* pfBottom)
@@ -142,25 +156,7 @@ void XrHMD::GetProjectionRaw(vr::EVREye eEye, float* pfLeft, float* pfRight, flo
 	if (eEye < 0 || (int)eEye >= 2)
 		eEye = vr::Eye_Left;
 
-	// TODO deduplicate with GetProjectionMatrix
-	static const XruCachedViews noViews{};
-	const XruCachedViews& cachedViews = xr_gbl ? xr_gbl->GetCachedViews(xr_gbl->seatedSpace) : noViews;
-	const std::array<XrView, XruEyeCount>& views = cachedViews.views;
-	if (cachedViews.viewCount != XruEyeCount) {
-		// No views from the runtime (yet): a 90 degree view rather than an end
-		OOVR_LOG_ONCE("GetProjectionRaw: the OpenXR runtime gave no views, answering 90 degrees");
-		if (pfLeft)
-			*pfLeft = -1;
-		if (pfRight)
-			*pfRight = 1;
-		if (pfTop)
-			*pfTop = -1;
-		if (pfBottom)
-			*pfBottom = 1;
-		return;
-	}
-
-	const XrFovf& fov = views[eEye].fov;
+	const XrFovf fov = CurrentFov(eEye);
 
 	/**
 	 * With a straight passthrough:
@@ -181,11 +177,6 @@ void XrHMD::GetProjectionRaw(vr::EVREye eEye, float* pfLeft, float* pfRight, flo
 	 * also negates the bottom and left value. Since it appears that SteamVR flips the top and bottom angles, we
 	 * can just do that and it'll match.
 	 */
-
-	// Unfortunately this can occur on WMR, from the data not being valid very early on. See the comments in
-	// GetProjectionMatrix for a further discussion of this.
-	if (fov.angleDown == 0.0f && fov.angleUp == 0.0f)
-		OOVR_LOG("Warning! FOV is 0");
 
 	if (pfTop)
 		*pfTop = tanf(fov.angleDown);

@@ -6,6 +6,7 @@
 #include "Reimpl/BaseSystem.h"
 #include "logging.h"
 
+#include <cmath>
 #include <string>
 #include <vector>
 
@@ -288,4 +289,73 @@ TEST_CASE("Scaled image sizes stay within what the runtime allows")
 	// Never nothing for a view that has a size
 	CHECK(XrHMD::ScaledImageSize(10, 4000, 0.001f) == 1);
 	CHECK(XrHMD::ScaledImageSize(0, 4000, 1.0f) == 0);
+}
+
+namespace {
+// The row-major matrix applied to a view-space point, as the graphics API sees clip space
+void ToClip(const vr::HmdMatrix44_t& m, float x, float y, float z, float out[4])
+{
+	for (int r = 0; r < 4; r++)
+		out[r] = m.m[r][0] * x + m.m[r][1] * y + m.m[r][2] * z + m.m[r][3];
+}
+}
+
+TEST_CASE("The projection maps the near and far planes to the API's depth range")
+{
+	const float nearZ = 0.1f, farZ = 50.0f;
+	// An off-axis view: 50 degrees left, 40 right, 30 up, 45 down
+	const float tl = std::tan(-0.8727f), tr = std::tan(0.6981f), tu = std::tan(0.5236f), td = std::tan(-0.7854f);
+	float c[4];
+
+	vr::HmdMatrix44_t gl = XrHMD::ProjectionFromTangents(tl, tr, tu, td, nearZ, farZ, API_OpenGL);
+	ToClip(gl, 0, 0, -nearZ, c);
+	CHECK(c[2] / c[3] == doctest::Approx(-1.0f).epsilon(1e-4));
+	ToClip(gl, 0, 0, -farZ, c);
+	CHECK(c[2] / c[3] == doctest::Approx(1.0f).epsilon(1e-4));
+
+	vr::HmdMatrix44_t dx = XrHMD::ProjectionFromTangents(tl, tr, tu, td, nearZ, farZ, API_DirectX);
+	ToClip(dx, 0, 0, -nearZ, c);
+	CHECK(c[2] / c[3] == doctest::Approx(0.0f).epsilon(1e-4));
+	ToClip(dx, 0, 0, -farZ, c);
+	CHECK(c[2] / c[3] == doctest::Approx(1.0f).epsilon(1e-4));
+
+	// The view's edges at distance 1 land on the edges of the screen, in both
+	for (const vr::HmdMatrix44_t* m : { &gl, &dx }) {
+		ToClip(*m, tl, 0, -1, c);
+		CHECK(c[0] / c[3] == doctest::Approx(-1.0f).epsilon(1e-4));
+		ToClip(*m, tr, 0, -1, c);
+		CHECK(c[0] / c[3] == doctest::Approx(1.0f).epsilon(1e-4));
+		ToClip(*m, 0, tu, -1, c);
+		CHECK(c[1] / c[3] == doctest::Approx(1.0f).epsilon(1e-4));
+		ToClip(*m, 0, td, -1, c);
+		CHECK(c[1] / c[3] == doctest::Approx(-1.0f).epsilon(1e-4));
+	}
+}
+
+TEST_CASE("Fields of view the runtime gives are checked before use")
+{
+	CHECK(XrHMD::IsValidFov({ -0.8f, 0.7f, 0.6f, -0.7f }));
+	CHECK_FALSE(XrHMD::IsValidFov({ 0, 0, 0, 0 }));
+	CHECK_FALSE(XrHMD::IsValidFov({ -0.8f, 0.7f, 0, 0 }));
+	CHECK_FALSE(XrHMD::IsValidFov({ 0.7f, -0.8f, 0.6f, -0.7f }));
+	CHECK_FALSE(XrHMD::IsValidFov({ -1.6f, 0.7f, 0.6f, -0.7f }));
+	CHECK_FALSE(XrHMD::IsValidFov({ std::nanf(""), 0.7f, 0.6f, -0.7f }));
+}
+
+TEST_CASE("Without views the projection is a finite 90 degree one")
+{
+	XrHMD hmd;
+	vr::HmdMatrix44_t m = hmd.GetProjectionMatrix(vr::Eye_Left, 0.1f, 100.0f, API_OpenGL);
+	for (int r = 0; r < 4; r++)
+		for (int c = 0; c < 4; c++)
+			CHECK(std::isfinite(m.m[r][c]));
+	CHECK(m.m[0][0] == doctest::Approx(1.0f));
+	CHECK(m.m[1][1] == doctest::Approx(1.0f));
+
+	float l, r, t, b;
+	hmd.GetProjectionRaw(vr::Eye_Right, &l, &r, &t, &b);
+	CHECK(l == doctest::Approx(-1.0f));
+	CHECK(r == doctest::Approx(1.0f));
+	CHECK(t == doctest::Approx(-1.0f));
+	CHECK(b == doctest::Approx(1.0f));
 }
