@@ -45,14 +45,6 @@ ViveFocus3InteractionProfile::ViveFocus3InteractionProfile()
 	// SteamVR's names for the raw inputs the binding evaluator reads (RawComponents)
 	rawSourceNames = { { "squeeze", "grip" }, { "thumbstick", "joystick" }, { "menu", "application_menu" } };
 
-	pathTranslationMap = {
-		{ "grip", "squeeze" },
-		{ "joystick", "thumbstick" },
-		{ "pull", "value" },
-		{ "grip/force", "squeeze/value" },
-		{ "application_menu", "menu" }
-	};
-
 	propertiesMap = {
 		{ vr::Prop_ControllerType_String, { GetOpenVRName().value() } }
 	};

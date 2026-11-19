@@ -48,14 +48,6 @@ PicoInteractionProfile::PicoInteractionProfile(Model model)
 	// SteamVR's names for the raw inputs the binding evaluator reads (RawComponents)
 	rawSourceNames = { { "squeeze", "grip" }, { "thumbstick", "joystick" }, { "menu", "application_menu" } };
 
-	pathTranslationMap = {
-		{ "grip", "squeeze" },
-		{ "joystick", "thumbstick" },
-		{ "pull", "value" },
-		{ "grip/force", "squeeze/value" },
-		{ "application_menu", "menu" }
-	};
-
 	propertiesMap = {
 		{ vr::Prop_ControllerType_String, { GetOpenVRName().value() } }
 	};
@@ -80,7 +72,7 @@ std::optional<const char*> PicoInteractionProfile::GetRightHandRenderModelName()
 
 std::optional<const char*> PicoInteractionProfile::GetOpenVRName() const
 {
-	return model == Model::Neo3 ? "pico_neo3_controller" : "pico4_controller";
+	return "pico_controller";
 }
 
 std::optional<vr::EVRSkeletalTrackingLevel> PicoInteractionProfile::GetOpenVRTrackinglevel() const

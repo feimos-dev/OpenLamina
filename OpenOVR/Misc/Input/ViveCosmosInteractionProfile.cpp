@@ -42,16 +42,6 @@ ViveCosmosInteractionProfile::ViveCosmosInteractionProfile()
 	// SteamVR's names for the raw inputs the binding evaluator reads (RawComponents)
 	rawSourceNames = { { "squeeze", "grip" }, { "thumbstick", "joystick" }, { "menu", "application_menu" } };
 
-	pathTranslationMap = {
-		{ "grip", "squeeze" },
-		{ "joystick", "thumbstick" },
-		{ "pull", "value" },
-		{ "grip/click", "squeeze/click" },
-		{ "grip/force", "squeeze/click" },
-		{ "grip/value", "squeeze/click" },
-		{ "application_menu", "menu" }
-	};
-
 	propertiesMap = {
 		{ vr::Prop_ControllerType_String, { GetOpenVRName().value() } }
 	};

@@ -66,10 +66,6 @@ TEST_CASE("Vive_cosmos_profile_paths")
 	CHECK_FALSE(cosmos.IsInputPathValid("/user/hand/left/input/squeeze/value"));
 	CHECK(cosmos.IsInputPathValid("/user/hand/right/input/trigger/click"));
 	CHECK(cosmos.IsInputPathValid("/user/hand/right/input/thumbstick/touch"));
-
-	// An OpenVR grip value maps onto the squeeze button
-	CHECK(cosmos.TranslateAction("/user/hand/left/input/grip/value") == "/user/hand/left/input/squeeze/click");
-	CHECK(cosmos.TranslateAction("/user/hand/left/input/joystick/x") == "/user/hand/left/input/thumbstick/x");
 }
 
 TEST_CASE("Vive_cosmos_controller_identity")
@@ -96,8 +92,6 @@ TEST_CASE("Vive_focus3_profile_paths")
 	CHECK_FALSE(focus3.IsInputPathValid("/user/hand/right/input/a/touch"));
 	CHECK(focus3.IsInputPathValid("/user/hand/left/input/y/click"));
 	CHECK_FALSE(focus3.IsInputPathValid("/user/hand/right/input/y/click"));
-
-	CHECK(focus3.TranslateAction("/user/hand/right/input/grip/value") == "/user/hand/right/input/squeeze/value");
 }
 
 TEST_CASE("Vive_focus3_controller_identity")
@@ -114,7 +108,8 @@ TEST_CASE("Pico_profiles_have_their_own_paths_and_types")
 	PicoInteractionProfile pico4(PicoInteractionProfile::Model::Pico4);
 	CHECK(neo3.GetPath() == "/interaction_profiles/bytedance/pico_neo3_controller");
 	CHECK(pico4.GetPath() == "/interaction_profiles/bytedance/pico4_controller");
-	CHECK(std::string(*neo3.GetOpenVRName()) != std::string(*pico4.GetOpenVRName()));
+	CHECK(std::string(*neo3.GetOpenVRName()) == "pico_controller");
+	CHECK(std::string(*pico4.GetOpenVRName()) == "pico_controller");
 
 	// The menu button is on both hands, the face buttons have a touch, the squeeze a value and a click
 	CHECK(pico4.IsInputPathValid("/user/hand/left/input/menu/click"));
@@ -125,6 +120,4 @@ TEST_CASE("Pico_profiles_have_their_own_paths_and_types")
 	CHECK(pico4.IsInputPathValid("/user/hand/left/input/squeeze/value"));
 	CHECK_FALSE(pico4.IsInputPathValid("/user/hand/left/input/thumbrest/touch"));
 	CHECK(neo3.GetValidInputPaths() == pico4.GetValidInputPaths());
-
-	CHECK(pico4.TranslateAction("/user/hand/left/input/grip/force") == "/user/hand/left/input/squeeze/value");
 }
