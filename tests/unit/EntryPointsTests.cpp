@@ -5,8 +5,14 @@
 
 #include "stdafx.h"
 
+#include "Reimpl/BaseClientCore.h"
+#include "steamvr_abi.h"
+
+#include <cstdlib>
 #include <cstring>
 #include <dlfcn.h>
+#include <filesystem>
+#include <fstream>
 #include <string>
 
 namespace {
@@ -141,5 +147,136 @@ TEST_CASE("VR_GetRuntimePath fills the caller's buffer")
 	// The required size is optional
 	CHECK(path(buffer.data(), (uint32_t)buffer.size(), nullptr));
 }
+
+TEST_CASE("Interface versions are valid only where they exist")
+{
+	Runtime rt;
+	auto valid = rt.fn<bool (*)(const char*)>("VR_IsInterfaceVersionValid");
+	REQUIRE(valid);
+	CHECK(valid("IVRSettings_003"));
+	CHECK(valid("FnTable:IVRSettings_003"));
+	CHECK(valid("IVRSystem_022"));
+	CHECK_FALSE(valid("IVRNotAnInterface_001"));
+	CHECK_FALSE(valid("FnTable:IVRNotAnInterface_001"));
+	CHECK_FALSE(valid(""));
+	CHECK_FALSE(valid(nullptr));
+}
+
+TEST_CASE("The runtime is installed when an OpenXR manifest is there")
+{
+	namespace fs = std::filesystem;
+	Runtime rt;
+	auto installed = rt.fn<bool (*)()>("VR_IsRuntimeInstalled");
+	REQUIRE(installed);
+
+	const fs::path manifest = fs::temp_directory_path() / "oc_entry_points_runtime.json";
+	{
+		std::ofstream(manifest) << "{}";
+	}
+	setenv("XR_RUNTIME_JSON", manifest.string().c_str(), 1);
+	CHECK(installed());
+	fs::remove(manifest);
+	CHECK_FALSE(installed());
+	unsetenv("XR_RUNTIME_JSON");
+}
+
+TEST_CASE("Init errors have text of their own")
+{
+	Runtime rt;
+	auto describe = rt.fn<const char* (*)(vr::EVRInitError)>("VR_GetVRInitErrorAsEnglishDescription");
+	REQUIRE(describe);
+	CHECK(std::string(describe(vr::VRInitError_None)) == "None");
+	CHECK(std::string(describe((vr::EVRInitError)147)) == "VRInitError_Init_IllegalTypeTransition");
+	CHECK(std::string(describe((vr::EVRInitError)200)).find("IllegalTypeTransition") == std::string::npos);
+	CHECK(std::string(describe((vr::EVRInitError)99999)) == "Unknown error (99999)");
+}
+
+namespace {
+struct EnvGuard {
+	std::string name;
+	std::string old;
+	bool had;
+	EnvGuard(const char* n, const char* value)
+	    : name(n)
+	{
+		const char* o = getenv(n);
+		had = o != nullptr;
+		if (o)
+			old = o;
+		if (value)
+			setenv(n, value, 1);
+		else
+			unsetenv(n);
+	}
+	~EnvGuard()
+	{
+		if (had)
+			setenv(name.c_str(), old.c_str(), 1);
+		else
+			unsetenv(name.c_str());
+	}
+};
+
+// A config folder with an openvrpaths.vrpath naming one runtime
+std::filesystem::path MakeConfig(const std::filesystem::path& configRoot, const std::string& runtime)
+{
+	std::filesystem::create_directories(configRoot / "openvr");
+	std::ofstream(configRoot / "openvr" / "openvrpaths.vrpath") << "{\"runtime\": [\"" << runtime << "\"]}";
+	return configRoot;
+}
+} // namespace
+
+TEST_CASE("SteamVR is found from the config folder")
+{
+	namespace fs = std::filesystem;
+	const fs::path base = fs::temp_directory_path() / "oc_entry_points_home";
+	fs::remove_all(base);
+
+	SUBCASE("XDG_CONFIG_HOME")
+	{
+		MakeConfig(base / "xdg", "/games/SteamVR");
+		EnvGuard xdg("XDG_CONFIG_HOME", (base / "xdg").string().c_str());
+		CHECK(BaseClientCore::GetAlternativeRuntimePath() == "/games/SteamVR");
+	}
+
+	SUBCASE("HOME with a trailing separator, a non-ASCII name")
+	{
+		const fs::path home = base / "h\xC3\xB6me";
+		MakeConfig(home / ".config", "/games/SteamVR/");
+		EnvGuard xdg("XDG_CONFIG_HOME", nullptr);
+		EnvGuard h("HOME", (home.string() + "/").c_str());
+		CHECK(BaseClientCore::GetAlternativeRuntimePath() == "/games/SteamVR");
+	}
+
+	SUBCASE("Nothing set")
+	{
+		EnvGuard xdg("XDG_CONFIG_HOME", nullptr);
+		EnvGuard h("HOME", nullptr);
+		CHECK(BaseClientCore::GetAlternativeRuntimePath().empty());
+	}
+
+	SUBCASE("An empty runtime entry")
+	{
+		MakeConfig(base / "xdg", "");
+		EnvGuard xdg("XDG_CONFIG_HOME", (base / "xdg").string().c_str());
+		CHECK(BaseClientCore::GetAlternativeRuntimePath().empty());
+	}
+
+	fs::remove_all(base);
+}
+
+// The runtime's entry points BaseClientCore forwards to (the runtime library itself is loaded by the tests above)
+VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(vr::EVRInitError* peError, vr::EVRApplicationType, const char*)
+{
+	if (peError)
+		*peError = vr::VRInitError_Init_NotInitialized;
+	return 0;
+}
+VR_INTERFACE void VR_CALLTYPE VR_ShutdownInternal() {}
+VR_INTERFACE bool VR_CALLTYPE VR_IsInterfaceVersionValid(const char*) { return false; }
+VR_INTERFACE void* VR_CALLTYPE VR_GetGenericInterface(const char*, vr::EVRInitError*) { return nullptr; }
+VR_INTERFACE bool VR_CALLTYPE VR_IsHmdPresent() { return false; }
+VR_INTERFACE const char* VR_CALLTYPE VR_GetVRInitErrorAsEnglishDescription(vr::EVRInitError) { return ""; }
+VR_INTERFACE const char* VR_CALLTYPE VR_GetVRInitErrorAsSymbol(vr::EVRInitError) { return ""; }
 
 #endif

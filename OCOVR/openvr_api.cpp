@@ -19,10 +19,12 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <set>
 
 #include "Misc/Config.h"
 #include "Misc/EnumNames.h"
+#include "Misc/LibMonado.h"
 
 // Specific to OCOVR
 #include "Drivers/Backend.h"
@@ -42,6 +44,8 @@ static int scene_init_count = 0;
 static bool utility_init = false;
 // Inits refused while a session was up, whose Shutdown (made by the caller on failure) doesn't end that session
 static int refused_init_count = 0;
+// Init, Shutdown and the interface lookups run on whatever threads the program uses; a lookup of an FnTable calls itself
+static std::recursive_mutex state_mutex;
 
 static void NewInitToken()
 {
@@ -90,6 +94,8 @@ VR_INTERFACE void* VR_CALLTYPE VR_GetGenericInterface(const char* interfaceVersi
 			*error = VRInitError_Init_InvalidInterface;
 		return NULL;
 	}
+
+	std::lock_guard<std::recursive_mutex> lock(state_mutex);
 
 	if (!running && !utility_init) {
 		OOVR_LOGF("[INFO] VR_GetGenericInterface called while OOVR not running, setting error=NotInitialized, for interfaceVersion=%s", interfaceVersion);
@@ -254,7 +260,8 @@ VR_INTERFACE const char* VR_CALLTYPE VR_GetVRInitErrorAsEnglishDescription(EVRIn
 		// clang-format on
 
 	default:
-		return "VRInitError_Init_IllegalTypeTransition";
+		// The rest are named by their symbol; a value the header doesn't have says so
+		return OC_EnumNameAsSteamVR("EVRInitError", (int32_t)error, "Unknown error (%d)");
 	}
 }
 
@@ -277,6 +284,8 @@ VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(EVRInitError* peError, EVRApp
 	}
 
 	oovr_install_crash_handler();
+
+	std::lock_guard<std::recursive_mutex> lock(state_mutex);
 
 	if (eApplicationType == VRApplication_Bootstrapper) {
 #ifdef _WIN32
@@ -423,13 +432,33 @@ VR_INTERFACE uint32_t VR_CALLTYPE HmdSystemFactory()
 
 VR_INTERFACE bool VR_CALLTYPE VR_IsInterfaceVersionValid(const char* pchInterfaceVersion)
 {
-	return true; // Kinda dodgy
+	if (!pchInterfaceVersion)
+		return false;
+
+	// The function table of a version is as valid as the version
+	const char* fnTablePrefix = "FnTable:";
+	if (!strncmp(fnTablePrefix, pchInterfaceVersion, strlen(fnTablePrefix)))
+		pchInterfaceVersion += strlen(fnTablePrefix);
+
+	bool known = false;
+	GetInterfaceFlagsByName(pchInterfaceVersion, "APPTYPE", &known);
+	if (known)
+		return true;
+
+	// GetInterfaceFlagsByName only knows the interfaces with flags: making the interface tells the rest
+	void* probe = CreateInterfaceByName(pchInterfaceVersion);
+	if (!probe)
+		return false;
+	((CVRCorrectLayout*)probe)->Delete();
+	return true;
 }
 
 VR_INTERFACE bool VR_CALLTYPE VR_IsRuntimeInstalled()
 {
-	// TODO in future check that the Oculus Runtime is installed
-	return true;
+	// An OpenXR runtime is registered (or named by XR_RUNTIME_JSON) and its manifest is there
+	std::optional<std::filesystem::path> manifest = LibMonado::ActiveRuntimeManifest();
+	std::error_code ec;
+	return manifest && std::filesystem::exists(*manifest, ec);
 }
 
 VR_INTERFACE const char* VR_CALLTYPE VR_RuntimePath()
@@ -468,6 +497,8 @@ VR_INTERFACE bool VR_GetRuntimePath(char* pchPathBuffer, uint32_t unBufferSize, 
 
 VR_INTERFACE void VR_CALLTYPE VR_ShutdownInternal()
 {
+	std::lock_guard<std::recursive_mutex> lock(state_mutex);
+
 	// The Shutdown that follows a refused Init: the session belongs to someone else
 	if ((running || utility_init) && refused_init_count > 0) {
 		refused_init_count--;
@@ -519,19 +550,19 @@ VR_INTERFACE void VR_CALLTYPE VR_ShutdownInternal()
 
 VR_INTERFACE void* VRClientCoreFactory(const char* pInterfaceName, int* pReturnCode)
 {
-	if (alternativeCoreFactory) {
-	use_alt:
-		return alternativeCoreFactory(pInterfaceName, pReturnCode);
-	}
-
-	bool shouldUseOC = BaseClientCore::CheckAppEnabled();
-	if (!shouldUseOC) {
+	// The choice between OpenLamina and SteamVR is made on the first call only
+	static std::once_flag chosen;
+	std::call_once(chosen, [] {
+		if (BaseClientCore::CheckAppEnabled())
+			return;
 		alternativeCoreFactory = PlatformGetAlternativeCoreFactory();
-		if (alternativeCoreFactory)
-			goto use_alt;
-		// The app was set to SteamVR, which couldn't be loaded (logged): the game still starts, on OpenComposite
-		OOVR_LOG("SteamVR was chosen for this program but couldn't be loaded; using OpenLamina instead");
-	}
+		if (!alternativeCoreFactory) {
+			// The app was set to SteamVR, which couldn't be loaded (logged): the game still starts, on OpenComposite
+			OOVR_LOG("SteamVR was chosen for this program but couldn't be loaded; using OpenLamina instead");
+		}
+	});
+	if (alternativeCoreFactory)
+		return alternativeCoreFactory(pInterfaceName, pReturnCode);
 
 	if (pReturnCode)
 		*pReturnCode = VRInitError_None;
