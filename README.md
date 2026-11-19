@@ -33,8 +33,8 @@ Upstream merge requests are linked as !*n* with their authors. Everything else w
   `tests/conformance/not_implemented.txt`). Old versions get the old struct layouts.
 - Settings, the application registry, room setup and their events are kept for real and shared by every program using
   OpenLamina, as SteamVR shares them.
-- SteamVR's binding files are evaluated by OpenLamina itself, with SteamVR's binding modes (`inputEvaluator`, see
-  [the configuration file](#configuration-file)).
+- SteamVR's binding files are evaluated by OpenLamina itself, with SteamVR's binding modes (toggles, dpads, chords and
+  the rest), on the controllers' raw inputs.
 - A conformance test program runs every method of every interface version and compares the answers with SteamVR's.
 
 **Newer games**
@@ -328,8 +328,8 @@ The available options are:
 	* On Monado, with its `libmonado`: a room setup's standing zero pose that a program commits (`IVRChaperoneSetup`'s `SetWorkingStandingZeroPoseToRawTrackingPose`, as playspace movers and recentring tools do) moves Monado's stage. That moves it for every program using Monado, native OpenXR ones too, until Monado restarts. Without it, the zero pose is kept and reported, and nothing moves.
 * `logAllOpenVRCalls` - boolean, default `false`
 	* Log every OpenVR call a game makes. Similar to `logGetTrackedProperty`, this clutters logs and should not be enabled unless necessary.
-* `inputEvaluator` - `direct` or `steamvr`, default `steamvr`.
-	* How a game's SteamVR bindings become input. `steamvr` has OpenLamina run SteamVR's binding modes (toggles, dpads, chords and the rest) on the controller's raw inputs, and maps legacy input as SteamVR does. `direct` turns each binding into OpenXR bindings and leaves the rest to the runtime, without those modes; try it when a game's controls don't work under `steamvr`.
+* `inputEvaluator` - ignored.
+	* Binding files are always evaluated by OpenLamina. An `openlamina.ini` that sets this key (`direct` or `steamvr`) still loads, and the log says the key does nothing.
 * `bindingEditor` - string, default empty.
 	* The program a game's "open binding UI" request starts.
 
