@@ -88,3 +88,18 @@ TEST_CASE("Chaperone_walls_stand_on_the_edges_of_the_floor_quad")
 	// A room of the runtime's stage has a wall on each edge
 	CHECK(ChaperoneData::FromStage(1, 1).collisionBounds.size() == 4);
 }
+
+TEST_CASE("Chaperone_default_colours_are_clear_bounds_and_a_clear_white_camera")
+{
+	const ChaperoneData d;
+	CHECK(d.colors[0].a == 0.0f);
+	CHECK(d.colors[1].r == 1.0f);
+	CHECK(d.colors[1].g == 1.0f);
+	CHECK(d.colors[1].b == 1.0f);
+	CHECK(d.colors[1].a == 0.0f);
+	// A committed room that has no colours keeps them
+	Json::Value room = d.ToJson();
+	room.removeMember("colors");
+	REQUIRE(ChaperoneData::FromJson(room).has_value());
+	CHECK(ChaperoneData::FromJson(room)->colors[1].b == 1.0f);
+}

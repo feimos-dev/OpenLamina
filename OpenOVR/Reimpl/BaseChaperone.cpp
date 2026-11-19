@@ -38,7 +38,6 @@ bool BaseChaperone::GetPlayAreaSize(float* pSizeX, float* pSizeZ)
 	*pSizeX = maxPoint.v[0] - minPoint.v[0];
 	*pSizeZ = maxPoint.v[2] - minPoint.v[2];
 
-	// TODO verify return value
 	return true;
 }
 void BaseChaperone::GetBoundsColor(HmdColor_t* pOutputColorArray, int nNumOutputColors)
@@ -103,8 +102,9 @@ void BaseChaperone::SetSceneColor(HmdColor_t color)
 }
 void BaseChaperone::GetBoundsColor(HmdColor_t* pOutputColorArray, int nNumOutputColors, float flCollisionBoundsFadeDistance, HmdColor_t* pOutputCameraColor)
 {
-	// The colours of the committed room setup (IVRChaperoneSetup); none (zero) before one is committed
-	HmdColor_t bounds{}, camera{};
+	// The colours of the committed room setup (IVRChaperoneSetup); before one is committed, clear bounds and a clear
+	// white camera
+	HmdColor_t bounds = ChaperoneData{}.colors[0], camera = ChaperoneData{}.colors[1];
 	if (auto committed = ChaperoneData::FromJson(SharedStore::Get().Read(StoreDoc::Chaperone))) {
 		bounds = committed->colors[0];
 		camera = committed->colors[1];

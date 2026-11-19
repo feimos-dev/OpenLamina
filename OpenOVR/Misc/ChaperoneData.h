@@ -19,7 +19,7 @@ struct ChaperoneData {
 	std::vector<vr::HmdVector2_t> perimeter;
 	vr::HmdMatrix34_t standingZero = Identity();
 	vr::HmdMatrix34_t seatedZero = Identity();
-	vr::HmdColor_t colors[2] = {}; // the bounds' colour, and the camera's
+	vr::HmdColor_t colors[2] = { { 0, 0, 0, 0 }, { 1, 1, 1, 0 } }; // the bounds' colour, and the camera's (white, clear)
 
 	/** The height of the collision bounds walls of a room that has none of its own, metres */
 	static constexpr float kWallHeight = 2.43f;
