@@ -1695,13 +1695,13 @@ EVRInputError BaseInput::GetAnalogActionData(VRActionHandle_t action, InputAnalo
 	if (!pActionData || unActionDataSize != sizeof(*pActionData))
 		return VRInputError_InvalidParam;
 
-	// Held by the dashboard: inactive (zeroed above)
-	if (HeldByDashboard() && act->type != ActionType::EyeTracking)
-		return VRInputError_None;
-
 	if (act->type != ActionType::Vector1 && act->type != ActionType::Vector2 && act->type != ActionType::Vector3)
 		OC_UNSUPPORTED(VRInputError_WrongType, "Invalid action type %d for action %s",
 		    static_cast<int>(act->type), act->fullName.c_str());
+
+	// Held by the dashboard: inactive (zeroed above)
+	if (HeldByDashboard())
+		return VRInputError_None;
 
 	// The evaluators' output, inactive if no active binding writes it
 	if (rawInputsSet != XR_NULL_HANDLE) {
