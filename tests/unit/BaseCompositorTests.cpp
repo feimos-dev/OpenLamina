@@ -57,3 +57,48 @@ TEST_CASE("Benchmark_rate_is_the_pixels_the_display_needs_per_second")
 	CHECK(BaseCompositor::MegaPixelsPerSecond(4000, 2200, 90.0f) == doctest::Approx(792.0f));
 	CHECK(BaseCompositor::MegaPixelsPerSecond(4000, 2200, 0.0f) == 0.0f);
 }
+
+TEST_CASE("A_frame_with_one_eye_shows_it_in_both")
+{
+	int source[2];
+	const bool usable[2] = { true, true };
+
+	const bool leftOnly[2] = { true, false };
+	EyeImageSources(leftOnly, usable, source);
+	CHECK(source[0] == 0);
+	CHECK(source[1] == 0);
+
+	const bool rightOnly[2] = { false, true };
+	EyeImageSources(rightOnly, usable, source);
+	CHECK(source[0] == 1);
+	CHECK(source[1] == 1);
+
+	const bool both[2] = { true, true };
+	EyeImageSources(both, usable, source);
+	CHECK(source[0] == 0);
+	CHECK(source[1] == 1);
+
+	// An eye submitted but unusable leaves the layer out; the one not submitted can't borrow it
+	const bool leftBroken[2] = { false, true };
+	EyeImageSources(both, leftBroken, source);
+	CHECK(source[0] == -1);
+	CHECK(source[1] == 1);
+	EyeImageSources(leftOnly, leftBroken, source);
+	CHECK(source[0] == -1);
+	CHECK(source[1] == -1);
+
+	// Nothing submitted: no image
+	const bool none[2] = { false, false };
+	EyeImageSources(none, usable, source);
+	CHECK(source[0] == -1);
+	CHECK(source[1] == -1);
+}
+
+TEST_CASE("Submit_ends_the_frame_unless_the_game_ends_it_with_PostPresentHandoff")
+{
+	CHECK(BaseCompositor::SubmitEndsFrame(VRCompositorTimingMode_Implicit, false));
+	CHECK(BaseCompositor::SubmitEndsFrame(VRCompositorTimingMode_Explicit_RuntimePerformsPostPresentHandoff, false));
+	CHECK_FALSE(BaseCompositor::SubmitEndsFrame(VRCompositorTimingMode_Explicit_ApplicationPerformsPostPresentHandoff, false));
+	// A game that calls it ends its frames there in any mode
+	CHECK_FALSE(BaseCompositor::SubmitEndsFrame(VRCompositorTimingMode_Implicit, true));
+}

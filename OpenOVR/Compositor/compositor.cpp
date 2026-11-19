@@ -201,6 +201,17 @@ bool Compositor::ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTextureBoun
 	return false;
 }
 
+void EyeImageSources(const bool submitted[2], const bool usable[2], int source[2])
+{
+	for (int eye = 0; eye < 2; eye++) {
+		const int other = 1 - eye;
+		if (submitted[eye])
+			source[eye] = usable[eye] ? eye : -1;
+		else
+			source[eye] = submitted[other] && usable[other] ? other : -1;
+	}
+}
+
 bool RegionFromBounds(const vr::VRTextureBounds_t* bounds, uint32_t width, uint32_t height, TextureRegion& out)
 {
 	vr::VRTextureBounds_t b = bounds ? *bounds : vr::VRTextureBounds_t{ 0, 0, 1, 1 };

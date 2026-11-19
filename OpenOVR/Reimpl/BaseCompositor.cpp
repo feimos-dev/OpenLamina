@@ -335,8 +335,8 @@ ovr_enum_t BaseCompositor::Submit(EVREye eye, const Texture_t* texture, const VR
 			result = (ovr_enum_t)BackendManager::Instance().StoreEyeTexture(eye, texture, bounds, submitFlags, isFirstEye);
 
 		if (leftEyeSubmitted && rightEyeSubmitted) {
-			if (!isNullRender)
-				BackendManager::Instance().SubmitFrames(isInSkybox, false);
+			if (!isNullRender && SubmitEndsFrame(explicitTimingMode, usesPostPresentHandoff))
+				BackendManager::Instance().SubmitFrames(isInSkybox);
 
 			leftEyeSubmitted = false;
 			rightEyeSubmitted = false;
@@ -359,8 +359,10 @@ ovr_enum_t BaseCompositor::SubmitWithArrayIndex(vr::EVREye eye, const vr::Textur
 
 void BaseCompositor::ClearLastSubmittedFrame()
 {
-	// At this point we should show the loading screen and show Guardian, and undo this when the
-	// next frame comes along. TODO implement since it would improve loading screens, but it's certainly not critical
+	// Nothing of the game's last frame is shown until it submits again
+	if (IsHelperSession())
+		return;
+	BackendManager::Instance().ClearSubmittedFrame();
 }
 
 void BaseCompositor::PostPresentHandoff()
@@ -373,14 +375,15 @@ void BaseCompositor::PostPresentHandoff()
 	//
 	// Some apps provide a GUI through layers that are submitted after any eye textures are submitted. The app then
 	// calls PostPresentHandOff to signal that all data is submitted and compositor can start work. Mimick this by
-	// calling SubmitFrames with a flag to say it is called from this function.
+	// ending the frame here for a game that calls this, and not at its second Submit.
 
 	// An overlay or background application has no frame of its own to end
 	if (IsHelperSession())
 		return;
+	usesPostPresentHandoff = true;
 	// As in Submit: the session isn't restarted while the frame is ended
 	auto lock = xr_session.lock_shared();
-	BackendManager::Instance().SubmitFrames(isInSkybox, true);
+	BackendManager::Instance().SubmitFrames(isInSkybox);
 }
 
 bool BaseCompositor::GetFrameTiming(OOVR_Compositor_FrameTiming* pTiming, uint32_t unFramesAgo)
@@ -709,10 +712,10 @@ void BaseCompositor::ForceReconnectProcess()
 
 void BaseCompositor::SuspendRendering(bool bSuspend)
 {
-	// TODO
-	// I'm not sure what the purpose of this function is. If you know, please tell me.
-	// - ZNix
-	// STUBBED();
+	// The game's frames aren't shown while suspended; it keeps submitting them as usual
+	if (IsHelperSession())
+		return;
+	BackendManager::Instance().SetRenderingSuspended(bSuspend);
 }
 
 ovr_enum_t BaseCompositor::GetMirrorTextureD3D11(EVREye eEye, void* pD3D11DeviceOrResource, void** ppD3D11ShaderResourceView)

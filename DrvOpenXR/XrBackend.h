@@ -213,7 +213,7 @@ private:
 	// The game's last projection layer, for OpenLamina's own frames; under frameOwner
 	XrCompositionLayerProjection lastProjection{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
 	XrCompositionLayerProjectionView lastProjectionViews[2]{};
-	bool haveLastProjection = false;
+	std::atomic<bool> haveLastProjection{ false };
 	bool SkyboxShown();
 	// The layers of the frame being ended, under frameOwner
 	std::vector<const XrCompositionLayerBaseHeader*> frameLayers;
@@ -323,10 +323,13 @@ private:
 	// Keep track of if eye textures have been submitted and if we need to create a projection layer for them
 	bool submittedEyeTextures = false;
 
-	// If the app is using PostPresentHandoff then we need to delay when we submit frame data through xrEndFrame
-	// until after all frame and layer data has been submitted and PostPresentHandoff is called. Otherwise we
-	// might miss overlay elements for GUI or HUDs
-	bool postPresentStatus = false;
+	// The space the frame's views were located in, which its projection layer is labelled with
+	XrReferenceSpaceType frameSpace = XR_REFERENCE_SPACE_TYPE_STAGE;
+	// The eyes submitted in the frame in flight
+	bool eyeSubmitted[XruEyeCount] = {};
+	// The game cleared its last frame (ClearLastSubmittedFrame), or suspended rendering: its eye textures aren't shown
+	std::atomic<bool> sceneCleared{ false };
+	std::atomic<bool> renderingSuspended{ false };
 
 	// Number of frames rendered for use in frame timing data
 	uint32_t nFrameIndex = 0;

@@ -166,8 +166,17 @@ private:
 	// True if the current frame has only nullptr textures supplied, and should be ignored
 	std::atomic<bool> isNullRender{ false };
 	std::atomic<int32_t> explicitTimingMode{ 0 };
+	// The game has called PostPresentHandoff: it ends its frames there, not at its second Submit
+	std::atomic<bool> usesPostPresentHandoff{ false };
 
 public:
+	// Whether the second eye's Submit ends the frame: not for a game that ends its frames with PostPresentHandoff,
+	// whether it says so in its timing mode or has called it
+	static bool SubmitEndsFrame(int32_t timingMode, bool calledHandoff)
+	{
+		return timingMode != (int32_t)VRCompositorTimingMode_Explicit_ApplicationPerformsPostPresentHandoff && !calledHandoff;
+	}
+
 	typedef int ovr_enum_t;
 
 	BaseCompositor();

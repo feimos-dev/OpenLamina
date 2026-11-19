@@ -795,6 +795,10 @@ void XrBackend::WaitForTrackingData()
 	// A skybox set before the session ran is shown now, ahead of this frame
 	ShowPendingSkybox();
 
+	// A frame the game gave one eye (or ended no other way) is ended with what it has before the next begins
+	if (renderingFrame && submittedEyeTextures)
+		SubmitFrames(false);
+
 	// The game's frame from here to its xrEndFrame (SubmitFrames): an own frame in flight is ended first
 	std::unique_lock<std::mutex> owner(frameOwner);
 	if (ownFrames)
@@ -841,7 +845,8 @@ void XrBackend::WaitForTrackingData()
 
 	xr_gbl->ClearCachedViews();
 
-	XrSpace projectionSpace = xr_space_from_ref_space_type(BaseSystem::currentSpace);
+	frameSpace = BaseSystem::currentSpace;
+	XrSpace projectionSpace = xr_space_from_ref_space_type(frameSpace);
 	const XruCachedViews& cachedViews = xr_gbl->GetCachedViews(projectionSpace);
 	const XrViewState& viewState = cachedViews.viewState;
 	const std::array<XrView, XruEyeCount>& views = cachedViews.views;
@@ -872,6 +877,9 @@ void XrBackend::WaitForTrackingData()
 		deferredRenderingStart = true;
 	} else {
 		renderingFrame = true;
+		submittedEyeTextures = false;
+		for (bool& submitted : eyeSubmitted)
+			submitted = false;
 	}
 }
 
@@ -896,6 +904,13 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 		// A texture OpenComposite can't use (logged): this eye is left out of the frame
 		projectionViews[eye].subImage.swapchain = XR_NULL_HANDLE;
 		return appOnOtherAdapter && appGraphicsUnusable ? kCompositorSharedTexturesNotSupported : kCompositorInvalidTexture;
+	}
+
+	// A game that submits without having waited for poses (or whose frame ended before this eye) gets a frame here, with
+	// the poses of now
+	if (sessionActive && !renderingFrame) {
+		deferredRenderingStart = false;
+		WaitForTrackingData();
 	}
 
 	XrCompositionLayerProjectionView& layer = projectionViews[eye];
@@ -970,19 +985,11 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 	}
 
 	submittedEyeTextures = true;
+	eyeSubmitted[eye] = true;
+	sceneCleared = false;
 
-	// TODO store view somewhere and use it for submitting our frame
-
-	// If WaitGetPoses was called before the first texture was submitted, we're in a kinda weird state
-	// The application will expect it can submit it's frames (and we do too) however xrBeginFrame was
-	// never called for this session - it was called for the early session, then when the first texture
-	// was published we switched to that, but this new session hasn't had xrBeginFrame called yet.
-	// To get around this, we set a flag if we should begin a frame but are still in the early session. At
-	// this point we can check for that flag and call xrBeginFrame a second time, on the right session.
-	if (deferredRenderingStart && usingApplicationGraphicsAPI) {
-		deferredRenderingStart = false;
-		WaitForTrackingData();
-	}
+	// WaitGetPoses called before the first texture was submitted began its frame on the early session, not this one:
+	// the frame above was begun on this session instead
 	return result;
 }
 
@@ -1067,21 +1074,16 @@ void XrBackend::SubmitDepth(vr::EVREye eye, const vr::Texture_t* texture, const 
 	projectionViews[eye].next = &d;
 }
 
-void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
+void XrBackend::SubmitFrames(bool showSkybox)
 {
 	// Always pump events, even if the session isn't active - this is what makes the session active
 	// in the first place.
 	PumpEvents();
 
-	// If we are getting calls from PostPresentHandOff then skip the calls from other functions as
-	//  there will be other data such as GUI layers to be added before ending the frame.
-	bool skipRender = postPresentStatus && !postPresent;
-	postPresentStatus = postPresent;
-
 	// Through this frame's xrEndFrame (see frameOwner)
 	std::unique_lock<std::mutex> owner(frameOwner);
 
-	if (!renderingFrame || skipRender)
+	if (!renderingFrame)
 		return;
 
 	// All data submitted, rendering has finished, frame can be ended.
@@ -1106,20 +1108,39 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 	// Only create the projection layer if we have a 3D environment to submit.
 	XrCompositionLayerProjection mainLayer{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
 	if (submittedEyeTextures) {
-		// We have eye textures so setup a projection layer
-		mainLayer.space = xr_space_from_ref_space_type(BaseSystem::currentSpace);
+		// We have eye textures so setup a projection layer, in the space its views were located in
+		mainLayer.space = xr_space_from_ref_space_type(frameSpace);
 		mainLayer.views = projectionViews;
 		mainLayer.viewCount = 2;
 
+		// An eye the game didn't submit shows the other's image
+		bool usable[XruEyeCount];
+		for (int i = 0; i < XruEyeCount; ++i)
+			usable[i] = projectionViews[i].subImage.swapchain != XR_NULL_HANDLE;
+		int source[XruEyeCount];
+		EyeImageSources(eyeSubmitted, usable, source);
+		const XrSwapchainSubImage images[XruEyeCount] = { projectionViews[0].subImage, projectionViews[1].subImage };
+		const void* depthFor[XruEyeCount] = { projectionViews[0].next, projectionViews[1].next };
+
 		app_layer = (XrCompositionLayerBaseHeader*)&mainLayer;
-		for (uint32_t i = 0; i < mainLayer.viewCount; ++i) {
+		for (int i = 0; i < XruEyeCount; ++i) {
 			XrCompositionLayerProjectionView& layer = projectionViews[i];
 			layer.type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
-			if (layer.subImage.swapchain == XR_NULL_HANDLE)
+			if (source[i] < 0) {
 				app_layer = nullptr;
+			} else if (source[i] != i) {
+				layer.subImage = images[source[i]];
+				layer.next = depthFor[source[i]];
+			}
 		}
 		submittedEyeTextures = false;
-		if (app_layer) {
+		for (bool& submitted : eyeSubmitted)
+			submitted = false;
+		// The game cleared its last frame or suspended rendering: the frame ends without its layer, and nothing of it is
+		// kept to show again
+		if (sceneCleared || renderingSuspended)
+			app_layer = nullptr;
+		else if (app_layer) {
 			// Kept for OpenLamina's own frames: its swapchains' last images and its views stay valid to submit again
 			lastProjection = mainLayer;
 			for (uint32_t i = 0; i < 2; i++) {
@@ -2208,8 +2229,22 @@ bool XrBackend::RunOwnFramesWhile(const std::function<bool()>& keepGoing)
 
 void XrBackend::EndOpenAppFrame()
 {
-	// As if the game had submitted, keeping whether it ends its frames from PostPresentHandoff
-	SubmitFrames(false, postPresentStatus);
+	// As if the game had submitted
+	SubmitFrames(false);
+}
+
+void XrBackend::ClearSubmittedFrame()
+{
+	sceneCleared = true;
+	// Not shown again by OpenLamina's own frames either
+	haveLastProjection = false;
+}
+
+void XrBackend::SetRenderingSuspended(bool suspended)
+{
+	renderingSuspended = suspended;
+	if (suspended)
+		haveLastProjection = false;
 }
 
 void XrBackend::StopOwnFrames(bool forGood)
