@@ -129,12 +129,12 @@ static uint32_t parse_uint32_t(string orig, string name, int line)
 	return (uint32_t)value;
 }
 
-// dashboardButton: menu_long, menu or off
+// dashboardButton: system, system_long, menu, menu_long or off
 static string parse_dashboard(string orig, string name, int line)
 {
 	string val = str_tolower(orig);
-	if (val != "menu_long" && val != "menu" && val != "off") {
-		BAD_VALUE("Value " + orig + " for " + name + " on line " + to_string(line) + " is none of menu_long, menu and off");
+	if (val != "system" && val != "system_long" && val != "menu_long" && val != "menu" && val != "off") {
+		BAD_VALUE("Value " + orig + " for " + name + " on line " + to_string(line) + " is none of system, system_long, menu, menu_long and off");
 	}
 	OOVR_LOGF("Setting config param %s to %s", name.c_str(), val.c_str());
 	return val;

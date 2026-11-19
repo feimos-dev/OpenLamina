@@ -489,10 +489,12 @@ public: // INTERNAL FUNCTIONS
 	 */
 	void SyncPointerActions();
 	/**
-	 * Whether a hand's (0 the left, 1 the right) menu button is held, as of the last sync: the old input's system and
-	 * menu buttons under inputEvaluator=direct, the raw inputs under steamvr. False before any actions are loaded.
+	 * Whether the button that opens the dashboard is held, as of the last sync. system: either controller's system
+	 * button, where the runtime hands it to applications. Otherwise the left controller's menu button: the old input's
+	 * system and menu buttons under inputEvaluator=direct, the raw inputs under steamvr. False before any actions are
+	 * loaded.
 	 */
-	bool GetHandMenu(int hand);
+	bool GetDashboardButton(bool system);
 	/**
 	 * While OpenLamina's dashboard is open, the game's input is held: its digital and analog actions read inactive, and
 	 * its old controller states zero
@@ -977,6 +979,9 @@ private:
 	void LoadDClickAction(const InteractionProfile& profile, const std::string& importBasePath, Action* action, std::vector<XrActionSuggestedBinding>& bindings);
 
 	void CreateLegacyActions();
+	// Suggests a profile's bindings (suggested points at bindings); refused with the system button's among them, again
+	// without those
+	XrResult SuggestBindings(XrInteractionProfileSuggestedBinding& suggested, std::vector<XrActionSuggestedBinding>& bindings);
 
 	/**
 	 * Convert a tracked device index to 0=left 1=right -1=other

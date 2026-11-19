@@ -335,7 +335,9 @@ bool PoseFromJson(const Json::Value& v, XrPosef& out)
 Dashboard::Button DashboardButtonSetting()
 {
 	const std::string& b = oovr_global_configuration.DashboardButton();
-	return b == "menu_long" ? Dashboard::Button::MenuLong : (b == "menu" ? Dashboard::Button::Menu : Dashboard::Button::Off);
+	if (b == "menu_long" || b == "system_long")
+		return Dashboard::Button::MenuLong;
+	return b == "menu" || b == "system" ? Dashboard::Button::Menu : Dashboard::Button::Off;
 }
 
 // A game, which runs the dashboard where dashboardButton is on
@@ -898,7 +900,8 @@ void BaseOverlay::_UpdateDashboard()
 	if (sceneDashboard) {
 		auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
 		BaseInput* input = GetUnsafeBaseInput();
-		const bool menu = input && backend && backend->IsInputAvailable() && input->GetHandMenu(0);
+		const bool menu = input && backend && backend->IsInputAvailable()
+		    && input->GetDashboardButton(oovr_global_configuration.DashboardButton().starts_with("system"));
 		const bool wasOpen = d.dashboard.Open();
 		// The button's time is the frames' (their predicted display time), which a long press is held for
 		const double now = xr_gbl && xr_gbl->nextPredictedFrameTime > 0 ? (double)xr_gbl->nextPredictedFrameTime * 1e-9 : NowSeconds();

@@ -20,6 +20,7 @@
 
 #include "OculusHandPoses.h"
 
+#include "Misc/Config.h"
 #include "Reimpl/BaseInput.h"
 #include "generated/static_bases.gen.h"
 
@@ -107,6 +108,13 @@ void InteractionProfile::AddLegacyBindings(const LegacyControllerActions& ctrl, 
 	const LegacyBindings* paths = GetLegacyBindings(ctrl.handPath);
 
 	create(ctrl.system, paths->system);
+	// Only when it opens the dashboard: a runtime may refuse a profile's bindings over this path
+	if (paths->dashboard && ctrl.dashboard != XR_NULL_HANDLE && oovr_global_configuration.DashboardButton().starts_with("system")) {
+		XrActionSuggestedBinding binding = {};
+		binding.action = ctrl.dashboard;
+		if (XR_SUCCEEDED(xrStringToPath(xr_instance, (ctrl.handPath + "/" + paths->dashboard).c_str(), &binding.binding)))
+			bindings.push_back(binding);
+	}
 	create(ctrl.menu, paths->menu);
 	create(ctrl.menuTouch, paths->menuTouch);
 	create(ctrl.btnA, paths->btnA);

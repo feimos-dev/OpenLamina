@@ -88,6 +88,7 @@ const InteractionProfile::LegacyBindings* ViveWandInteractionProfile::GetLegacyB
 
 	if (!bindings.menu) {
 		//		bindings.system = "input/system/click"; - causes issues on Oculus runtime
+		bindings.dashboard = "input/system/click";
 		bindings.menu = "input/menu/click";
 		bindings.stickX = "input/trackpad/x";
 		bindings.stickY = "input/trackpad/y";

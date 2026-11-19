@@ -36,7 +36,10 @@ public:
 	inline bool HelperApps() const { return helperApps; }
 	/** An overlay application's layers' place among other programs' (XrSessionCreateInfoOverlayEXTX) */
 	inline uint32_t OverlayLayersPlacement() const { return overlayLayersPlacement; }
-	/** What opens OpenLamina's dashboard: "menu_long" (the left menu button held 0.6 s), "menu" (pressed) or "off" */
+	/**
+	 * What opens OpenLamina's dashboard: "system" (either controller's system button, pressed), "system_long" (held
+	 * 0.6 s), "menu" (the left menu button, pressed), "menu_long" (held 0.6 s) or "off"
+	 */
 	const std::string& DashboardButton() const { return dashboardButton; }
 	/** A grid wall on the play area's edge when the HMD or a controller comes near it */
 	inline bool DrawBounds() const { return drawBounds; }

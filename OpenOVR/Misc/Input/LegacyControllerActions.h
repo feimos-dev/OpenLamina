@@ -15,6 +15,8 @@ struct LegacyControllerActions {
 	XrAction system; // 'system' button, on Vive the SteamVR buttons, on Oculus Touch the menu button on the left controller
 	XrAction menu, menuTouch; // Upper button on touch controller (B/Y), application button on Vive
 	XrAction btnA, btnATouch; // Lower button on touch controller - A/X, not present on Vive
+	// The controller's own system button, which no game reads: it opens the dashboard (dashboardButton=system)
+	XrAction dashboard;
 
 	XrAction trackpadX, trackpadY, trackpadTouch, trackpadForce, stickX, stickY, stickBtn, stickBtnTouch; // Axis0
 
