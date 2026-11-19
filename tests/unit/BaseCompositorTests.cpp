@@ -50,3 +50,10 @@ TEST_CASE("Bounds_with_no_area_show_the_whole_texture_on_that_axis")
 	CHECK_FALSE(r.flipX);
 	CHECK_FALSE(r.flipY);
 }
+
+TEST_CASE("Benchmark_rate_is_the_pixels_the_display_needs_per_second")
+{
+	// 2000x2200 per eye pair at 90 Hz
+	CHECK(BaseCompositor::MegaPixelsPerSecond(4000, 2200, 90.0f) == doctest::Approx(792.0f));
+	CHECK(BaseCompositor::MegaPixelsPerSecond(4000, 2200, 0.0f) == 0.0f);
+}

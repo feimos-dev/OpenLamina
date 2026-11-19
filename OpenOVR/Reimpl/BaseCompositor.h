@@ -351,6 +351,12 @@ public:
 	 * null.  The string will be a space separated list of required device extensions to enable in VkCreateDevice */
 	uint32_t GetVulkanDeviceExtensionsRequired(VkPhysicalDevice_T* pPhysicalDevice, char* pchValue, uint32_t unBufferSize);
 
+	/** The pixels per second, in millions, that a display of this render target size and refresh rate needs */
+	static float MegaPixelsPerSecond(uint32_t width, uint32_t height, float hz)
+	{
+		return hz > 0.0f ? (float)((double)width * height * hz / 1e6) : 0.0f;
+	}
+
 	/** What the two above answer for OpenXR's answer: the size OpenXR says is needed, also when the buffer was too
 	 * small (as SteamVR answers); 0 for any other failure */
 	static uint32_t VulkanExtensionsSize(XrResult res, uint32_t sizeNeeded)

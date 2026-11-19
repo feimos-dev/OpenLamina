@@ -834,8 +834,21 @@ void BaseCompositor::ClearStageOverride()
 
 bool BaseCompositor::GetCompositorBenchmarkResults(Compositor_BenchmarkResults* pBenchmarkResults, uint32_t nSizeOfBenchmarkResults)
 {
-	OOVR_SOFT_ABORT("Compositor benchmarking not implemented");
-	return false;
+	if (!pBenchmarkResults)
+		return true;
+
+	// No benchmark is run: the measured rate is taken to be the recommended one
+	uint32_t width = 0, height = 0;
+	BackendManager::Instance().GetPrimaryHMD()->GetRecommendedRenderTargetSize(&width, &height);
+	vr::ETrackedPropertyError err = vr::TrackedProp_Success;
+	float hz = BackendManager::Instance().GetPrimaryHMD()->GetFloatTrackedDeviceProperty(vr::Prop_DisplayFrequency_Float, &err);
+	float rate = err == vr::TrackedProp_Success ? MegaPixelsPerSecond(width, height, hz) : 0.0f;
+
+	// An older struct is as long as its size says
+	vr::Compositor_BenchmarkResults results{ rate, rate };
+	memset(pBenchmarkResults, 0, nSizeOfBenchmarkResults);
+	memcpy(pBenchmarkResults, &results, std::min<size_t>(nSizeOfBenchmarkResults, sizeof(results)));
+	return true;
 }
 
 ovr_enum_t BaseCompositor::GetLastPosePredictionIDs(uint32_t* pRenderPosePredictionID, uint32_t* pGamePosePredictionID)

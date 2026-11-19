@@ -74,7 +74,6 @@
  {"interface": "IVRCompositor_\\d+", "method": "ReleaseMirrorTextureD3D11", "field": "out", "reason": "the compositor (SteamVR's null driver: focus, timing, its mirror textures, skyboxes)"},
  {"interface": "IVRCompositor_\\d+", "method": "SubmitExplicitTimingData", "field": "ret", "reason": "the compositor (SteamVR's null driver: focus, timing, its mirror textures, skyboxes)"},
  {"interface": "IVRCompositor_\\d+", "method": "IsCurrentSceneFocusAppLoading", "field": "ret", "reason": "the compositor (SteamVR's null driver: focus, timing, its mirror textures, skyboxes)"},
- {"interface": "IVRCompositor_\\d+", "method": "GetCompositorBenchmarkResults", "field": "ret", "reason": "the compositor (SteamVR's null driver: focus, timing, its mirror textures, skyboxes)"},
  {"interface": "IVRCompositor_\\d+", "method": "GetCompositorBenchmarkResults", "field": "out", "reason": "the compositor (SteamVR's null driver: focus, timing, its mirror textures, skyboxes)"},
  {"interface": "IVRCompositor_\\d+", "method": "GetLastPosePredictionIDs", "field": "out", "reason": "the compositor (SteamVR's null driver: focus, timing, its mirror textures, skyboxes)"},
  {"interface": "IVRCompositor_\\d+", "method": "GetPosesForFrame", "field": "ret", "reason": "the compositor (SteamVR's null driver: focus, timing, its mirror textures, skyboxes)"},
