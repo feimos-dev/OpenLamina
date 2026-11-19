@@ -51,7 +51,7 @@
  "render-models/fallback/-/-": {
   "broken_ret": 0,
   "broken_vertices": 10659,
-  "broken_textured": false,
+  "broken_textured": true,
   "hand_ret": 0,
   "hand_has_vertices": true,
   "unknown_ret": 301,

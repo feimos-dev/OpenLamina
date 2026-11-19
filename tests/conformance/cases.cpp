@@ -1344,12 +1344,13 @@ void ChaperoneCase(CaseContext& c)
 	Json::Value live;
 	live["count_ret"] = setup->GetLiveCollisionBoundsInfo(nullptr, &count);
 	live["count"] = count;
-	vr::HmdQuad_t quad{};
-	count = 1;
-	live["ret"] = setup->GetLiveCollisionBoundsInfo(&quad, &count);
+	vr::HmdQuad_t quads[4] = {};
+	count = 4;
+	live["ret"] = setup->GetLiveCollisionBoundsInfo(quads, &count);
+	// Each wall starts at a corner of the floor
 	std::string corners;
-	for (const vr::HmdVector3_t& v : quad.vCorners)
-		corners += (corners.empty() ? "" : " ") + std::to_string(v.v[0]) + "," + std::to_string(v.v[2]);
+	for (const vr::HmdQuad_t& q : quads)
+		corners += (corners.empty() ? "" : " ") + std::to_string(q.vCorners[0].v[0]) + "," + std::to_string(q.vCorners[0].v[2]);
 	live["corners"] = corners;
 	c.Record("GetLiveCollisionBoundsInfo", live);
 
