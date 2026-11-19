@@ -206,3 +206,46 @@ TEST_CASE("Without D3D the adapter queries answer -1")
 	CHECK(output == -1);
 }
 #endif
+
+TEST_CASE("A time's place on the vsync grid")
+{
+	const XrDuration period = 10000000; // 10 ms
+	float since = -1;
+	uint64_t count = 99;
+
+	// Ahead of the anchor by 2.5 periods
+	CHECK(XrHMD::VsyncPhase(1000000000 + 25000000, 1000000000, period, &since, &count));
+	CHECK(since == doctest::Approx(0.005f));
+	CHECK(count == 100 + 2);
+
+	// Before the anchor: the vsync before it, not after
+	CHECK(XrHMD::VsyncPhase(1000000000 - 3000000, 1000000000, period, &since, &count));
+	CHECK(since == doctest::Approx(0.007f));
+	CHECK(count == 100 - 1);
+
+	// On a vsync
+	CHECK(XrHMD::VsyncPhase(1000000000 + 30000000, 1000000000, period, &since, &count));
+	CHECK(since == doctest::Approx(0.0f));
+	CHECK(count == 103);
+
+	// No period, no anchor or no clock: no answer, and the outputs are written
+	since = -1;
+	count = 99;
+	CHECK_FALSE(XrHMD::VsyncPhase(1000000000, 1000000000, 0, &since, &count));
+	CHECK(since == 0.0f);
+	CHECK(count == 0);
+	CHECK_FALSE(XrHMD::VsyncPhase(0, 1000000000, period, &since, &count));
+	CHECK_FALSE(XrHMD::VsyncPhase(1000000000, 1, period, &since, &count));
+	CHECK(XrHMD::VsyncPhase(1000000000, 1000000000, period, nullptr, nullptr));
+}
+
+TEST_CASE("Without a session the vsync time is unknown and still written")
+{
+	XrHMD hmd;
+	float since = 5.0f;
+	uint64_t count = 5;
+	CHECK_FALSE(hmd.GetTimeSinceLastVsync(&since, &count));
+	CHECK(since == 0.0f);
+	CHECK(count == 0);
+	CHECK_FALSE(hmd.GetTimeSinceLastVsync(nullptr, nullptr));
+}

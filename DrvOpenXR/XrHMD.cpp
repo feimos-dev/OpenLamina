@@ -215,14 +215,50 @@ vr::HmdMatrix34_t XrHMD::GetEyeToHeadTransform(vr::EVREye eEye)
 	return G2S_m34(X2G_om34_pose(views[eEye].pose));
 }
 
+bool XrHMD::VsyncPhase(XrTime now, XrTime anchor, XrDuration period, float* secondsSinceVsync, uint64_t* vsyncCount)
+{
+	if (secondsSinceVsync)
+		*secondsSinceVsync = 0.0f;
+	if (vsyncCount)
+		*vsyncCount = 0;
+	if (now <= 0 || anchor <= 1 || period <= 0)
+		return false;
+
+	// The display's vsyncs are at anchor + k * period, for whole k (negative for those before the anchor)
+	XrDuration offset = now - anchor;
+	XrDuration whole = offset / period;
+	XrDuration rest = offset % period;
+	if (rest < 0) {
+		rest += period;
+		whole--;
+	}
+	XrTime count = anchor / period + whole;
+	if (count < 0)
+		return false;
+
+	if (secondsSinceVsync)
+		*secondsSinceVsync = (float)((double)rest / 1e9);
+	if (vsyncCount)
+		*vsyncCount = (uint64_t)count;
+	return true;
+}
+
 bool XrHMD::GetTimeSinceLastVsync(float* pfSecondsSinceLastVsync, uint64_t* pulFrameCounter)
 {
-	// TODO: Use frame time statistics to give proper data
-	OOVR_LOG_ONCE("Warning: static value returned");
 	if (pfSecondsSinceLastVsync)
-		*pfSecondsSinceLastVsync = 0.011f;
+		*pfSecondsSinceLastVsync = 0.0f;
+	if (pulFrameCounter)
+		*pulFrameCounter = 0;
 
-	return false;
+	auto lock = xr_session.lock_shared(); // held while reading: a session restart waits for it
+	if (!xr_gbl)
+		return false;
+
+	// The runtime's last predicted display time is on the display's vsync grid; the period is the runtime's
+	BackendManager* manager = BackendManager::InstancePtr();
+	auto* backend = manager ? (XrBackend*)manager->GetBackendInstance() : nullptr;
+	float periodMs = backend ? backend->DisplayPeriodMs() : 0.0f;
+	return VsyncPhase(xr_time_now(), xr_gbl->nextPredictedFrameTime, (XrDuration)(periodMs * 1e6f), pfSecondsSinceLastVsync, pulFrameCounter);
 }
 
 vr::HiddenAreaMesh_t XrHMD::GetHiddenAreaMesh(vr::EVREye eEye, vr::EHiddenAreaMeshType type)
@@ -411,6 +447,11 @@ bool XrHMD::GetBoolTrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::ET
 		if (battery && battery->present)
 			return battery->charging;
 		break;
+	}
+	case vr::Prop_ReportsTimeSinceVSync_Bool: {
+		// GetTimeSinceLastVsync needs the runtime's clock
+		auto lock = xr_session.lock_shared();
+		return xr_gbl && xr_time_now() > 0;
 	}
 	case vr::Prop_HasDriverDirectModeComponent_Bool:
 		return true; // Who knows what this is used for? It's in HL:A anyway.

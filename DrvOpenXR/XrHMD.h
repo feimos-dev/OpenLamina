@@ -89,6 +89,11 @@ public:
 	 *   return zero for vsync time and frame counter and return false from the method. */
 	bool GetTimeSinceLastVsync(float* pfSecondsSinceLastVsync, uint64_t* pulFrameCounter) override;
 
+	/** Where a time falls on a display's vsync grid (vsyncs at anchor + k * period, all in the runtime's nanoseconds):
+	 * the seconds since the last vsync and the vsyncs counted from the clock's start. False, with zeros, where a time
+	 * or the period is not known. */
+	static bool VsyncPhase(XrTime now, XrTime anchor, XrDuration period, float* secondsSinceVsync, uint64_t* vsyncCount);
+
 	/** Returns the hidden area mesh for the current HMD. The pixels covered by this mesh will never be seen by the user after the lens distortion is
 	 * applied based on visibility to the panels. If this HMD does not have a hidden area mesh, the vertex data and count will be NULL and 0 respectively.
 	 * This mesh is meant to be rendered into the stencil buffer (or into the depth buffer setting nearz) before rendering each eye's view.
