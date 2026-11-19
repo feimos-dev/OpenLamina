@@ -24,3 +24,101 @@ TEST_CASE("The IPD before the runtime has views is a human one")
 	XrHMD hmd;
 	CHECK(hmd.GetIPD() == doctest::Approx(0.064f));
 }
+
+#include "Drivers/Backend.h"
+#include "Reimpl/BaseExtendedDisplay.h"
+
+namespace {
+
+// An HMD that answers a render target size
+class SizedHmd : public IHMD {
+public:
+	uint32_t width = 0, height = 0;
+
+	void GetPose(vr::ETrackingUniverseOrigin, vr::TrackedDevicePose_t*, ETrackingStateType) override {}
+	void GetPose(vr::ETrackingUniverseOrigin, vr::TrackedDevicePose_t*, ETrackingStateType, double) override {}
+	void GetRecommendedRenderTargetSize(uint32_t* w, uint32_t* h) override
+	{
+		*w = width;
+		*h = height;
+	}
+	vr::HmdMatrix44_t GetProjectionMatrix(vr::EVREye, float, float, EGraphicsAPIConvention) override { return {}; }
+	void GetProjectionRaw(vr::EVREye, float*, float*, float*, float*) override {}
+	bool ComputeDistortion(vr::EVREye, float, float, vr::DistortionCoordinates_t*) override { return false; }
+	vr::HmdMatrix34_t GetEyeToHeadTransform(vr::EVREye) override { return {}; }
+	float GetIPD() override { return 0.064f; }
+	bool GetTimeSinceLastVsync(float*, uint64_t*) override { return false; }
+	vr::HiddenAreaMesh_t GetHiddenAreaMesh(vr::EVREye, vr::EHiddenAreaMeshType) override { return {}; }
+};
+
+class SizedBackend : public IBackend {
+public:
+	std::shared_ptr<SizedHmd> hmd = std::make_shared<SizedHmd>();
+
+	std::shared_ptr<IHMD> GetPrimaryHMD() override { return hmd; }
+	std::shared_ptr<ITrackedDevice> GetDevice(vr::TrackedDeviceIndex_t) override { return nullptr; }
+	std::shared_ptr<ITrackedDevice> GetDeviceByHand(ITrackedDevice::TrackedDeviceType) override { return nullptr; }
+	void GetDeviceToAbsoluteTrackingPose(vr::ETrackingUniverseOrigin, float, vr::TrackedDevicePose_t*, uint32_t) override {}
+	void WaitForTrackingData() override {}
+	IBackend::openvr_enum_t StoreEyeTexture(vr::EVREye, const vr::Texture_t*, const vr::VRTextureBounds_t*, vr::EVRSubmitFlags, bool) override { return 0; }
+	void SubmitFrames(bool, bool) override {}
+	IBackend::openvr_enum_t SetSkyboxOverride(const vr::Texture_t*, uint32_t) override { return 0; }
+	void ClearSkyboxOverride() override {}
+	bool GetFrameTiming(OOVR_Compositor_FrameTiming*, uint32_t) override { return false; }
+	IBackend::openvr_enum_t GetMirrorTextureD3D11(vr::EVREye, void*, void**) override { return 0; }
+	void ReleaseMirrorTextureD3D11(void*) override {}
+	bool GetPlayAreaPoints(vr::HmdVector3_t*, int*) override { return false; }
+	bool AreBoundsVisible() override { return false; }
+	void ForceBoundsVisible(bool) override {}
+	void PumpEvents() override {}
+	bool IsInputAvailable() override { return false; }
+	bool IsGraphicsConfigured() override { return false; }
+	void OnOverlayTexture(const vr::Texture_t*) override {}
+};
+
+// A backend whose HMD has a 1000 x 1200 eye, for the length of the test
+struct WithEyeSize {
+	SizedBackend* backend = new SizedBackend();
+	WithEyeSize(uint32_t w, uint32_t h)
+	{
+		backend->hmd->width = w;
+		backend->hmd->height = h;
+		BackendManager::Create(backend);
+	}
+	~WithEyeSize() { BackendManager::Reset(); }
+};
+
+}
+
+TEST_CASE("The extended display's window is two eyes wide and one eye tall")
+{
+	WithEyeSize eyes(1000, 1200);
+	BaseExtendedDisplay display;
+
+	int32_t x = -1, y = -1;
+	uint32_t w = 0, h = 0;
+	display.GetWindowBounds(&x, &y, &w, &h);
+	CHECK(x == 0);
+	CHECK(y == 0);
+	CHECK(w == 2000);
+	CHECK(h == 1200);
+}
+
+TEST_CASE("The extended display's eye viewports tile the window")
+{
+	WithEyeSize eyes(1000, 1200);
+	BaseExtendedDisplay display;
+
+	uint32_t x, y, w, h;
+	display.GetEyeOutputViewport(vr::Eye_Left, &x, &y, &w, &h);
+	CHECK(x == 0);
+	CHECK(y == 0);
+	CHECK(w == 1000);
+	CHECK(h == 1200);
+	display.GetEyeOutputViewport(vr::Eye_Right, &x, &y, &w, &h);
+	CHECK(x == 1000);
+	CHECK(w == 1000);
+	CHECK(h == 1200);
+	// Outputs the caller doesn't want
+	display.GetEyeOutputViewport(vr::Eye_Left, nullptr, nullptr, nullptr, nullptr);
+}
