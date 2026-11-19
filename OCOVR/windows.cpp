@@ -62,7 +62,8 @@ BOOL APIENTRY DllMain(HMODULE hModule,
 	case DLL_THREAD_DETACH:
 		break;
 	case DLL_PROCESS_DETACH:
-		if (chainedImplementation) {
+		// At process exit (lpReserved set) nothing needs freeing, and the loader lock is held anyway
+		if (chainedImplementation && !lpReserved) {
 			FreeLibrary(chainedImplementation);
 		}
 		break;
@@ -81,6 +82,9 @@ static string GetLastErrorAsString()
 	LPSTR messageBuffer = nullptr;
 	size_t size = FormatMessageA(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS,
 	    NULL, errorMessageID, MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT), (LPSTR)&messageBuffer, 0, NULL);
+
+	if (!messageBuffer || size == 0)
+		return "<unknown error " + std::to_string(errorMessageID) + ">";
 
 	string message(messageBuffer, size);
 
