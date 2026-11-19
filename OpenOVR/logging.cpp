@@ -18,7 +18,7 @@
 #ifdef _WIN32
 #include <direct.h> // _mkdir
 #endif
-#ifdef __GLIBCXX__
+#ifndef _WIN32
 #include <unistd.h>
 #endif
 
@@ -161,10 +161,41 @@ static FILE* cfile(std::ofstream& ofs)
 }
 #endif
 
+// The program's executable name without its folder and extension, in characters safe for a file name; "program" if
+// it can't be told
+static std::string ProgramName()
+{
+	std::string name;
+#ifdef _WIN32
+	char path[MAX_PATH] = {};
+	const DWORD length = GetModuleFileNameA(nullptr, path, sizeof(path));
+	if (length > 0 && length < sizeof(path))
+		name.assign(path, length);
+#else
+	char path[4096] = {};
+	const ssize_t length = readlink("/proc/self/exe", path, sizeof(path) - 1);
+	if (length > 0)
+		name.assign(path, (size_t)length);
+#endif
+	const size_t slash = name.find_last_of("/\\");
+	if (slash != std::string::npos)
+		name.erase(0, slash + 1);
+	const size_t dot = name.rfind('.');
+	if (dot != std::string::npos && dot > 0)
+		name.erase(dot);
+	for (char& c : name) {
+		const bool safe = (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' || c == '.';
+		if (!safe)
+			c = '_';
+	}
+	return name.empty() ? "program" : name;
+}
+
 static std::ofstream init_stream()
 {
 	std::ofstream stream;
-	string outputFilePath = "openlamina.log";
+	// One file per program, by its executable's name: a game and the tools beside it each keep their own
+	string outputFilePath = "openlamina." + ProgramName() + ".log";
 
 	// Try and write to standard location
 	// fall back to exe dir if can't create dir

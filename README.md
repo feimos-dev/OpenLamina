@@ -264,7 +264,7 @@ everything else in it (comments, other options) as it is.
 
 This is its configuration file, where you can specify a number of options. These are listed in `name=value` format, and you
 can define a comment by starting a line with `;` or a `#`. Note the option names **are** case sensitive. An option OpenLamina
-doesn't know, or a value it can't read, is logged as a warning (in `openlamina.log`) and that option keeps its default; the game
+doesn't know, or a value it can't read, is logged as a warning (in the program's log) and that option keeps its default; the game
 starts either way. Any whitespace between the name, equals sign, and value is ignored, as is whitespace on the end of the line.
 Ensure your lines do not begin with whitespace however.
 
@@ -357,12 +357,12 @@ If a game crashes, shows a missing interface, or behaves differently than under 
 - what happened and when: at start, after loading a level, on pressing a button;
 - whether it also happens with upstream's build, if you know.
 
-And attach `openlamina.log`, which has most of what's needed to find the cause. It is in:
+And attach the game's log, which has most of what's needed to find the cause. Each program has its own, named after its EXE: `openlamina.<program>.log` (`openlamina.hlvr.log` for `hlvr.exe`), written anew each time the program starts. It is in:
 
 - Windows: `%LOCALAPPDATA%\OpenLamina\logs` (paste that into Explorer's address bar)
 - Linux: `$XDG_STATE_HOME/OpenLamina/logs`, or `~/.local/state/OpenLamina/logs` if `XDG_STATE_HOME` isn't set
 
-If neither exists, look for `openlamina.log` next to the game's EXE.
+If neither exists, look for it next to the game's EXE.
 
 ## Building
 
