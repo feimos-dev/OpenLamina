@@ -51,6 +51,7 @@ UKN_FUNC(29);
 
 #include "BaseClientCore.h"
 #include "BaseDriverManager.h"
+#include "BaseResources.h"
 #include "Misc/Process.h"
 #include "BaseSystem.h"
 #include "generated/static_bases.gen.h"
@@ -118,8 +119,8 @@ void* BaseControlPanel::GetCurrentCompositorInterface(const char* pchInterfaceVe
 
 uint32_t BaseControlPanel::LoadSharedResource(const char* pchResourceName, char* pchBuffer, uint32_t unBufferLen)
 {
-	// SteamVR's shared resources (its own images and sounds) aren't here: not found
-	return 0;
+	// BaseResources keeps no state, so the same reading as IVRResources
+	return BaseResources().LoadSharedResource(pchResourceName, pchBuffer, unBufferLen);
 }
 
 float BaseControlPanel::GetIPD()

@@ -3,6 +3,7 @@
 
 #include "stdafx.h"
 
+#include "Reimpl/BaseControlPanel.h"
 #include "Reimpl/BaseResources.h"
 
 #include <chrono>
@@ -61,4 +62,14 @@ TEST_CASE("Resource_paths_stay_inside_the_resources_folder")
 
 	CHECK(r.LoadSharedResource("images/a.txt", buf, sizeof(buf)) == 3);
 	CHECK(r.LoadSharedResource("../resources/images/a.txt", buf, sizeof(buf)) == 0);
+}
+
+TEST_CASE("Control_panel_reads_the_same_shared_resources")
+{
+	FakeSteamVR steamvr;
+	BaseControlPanel panel;
+	char buf[16] = {};
+	CHECK(panel.LoadSharedResource("images/a.txt", buf, sizeof(buf)) == 3);
+	CHECK(std::string(buf, 3) == "abc");
+	CHECK(panel.LoadSharedResource("images/missing.txt", buf, sizeof(buf)) == 0);
 }
