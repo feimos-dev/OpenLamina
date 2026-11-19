@@ -67,10 +67,10 @@ TEST_CASE("A_new_overlay_is_white_opaque_and_unrestricted")
 	CHECK(b == 1.0f);
 	CHECK(a == 1.0f);
 
-	float near = -1, far = -1;
-	CHECK(overlays.GetOverlayAutoCurveDistanceRangeInMeters(h, &near, &far) == VROverlayError_None);
-	CHECK(near == 0.0f);
-	CHECK(far == 0.0f);
+	float rangeMin = -1, rangeMax = -1;
+	CHECK(overlays.GetOverlayAutoCurveDistanceRangeInMeters(h, &rangeMin, &rangeMax) == VROverlayError_None);
+	CHECK(rangeMin == 0.0f);
+	CHECK(rangeMax == 0.0f);
 
 	// Its creator may render to it
 	CHECK(overlays.GetOverlayRenderingPid(h) == oc_current_pid());
