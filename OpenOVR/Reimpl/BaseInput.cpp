@@ -1240,22 +1240,13 @@ bool BaseInput::SuggestRawBindings(const InteractionProfile& profile, const std:
 	auto bindsSomething = [&] {
 		if (!bindings.empty())
 			return true;
-		const std::vector<std::pair<std::string, std::string>> components = profile.RawComponents();
-		for (const auto& [setPath, set] : file.sets) {
-			if (!actionSets.LookupItem(setPath))
-				continue;
-			for (const SourceBinding& source : set.sources) {
-				const std::string prefix = source.path + "/";
-				if (std::none_of(components.begin(), components.end(), [&](const auto& c) { return c.second.starts_with(prefix); }))
-					continue;
-				for (const auto& [input, output] : source.inputs) {
-					const Action* action = actions.LookupItem(actions.ShortenOrLookupName(output));
-					if (action && action->type != ActionType::EyeTracking)
-						return true;
-				}
-			}
-		}
-		return false;
+		std::vector<std::string> rawPaths;
+		for (const auto& [xrPath, steamvrPath] : profile.RawComponents())
+			rawPaths.push_back(steamvrPath);
+		return BindsRawInput(file, rawPaths, [&](const std::string& setPath, const std::string& output) {
+			const Action* action = actions.LookupItem(actions.ShortenOrLookupName(output));
+			return actionSets.LookupItem(setPath) && action && action->type != ActionType::EyeTracking;
+		});
 	};
 	if (!bindsSomething())
 		return false;

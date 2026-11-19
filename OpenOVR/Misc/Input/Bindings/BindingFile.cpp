@@ -212,3 +212,20 @@ BindingFile LoadBindingFile(const std::filesystem::path& path)
 	std::string text((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
 	return ParseBindingFile(text);
 }
+
+bool BindsRawInput(const BindingFile& file, const std::vector<std::string>& rawPaths,
+    const std::function<bool(const std::string& setPath, const std::string& output)>& wanted)
+{
+	for (const auto& [setPath, set] : file.sets) {
+		for (const SourceBinding& source : set.sources) {
+			const std::string prefix = source.path + "/";
+			if (std::none_of(rawPaths.begin(), rawPaths.end(), [&](const std::string& raw) { return raw.starts_with(prefix); }))
+				continue;
+			for (const auto& [input, output] : source.inputs) {
+				if (wanted(setPath, output))
+					return true;
+			}
+		}
+	}
+	return false;
+}

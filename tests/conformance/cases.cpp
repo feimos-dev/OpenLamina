@@ -1878,7 +1878,7 @@ void InputFramesCase(CaseContext& c)
 	toggle3["active_every_frame"] = activeFrames == 70;
 	toggle3["origin_every_frame"] = originFrames == 70;
 	out["checks"] = toggle3;
-	// The checks at the top for --expect; all of it as "out", which --expected compares (baseline/input-direct.json)
+	// The checks at the top for --expect; all of it as "out", which --expected compares
 	Json::Value record = toggle3;
 	record["out"] = out;
 	c.Record("toggle", record);
