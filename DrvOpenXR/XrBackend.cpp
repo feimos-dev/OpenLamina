@@ -990,6 +990,9 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 
 		if (result == kCompositorNone) {
 			KeepForMirror(eye, texture, bounds);
+#if defined(SUPPORT_GL)
+			GLMirrorFrame((int)eye, texture, bounds, submitFlags);
+#endif
 			// The mirror window shows the left eye, read back while it's open
 			Image mirror;
 			if (eye == vr::Eye_Left && MirrorWindow::Get().WantsFrame() && comp.ReadbackToCpu(texture, bounds, mirror))

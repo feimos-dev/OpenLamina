@@ -35,6 +35,7 @@ typedef void(APIENTRY* PFNGLBINDFRAMEBUFFERPROC)(GLenum target, GLuint framebuff
 typedef void(APIENTRY* PFNGLBLITFRAMEBUFFERPROC)(GLint srcX0, GLint srcY0, GLint srcX1, GLint srcY1, GLint dstX0, GLint dstY0, GLint dstX1, GLint dstY1, GLbitfield mask, GLenum filter);
 typedef void(APIENTRY* PFNGLFRAMEBUFFERTEXTURE2DEXTPROC)(GLenum target, GLenum attachment, GLenum textarget, GLuint texture, GLint level);
 typedef void(APIENTRY* PFNGLFRAMEBUFFERTEXTURELAYERPROC)(GLenum target, GLenum attachment, GLuint texture, GLint level, GLint layer);
+typedef void(APIENTRY* PFNGLDELETEFRAMEBUFFERSPROC)(GLsizei n, const GLuint* framebuffers);
 typedef void(APIENTRY* PFNGLBINDRENDERBUFFERPROC)(GLenum target, GLuint renderbuffer);
 typedef void(APIENTRY* PFNGLGETRENDERBUFFERPARAMETERIVPROC)(GLenum target, GLenum pname, GLint* params);
 typedef void(APIENTRY* PFNGLFRAMEBUFFERRENDERBUFFERPROC)(GLenum target, GLenum attachment, GLenum renderbuffertarget, GLuint renderbuffer);
@@ -53,6 +54,7 @@ static PFNGLGENFRAMEBUFFERSPROC glGenFramebuffers = nullptr;
 static PFNGLBLITFRAMEBUFFERPROC glBlitFramebuffer = nullptr;
 static PFNGLFRAMEBUFFERTEXTURE2DEXTPROC glFramebufferTexture2D = nullptr;
 static PFNGLFRAMEBUFFERTEXTURELAYERPROC glFramebufferTextureLayer = nullptr;
+static PFNGLDELETEFRAMEBUFFERSPROC glDeleteFramebuffers = nullptr;
 static PFNGLBINDRENDERBUFFERPROC glBindRenderbuffer = nullptr;
 static PFNGLGETRENDERBUFFERPARAMETERIVPROC glGetRenderbufferParameteriv = nullptr;
 static PFNGLFRAMEBUFFERRENDERBUFFERPROC glFramebufferRenderbuffer = nullptr;
@@ -119,6 +121,7 @@ GLCompositor::GLCompositor(GLuint initialTexture)
 		LOAD_FUNC(glBlitFramebuffer);
 		LOAD_FUNC(glFramebufferTexture2D);
 		LOAD_FUNC(glFramebufferTextureLayer);
+		LOAD_FUNC(glDeleteFramebuffers);
 		LOAD_FUNC(glBindRenderbuffer);
 		LOAD_FUNC(glGetRenderbufferParameteriv);
 		LOAD_FUNC(glFramebufferRenderbuffer);
@@ -500,6 +503,97 @@ void GLBaseCompositor::CheckCreateSwapChain(int width, int height, vr::EColorSpa
 
 	// Enumerate all the swapchain images
 	ReadSwapchainImages();
+}
+
+#endif
+
+#ifdef SUPPORT_GL
+
+// The mirror textures of each eye (GetMirrorTextureGL), in the game's context; 0 for none
+static std::atomic<GLuint> glMirrors[2];
+static std::mutex glMirrorLock;
+
+GLuint GLMirrorGet(int eye, uint32_t width, uint32_t height)
+{
+	if (eye < 0 || eye > 1 || !width || !height)
+		return 0;
+	std::lock_guard<std::mutex> lock(glMirrorLock);
+	if (glMirrors[eye])
+		return glMirrors[eye];
+	for (int i = 0; i < 32 && glGetError() != GL_NO_ERROR; i++) {
+	}
+	GLint previous = 0;
+	glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous);
+	GLuint texture = 0;
+	glGenTextures(1, &texture);
+	glBindTexture(GL_TEXTURE_2D, texture);
+	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (GLsizei)width, (GLsizei)height, 0, GL_RGBA, GL_UNSIGNED_BYTE, nullptr);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+	glBindTexture(GL_TEXTURE_2D, (GLuint)previous);
+	if (glGetError() != GL_NO_ERROR) {
+		glDeleteTextures(1, &texture);
+		return 0;
+	}
+	glMirrors[eye] = texture;
+	return texture;
+}
+
+bool GLMirrorRelease(GLuint texture)
+{
+	std::lock_guard<std::mutex> lock(glMirrorLock);
+	for (std::atomic<GLuint>& mirror : glMirrors) {
+		if (texture && mirror == texture) {
+			glDeleteTextures(1, &texture);
+			mirror = 0;
+			return true;
+		}
+	}
+	return false;
+}
+
+void GLMirrorFrame(int eye, const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, vr::EVRSubmitFlags submitFlags)
+{
+	if (eye < 0 || eye > 1 || !glMirrors[eye] || glFunctionsMissing || !texture || texture->eType != vr::TextureType_OpenGL)
+		return;
+	// Only plain 2D textures: an array, renderbuffer or multisampled one isn't mirrored
+	if (submitFlags & (vr::Submit_GlRenderBuffer | vr::Submit_GlArrayTexture))
+		return;
+	std::lock_guard<std::mutex> lock(glMirrorLock);
+	const GLuint mirror = glMirrors[eye];
+	if (!mirror)
+		return;
+	const GLuint src = (GLuint)(intptr_t)texture->handle;
+	GLint previous = 0, width = 0, height = 0, mirrorWidth = 0, mirrorHeight = 0;
+	glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous);
+	glBindTexture(GL_TEXTURE_2D, src);
+	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &width);
+	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &height);
+	glBindTexture(GL_TEXTURE_2D, mirror);
+	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_WIDTH, &mirrorWidth);
+	glGetTexLevelParameteriv(GL_TEXTURE_2D, 0, GL_TEXTURE_HEIGHT, &mirrorHeight);
+	glBindTexture(GL_TEXTURE_2D, (GLuint)previous);
+	TextureRegion area;
+	if (width <= 0 || height <= 0 || mirrorWidth <= 0 || mirrorHeight <= 0 || !RegionFromBounds(bounds, (uint32_t)width, (uint32_t)height, area))
+		return;
+	GLuint fbo[2] = { 0, 0 };
+	glGenFramebuffers(2, fbo);
+	{
+		GameBlitState gameState;
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo[0]);
+		glFramebufferTexture2D(GL_READ_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, src, 0);
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo[1]);
+		glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, mirror, 0);
+		// The area, flipped where the bounds run backwards, over the whole mirror
+		glBlitFramebuffer(
+		    (GLint)(area.flipX ? area.x1 : area.x0), (GLint)(area.flipY ? area.y1 : area.y0), (GLint)(area.flipX ? area.x0 : area.x1), (GLint)(area.flipY ? area.y0 : area.y1),
+		    0, 0, mirrorWidth, mirrorHeight, GL_COLOR_BUFFER_BIT, GL_LINEAR);
+	}
+	glDeleteFramebuffers(2, fbo);
+	for (int i = 0; i < 32 && glGetError() != GL_NO_ERROR; i++) {
+	}
 }
 
 #endif

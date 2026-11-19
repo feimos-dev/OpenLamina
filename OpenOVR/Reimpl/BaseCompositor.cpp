@@ -20,6 +20,9 @@ using glm::vec3;
 using glm::vec4;
 
 #include "BaseCompositor.h"
+#if defined(SUPPORT_GL)
+#include "../Compositor/glcompositor.h"
+#endif
 #include "BaseOverlay.h"
 
 // For the left and right hand constants - TODO move them to their own file
@@ -745,23 +748,43 @@ ovr_enum_t BaseCompositor::GetMirrorTextureGL(EVREye eEye, glUInt_t* pglTextureI
 		*pglTextureId = 0;
 	if (pglSharedTextureHandle)
 		*pglSharedTextureHandle = nullptr;
-	OC_UNSUPPORTED(VRCompositorError_RequestFailed, "GetMirrorTextureGL: no OpenGL mirror texture");
+#if defined(SUPPORT_GL)
+	if (eEye != Eye_Left && eEye != Eye_Right)
+		return VRCompositorError_RequestFailed;
+	// In the game's context (the one current on this thread), at the size the game renders at
+	uint32_t width = 0, height = 0;
+	BackendManager::Instance().GetPrimaryHMD()->GetRecommendedRenderTargetSize(&width, &height);
+	const GLuint texture = GLMirrorGet((int)eEye, width, height);
+	if (!texture)
+		return VRCompositorError_RequestFailed;
+	if (pglTextureId)
+		*pglTextureId = texture;
+	// The handle is the texture's own name: the mirror lives in the game's context, so there's nothing to share
+	if (pglSharedTextureHandle)
+		*pglSharedTextureHandle = (glSharedTextureHandle_t)(uintptr_t)texture;
+	return VRCompositorError_None;
+#else
+	OC_UNSUPPORTED(VRCompositorError_RequestFailed, "GetMirrorTextureGL: this build has no OpenGL support");
+#endif
 }
 
 bool BaseCompositor::ReleaseSharedGLTexture(glUInt_t glTextureId, glSharedTextureHandle_t glSharedTextureHandle)
 {
-	// GetMirrorTextureGL hands nothing out
-	return false;
+#if defined(SUPPORT_GL)
+	return GLMirrorRelease(glTextureId);
+#else
+	return false; // GetMirrorTextureGL handed nothing out
+#endif
 }
 
 void BaseCompositor::LockGLSharedTextureForAccess(glSharedTextureHandle_t glSharedTextureHandle)
 {
-	// GetMirrorTextureGL hands nothing out, so there's nothing to lock
+	// The texture is in the game's own context, written by its own Submit calls: nothing to lock
 }
 
 void BaseCompositor::UnlockGLSharedTextureForAccess(glSharedTextureHandle_t glSharedTextureHandle)
 {
-	// GetMirrorTextureGL hands nothing out, so there's nothing to unlock
+	// Nothing was locked
 }
 
 uint32_t BaseCompositor::GetVulkanInstanceExtensionsRequired(char* pchValue, uint32_t unBufferSize)
