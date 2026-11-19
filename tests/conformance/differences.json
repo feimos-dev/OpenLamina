@@ -176,7 +176,7 @@
  {"interface": "IVRScreenshots_\\d+", "method": "UpdateScreenshotProgress", "field": "ret", "reason": "screenshots, answered without a runtime"},
  {"interface": "IVRScreenshots_\\d+", "method": "SubmitScreenshot", "field": "ret", "reason": "screenshots, answered without a runtime"},
  {"interface": "IVRSettings_\\d+", "method": "SetBool", "field": "out", "reason": "SteamVR answered 6, an error openvr.h has no name for, to SetBool of an empty key and once of steamvr.supersampleScale; OpenLamina stores it"},
- {"interface": "IVRSystem_\\d+", "method": "DriverDebugRequest", "field": "ret", "reason": "the system interface: device and system properties are OpenLamina's own"},
+ {"interface": "IVRSystem_\\d+", "method": "DriverDebugRequest", "field": "ret", "reason": "there are no OpenVR drivers to ask: OpenLamina answers 0 where SteamVR gives an empty response of size 1"},
  {"interface": "IVRDebug_001", "method": "BeginVrProfilerEvent", "field": "out", "reason": "profiler event handles are numbers each runtime picks"},
  {"interface": "IVRSpatialAnchors_001", "method": "CreateSpatialAnchorFromPose", "field": "out", "reason": "anchor handles are numbers each runtime picks"},
  {"interface": "IVRTrackedCamera_\\d+", "method": "GetVideoStreamTextureD3D11", "field": "out", "reason": "SteamVR's record shows the game's D3D11 device buffer as written; OpenLamina never writes to the game's device"},
