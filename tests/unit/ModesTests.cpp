@@ -67,9 +67,10 @@ TEST_CASE("Button_click_follows_raw_click")
 	CHECK_FALSE(r.mode->DigitalInput("north").has_value());
 }
 
-// A click threshold in the binding is used on the trigger's pull, before the trigger's own click (Half-Life: Alyx
-// grabs at 0.8 so on Index); without one the click decides, as before
-TEST_CASE("Button_click_threshold_given_wins_over_the_click")
+// A trigger presses a button binding through the click thresholds on its pull, the binding's or the default 0.7,
+// before the trigger's own click (an Index trigger clicks only at the end of its pull); force_input "click" asks for
+// the click itself
+TEST_CASE("Button_on_a_trigger_presses_from_its_pull")
 {
 	const std::string t = "/user/hand/right/input/trigger";
 	Runner given(Source("button", { { "click", "/use" } }, { { "click_activate_threshold", "0.8" }, { "click_deactivate_threshold", "0.75" } }, t));
@@ -80,15 +81,27 @@ TEST_CASE("Button_click_threshold_given_wins_over_the_click")
 	given.Step({ { t + "/value", 0.7f }, { t + "/click", 0 } });
 	CHECK_FALSE(given.Digital("/use"));
 
-	Runner plain(Source("button", { { "click", "/use" } }, {}, t));
-	plain.Step({ { t + "/value", 0.85f }, { t + "/click", 0 } });
-	CHECK_FALSE(plain.Digital("/use"));
-	plain.Step({ { t + "/value", 1.0f }, { t + "/click", 1 } });
-	CHECK(plain.Digital("/use"));
+	Runner plain(Source("button", { { "click", "/fire" } }, {}, t));
+	plain.Step({ { t + "/value", 0.6f }, { t + "/click", 0 } });
+	CHECK_FALSE(plain.Digital("/fire"));
+	plain.Step({ { t + "/value", 0.75f }, { t + "/click", 0 } });
+	CHECK(plain.Digital("/fire"));
 
-	Runner toggle(Source("toggle_button", { { "click", "/flip" } }, { { "click_activate_threshold", "0.8" } }, t));
-	toggle.Step({ { t + "/value", 0.9f }, { t + "/click", 0 } });
+	Runner clickOnly(Source("button", { { "click", "/fire" } }, { { "force_input", "click" } }, t));
+	clickOnly.Step({ { t + "/value", 0.95f }, { t + "/click", 0 } });
+	CHECK_FALSE(clickOnly.Digital("/fire"));
+	clickOnly.Step({ { t + "/value", 1.0f }, { t + "/click", 1 } });
+	CHECK(clickOnly.Digital("/fire"));
+
+	Runner toggle(Source("toggle_button", { { "click", "/flip" } }, {}, t));
+	toggle.Step({ { t + "/value", 0.8f }, { t + "/click", 0 } });
 	CHECK(toggle.Digital("/flip"));
+
+	// A button without a value still follows its click
+	const std::string a = "/user/hand/right/input/a";
+	Runner button(Source("button", { { "click", "/a" } }, {}, a));
+	button.Step({ { a + "/click", 1 } });
+	CHECK(button.Digital("/a"));
 }
 
 TEST_CASE("Button_double_press_counted_once")
