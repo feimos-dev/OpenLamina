@@ -67,6 +67,87 @@ TEST_CASE("Long_press_opens_short_does_not")
 	CHECK(!off.Open());
 }
 
+TEST_CASE("Press_toggles_on_release_and_hold_recentres")
+{
+	const int none = Dashboard::kNoHand;
+	Dashboard d(Dashboard::Button::PressOrHold);
+	// A short press of the left button: nothing while it's down, open when it's let go
+	CHECK(d.OnInput(true, false, 0.0) == none);
+	CHECK(d.OnInput(true, false, 0.5) == none);
+	CHECK(!d.Open());
+	CHECK(d.OnInput(false, false, 0.6) == none);
+	CHECK(d.Open());
+	// And of the right one: closed again
+	CHECK(d.OnInput(false, true, 1.0) == none);
+	CHECK(d.Open());
+	CHECK(d.OnInput(false, false, 1.2) == none);
+	CHECK(!d.Open());
+
+	// A hold: a recentre from that hand once it has been held long enough, once, and no dashboard when it's let go
+	CHECK(d.OnInput(false, true, 2.0) == none);
+	CHECK(d.OnInput(false, true, 2.0 + Dashboard::kRecentreHold - 0.01) == none);
+	CHECK(d.OnInput(false, true, 2.0 + Dashboard::kRecentreHold) == 1);
+	CHECK(d.OnInput(false, true, 4.0) == none);
+	CHECK(d.OnInput(false, true, 6.0) == none);
+	CHECK(d.OnInput(false, false, 6.1) == none);
+	CHECK(!d.Open());
+	// The next press is a press again
+	d.OnInput(true, false, 7.0);
+	d.OnInput(false, false, 7.1);
+	CHECK(d.Open());
+
+	// A hold while it's open recentres and leaves it open
+	CHECK(d.OnInput(true, false, 8.0) == none);
+	CHECK(d.OnInput(true, false, 9.5) == 0);
+	CHECK(d.OnInput(false, false, 9.6) == none);
+	CHECK(d.Open());
+}
+
+TEST_CASE("Hold_with_both_hands")
+{
+	const int none = Dashboard::kNoHand;
+	Dashboard d(Dashboard::Button::PressOrHold);
+	// Both buttons down are one press, from the hand that began it
+	CHECK(d.OnInput(true, false, 0.0) == none);
+	CHECK(d.OnInput(true, true, 0.5) == none);
+	CHECK(d.OnInput(true, true, 1.0) == 0);
+	// One let go, the other still down: the same press, already used
+	CHECK(d.OnInput(false, true, 1.2) == none);
+	CHECK(d.OnInput(false, true, 3.0) == none);
+	CHECK(d.OnInput(false, false, 3.1) == none);
+	CHECK(!d.Open());
+
+	// Begun on the left, which is let go while the right holds on: the right hand's, timed from the start
+	CHECK(d.OnInput(true, false, 4.0) == none);
+	CHECK(d.OnInput(true, true, 4.3) == none);
+	CHECK(d.OnInput(false, true, 4.6) == none);
+	CHECK(!d.Open());
+	CHECK(d.OnInput(false, true, 5.0) == 1);
+	CHECK(d.OnInput(false, false, 5.1) == none);
+	CHECK(!d.Open());
+
+	// Both pressed and let go shortly: one press
+	d.OnInput(true, true, 6.0);
+	d.OnInput(true, false, 6.1);
+	CHECK(!d.Open());
+	d.OnInput(false, false, 6.2);
+	CHECK(d.Open());
+}
+
+TEST_CASE("Other_buttons_never_recentre")
+{
+	for (Dashboard::Button button : { Dashboard::Button::Menu, Dashboard::Button::MenuLong, Dashboard::Button::Off }) {
+		Dashboard d(button);
+		bool recentred = false;
+		for (int i = 0; i <= 30; i++)
+			recentred = recentred || d.OnInput(true, true, i * 0.1) != Dashboard::kNoHand;
+		recentred = recentred || d.OnInput(false, false, 3.1) != Dashboard::kNoHand;
+		CHECK(!recentred);
+		// As before: at the press, after 0.6 s, never
+		CHECK(d.Open() == (button != Dashboard::Button::Off));
+	}
+}
+
 TEST_CASE("Tab_click_selects_program")
 {
 	Dashboard d(Dashboard::Button::MenuLong);

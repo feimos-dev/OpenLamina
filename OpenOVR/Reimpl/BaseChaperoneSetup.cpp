@@ -14,6 +14,7 @@
 #include "generated/static_bases.gen.h"
 
 #include <glm/gtc/matrix_inverse.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 #include <algorithm>
 #include <cmath>
@@ -24,7 +25,8 @@ using namespace vr;
 // Room setup: a working copy that programs change and commit to the store's Chaperone document, which every
 // OpenComposite program then reads. The OpenXR runtime's stage is the room until something is committed. The zero
 // poses are kept and reported; with applyZeroPoses, on Monado, the standing one also moves the runtime's stage through
-// libmonado (ApplyZeroPoses), and elsewhere the runtime's own stay in use. Raw tracking space is the runtime's stage
+// libmonado (ApplyZeroPoses), as does a recentre the user asks for (RecentreStage), and elsewhere the runtime's own
+// stay in use. Raw tracking space is the runtime's stage
 // (floorSpace), so it moves with it, where SteamVR's raw space never moves. The live collision bounds and
 // IVRChaperone's play area stay the runtime's: it draws the boundary the user sees.
 
@@ -105,6 +107,58 @@ std::optional<vr::HmdMatrix34_t> BaseChaperoneSetup::ApplyZeroPoses(Json::Value&
 		return std::nullopt;
 	RecordStage(offsets, committed.standingZero, G2S_m34(target));
 	return now;
+}
+
+vr::HmdMatrix34_t BaseChaperoneSetup::RecentredOrigin(const vr::HmdMatrix34_t& headInStage)
+{
+	const glm::mat4 head = S2G_m34(headInStage);
+	// The way the head faces, along the floor; looking straight up or down, the way its top or bottom points
+	glm::vec3 forward = -glm::vec3(head[2]);
+	const bool down = forward.y < 0;
+	forward.y = 0;
+	if (glm::length(forward) < 1e-3f) {
+		forward = glm::vec3(head[1]) * (down ? 1.0f : -1.0f);
+		forward.y = 0;
+	}
+	const float yaw = glm::length(forward) < 1e-3f ? 0.0f : std::atan2(-forward.x, -forward.z);
+	glm::mat4 origin = glm::rotate(glm::mat4(1.0f), yaw, glm::vec3(0.0f, 1.0f, 0.0f));
+	origin[3] = glm::vec4(head[3].x, 0.0f, head[3].z, 1.0f);
+	return G2S_m34(origin);
+}
+
+std::optional<vr::HmdMatrix34_t> BaseChaperoneSetup::MoveStage(Json::Value& offsets, const vr::HmdMatrix34_t& origin, LibMonado& monado)
+{
+	std::optional<vr::HmdMatrix34_t> now = monado.GetReferenceSpaceOffset(LibMonado::kReferenceSpaceStage);
+	if (!now)
+		return std::nullopt;
+	const vr::HmdMatrix34_t target = G2S_m34(S2G_m34(*now) * S2G_m34(origin));
+	if (!monado.SetReferenceSpaceOffset(LibMonado::kReferenceSpaceStage, target))
+		return std::nullopt;
+	const Json::Value record = offsets.isObject() ? offsets.get("stage", Json::Value()) : Json::Value();
+	if (record.isObject() && record.isMember("zero") && record.isMember("offset")
+	    && Near(S2G_m34(*now), S2G_m34(ChaperoneData::MatrixFromJson(record["offset"]))))
+		offsets["stage"]["offset"] = ChaperoneData::MatrixToJson(target);
+	return now;
+}
+
+bool BaseChaperoneSetup::RecentreStage(const vr::HmdMatrix34_t& headInStage)
+{
+	LibMonado& monado = LibMonado::Get();
+	if (!oovr_global_configuration.ApplyZeroPoses() || !monado.Available())
+		return false;
+	// Read, moved and recorded under the store's lock, as a committed zero pose is
+	const vr::HmdMatrix34_t origin = RecentredOrigin(headInStage);
+	std::optional<vr::HmdMatrix34_t> before;
+	const bool recorded = SharedStore::Get().Update(StoreDoc::Offsets, [&](Json::Value& offsets) { before = MoveStage(offsets, origin, monado); });
+	if (!before)
+		return false;
+	if (!recorded) {
+		// Moved but not recorded: put back, so that the next commit doesn't apply its zero pose on top
+		monado.SetReferenceSpaceOffset(LibMonado::kReferenceSpaceStage, *before);
+		return false;
+	}
+	PostChangedEvents();
+	return true;
 }
 
 ChaperoneData BaseChaperoneSetup::LiveData(bool* found)

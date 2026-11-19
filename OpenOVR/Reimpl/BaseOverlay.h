@@ -270,6 +270,9 @@ public:
 	// on the game's thread before _UpdatePointer; in every program, the store's Dashboard document read for its
 	// dashboard overlays. Not holding _LayersLock().
 	void _UpdateDashboard();
+	// A recentre the dashboard's button was held for (dashboardButton=system), on the game's thread once its frame has
+	// ended: the seated space is replaced, which a frame being built may refer to
+	void _RecentreIfAsked();
 
 	// The scene app's play area walls (drawBounds) near the HMD and the controllers: placed, and their grids filled, on
 	// the game's thread before the frame's layers are built. Not holding _LayersLock().

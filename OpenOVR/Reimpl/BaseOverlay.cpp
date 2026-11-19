@@ -6,6 +6,7 @@
 #include "../../DrvOpenXR/CpuSwapchain.h"
 #include "../../DrvOpenXR/HelperSession.h"
 #include "../../DrvOpenXR/XrBackend.h"
+#include "BaseChaperoneSetup.h"
 #include "BaseCompositor.h"
 #include "Misc/FrameStats.h"
 #include "BaseOverlay.h"
@@ -36,12 +37,15 @@
 #include "BaseInput.h"
 #include "convert.h"
 #include "generated/static_bases.gen.h"
+#include <glm/gtc/matrix_inverse.hpp>
+
 #include <array>
 #include <atomic>
 #include <chrono>
 #include <climits>
 #include <optional>
 #include <string>
+#include <utility>
 
 using glm::mat4;
 using glm::vec3;
@@ -273,6 +277,7 @@ struct BaseOverlay::Sharing {
 
 struct BaseOverlay::DashboardState {
 	Dashboard dashboard; // the game's thread's (_UpdateDashboard)
+	int recentreHand = Dashboard::kNoHand; // the hand a recentre was held on, until _RecentreIfAsked (the game's thread's)
 	// ShowDashboard in the scene app, from any thread: acted on by _UpdateDashboard; the overlay's key under layersLock
 	std::atomic<bool> openRequested{ false };
 	std::string requestedKey;
@@ -337,7 +342,9 @@ Dashboard::Button DashboardButtonSetting()
 	const std::string& b = oovr_global_configuration.DashboardButton();
 	if (b == "menu_long" || b == "system_long")
 		return Dashboard::Button::MenuLong;
-	return b == "menu" || b == "system" ? Dashboard::Button::Menu : Dashboard::Button::Off;
+	if (b == "system")
+		return Dashboard::Button::PressOrHold;
+	return b == "menu" ? Dashboard::Button::Menu : Dashboard::Button::Off;
 }
 
 // A game, which runs the dashboard where dashboardButton is on
@@ -588,6 +595,8 @@ constexpr float kPanelDistance = 1.5f;
 
 // The keyboard: ahead of the head and below it
 constexpr float kKeyboardDistance = 1.0f, kKeyboardBelow = 0.4f;
+// The pulse on the controller whose system button was held for a recentre
+constexpr float kRecentreHapticSeconds = 0.1f, kRecentreHapticAmplitude = 0.5f;
 
 double NowSeconds()
 {
@@ -900,12 +909,15 @@ void BaseOverlay::_UpdateDashboard()
 	if (sceneDashboard) {
 		auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
 		BaseInput* input = GetUnsafeBaseInput();
-		const bool menu = input && backend && backend->IsInputAvailable()
-		    && input->GetDashboardButton(oovr_global_configuration.DashboardButton().starts_with("system"));
+		const bool available = input && backend && backend->IsInputAvailable();
+		const bool system = oovr_global_configuration.DashboardButton().starts_with("system");
+		const bool left = available && input->GetDashboardButton(system, 0), right = available && input->GetDashboardButton(system, 1);
 		const bool wasOpen = d.dashboard.Open();
 		// The button's time is the frames' (their predicted display time), which a long press is held for
 		const double now = xr_gbl && xr_gbl->nextPredictedFrameTime > 0 ? (double)xr_gbl->nextPredictedFrameTime * 1e-9 : NowSeconds();
-		d.dashboard.OnInput(menu, now);
+		const int recentre = d.dashboard.OnInput(left, right, now);
+		if (recentre != Dashboard::kNoHand)
+			d.recentreHand = recentre;
 		// Asked for by this program (ShowDashboard), or by another one through the store: a live request
 		std::string requestedKey;
 		bool requested = false;
@@ -983,6 +995,42 @@ void BaseOverlay::_UpdateDashboard()
 	pose.position = G2X_v3f(X2G_v3f(pose.position) + q * glm::vec3(0.0f, 0.0f, -0.01f));
 	d.framePose = pose;
 	d.shown = d.chain->Live();
+}
+
+void BaseOverlay::_RecentreIfAsked()
+{
+	DashboardState& d = *dash;
+	const int hand = std::exchange(d.recentreHand, Dashboard::kNoHand);
+	if (hand == Dashboard::kNoHand)
+		return;
+	// The stage, where it can be moved: every program follows
+	bool stageMoved = false;
+	TrackedDevicePose_t head{};
+	if (std::shared_ptr<ITrackedDevice> hmd = BackendManager::Instance().GetDevice(vr::k_unTrackedDeviceIndex_Hmd))
+		hmd->GetPose(vr::TrackingUniverseStanding, &head, ETrackingStateType::TrackingStateType_Rendering);
+	if (head.bPoseIsValid) {
+		stageMoved = BaseChaperoneSetup::RecentreStage(head.mDeviceToAbsoluteTracking);
+		if (stageMoved && d.dashboard.Open()) {
+			// The open dashboard's panel stays where it is in the room
+			const glm::mat4 toNew = glm::affineInverse(S2G_m34(BaseChaperoneSetup::RecentredOrigin(head.mDeviceToAbsoluteTracking)));
+			const uint32_t self = oc_current_pid();
+			SharedStore::Get().Update(StoreDoc::Dashboard, [&](Json::Value& doc) {
+				XrPosef panel{};
+				if (!doc.isObject() || PidOf(doc["scene_pid"]) != self || !PoseFromJson(doc["panel_pose"], panel))
+					return;
+				const glm::mat4 moved = toNew * X2G_om34_pose(panel);
+				doc["panel_pose"] = PoseJson(XrPosef{ G2X_quat(glm::normalize(glm::quat_cast(glm::mat3(moved)))), G2X_v3f(glm::vec3(moved[3])) });
+			});
+		}
+	}
+	// The seated origin under the head too; without a stage to move, that is the recentre
+	if (BaseSystem* system = GetUnsafeBaseSystem())
+		system->ResetSeatedZeroPose();
+	OOVR_LOGF("Recentred from the %s controller's system button: %s", hand == 0 ? "left" : "right",
+	    stageMoved ? "the stage and the seated origin" : "the seated origin (the stage can't be moved here)");
+	// A short pulse on the controller that was held
+	if (BaseInput* input = GetUnsafeBaseInput())
+		input->TriggerHandHaptic(hand, kRecentreHapticSeconds, 0.0f, kRecentreHapticAmplitude);
 }
 
 void BaseOverlay::_UpdateBounds()

@@ -1,0 +1,20 @@
+{
+  "#": "The recentre case: the head 0.5 m right of and 0.3 m behind the stage's origin, turned 90 degrees left; from frame 170 0.4 m left of and 1 m behind it, 1.6 m up, turned right round. The right controller's system button held from frame 20 to 150 (1.4 s), the left one's from 180 to 310; then the left one pressed from 340 to 350 and the right one from 370 to 380",
+  "interaction_profile": "/interaction_profiles/valve/index_controller",
+  "poses": {
+    "/user/head": [
+      {"p": [0.5, 1.7, 0.3], "q": [0, 0.70710678, 0, 0.70710678], "from_frame": 0},
+      {"p": [-0.4, 1.6, 1.0], "q": [0, 1, 0, 0], "from_frame": 170}
+    ]
+  },
+  "inputs": [
+    {"frame": 20, "path": "/user/hand/right/input/system/click", "value": 1.0},
+    {"frame": 150, "path": "/user/hand/right/input/system/click", "value": 0.0},
+    {"frame": 180, "path": "/user/hand/left/input/system/click", "value": 1.0},
+    {"frame": 310, "path": "/user/hand/left/input/system/click", "value": 0.0},
+    {"frame": 340, "path": "/user/hand/left/input/system/click", "value": 1.0},
+    {"frame": 350, "path": "/user/hand/left/input/system/click", "value": 0.0},
+    {"frame": 370, "path": "/user/hand/right/input/system/click", "value": 1.0},
+    {"frame": 380, "path": "/user/hand/right/input/system/click", "value": 0.0}
+  ]
+}

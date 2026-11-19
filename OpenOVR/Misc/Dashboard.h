@@ -1,5 +1,5 @@
 #pragma once
-// OpenLamina's dashboard: opened over the game with the left controller's menu button (dashboardButton), it shows
+// OpenLamina's dashboard: opened over the game with a controller's system or menu button (dashboardButton), it shows
 // each program's dashboard overlay (IVROverlay::CreateDashboardOverlay) in a panel ahead of the player, with a tab
 // per program to choose between them and a "Quit game" button. The scene app's instance runs it and draws the frame
 // and tabs around the panel; the program whose overlay is chosen draws that overlay itself at the panel's pose (no
@@ -22,15 +22,19 @@
 
 class Dashboard {
 public:
-	// How its button opens it. ini dashboardButton=system|system_long|menu|menu_long|off, default off: the button is a
-	// controller's system button or the left menu button, pressed (Menu) or held for 0.6 s (MenuLong)
-	enum class Button { MenuLong, Menu, Off };
+	// How its button opens it. ini dashboardButton=system|system_long|menu|menu_long|off: the button is a controller's
+	// system button or the left menu button. Menu: each press opens or closes it. MenuLong: held for 0.6 s.
+	// PressOrHold (system): a press opens or closes it when the button is let go, and a hold of 1 s recentres instead.
+	enum class Button { MenuLong, Menu, PressOrHold, Off };
 
 	// The frame's canvas, and its size in metres: the panel in its middle, tabs above, "Quit game" below
 	static constexpr int kWidth = 1024, kHeight = 768;
 	static constexpr float kWidthMetres = 1.6f, kHeightMetres = 1.2f;
 	// How long the menu button is held to open or close it (MenuLong)
 	static constexpr double kLongPress = 0.6;
+	// How long the button is held to recentre (PressOrHold)
+	static constexpr double kRecentreHold = 1.0;
+	static constexpr int kNoHand = -1;
 
 	struct Rect {
 		int x, y, w, h;
@@ -45,7 +49,10 @@ public:
 	{
 	}
 
-	void OnInput(bool leftMenuDown, double now); // opens and closes
+	// The button of each hand (0 left, 1 right) at a time in seconds: opens and closes it. Returns the hand whose button
+	// has now been held long enough to recentre (once a press, and that press doesn't open or close it), else kNoHand.
+	int OnInput(bool leftDown, bool rightDown, double now);
+	int OnInput(bool leftDown, double now) { return OnInput(leftDown, false, now); }
 	bool Open() const { return open; }
 	void SetOpen(bool isOpen); // ShowDashboard, a quit, the store
 
@@ -67,9 +74,10 @@ public:
 private:
 	Button button;
 	bool open = false;
-	bool held = false; // the button, at the last OnInput
+	bool held = false; // the button of either hand, at the last OnInput
 	double heldSince = 0;
-	bool toggledThisPress = false;
+	int heldHand = 0; // the hand that began the press
+	bool toggledThisPress = false; // or recentred
 	mutable std::vector<Tab> drawnTabs; // as last drawn, for OnClick
 };
 

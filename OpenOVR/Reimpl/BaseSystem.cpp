@@ -945,9 +945,10 @@ void BaseSystem::ResetSeatedZeroPose()
 
 		if ((location.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) && (location.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)) {
 			static XrReferenceSpaceCreateInfo spaceInfo{ XR_TYPE_REFERENCE_SPACE_CREATE_INFO, nullptr, XR_REFERENCE_SPACE_TYPE_LOCAL, { { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } } };
+			// The head's place in the seated space now, turned into the space that one is made in
 			XrVector3f rotatedPos;
+			rotate_vector_by_quaternion(location.pose.position, spaceInfo.poseInReferenceSpace.orientation, rotatedPos);
 			auto rot = yRotation(location.pose.orientation, spaceInfo.poseInReferenceSpace.orientation);
-			rotate_vector_by_quaternion(location.pose.position, rot, rotatedPos);
 			spaceInfo.poseInReferenceSpace.position.x += rotatedPos.x;
 			spaceInfo.poseInReferenceSpace.position.y += rotatedPos.y;
 			spaceInfo.poseInReferenceSpace.position.z += rotatedPos.z;

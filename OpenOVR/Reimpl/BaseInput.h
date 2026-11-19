@@ -489,12 +489,12 @@ public: // INTERNAL FUNCTIONS
 	 */
 	void SyncPointerActions();
 	/**
-	 * Whether the button that opens the dashboard is held, as of the last sync. system: either controller's system
-	 * button, where the runtime hands it to applications. Otherwise the left controller's menu button: the old input's
-	 * system and menu buttons under inputEvaluator=direct, the raw inputs under steamvr. False before any actions are
-	 * loaded.
+	 * Whether the button that opens the dashboard is held on a hand (0 the left, 1 the right), as of the last sync.
+	 * system: that controller's system button, where the runtime hands it to applications. Otherwise the left
+	 * controller's menu button (never the right's): the old input's system and menu buttons under
+	 * inputEvaluator=direct, the raw inputs under steamvr. False before any actions are loaded.
 	 */
-	bool GetDashboardButton(bool system);
+	bool GetDashboardButton(bool system, int hand);
 	/**
 	 * While OpenLamina's dashboard is open, the game's input is held: its digital and analog actions read inactive, and
 	 * its old controller states zero

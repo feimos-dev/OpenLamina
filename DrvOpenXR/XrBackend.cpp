@@ -1190,8 +1190,10 @@ void XrBackend::SubmitFrames(bool showSkybox, bool postPresent)
 	owner.unlock();
 
 	// The game's own dashboard overlays, for its dashboard's tabs (dashboardButton), once its frame has ended
-	if (overlay)
+	if (overlay) {
 		WithStoreDocuments([&] { overlay->_PublishOverlays(); });
+		WithStoreDocuments([&] { overlay->_RecentreIfAsked(); });
+	}
 	NoticeRenderScale();
 
 	BaseSystem* sys = GetUnsafeBaseSystem();

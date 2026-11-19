@@ -38,14 +38,17 @@ Dashboard::Rect Dashboard::QuitRect()
 	return Rect{ kWidth - kMargin - kTabWidth, kHeight - kMargin - kTabHeight, kTabWidth, kTabHeight };
 }
 
-void Dashboard::OnInput(bool leftMenuDown, double now)
+int Dashboard::OnInput(bool leftDown, bool rightDown, double now)
 {
+	const bool down = leftDown || rightDown;
 	if (button == Button::Off) {
-		held = leftMenuDown;
-		return;
+		held = down;
+		return kNoHand;
 	}
-	if (leftMenuDown && !held) {
+	int recentre = kNoHand;
+	if (down && !held) {
 		heldSince = now;
+		heldHand = leftDown ? 0 : 1;
 		toggledThisPress = false;
 		// Menu: each press opens or closes it
 		if (button == Button::Menu) {
@@ -54,11 +57,23 @@ void Dashboard::OnInput(bool leftMenuDown, double now)
 		}
 	}
 	// MenuLong: held long enough, once a press
-	if (leftMenuDown && button == Button::MenuLong && !toggledThisPress && now - heldSince >= kLongPress) {
+	if (down && button == Button::MenuLong && !toggledThisPress && now - heldSince >= kLongPress) {
 		open = !open;
 		toggledThisPress = true;
 	}
-	held = leftMenuDown;
+	if (button == Button::PressOrHold) {
+		if (down && !toggledThisPress && now - heldSince >= kRecentreHold) {
+			// Held long enough: a recentre, from the hand that began the press if it's still the one held
+			toggledThisPress = true;
+			const bool beganHeld = heldHand == 0 ? leftDown : rightDown;
+			recentre = beganHeld ? heldHand : 1 - heldHand;
+		} else if (!down && held && !toggledThisPress) {
+			// Let go before that: a press
+			open = !open;
+		}
+	}
+	held = down;
+	return recentre;
 }
 
 void Dashboard::SetOpen(bool isOpen)
