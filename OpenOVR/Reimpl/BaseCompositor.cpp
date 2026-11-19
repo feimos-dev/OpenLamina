@@ -792,14 +792,16 @@ void BaseCompositor::SetExplicitTimingMode(ovr_enum_t eTimingMode)
 {
 	// Explicit timing means the application calls SubmitExplicitTimingData each
 	// frame, and in return we're not allowed to use their Vulkan queue
-	// during WaitGetPoses. We don't do any of that anyway, so nothing needs to
-	// be done here.
+	// during WaitGetPoses. We never use their queue there, so only the mode is kept.
+	explicitTimingMode = (int32_t)eTimingMode;
 }
 
 ovr_enum_t BaseCompositor::SubmitExplicitTimingData()
 {
 	// In SteamVR this records a more accurate timestamp for tracking via the GPU's
-	// clock, Oculus doesn't support that so noop here is fine.
+	// clock, which OpenXR has no equivalent for, so there is nothing to record.
+	if (explicitTimingMode == 0) // the implicit timing mode
+		return VRCompositorError_RequestFailed;
 	return VRCompositorError_None;
 }
 

@@ -1,4 +1,7 @@
 #pragma once
+
+#include <atomic>
+#include <cstdint>
 #include "../BaseCommon.h" // TODO don't import from OCOVR, and remove the "../"
 #include "generated/interfaces/IVRCompositor_022.h"
 
@@ -159,6 +162,7 @@ private:
 
 	// True if the current frame has only nullptr textures supplied, and should be ignored
 	bool isNullRender = false;
+	std::atomic<int32_t> explicitTimingMode{ 0 };
 
 public:
 	typedef int ovr_enum_t;
