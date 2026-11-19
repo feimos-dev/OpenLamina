@@ -1,5 +1,6 @@
 #include "XrGenericTracker.h"
 
+#include "../OpenOVR/Misc/LibMonado.h"
 #include "../OpenOVR/Misc/xrmoreutils.h"
 #include "../OpenOVR/Reimpl/BaseInput.h"
 #include "../OpenOVR/convert.h"
@@ -35,6 +36,34 @@ void XrGenericTracker::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDe
 }
 
 // Properties
+
+bool XrGenericTracker::GetBoolTrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::ETrackedPropertyError* pErrorL)
+{
+	if (prop == vr::Prop_DeviceProvidesBatteryStatus_Bool || prop == vr::Prop_DeviceIsCharging_Bool) {
+		// From libmonado, by the xdev's name and serial, when Monado offers it
+		std::optional<LibMonado::Battery> battery = LibMonado::Get().BatteryFor(xdevProperties.name, xdevProperties.serial);
+		bool present = battery && battery->present;
+		if (prop == vr::Prop_DeviceProvidesBatteryStatus_Bool || present) {
+			if (pErrorL)
+				*pErrorL = vr::TrackedProp_Success;
+			return prop == vr::Prop_DeviceProvidesBatteryStatus_Bool ? present : battery->charging;
+		}
+	}
+	return XrTrackedDevice::GetBoolTrackedDeviceProperty(prop, pErrorL);
+}
+
+float XrGenericTracker::GetFloatTrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::ETrackedPropertyError* pErrorL)
+{
+	if (prop == vr::Prop_DeviceBatteryPercentage_Float) {
+		std::optional<LibMonado::Battery> battery = LibMonado::Get().BatteryFor(xdevProperties.name, xdevProperties.serial);
+		if (battery && battery->present) {
+			if (pErrorL)
+				*pErrorL = vr::TrackedProp_Success;
+			return battery->charge;
+		}
+	}
+	return XrTrackedDevice::GetFloatTrackedDeviceProperty(prop, pErrorL);
+}
 
 uint64_t XrGenericTracker::GetUint64TrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::ETrackedPropertyError* pErrorL)
 {

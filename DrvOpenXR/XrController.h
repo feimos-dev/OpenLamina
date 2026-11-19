@@ -13,7 +13,6 @@ public:
 	enum XrControllerType : int {
 		XCT_LEFT,
 		XCT_RIGHT,
-		XCT_TRACKED_OBJECT,
 	};
 
 	explicit XrController(XrControllerType type, const InteractionProfile& profile);
@@ -44,7 +43,7 @@ public:
 		switch (prop) {
 		case vr::Prop_DeviceProvidesBatteryStatus_Bool: {
 			std::optional<LibMonado::Battery> battery = role ? mnd.BatteryForRole(role) : std::nullopt;
-			return battery ? battery->present : true;
+			return battery && battery->present;
 		}
 		case vr::Prop_DeviceIsCharging_Bool: {
 			std::optional<LibMonado::Battery> battery = role ? mnd.BatteryForRole(role) : std::nullopt;

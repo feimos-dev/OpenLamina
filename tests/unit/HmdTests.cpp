@@ -29,7 +29,6 @@ public:
 	uint32_t width = 0, height = 0;
 
 	void GetPose(vr::ETrackingUniverseOrigin, vr::TrackedDevicePose_t*, ETrackingStateType) override {}
-	void GetPose(vr::ETrackingUniverseOrigin, vr::TrackedDevicePose_t*, ETrackingStateType, double) override {}
 	void GetRecommendedRenderTargetSize(uint32_t* w, uint32_t* h) override
 	{
 		*w = width;

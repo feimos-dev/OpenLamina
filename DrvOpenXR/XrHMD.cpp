@@ -482,7 +482,31 @@ bool XrHMD::GetBoolTrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::ET
 		// With sessionEvents, the runtime says whether the user wears the headset
 		return oovr_global_configuration.SessionEvents() ? HasProximitySensor() : true;
 	case vr::Prop_HasCameraComponent_Bool:
+	case vr::Prop_HasCamera_Bool:
+	case vr::Prop_IsOnDesktop_Bool:
 		return false;
+	case vr::Prop_NeverTracked_Bool:
+	case vr::Prop_WillDriftInYaw_Bool:
+	case vr::Prop_DeviceHasNoIMU_Bool: {
+		// From what the system says it tracks: a system with no tracking never has a pose; one with orientation only
+		// has no position to hold its yaw by; one without orientation has no IMU
+		auto lock = xr_session.lock_shared();
+		if (!xr_gbl)
+			break;
+		const XrSystemTrackingProperties& tracking = xr_gbl->systemProperties.trackingProperties;
+		bool orientation = tracking.orientationTracking != XR_FALSE, position = tracking.positionTracking != XR_FALSE;
+		if (prop == vr::Prop_NeverTracked_Bool)
+			return !orientation && !position;
+		if (prop == vr::Prop_WillDriftInYaw_Bool)
+			return orientation && !position;
+		return !orientation;
+	}
+	case vr::Prop_SupportsXrEyeGazeInteraction_Bool: {
+		auto lock = xr_session.lock_shared();
+		if (!xr_gbl)
+			break;
+		return xr_gbl->eyeGazeProperties.supportsEyeGazeInteraction != XR_FALSE;
+	}
 	case vr::Prop_HasDisplayComponent_Bool:
 		return true;
 	case vr::Prop_HasVirtualDisplayComponent_Bool:
@@ -553,31 +577,41 @@ float XrHMD::GetFloatTrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::
 uint32_t XrHMD::GetStringTrackedDeviceProperty(vr::ETrackedDeviceProperty prop,
     char* value, uint32_t bufferSize, vr::ETrackedPropertyError* pErrorL)
 {
-	std::shared_lock lock(profile_mutex);
-
 	if (pErrorL)
 		*pErrorL = vr::TrackedProp_Success;
 
-	if (profile) {
-		std::optional<std::string> ret = profile->GetProperty<std::string>(prop, HAND_NONE);
-		if (ret.has_value())
-			return AnswerString(*ret, value, bufferSize, pErrorL);
-	}
-
-	// The rest from the HMD's row (Identity)
+	// From the HMD's row (Identity): the runtime's system, not the controllers' interaction profile
 	return XrTrackedDevice::GetStringTrackedDeviceProperty(prop, value, bufferSize, pErrorL);
 }
 
 DeviceIdentity XrHMD::Identity()
 {
-	// The OpenXR system's name picks the row; read once (it doesn't change while the instance lives)
-	static std::string systemName = [] {
-		XrSystemProperties properties = { XR_TYPE_SYSTEM_PROPERTIES };
-		if (xr_instance != XR_NULL_HANDLE && XR_SUCCEEDED(xrGetSystemProperties(xr_instance, xr_system, &properties)))
-			return std::string(properties.systemName);
-		return std::string();
-	}();
-	return HmdIdentity(systemName);
+	// The OpenXR system's name picks the row; read once per instance (it doesn't change while the instance lives)
+	static std::mutex nameMutex;
+	static XrInstance nameInstance = XR_NULL_HANDLE;
+	static std::string systemName;
+	{
+		std::lock_guard<std::mutex> guard(nameMutex);
+		if (xr_instance == XR_NULL_HANDLE) {
+			systemName.clear();
+			nameInstance = XR_NULL_HANDLE;
+		} else if (xr_instance != nameInstance || systemName.empty()) {
+			XrSystemProperties properties = { XR_TYPE_SYSTEM_PROPERTIES };
+			systemName = XR_SUCCEEDED(xrGetSystemProperties(xr_instance, xr_system, &properties)) ? properties.systemName : "";
+			nameInstance = xr_instance;
+		}
+	}
+	RuntimeDevice device;
+	if (std::optional<LibMonado::DeviceInfo> head = LibMonado::Get().DeviceInfoForRole("head")) {
+		device.name = head->name;
+		device.serial = head->serial;
+	}
+	std::string name;
+	{
+		std::lock_guard<std::mutex> guard(nameMutex);
+		name = systemName;
+	}
+	return HmdIdentity(name, device);
 }
 
 int32_t XrHMD::GetInt32TrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::ETrackedPropertyError* pErrorL)
@@ -593,12 +627,24 @@ int32_t XrHMD::GetInt32TrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr
 	case vr::Prop_ExpectedControllerCount_Int32:
 		return 2;
 	case vr::Prop_ExpectedTrackingReferenceCount_Int32:
+	case vr::Prop_NumCameras_Int32:
 		return 0;
 	default:
 		break;
 	}
 
 	return ITrackedDevice::GetInt32TrackedDeviceProperty(prop, pErrorL);
+}
+
+uint64_t XrHMD::GetUint64TrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::ETrackedPropertyError* pErrorL)
+{
+	uint64_t luid = 0;
+	if (prop == vr::Prop_GraphicsAdapterLuid_Uint64 && BaseSystem::_RuntimeAdapterLuid(&luid)) {
+		if (pErrorL)
+			*pErrorL = vr::TrackedProp_Success;
+		return luid;
+	}
+	return XrTrackedDevice::GetUint64TrackedDeviceProperty(prop, pErrorL);
 }
 
 void XrHMD::SetInteractionProfile(const InteractionProfile* profile)

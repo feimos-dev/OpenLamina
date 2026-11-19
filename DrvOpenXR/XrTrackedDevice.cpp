@@ -22,12 +22,24 @@ void XrTrackedDevice::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDev
 	NoPose(pose);
 }
 
-void XrTrackedDevice::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDevicePose_t* pose, ETrackingStateType trackingState, double absTime)
-{
-	NoPose(pose);
-}
-
 // Properties
+
+int32_t XrTrackedDevice::GetInt32TrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::ETrackedPropertyError* pErrorL)
+{
+	vr::ETrackedDeviceClass deviceClass = GetTrackedDeviceClass();
+	bool answered = prop == vr::Prop_DeviceClass_Int32
+	    || (prop == vr::Prop_ControllerRoleHint_Int32
+	        && (deviceClass == vr::TrackedDeviceClass_Controller || deviceClass == vr::TrackedDeviceClass_GenericTracker));
+	if (!answered)
+		return ITrackedDevice::GetInt32TrackedDeviceProperty(prop, pErrorL);
+
+	if (pErrorL)
+		*pErrorL = vr::TrackedProp_Success;
+	if (prop == vr::Prop_DeviceClass_Int32)
+		return deviceClass;
+	// The hand, or none for a tracker
+	return GetControllerRole();
+}
 
 uint64_t XrTrackedDevice::GetUint64TrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::ETrackedPropertyError* pErrorL)
 {

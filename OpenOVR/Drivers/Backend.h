@@ -46,13 +46,6 @@ public:
 	    ETrackingStateType trackingState)
 	    = 0;
 
-	virtual void GetPose(
-	    vr::ETrackingUniverseOrigin origin,
-	    vr::TrackedDevicePose_t* pose,
-	    ETrackingStateType trackingState,
-	    double absTime)
-	    = 0;
-
 	virtual vr::ETrackedDeviceClass GetTrackedDeviceClass() = 0;
 
 	virtual vr::ETrackedControllerRole GetControllerRole();
