@@ -1019,6 +1019,8 @@ void OldMisc(CaseContext& c)
 
 	r = Json::Value();
 	r["drivers"] = panel->GetDriverCount();
+	char driverId[64] = {};
+	r["driver id sized"] = panel->GetDriverId(0, driverId, sizeof(driverId)) == strlen(driverId) + 1;
 	r["display interface"] = (void*)panel->GetCurrentDisplayInterface("IVRSystem_022") == sys;
 	r["unknown interface null"] = panel->GetCurrentDisplayInterface("IVRNoSuchThing_001") == nullptr;
 	r["ipd positive"] = panel->GetIPD() > 0.0f;
