@@ -45,6 +45,9 @@ VR_INTERFACE bool VR_CALLTYPE VR_IsRuntimeInstalled();
 /** Returns where the OpenVR runtime is installed. */
 VR_INTERFACE const char* VR_CALLTYPE VR_RuntimePath();
 
+/** Returns where the OpenVR runtime is installed, copied into the caller's buffer. */
+VR_INTERFACE bool VR_GetRuntimePath(char* pchPathBuffer, uint32_t unBufferSize, uint32_t* punRequiredBufferSize);
+
 // In openvr.h, but missing any documentation
 VR_INTERFACE void VR_CALLTYPE VR_ShutdownInternal();
 

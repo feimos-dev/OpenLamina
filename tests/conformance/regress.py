@@ -48,6 +48,9 @@ def digest(value):
 
 def covered(rules, r, field):
     who = r.get("interface", r.get("case", ""))
+    # A call through an interface's function table answers as the interface itself
+    if who.startswith("FnTable:"):
+        who = who[len("FnTable:"):]
     for d in rules:
         if d["field"] != field and not re.fullmatch(d["field"], field):
             continue

@@ -15,6 +15,9 @@
 #include "KhrSimpleInteractionProfile.h"
 #include "OculusInteractionProfile.h"
 #include "ReverbG2InteractionProfile.h"
+#include "ViveCosmosInteractionProfile.h"
+#include "ViveFocus3InteractionProfile.h"
+#include "PicoInteractionProfile.h"
 #include "ViveInteractionProfile.h"
 #include "ViveTrackerInteractionProfile.h"
 
@@ -23,24 +26,6 @@
 #include "Misc/Config.h"
 #include "Reimpl/BaseInput.h"
 #include "generated/static_bases.gen.h"
-
-std::string InteractionProfile::TranslateAction(const std::string& inputPath) const
-{
-	if (!pathTranslationMap.empty() && !IsInputPathValid(inputPath)) {
-		std::string ret = inputPath;
-		for (auto& [key, val] : pathTranslationMap) {
-			size_t loc = ret.find(key);
-			if (loc != std::string::npos) {
-				// translate action!
-				ret = ret.substr(0, loc) + val + ret.substr(loc + key.size());
-			}
-		}
-		OOVR_LOGF("Translated path %s to %s for profile %s", inputPath.c_str(), ret.c_str(), GetPath().c_str());
-		return ret;
-	}
-	// either this path is already valid or it's invalid and not translatable
-	return inputPath;
-}
 
 std::vector<std::pair<std::string, std::string>> InteractionProfile::RawComponents() const
 {
@@ -137,20 +122,34 @@ void InteractionProfile::AddLegacyBindings(const LegacyControllerActions& ctrl, 
 	create(ctrl.aimPoseAction, paths->aimPoseAction);
 }
 
+InteractionProfile::ProfileList InteractionProfile::CreateProfiles(XrExt& ext)
+{
+	ProfileList profiles;
+	if (ext.G2Controller_Available())
+		profiles.emplace_back(std::make_unique<ReverbG2InteractionProfile>());
+
+	profiles.emplace_back(std::make_unique<HolographicInteractionProfile>());
+	profiles.emplace_back(std::make_unique<IndexControllerInteractionProfile>());
+	profiles.emplace_back(std::make_unique<ViveWandInteractionProfile>());
+	profiles.emplace_back(std::make_unique<OculusTouchInteractionProfile>());
+	if (ext.ExtensionEnabled(OC_XR_HTC_VIVE_COSMOS_CONTROLLER_INTERACTION_EXTENSION_NAME))
+		profiles.emplace_back(std::make_unique<ViveCosmosInteractionProfile>());
+	if (ext.ExtensionEnabled(OC_XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME))
+		profiles.emplace_back(std::make_unique<ViveFocus3InteractionProfile>());
+	if (ext.ExtensionEnabled(OC_XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME)) {
+		profiles.emplace_back(std::make_unique<PicoInteractionProfile>(PicoInteractionProfile::Model::Neo3));
+		profiles.emplace_back(std::make_unique<PicoInteractionProfile>(PicoInteractionProfile::Model::Pico4));
+	}
+	profiles.emplace_back(std::make_unique<KhrSimpleInteractionProfile>());
+	profiles.emplace_back(std::make_unique<ViveTrackerInteractionProfile>());
+	return profiles;
+}
+
 const InteractionProfile::ProfileList& InteractionProfile::GetProfileList()
 {
-	static std::vector<std::unique_ptr<InteractionProfile>> profiles;
-	if (profiles.empty()) {
-		if (xr_ext->G2Controller_Available())
-			profiles.emplace_back(std::make_unique<ReverbG2InteractionProfile>());
-
-		profiles.emplace_back(std::make_unique<HolographicInteractionProfile>());
-		profiles.emplace_back(std::make_unique<IndexControllerInteractionProfile>());
-		profiles.emplace_back(std::make_unique<ViveWandInteractionProfile>());
-		profiles.emplace_back(std::make_unique<OculusTouchInteractionProfile>());
-		profiles.emplace_back(std::make_unique<KhrSimpleInteractionProfile>());
-		profiles.emplace_back(std::make_unique<ViveTrackerInteractionProfile>());
-	}
+	static ProfileList profiles;
+	if (profiles.empty())
+		profiles = CreateProfiles(*xr_ext);
 	return profiles;
 }
 
@@ -181,7 +180,7 @@ glm::mat4 InteractionProfile::GetGripToSteamVRTransform(ITrackedDevice::TrackedD
 
 std::optional<glm::mat4> InteractionProfile::GetComponentTransform(ITrackedDevice::TrackedDeviceType hand, const std::string& name) const
 {
-	std::unordered_map<std::string, glm::mat4> transforms = hand == ITrackedDevice::HAND_RIGHT ? rightComponentTransforms : leftComponentTransforms;
+	const std::unordered_map<std::string, glm::mat4>& transforms = hand == ITrackedDevice::HAND_RIGHT ? rightComponentTransforms : leftComponentTransforms;
 	const auto iter = transforms.find(name);
 	if (iter == transforms.end())
 		return {};
@@ -189,24 +188,40 @@ std::optional<glm::mat4> InteractionProfile::GetComponentTransform(ITrackedDevic
 		return iter->second;
 }
 
+std::optional<std::array<vr::VRBoneTransform_t, 31>> InteractionProfile::GetDefaultSkeletalReferencePose(ITrackedDevice::TrackedDeviceType hand, int pose)
+{
+	using PoseMap = std::unordered_map<int, std::array<vr::VRBoneTransform_t, 31>>;
+	static const PoseMap leftPoses = {
+		{ VRSkeletalReferencePose_BindPose, oculus::leftBindPose },
+		{ VRSkeletalReferencePose_OpenHand, oculus::leftOpenHandPose },
+		{ VRSkeletalReferencePose_Fist, oculus::leftFistPose },
+		{ VRSkeletalReferencePose_GripLimit, oculus::leftGripLimitPose },
+	};
+	static const PoseMap rightPoses = {
+		{ VRSkeletalReferencePose_BindPose, oculus::rightBindPose },
+		{ VRSkeletalReferencePose_OpenHand, oculus::rightOpenHandPose },
+		{ VRSkeletalReferencePose_Fist, oculus::rightFistPose },
+		{ VRSkeletalReferencePose_GripLimit, oculus::rightGripLimitPose },
+	};
+
+	if (hand != ITrackedDevice::HAND_LEFT && hand != ITrackedDevice::HAND_RIGHT)
+		return {};
+
+	const PoseMap& poses = hand == ITrackedDevice::HAND_LEFT ? leftPoses : rightPoses;
+	const auto iter = poses.find(pose);
+	if (iter == poses.end())
+		return {};
+	return iter->second;
+}
+
 std::optional<std::array<vr::VRBoneTransform_t, 31>> InteractionProfile::GetSkeletalReferencePose(ITrackedDevice::TrackedDeviceType hand, int pose) const
 {
-	auto poses = hand == ITrackedDevice::HAND_LEFT ? leftHandPoses : rightHandPoses;
+	const auto& poses = hand == ITrackedDevice::HAND_LEFT ? leftHandPoses : rightHandPoses;
 
 	// Fall back to oculus poses, which should be close enough for most controllers
 	if (poses.empty()) {
 		OOVR_LOG_ONCE("WARNING: No reference poses defined for interaction profile, using fallback.");
-		if (hand == ITrackedDevice::HAND_LEFT) {
-			poses[VRSkeletalReferencePose_BindPose] = oculus::leftBindPose;
-			poses[VRSkeletalReferencePose_OpenHand] = oculus::leftOpenHandPose;
-			poses[VRSkeletalReferencePose_Fist] = oculus::leftFistPose;
-			poses[VRSkeletalReferencePose_GripLimit] = oculus::leftGripLimitPose;
-		} else {
-			poses[VRSkeletalReferencePose_BindPose] = oculus::rightBindPose;
-			poses[VRSkeletalReferencePose_OpenHand] = oculus::rightOpenHandPose;
-			poses[VRSkeletalReferencePose_Fist] = oculus::rightFistPose;
-			poses[VRSkeletalReferencePose_GripLimit] = oculus::rightGripLimitPose;
-		}
+		return GetDefaultSkeletalReferencePose(hand, pose);
 	}
 
 	const auto iter = poses.find(pose);

@@ -50,6 +50,27 @@ TEST_CASE("Analog_largest_magnitude")
 	CHECK(e.Outputs().analog.at("/actions/main/in/throttle").origin == "/user/hand/left/input/trigger");
 }
 
+TEST_CASE("Analog_change_time")
+{
+	BindingFile f = ParseBindingFile(R"({ "bindings": { "/actions/main": { "sources": [
+		{ "path": "/user/hand/right/input/trigger", "mode": "trigger", "inputs": { "pull": { "output": "/actions/main/in/throttle" } } } ] } } })");
+	BindingEvaluator e(f);
+	e.SetActiveActionSets({ { "/actions/main", 0 } });
+	const std::string trigger = "/user/hand/right/input/trigger/value";
+	const std::string action = "/actions/main/in/throttle";
+	// Not moved yet: no change time
+	e.Update(Raw({ { trigger, 0 } }, 1.0));
+	CHECK(e.Outputs().analog.at(action).changeTime == 0);
+	// Moved: now
+	e.Update(Raw({ { trigger, 0.5 } }, 2.0));
+	CHECK(e.Outputs().analog.at(action).changeTime == doctest::Approx(2.0));
+	// Held still: when it moved
+	e.Update(Raw({ { trigger, 0.5 } }, 3.0));
+	CHECK(e.Outputs().analog.at(action).changeTime == doctest::Approx(2.0));
+	e.Update(Raw({ { trigger, 0.25 } }, 4.0));
+	CHECK(e.Outputs().analog.at(action).changeTime == doctest::Approx(4.0));
+}
+
 TEST_CASE("Chord_needs_all_inputs")
 {
 	BindingFile f = ParseBindingFile(R"({ "bindings": { "/actions/main": {

@@ -8,6 +8,7 @@
 #include "json/json.h"
 
 #include <filesystem>
+#include <functional>
 #include <map>
 #include <string>
 #include <string_view>
@@ -54,3 +55,15 @@ struct BindingFile {
 
 BindingFile ParseBindingFile(std::string_view text);
 BindingFile LoadBindingFile(const std::filesystem::path& path);
+
+/** Whether a source of the file is on one of rawPaths (the raw inputs of a controller, such as
+ * /user/hand/right/input/trigger/value, for the source /user/hand/right/input/trigger) and binds an input to an output
+ * that wanted accepts, given its action set's path */
+bool BindsRawInput(const BindingFile& file, const std::vector<std::string>& rawPaths,
+    const std::function<bool(const std::string& setPath, const std::string& output)>& wanted);
+
+/** The names an action manifest's "localization" tables and "localization_files" give, for the table of the language
+ * closest to language (a tag such as "en_US"): lower-cased action and action set path ("/actions/main/in/fire") to
+ * its text. Files are read from manifestDir. A table or file that can't be used is skipped, never an error. */
+std::map<std::string, std::string> ReadManifestLocalization(const Json::Value& manifest, const std::filesystem::path& manifestDir,
+    std::string_view language);

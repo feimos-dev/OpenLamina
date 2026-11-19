@@ -46,6 +46,7 @@
 #include "../OpenOVR/Misc/FrameStats.h"
 #include "../OpenOVR/Misc/MirrorWindow.h"
 #include "../OpenOVR/Misc/Process.h"
+#include "../OpenOVR/Misc/xrmoreutils.h"
 #include "../OpenOVR/Misc/ProgramEvents.h"
 #include "../OpenOVR/Misc/SharedStore.h"
 #include "../OpenOVR/Reimpl/BaseSettings.h"
@@ -213,10 +214,20 @@ void XrBackend::GetDeviceToAbsoluteTrackingPose(
     vr::TrackedDevicePose_t* poseArray,
     uint32_t poseArrayCount)
 {
+	PollGenericTrackers();
+
+	// All the devices are located at the one time, as far ahead as the program asked
+	XrTime poseTime = 0;
+	{
+		auto sessionLock = xr_session.lock_shared();
+		if (xr_gbl)
+			poseTime = xr_utils::PoseTimeForPrediction(predictedSecondsToPhotonsFromNow, xr_time_now(), xr_gbl->nextPredictedFrameTime);
+	}
+
 	for (uint32_t i = 0; i < poseArrayCount; ++i) {
 		std::shared_ptr<ITrackedDevice> dev = GetDevice(i);
 		if (dev) {
-			dev->GetPose(toOrigin, &poseArray[i], ETrackingStateType::TrackingStateType_Rendering);
+			dev->GetPose(toOrigin, &poseArray[i], ETrackingStateType::TrackingStateType_Rendering, poseTime);
 		} else {
 			poseArray[i] = BackendManager::InvalidPose();
 		}
@@ -784,6 +795,9 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 
 void XrBackend::WaitForTrackingData()
 {
+	// A game that waits for frames before its first submit still sees the session become ready
+	PumpEvents();
+
 	// Make sure the OpenXR session is active before doing anything else, and if not then skip
 	if (!sessionActive) {
 		renderingFrame = false;
@@ -1771,6 +1785,16 @@ bool XrBackend::IsInputAvailable()
 	return sessionState == XR_SESSION_STATE_FOCUSED;
 }
 
+bool XrBackend::IsInputFocusLost()
+{
+	return inputFocusHad && sessionState != XR_SESSION_STATE_FOCUSED;
+}
+
+bool XrBackend::ShouldReduceRenderingWork()
+{
+	return perfStrainedDomains != 0;
+}
+
 // VREvent_InputFocusCaptured or _Released
 static void PostFocusChange(bool captured)
 {
@@ -1787,17 +1811,33 @@ static void PostPresenceChange(bool present)
 	    VREvent_Data_t{}, false);
 }
 
+// XR_EXT_local_floor's reference space type, which the bundled headers predate
+static const XrReferenceSpaceType kReferenceSpaceLocalFloor = (XrReferenceSpaceType)1000426000;
+
+// A device's role (which controller is the left hand, say) changed: no device in particular
+static void PostRoleChange()
+{
+	OcPostEvent(VREvent_TrackedDeviceRoleChanged, k_unTrackedDeviceIndexInvalid, VREvent_Data_t{}, false);
+}
+
+// The runtime ends the game's session by its own choice: the driver asks to quit, and the game is told to
+void XrBackend::OnRuntimeQuit()
+{
+	if (!sessionLost)
+		OcPostEvent(VREvent_DriverRequestedQuit, k_unTrackedDeviceIndexInvalid, VREvent_Data_t{}, false);
+	OnSessionLost();
+}
+
 void XrBackend::PumpEvents()
 {
 	// Poll for OpenXR events
-	// TODO filter by session?
 	while (true) {
 		XrEventDataBuffer ev = { XR_TYPE_EVENT_DATA_BUFFER };
 		XrResult res = xr_instance ? xrPollEvent(xr_instance, &ev) : XR_ERROR_HANDLE_INVALID;
 		if (XR_FAILED(res)) {
 			OOVR_LOG_ONCE("xrPollEvent failed: no events this frame");
 			if (res == XR_ERROR_INSTANCE_LOST)
-				OnSessionLost();
+				OnRuntimeQuit();
 			break;
 		}
 
@@ -1816,6 +1856,60 @@ void XrBackend::PumpEvents()
 			continue;
 		}
 
+		// The runtime dropped events before this one (the program polled too rarely): states may have changed unseen
+		if (ev.type == XR_TYPE_EVENT_DATA_EVENTS_LOST) {
+			OOVR_LOGF("The OpenXR runtime lost %u events", ((XrEventDataEventsLost*)&ev)->lostEventCount);
+			continue;
+		}
+
+		// The instance is going away (the runtime updating or shutting down): the game is told to quit while it can
+		if (ev.type == XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING) {
+			OOVR_LOG("The OpenXR instance will be lost");
+			if (!exitExpected)
+				OnRuntimeQuit();
+			continue;
+		}
+
+		// A reference space's origin moves (the user recentres or redraws the play area): the spaces follow by
+		// themselves, the game is told. The floor and the stage are the standing origin, the local space the seated one.
+		if (ev.type == XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING) {
+			auto* change = (XrEventDataReferenceSpaceChangePending*)&ev;
+			if (change->session != xr_session.get() || exitExpected)
+				continue;
+			switch ((int)change->referenceSpaceType) {
+			case (int)XR_REFERENCE_SPACE_TYPE_STAGE:
+			case (int)kReferenceSpaceLocalFloor:
+				OcPostEvent(VREvent_StandingZeroPoseReset, k_unTrackedDeviceIndex_Hmd, VREvent_Data_t{}, false);
+				OcPostEvent(VREvent_ChaperoneUniverseHasChanged, k_unTrackedDeviceIndexInvalid, VREvent_Data_t{}, false);
+				break;
+			case (int)XR_REFERENCE_SPACE_TYPE_LOCAL:
+				OcPostEvent(VREvent_SeatedZeroPoseReset, k_unTrackedDeviceIndex_Hmd, VREvent_Data_t{}, false);
+				break;
+			default:
+				break;
+			}
+			continue;
+		}
+
+		// XR_KHR_visibility_mask: the hidden area meshes are asked of the runtime on every call, so nothing is kept to
+		// drop
+		if (ev.type == XR_TYPE_EVENT_DATA_VISIBILITY_MASK_CHANGED_KHR)
+			continue;
+
+		// XR_EXT_performance_settings: the runtime's CPU or GPU load went above or back to normal
+		if (ev.type == XR_TYPE_EVENT_DATA_PERF_SETTINGS_EXT) {
+			auto* perf = (XrEventDataPerfSettingsEXT*)&ev;
+			OOVR_LOGF("The runtime's performance level for domain %d went from %d to %d", (int)perf->domain, (int)perf->fromLevel, (int)perf->toLevel);
+			if (perf->domain > 0 && perf->domain < 32) {
+				const uint32_t bit = 1u << (uint32_t)perf->domain;
+				if (perf->toLevel == XR_PERF_SETTINGS_NOTIF_LEVEL_NORMAL_EXT)
+					perfStrainedDomains &= ~bit;
+				else
+					perfStrainedDomains |= bit;
+			}
+			continue;
+		}
+
 		if (ev.type == XR_TYPE_EVENT_DATA_SESSION_STATE_CHANGED) {
 			auto* changed = (XrEventDataSessionStateChanged*)&ev;
 			// A state change for a session already destroyed (around a restart) is old news
@@ -1823,6 +1917,20 @@ void XrBackend::PumpEvents()
 				continue;
 			const XrSessionState previous = sessionState;
 			sessionState = changed->state;
+			if (sessionState == XR_SESSION_STATE_FOCUSED)
+				inputFocusHad = true;
+
+			// The headset in standby while its session is stopped (taken off, on runtimes that stop the session for it),
+			// out of it when the session is ready again (sessionEvents)
+			if (oovr_global_configuration.SessionEvents() && !exitExpected) {
+				if (sessionState == XR_SESSION_STATE_STOPPING && previous != XR_SESSION_STATE_UNKNOWN) {
+					if (!standbyTold.exchange(true))
+						OcPostEvent(VREvent_EnterStandbyMode, k_unTrackedDeviceIndex_Hmd, VREvent_Data_t{}, false);
+				} else if (sessionState == XR_SESSION_STATE_READY || sessionState == XR_SESSION_STATE_FOCUSED) {
+					if (standbyTold.exchange(false))
+						OcPostEvent(VREvent_LeaveStandbyMode, k_unTrackedDeviceIndex_Hmd, VREvent_Data_t{}, false);
+				}
+			}
 
 			// Input focus (sessionEvents): lost from FOCUSED to VISIBLE (the runtime's menu over the game, say), back
 			// at FOCUSED. Not while OpenLamina ends the session itself (a restart). Each change is told once, whichever
@@ -1883,13 +1991,12 @@ void XrBackend::PumpEvents()
 				// The runtime ending the session (the user quitting from its menu, say) is the game's cue to quit;
 				// OpenComposite ending it itself isn't
 				if (!exitExpected)
-					OnSessionLost();
+					OnRuntimeQuit();
 				break;
 			}
 			case XR_SESSION_STATE_LOSS_PENDING: {
 				// If the headset is unplugged or the user decides to exit the app
-				// TODO just kill the app after awhile, unless it sends a message to stop that - read the OpenVR wiki docs for more info
-				OnSessionLost();
+				OnRuntimeQuit();
 				break;
 			}
 			default:
@@ -1897,7 +2004,9 @@ void XrBackend::PumpEvents()
 				break;
 			}
 		} else if (ev.type == XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED) {
-			UpdateInteractionProfile();
+			// A session already destroyed (around a restart) has nothing to say about the controllers
+			if (((XrEventDataInteractionProfileChanged*)&ev)->session == xr_session.get())
+				UpdateInteractionProfile();
 		} else if (ev.type == OC_XR_TYPE_EVENT_DATA_DISPLAY_REFRESH_RATE_CHANGED_FB) {
 			// Prop_DisplayFrequency_Float asks the runtime again
 			auto* changed = (const OcXrEventDataDisplayRefreshRateChangedFB*)&ev;
@@ -1950,6 +2059,19 @@ void XrBackend::PumpEvents()
 	BaseInput* input = GetUnsafeBaseInput();
 	if (input && !exitExpected && !input->AreActionsLoaded() && sessionState == XR_SESSION_STATE_FOCUSED && !Hand(XrController::XCT_LEFT) && !Hand(XrController::XCT_RIGHT)) {
 		QueryForInteractionProfile();
+	}
+}
+
+bool XrBackend::WaitForEvents(const std::function<bool()>& done, int timeoutMs)
+{
+	const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeoutMs);
+	while (true) {
+		PumpEvents();
+		if (done())
+			return true;
+		if (std::chrono::steady_clock::now() >= deadline)
+			return false;
+		std::this_thread::sleep_for(std::chrono::milliseconds(5));
 	}
 }
 
@@ -2022,6 +2144,7 @@ void XrBackend::OnSessionCreated()
 	RestartFrameTiming();
 
 	sessionState = XR_SESSION_STATE_UNKNOWN;
+	inputFocusHad = false;
 	sessionActive = false;
 	renderingFrame = false;
 	frameAwaitingBegin = false;
@@ -2032,21 +2155,7 @@ void XrBackend::OnSessionCreated()
 
 	// Wait until we transition to the idle state.
 	// This sets the time, so OpenXR calls which use that will work correctly.
-	int count = 0;
-	while (sessionState == XR_SESSION_STATE_UNKNOWN && !sessionLost && count++ < 10) {
-		const int durationMs = 250;
-
-		OOVR_LOGF("No session transition yet received, waiting %dms ...", durationMs);
-
-#ifdef _WIN32
-		Sleep(durationMs);
-#else
-		struct timespec ts = { 0, durationMs * 1000000 };
-		nanosleep(&ts, &ts);
-#endif
-
-		PumpEvents();
-	}
+	WaitForEvents([this]() { return sessionState != XR_SESSION_STATE_UNKNOWN || sessionLost; }, 2500);
 	if (sessionState == XR_SESSION_STATE_UNKNOWN && !sessionLost)
 		OOVR_LOG("No session transition received yet: carrying on, later PumpEvents calls take the session's states");
 	if (sessionLost) {
@@ -2475,6 +2584,7 @@ void XrBackend::UpdateInteractionProfile()
 		{ .pathstr = "/user/hand/right", .controller = hand_right, .hand = XrController::XCT_RIGHT }
 	};
 
+	bool hmdProfileSet = false;
 	for (hand_info& info : hands) {
 		XrInteractionProfileState state{ XR_TYPE_INTERACTION_PROFILE_STATE };
 		XrPath path = XR_NULL_PATH;
@@ -2490,13 +2600,29 @@ void XrBackend::UpdateInteractionProfile()
 
 			for (const std::unique_ptr<InteractionProfile>& profile : InteractionProfile::GetProfileList()) {
 				if (profile->GetPath() == path_name) {
+					// The first hand with a known profile decides the headset's identity
+					if (!hmdProfileSet) {
+						hmd->SetInteractionProfile(profile.get());
+						hmdProfileSet = true;
+					}
+					std::shared_ptr<XrController> current = Hand(info.hand);
+					if (current && current->GetInteractionProfile() == profile.get())
+						break; // unchanged: keep the device and its state
+
 					OOVR_LOGF("%s - Using interaction profile: %s", info.pathstr, path_name);
+					BaseSystem* system = GetUnsafeBaseSystem();
+					const bool handAppeared = !current;
+					if (current && system) {
+						VREvent_t event = {
+							.eventType = VREvent_TrackedDeviceDeactivated,
+							.trackedDeviceIndex = (TrackedDeviceIndex_t)info.hand + 1
+						};
+						system->_EnqueueEvent(event);
+					}
 					{
 						std::unique_lock handsLock(hands_mutex);
 						info.controller = std::make_shared<XrController>(info.hand, *profile);
 					}
-					hmd->SetInteractionProfile(profile.get());
-					BaseSystem* system = GetUnsafeBaseSystem();
 					if (system) {
 						VREvent_t event = {
 							.eventType = VREvent_TrackedDeviceActivated,
@@ -2509,6 +2635,8 @@ void XrBackend::UpdateInteractionProfile()
 						};
 						system->_EnqueueEvent(event);
 					}
+					if (handAppeared)
+						PostRoleChange();
 					break;
 				}
 			}
@@ -2532,6 +2660,7 @@ void XrBackend::UpdateInteractionProfile()
 					};
 					system->_EnqueueEvent(event);
 				}
+				PostRoleChange();
 			}
 		}
 	}
@@ -2547,9 +2676,6 @@ void XrBackend::CreateGenericTrackers()
 	std::unique_lock lock(generic_trackers_mutex);
 
 	OOVR_LOGF("Checking for generic trackers...");
-
-	// should get cleared every time this function is run to avoid stale trackers
-	generic_trackers.clear();
 
 	// list containing all generic tracked devices
 	XrXDevListMNDX generic_tracker_list;
@@ -2629,54 +2755,135 @@ void XrBackend::CreateGenericTrackers()
 
 	OOVR_LOGF("Found %zu generic trackers", generic_tracker_ids.size());
 
-	OOVR_LOG("Creating generic trackers...");
+	uint64_t generation = 0;
+	if (XR_SUCCEEDED(xr_ext->xrGetXDevListGenerationNumberMNDX(generic_tracker_list, &generation)))
+		generic_trackers_generation = generation;
+
+	// A tracker the runtime still lists keeps its place, so the indices the program holds stay right. Its space goes
+	// with the session it was made in, so after a restart it is made again in the same place.
+	const bool sameSession = generic_trackers_session == xr_session.get();
+	generic_trackers_session = xr_session.get();
+
+	struct Wanted {
+		XrXDevIdMNDX id;
+		XrXDevPropertiesMNDX properties;
+		bool placed = false;
+	};
+	std::vector<Wanted> wanted;
 	for (const XrXDevIdMNDX id : generic_tracker_ids) {
-		int index = generic_trackers.size();
-
-		if (index >= MAX_GENERIC_TRACKERS) {
-			OOVR_LOGF("More trackers present than allowed (%d), skipping..", MAX_GENERIC_TRACKERS);
-			break;
-		}
-
 		cur_info.id = id;
-
 		OC_XR_LOG(xr_ext->xrGetXDevPropertiesMNDX(generic_tracker_list, &cur_info, &cur_properties));
+		wanted.push_back({ id, cur_properties });
+	}
 
-		std::string serial = cur_properties.serial;
-		std::string name = cur_properties.name;
+	BaseSystem* system = GetUnsafeBaseSystem();
+	auto sendEvent = [&](EVREventType type, TrackedDeviceIndex_t device) {
+		if (!system)
+			return;
+		VREvent_t event = {
+			.eventType = (uint32_t)type,
+			.trackedDeviceIndex = device
+		};
+		system->_EnqueueEvent(event);
+	};
 
-		OOVR_LOGF("Generic Tracker: %s, Serial: %s, Index: %d, ID: %" PRIu64, cur_properties.name, cur_properties.serial, index, id);
+	auto createTracker = [&](Wanted& want, uint32_t index) -> std::shared_ptr<XrGenericTracker> {
+		OOVR_LOGF("Generic Tracker: %s, Serial: %s, Index: %u, ID: %" PRIu64, want.properties.name, want.properties.serial, index, want.id);
 
-		// create space
 		XrSpace space = XR_NULL_HANDLE;
 		XrPosef pose = { .orientation = { 0, 0, 0, 1 }, .position = { 0, 0, 0 } };
 		XrCreateXDevSpaceInfoMNDX create_space_info = {
 			.type = XR_TYPE_CREATE_XDEV_SPACE_INFO_MNDX,
 			.next = NULL,
 			.xdevList = generic_tracker_list,
-			.id = id,
+			.id = want.id,
 			.offset = pose,
 		};
 
 		if (XR_FAILED(xr_ext->xrCreateXDevSpaceMNDX(xr_session.get(), &create_space_info, &space))) {
-			OOVR_LOGF("xrCreateXDevSpaceMNDX failed: no tracker for serial %s", cur_properties.serial);
+			OOVR_LOGF("xrCreateXDevSpaceMNDX failed: no tracker for serial %s", want.properties.serial);
+			return nullptr;
+		}
+		return std::make_shared<XrGenericTracker>(*profile, want.properties, index, space);
+	};
+
+	std::vector<std::shared_ptr<XrGenericTracker>> current = std::move(generic_trackers);
+	generic_trackers.assign(current.size(), nullptr);
+	for (size_t slot = 0; slot < current.size(); slot++) {
+		if (!current[slot])
+			continue;
+		const TrackedDeviceIndex_t deviceIndex = (TrackedDeviceIndex_t)slot + RESERVED_DEVICE_INDICES;
+		auto it = std::find_if(wanted.begin(), wanted.end(), [&](const Wanted& w) { return !w.placed && current[slot]->Serial() == w.properties.serial; });
+		if (it == wanted.end()) {
+			sendEvent(VREvent_TrackedDeviceDeactivated, deviceIndex);
 			continue;
 		}
-
-		generic_trackers.push_back(std::make_unique<XrGenericTracker>(*profile, cur_properties, index, space));
-
-		BaseSystem* system = GetUnsafeBaseSystem();
-		if (system) {
-			VREvent_t event = {
-				.eventType = VREvent_TrackedDeviceActivated,
-				.trackedDeviceIndex = (TrackedDeviceIndex_t)generic_trackers.at(index)->DeviceIndex()
-			};
-			system->_EnqueueEvent(event);
+		it->placed = true;
+		if (sameSession) {
+			generic_trackers[slot] = current[slot];
+		} else if ((generic_trackers[slot] = createTracker(*it, (uint32_t)slot))) {
+			sendEvent(VREvent_TrackedDeviceActivated, deviceIndex);
+		} else {
+			sendEvent(VREvent_TrackedDeviceDeactivated, deviceIndex);
 		}
 	}
+	// The old trackers' spaces go with their session when it was replaced
+	if (!sameSession) {
+		for (std::shared_ptr<XrGenericTracker>& old : current)
+			if (old)
+				old->ForgetSpace();
+	}
+	current.clear();
+
+	for (Wanted& want : wanted) {
+		if (want.placed)
+			continue;
+
+		// The first free place
+		size_t slot = 0;
+		while (slot < generic_trackers.size() && generic_trackers[slot])
+			slot++;
+		if (slot >= (size_t)MAX_GENERIC_TRACKERS) {
+			OOVR_LOGF("More trackers present than allowed (%d), skipping..", MAX_GENERIC_TRACKERS);
+			break;
+		}
+		if (slot == generic_trackers.size())
+			generic_trackers.push_back(nullptr);
+
+		if ((generic_trackers[slot] = createTracker(want, (uint32_t)slot)))
+			sendEvent(VREvent_TrackedDeviceActivated, (TrackedDeviceIndex_t)slot + RESERVED_DEVICE_INDICES);
+	}
+	while (!generic_trackers.empty() && !generic_trackers.back())
+		generic_trackers.pop_back();
 
 	// cleanup
 	xr_ext->xrDestroyXDevListMNDX(generic_tracker_list);
+}
+
+void XrBackend::PollGenericTrackers()
+{
+	if (sessionLost || !xr_ext || !xr_ext->xrMndxXdevSpace_Available())
+		return;
+
+	const int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+	int64_t last = generic_trackers_polled_ms;
+	if (nowMs - last < 1000 || !generic_trackers_polled_ms.compare_exchange_strong(last, nowMs))
+		return;
+
+	auto sessionLock = xr_session.lock_shared();
+	if (!xr_session.get())
+		return;
+
+	XrCreateXDevListInfoMNDX create_info = { .type = XR_TYPE_CREATE_XDEV_LIST_INFO_MNDX };
+	XrXDevListMNDX list = XR_NULL_HANDLE;
+	if (XR_FAILED(xr_ext->xrCreateXDevListMNDX(xr_session.get(), &create_info, &list)))
+		return;
+	uint64_t generation = 0;
+	bool changed = XR_SUCCEEDED(xr_ext->xrGetXDevListGenerationNumberMNDX(list, &generation)) && generation != generic_trackers_generation;
+	xr_ext->xrDestroyXDevListMNDX(list);
+
+	if (changed)
+		CreateGenericTrackers();
 }
 
 void XrBackend::MaybeRestartForInputs()
@@ -2764,6 +2971,9 @@ void XrBackend::BindInfoSet()
 			    [&path_name](std::string s) -> bool {
 				    return s.find("/click") != s.npos && s.find(path_name) != s.npos;
 			    });
+			// A profile with no click input for this hand binds nothing for it
+			if (click_path == profile->GetValidInputPaths().end())
+				continue;
 			XrPath path = XR_NULL_PATH;
 			OC_XR_LOG(xrStringToPath(xr_instance, click_path->c_str(), &path));
 			if (infoAction != XR_NULL_HANDLE && path != XR_NULL_PATH) // one bad entry would lose the profile's suggestion

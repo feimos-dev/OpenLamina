@@ -1003,13 +1003,26 @@ void OldMisc(CaseContext& c)
 	r["size"] = notes->GetErrorString(vr::IVRNotifications_001::k_ENotificationError_Fail, name, sizeof(name));
 	r["name"] = name;
 	vr::IVRNotifications_001::VRNotificationId id = 0;
-	r["create"] = (int)notes->CreateNotification(vr::k_ulOverlayHandleInvalid, 0, "type", "text", "category", nullptr, &id);
-	r["id set"] = id != 0;
-	r["dismiss"] = (int)notes->DismissNotification(id);
+	r["create without overlay"] = (int)notes->CreateNotification(vr::k_ulOverlayHandleInvalid, 0, "type", "text", "category", nullptr, &id);
+	r["id set without overlay"] = id != 0;
+	r["dismiss unknown"] = (int)notes->DismissNotification(12345);
+	auto* ov = (vr::IVROverlay_028::IVROverlay*)c.core->GetGenericInterface("IVROverlay_028", &le);
+	vr::VROverlayHandle_t oh = vr::k_ulOverlayHandleInvalid;
+	if (ov && ov->CreateOverlay("oc.notes", "Notes", &oh) == 0) {
+		r["create"] = (int)notes->CreateNotification(oh, 0, "type", "text", "category", nullptr, &id);
+		r["id set"] = id != 0;
+		r["dismiss"] = (int)notes->DismissNotification(id);
+		r["dismiss again"] = (int)notes->DismissNotification(id);
+		ov->DestroyOverlay(oh);
+	}
 	c.Record("IVRNotifications_001", r);
 
 	r = Json::Value();
 	r["drivers"] = panel->GetDriverCount();
+	char driverId[64] = {};
+	// The call first: the order a compiler evaluates the two sides of == in is its own
+	const uint32_t driverIdSize = panel->GetDriverId(0, driverId, sizeof(driverId));
+	r["driver id sized"] = driverIdSize == strlen(driverId) + 1;
 	r["display interface"] = (void*)panel->GetCurrentDisplayInterface("IVRSystem_022") == sys;
 	r["unknown interface null"] = panel->GetCurrentDisplayInterface("IVRNoSuchThing_001") == nullptr;
 	r["ipd positive"] = panel->GetIPD() > 0.0f;
@@ -1808,8 +1821,8 @@ void BindingInfoCase(CaseContext& c)
 	vr::VRInputValueHandle_t origins[4]{};
 	in->GetActionOrigins(set, toggle, origins, 4);
 	vr::VRInputValueHandle_t right = 0;
-	in->GetInputSourceHandle("/user/hand/right", &right);
-	r["origin_is_the_right_hand"] = origins[0] == right && origins[1] == vr::k_ulInvalidInputValueHandle;
+	in->GetInputSourceHandle("/user/hand/right/input/trigger", &right);
+	r["origin_is_the_right_trigger"] = origins[0] == right && origins[1] == vr::k_ulInvalidInputValueHandle;
 	c.Record("odd source", r);
 	c.core->Cleanup();
 }
@@ -1878,7 +1891,7 @@ void InputFramesCase(CaseContext& c)
 	toggle3["active_every_frame"] = activeFrames == 70;
 	toggle3["origin_every_frame"] = originFrames == 70;
 	out["checks"] = toggle3;
-	// The checks at the top for --expect; all of it as "out", which --expected compares (baseline/input-direct.json)
+	// The checks at the top for --expect; all of it as "out", which --expected compares
 	Json::Value record = toggle3;
 	record["out"] = out;
 	c.Record("toggle", record);
@@ -3259,6 +3272,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		std::map<std::string, CaseFn> m = cases;
 		m.insert(GfxCases().begin(), GfxCases().end());
 		m.insert(HelperCases().begin(), HelperCases().end());
+		m.insert(CoverageCases().begin(), CoverageCases().end());
 		return m;
 	}();
 	return all;

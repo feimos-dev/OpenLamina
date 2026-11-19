@@ -29,7 +29,8 @@ OOVR_EIOBufferError BaseIOBuffer::Write(OOVR_IOBufferHandle_t ulBuffer, void* pS
 
 vr::PropertyContainerHandle_t BaseIOBuffer::PropertyContainer(OOVR_IOBufferHandle_t ulBuffer)
 {
-	return vr::k_ulInvalidPropertyContainer;
+	// No buffer is ever open. SteamVR answers a buffer that isn't with the number of its InvalidArgument error
+	return OOVR_IOBuffer_InvalidArgument;
 }
 
 bool BaseIOBuffer::HasReaders(OOVR_IOBufferHandle_t ulBuffer)

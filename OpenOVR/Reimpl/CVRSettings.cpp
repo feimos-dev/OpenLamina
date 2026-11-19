@@ -2,6 +2,9 @@
 #define GENFILE
 #include "BaseCommon.h"
 
+// Utility apps have no backend and read settings all the same
+BASE_FLAG([APPTYPE] = (1ull << vr::VRApplication_Scene) | (1ull << vr::VRApplication_Overlay) | (1ull << vr::VRApplication_Background) | (1ull << vr::VRApplication_Utility))
+
 GEN_INTERFACE("Settings", "001")
 GEN_INTERFACE("Settings", "002")
 GEN_INTERFACE("Settings", "003")

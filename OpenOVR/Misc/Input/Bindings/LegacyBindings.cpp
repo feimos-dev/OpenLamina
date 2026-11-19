@@ -252,3 +252,31 @@ vr::EVRControllerAxisType LegacyAxisType(const BindingFile& file, const std::str
 	}
 	return vr::k_eControllerAxis_None;
 }
+
+bool LegacyStateChanged(const vr::VRControllerState_t& a, const vr::VRControllerState_t& b)
+{
+	if (a.ulButtonPressed != b.ulButtonPressed || a.ulButtonTouched != b.ulButtonTouched)
+		return true;
+	for (uint32_t i = 0; i < vr::k_unControllerStateAxisCount; i++)
+		if (a.rAxis[i].x != b.rAxis[i].x || a.rAxis[i].y != b.rAxis[i].y)
+			return true;
+	return false;
+}
+
+void ApplyLegacyFingerCurls(const float curl[5], bool axis3Free, bool axis4Free, vr::VRControllerState_t& state)
+{
+	// Scaled as the hand's curl range is, so a closed fist reads past 1 as SteamVR's does
+	if (axis3Free) {
+		state.rAxis[3].x = curl[1] * 1.66f * 1.33f;
+		state.rAxis[3].y = curl[2] * 1.66f;
+	}
+	if (axis4Free) {
+		state.rAxis[4].x = curl[3] * 1.66f;
+		state.rAxis[4].y = curl[4] * 1.66f;
+	}
+}
+
+float LegacyHapticStrength(unsigned long long microseconds)
+{
+	return (float)std::min(microseconds, 3999ull) / 3999.0f;
+}

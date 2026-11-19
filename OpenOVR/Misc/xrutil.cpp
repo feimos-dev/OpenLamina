@@ -16,6 +16,7 @@ SessionWrapper& xr_session = *new SessionWrapper();
 XrSystemId xr_system = XR_NULL_SYSTEM_ID;
 XrViewConfigurationView xr_main_views[XruEyeCount] = {};
 XrSessionGlobals* xr_gbl = nullptr;
+XrPosef xr_seated_origin = { { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
 
 XrExt* xr_ext = nullptr;
 
@@ -46,6 +47,7 @@ XrExt::XrExt(XrGraphicsApiSupportedFlags apis, const std::vector<const char*>& e
 	bool xdevSpace = false;
 	bool refreshRate = false;
 	for (const char* ext : extensions) {
+		enabledExtensions.insert(ext);
 		if (strcmp(ext, XR_KHR_VISIBILITY_MASK_EXTENSION_NAME) == 0)
 			hasVisMask = true;
 		if (strcmp(ext, XR_EXT_HAND_TRACKING_EXTENSION_NAME) == 0)
@@ -151,8 +153,12 @@ XrSessionGlobals::XrSessionGlobals()
 
 	// A space the runtime won't give stays XR_NULL_HANDLE: poses in it are then invalid, nothing ends.
 	// A runtime without a stage (some seated-only ones) gets the local space for standing too.
+	// The seated origin the program last set stays across a session restart
+	seatedPose = xr_seated_origin;
+	spaceInfo.poseInReferenceSpace = seatedPose;
 	spaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
 	OC_XR_LOG(xrCreateReferenceSpace(xr_session.get(), &spaceInfo, &seatedSpace));
+	spaceInfo.poseInReferenceSpace = { { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
 
 	spaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_STAGE;
 	if (XR_FAILED(xrCreateReferenceSpace(xr_session.get(), &spaceInfo, &floorSpace))) {

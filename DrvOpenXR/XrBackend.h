@@ -53,6 +53,12 @@ public:
 	// What the game has been told of the session, as SteamVR tells it: whether it lost input focus (sessionEvents), and
 	// the IPD (NaN until the session's first)
 	std::atomic<bool> inputFocusLost{ false };
+	// The session has been FOCUSED: only then is leaving that state the runtime taking input
+	std::atomic<bool> inputFocusHad{ false };
+	// The headset's standby, as the game was told of it (the session stopping), and the domains (bit n for
+	// XrPerfSettingsDomainEXT n) the runtime reports above normal load
+	std::atomic<bool> standbyTold{ false };
+	std::atomic<uint32_t> perfStrainedDomains{ 0 };
 	std::atomic<float> toldIpd{ NAN };
 	// The app's graphics device couldn't be bound: the session stays on the temporary device
 	std::atomic<bool> appGraphicsUnusable{ false };
@@ -72,6 +78,10 @@ public:
 	 * that failed): VREvent_Quit is queued once, and no more frames are begun. There's no reconnecting.
 	 */
 	void OnSessionLost();
+	/** Pumps events until done() is true, for at most timeoutMs: whether it was */
+	bool WaitForEvents(const std::function<bool()>& done, int timeoutMs);
+	/** The runtime ends the session on its own: VREvent_DriverRequestedQuit, then OnSessionLost */
+	void OnRuntimeQuit();
 	bool IsSessionLost() const { return sessionLost; }
 	/** The session is lost, not running, or stopping, exiting or about to be lost: nothing can be shown in it any more */
 	bool IsSessionEnded() const
@@ -184,6 +194,12 @@ private:
 
 	std::vector<std::shared_ptr<XrGenericTracker>> generic_trackers;
 	std::shared_mutex generic_trackers_mutex;
+	// The session the trackers' spaces belong to, and the xdev list generation they were made from
+	XrSession generic_trackers_session = XR_NULL_HANDLE;
+	std::atomic<uint64_t> generic_trackers_generation{ UINT64_MAX };
+	std::atomic<int64_t> generic_trackers_polled_ms{ 0 };
+	// Makes the trackers again when the runtime's list of devices has changed (looked at about once a second)
+	void PollGenericTrackers();
 
 	// False if the texture can't be used (logged): no session switch then, or the switch was undone
 	bool CheckOrInitCompositors(const vr::Texture_t* tex);

@@ -91,10 +91,6 @@ class InterfaceDef:
     def version_variable(self):
         return f"{self.namespace()}::{self.interface()}_Version"
 
-    # Throw an error to make sure we don't accidentally write this instance to a file
-    def __str__(self):
-        raise Exception("repl")
-
 
 class CustomInterface(InterfaceDef):
     def header_prefix(self):
@@ -102,37 +98,6 @@ class CustomInterface(InterfaceDef):
 
     def header_filename(self):
         return f"custom_interfaces/{self.interface_v()}.h"
-
-
-class DriverInterface(InterfaceDef):
-    def interface_v(self):
-        return "driver_%s_%s" % (self.interface(), self.version)
-
-
-class APIInterface(InterfaceDef):
-    def header_filename(self):
-        return "API/I%s_%s.h" % (self.name, self.version)
-
-    def proxy_class_name(self):
-        return "CVROC%s_%s" % (self.name, self.version)
-
-    def basename(self):
-        return "OCBase" + self.name
-
-    def interface(self):
-        return "IVROC%s" % self.name
-
-    def getter_name(self):
-        return "BaseOC" + self.name
-
-    def varname(self):
-        return "OC" + self.name
-
-    def namespace(self):
-        return "ocapi::" + self.interface_v()
-
-    def base_header(self):
-        return "API/" + super().base_header()
 
 
 @dataclass

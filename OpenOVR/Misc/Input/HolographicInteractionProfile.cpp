@@ -29,15 +29,6 @@ HolographicInteractionProfile::HolographicInteractionProfile()
 	// SteamVR's names for the raw inputs the binding evaluator reads (RawComponents)
 	this->rawSourceNames = { { "squeeze", "grip" }, { "thumbstick", "joystick" }, { "menu", "application_menu" } };
 
-	pathTranslationMap = {
-		{ "application_menu", "menu" },
-		{ "grip", "squeeze" },
-		{ "pull", "value" },
-		{ "force", "value" },
-		{ "trigger/click", "trigger/value" },
-		{ "joystick", "thumbstick" }
-	};
-
 	hmdPropertiesMap = {
 		{ vr::Prop_ManufacturerName_String, "WindowsMR" },
 	};
