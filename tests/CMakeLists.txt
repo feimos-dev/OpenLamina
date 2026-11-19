@@ -125,6 +125,7 @@ add_executable(oc_unit_tests
 	unit/KeyboardTests.cpp
 	unit/RenderModelTests.cpp
 	unit/HmdTests.cpp
+	unit/DeviceSlotsTests.cpp
 	unit/ClientCoreStandIns.cpp
 	${OC_TEST_RESOURCES}
 )

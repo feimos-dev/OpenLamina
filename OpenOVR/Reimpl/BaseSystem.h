@@ -3,8 +3,11 @@
 #include "custom_types.h"
 #include "generated/interfaces/IVRSystem_017.h"
 #include "openxr/openxr.h"
+#include <array>
+#include <atomic>
 #include <memory>
 #include <queue>
+#include <vector>
 #include <mutex>
 
 class BaseSystem {
@@ -48,12 +51,24 @@ public:
 	inline static XrReferenceSpaceType currentSpace = XR_REFERENCE_SPACE_TYPE_STAGE; // The standing/stage origin is the default
 
 private:
+	// The class each slot last held, as ETrackedDeviceClass
+	std::array<std::atomic<int32_t>, vr::k_unMaxTrackedDeviceCount> slotClasses{};
+
 	void CheckControllerEvents(vr::TrackedDeviceIndex_t hand, vr::VRControllerState_t& last);
 
 public:
 	static const vr::TrackedDeviceIndex_t leftHandIndex = 1;
 	static const vr::TrackedDeviceIndex_t rightHandIndex = 2;
 	static const vr::TrackedDeviceIndex_t thirdTouchIndex = 3;
+
+	// A device found for a sorted list: where it is along the reference's right axis, if its pose is known
+	struct DeviceSortKey {
+		vr::TrackedDeviceIndex_t index;
+		bool hasPosition;
+		float right;
+	};
+	// Rightmost first; devices without a position follow in their given order
+	static void SortRightToLeft(std::vector<DeviceSortKey>& devices);
 
 	static float SGetIpd();
 

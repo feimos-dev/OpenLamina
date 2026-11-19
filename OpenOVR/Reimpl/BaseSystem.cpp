@@ -17,6 +17,7 @@
 #include "generated/static_bases.gen.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cinttypes>
 #include <string>
@@ -354,36 +355,57 @@ HmdMatrix34_t BaseSystem::GetRawZeroPoseToStandingAbsoluteTrackingPose()
 	return G2S_m34(glm::identity<glm::mat4>());
 }
 
+void BaseSystem::SortRightToLeft(std::vector<DeviceSortKey>& devices)
+{
+	// Devices without a position keep their order, after the ones that have one
+	std::stable_sort(devices.begin(), devices.end(), [](const DeviceSortKey& a, const DeviceSortKey& b) {
+		if (a.hasPosition != b.hasPosition)
+			return a.hasPosition;
+		return a.hasPosition && a.right > b.right;
+	});
+}
+
 uint32_t BaseSystem::GetSortedTrackedDeviceIndicesOfClass(ETrackedDeviceClass targetClass,
     vr::TrackedDeviceIndex_t* indexArray, uint32_t indexCount,
     vr::TrackedDeviceIndex_t unRelativeToTrackedDeviceIndex)
 {
+	if (!indexArray)
+		indexCount = 0;
 
-	uint32_t outCount = 0;
-
-	for (vr::TrackedDeviceIndex_t dev = 0; dev < vr::k_unMaxTrackedDeviceCount; dev++) {
-		vr::ETrackedDeviceClass cls = GetTrackedDeviceClass(dev);
-
-		if (cls != targetClass)
-			continue;
-
-		if (outCount < indexCount)
-			indexArray[outCount] = dev;
-
-		outCount++;
+	// The reference: a device's own frame, or the standing space when it isn't one
+	glm::mat4 toLocal = glm::identity<glm::mat4>();
+	std::shared_ptr<ITrackedDevice> reference = BackendManager::Instance().GetDevice(unRelativeToTrackedDeviceIndex);
+	if (reference) {
+		vr::TrackedDevicePose_t pose = {};
+		reference->GetPose(vr::TrackingUniverseStanding, &pose, TrackingStateType_Now);
+		if (pose.bPoseIsValid)
+			toLocal = glm::inverse(S2G_m34(pose.mDeviceToAbsoluteTracking));
 	}
 
-	// TODO sort the devices
-	// I'm allowing this to do in despite not sorting it, since I can't see any usecase
-	// for relying on the sort results, possibly except for determining the left and right controller.
-	//
-	// So if some game has the left and right controllers flipped then investigate it, otherwise this
-	// shouldn't be a big issue.
-	//
-	// From what I've seen, it's generally used to get a list of devices of a class, without caring about
-	// the order of the results.
+	std::vector<DeviceSortKey> found;
+	for (vr::TrackedDeviceIndex_t dev = 0; dev < vr::k_unMaxTrackedDeviceCount; dev++) {
+		if (GetTrackedDeviceClass(dev) != targetClass)
+			continue;
 
-	return outCount;
+		DeviceSortKey key{ dev, false, 0.0f };
+		std::shared_ptr<ITrackedDevice> device = BackendManager::Instance().GetDevice(dev);
+		if (device) {
+			vr::TrackedDevicePose_t pose = {};
+			device->GetPose(vr::TrackingUniverseStanding, &pose, TrackingStateType_Now);
+			if (pose.bPoseIsValid) {
+				key.hasPosition = true;
+				key.right = (toLocal * S2G_m34(pose.mDeviceToAbsoluteTracking))[3].x;
+			}
+		}
+		found.push_back(key);
+	}
+
+	SortRightToLeft(found);
+
+	for (uint32_t i = 0; i < found.size() && i < indexCount; i++)
+		indexArray[i] = found[i].index;
+
+	return (uint32_t)found.size();
 }
 
 EDeviceActivityLevel BaseSystem::GetTrackedDeviceActivityLevel(vr::TrackedDeviceIndex_t unDeviceId)
@@ -413,48 +435,41 @@ void BaseSystem::ApplyTransform(TrackedDevicePose_t* pOutputPose, const TrackedD
 
 vr::TrackedDeviceIndex_t BaseSystem::GetTrackedDeviceIndexForControllerRole(vr::ETrackedControllerRole unDeviceType)
 {
-	vr::TrackedDeviceIndex_t unDeviceIndex = -1;
+	if (unDeviceType == TrackedControllerRole_Invalid)
+		return vr::k_unTrackedDeviceIndexInvalid;
 
-	if (unDeviceType == TrackedControllerRole_LeftHand) {
-		unDeviceIndex = leftHandIndex;
-	} else if (unDeviceType == TrackedControllerRole_RightHand) {
-		unDeviceIndex = rightHandIndex;
+	for (vr::TrackedDeviceIndex_t index = 0; index < vr::k_unMaxTrackedDeviceCount; index++) {
+		std::shared_ptr<ITrackedDevice> dev = BackendManager::Instance().GetDevice(index);
+		if (dev && dev->GetControllerRole() == unDeviceType)
+			return index;
 	}
 
-	std::shared_ptr<ITrackedDevice> dev = BackendManager::Instance().GetDevice(unDeviceIndex);
-	if (!dev) {
-		return -1; // This is what SteamVR does for unknown devices
-	} else {
-		return unDeviceIndex;
-	}
+	return vr::k_unTrackedDeviceIndexInvalid; // This is what SteamVR does for unknown devices
 }
 
 vr::ETrackedControllerRole BaseSystem::GetControllerRoleForTrackedDeviceIndex(vr::TrackedDeviceIndex_t unDeviceIndex)
 {
-	if (unDeviceIndex == leftHandIndex) {
-		return TrackedControllerRole_LeftHand;
-	} else if (unDeviceIndex == rightHandIndex) {
-		return TrackedControllerRole_RightHand;
-	} else {
+	std::shared_ptr<ITrackedDevice> dev = BackendManager::Instance().GetDevice(unDeviceIndex);
+	if (!dev)
 		return TrackedControllerRole_Invalid;
-	}
+
+	return dev->GetControllerRole();
 }
 
 ETrackedDeviceClass BaseSystem::GetTrackedDeviceClass(vr::TrackedDeviceIndex_t deviceIndex)
 {
-	if (!IsTrackedDeviceConnected(deviceIndex))
+	if (deviceIndex >= vr::k_unMaxTrackedDeviceCount)
 		return TrackedDeviceClass_Invalid;
 
-	if (deviceIndex == k_unTrackedDeviceIndex_Hmd)
-		return TrackedDeviceClass_HMD;
+	// A slot that held a device keeps its class once the device is gone
+	std::shared_ptr<ITrackedDevice> dev = BackendManager::Instance().GetDevice(deviceIndex);
+	if (dev) {
+		ETrackedDeviceClass cls = dev->GetTrackedDeviceClass();
+		slotClasses[deviceIndex] = (int32_t)cls;
+		return cls;
+	}
 
-	if (deviceIndex == leftHandIndex || deviceIndex == rightHandIndex)
-		return TrackedDeviceClass_Controller;
-
-	if (deviceIndex >= thirdTouchIndex)
-		return TrackedDeviceClass_GenericTracker;
-
-	return TrackedDeviceClass_Invalid;
+	return (ETrackedDeviceClass)slotClasses[deviceIndex].load();
 }
 
 bool BaseSystem::IsTrackedDeviceConnected(vr::TrackedDeviceIndex_t deviceIndex)
