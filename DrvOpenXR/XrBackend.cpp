@@ -331,7 +331,7 @@ static std::string AdapterName(uint64_t luid)
 
 // Whether the game's device, on the adapter gameLuid, is on the OpenXR runtime's adapter (or the runtime names
 // none). One soft failure if not: the session is still tried, as a runtime may copy across adapters, and Submit answers
-// SharedTexturesNotSupported if it or its swapchains then fail.
+// TextureIsOnWrongDevice if it or its swapchains then fail.
 static bool OnRuntimeAdapter(uint64_t gameLuid)
 {
 	uint64_t runtimeLuid = 0;
@@ -339,7 +339,7 @@ static bool OnRuntimeAdapter(uint64_t gameLuid)
 		return true;
 	std::string game = AdapterName(gameLuid), runtime = AdapterName(runtimeLuid);
 	OC_SOFT_CHECK(false, false, "The game renders on %s, but the OpenXR runtime on %s: trying the session anyway "
-	                            "(if it or its swapchains fail, Submit answers SharedTexturesNotSupported)",
+	                            "(if it or its swapchains fail, Submit answers TextureIsOnWrongDevice)",
 	    game.c_str(), runtime.c_str());
 	return false;
 }
@@ -816,6 +816,7 @@ void XrBackend::WaitForTrackingData()
 		auto waitReturned = std::chrono::steady_clock::now();
 		RecordFrameTiming(waitCall, waitReturned, state.predictedDisplayTime, state.predictedDisplayPeriod);
 		xr_gbl->nextPredictedFrameTime = state.predictedDisplayTime;
+		frameShouldRender = state.shouldRender != XR_FALSE;
 		frameAwaitingBegin = true;
 
 		FrameStats::Get().OnFrameStart();
@@ -824,9 +825,6 @@ void XrBackend::WaitForTrackingData()
 		if (GetFrameTiming(&timing, 0))
 			FrameStats::Get().OnAppFrame(timing, measuredDropped, waitReturned, displayPeriodMs);
 	}
-
-	// FIXME loop until this returns true?
-	// OOVR_FALSE_ABORT(state.shouldRender);
 
 	XrFrameBeginInfo beginInfo{ XR_TYPE_FRAME_BEGIN_INFO };
 	if (XrResult res = xrBeginFrame(xr_session.get(), &beginInfo); XR_FAILED(res)) {
@@ -887,8 +885,8 @@ void XrBackend::WaitForTrackingData()
 static constexpr IBackend::openvr_enum_t kCompositorNone = 0;
 static constexpr IBackend::openvr_enum_t kCompositorRequestFailed = 1;
 static constexpr IBackend::openvr_enum_t kCompositorInvalidTexture = 102;
+static constexpr IBackend::openvr_enum_t kCompositorTextureIsOnWrongDevice = 104;
 static constexpr IBackend::openvr_enum_t kCompositorUnsupportedFormat = 105;
-static constexpr IBackend::openvr_enum_t kCompositorSharedTexturesNotSupported = 106;
 
 IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
     vr::EVREye eye,
@@ -903,7 +901,7 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 	if (!CheckOrInitCompositors(texture)) {
 		// A texture OpenComposite can't use (logged): this eye is left out of the frame
 		projectionViews[eye].subImage.swapchain = XR_NULL_HANDLE;
-		return appOnOtherAdapter && appGraphicsUnusable ? kCompositorSharedTexturesNotSupported : kCompositorInvalidTexture;
+		return appOnOtherAdapter ? kCompositorTextureIsOnWrongDevice : kCompositorInvalidTexture;
 	}
 
 	// A game that submits without having waited for poses (or whose frame ended before this eye) gets a frame here, with
@@ -912,6 +910,9 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 		deferredRenderingStart = false;
 		WaitForTrackingData();
 	}
+
+	if (submitFlags & vr::Submit_LensDistortionAlreadyApplied)
+		OOVR_LOG_ONCE("The game submits textures with the lens distortion already applied: they are shown as they are, and the runtime distorts them again");
 
 	XrCompositionLayerProjectionView& layer = projectionViews[eye];
 	layer.type = XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW;
@@ -969,7 +970,7 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 		if (res == XR_ERROR_VALIDATION_FAILURE)
 			result = kCompositorInvalidTexture; // the compositor's word for texture data it can't use
 		else if (XR_FAILED(res) && appOnOtherAdapter)
-			result = kCompositorSharedTexturesNotSupported; // a swapchain call failed for a device on another adapter
+			result = kCompositorTextureIsOnWrongDevice; // a swapchain call failed for a device on another adapter
 		else if (res == XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED)
 			result = kCompositorUnsupportedFormat;
 		else if (XR_FAILED(res))
@@ -1181,6 +1182,9 @@ void XrBackend::SubmitFrames(bool showSkybox)
 		const int overlayCount = overlay->_BuildLayers(nullptr, headers, true);
 		frameLayers.insert(frameLayers.end(), headers, headers + overlayCount);
 	}
+	// A frame the runtime says isn't visible is ended with no layers
+	if (!frameShouldRender)
+		frameLayers.clear();
 	headers = frameLayers.data();
 	layer_count = (int)frameLayers.size();
 
@@ -1221,7 +1225,7 @@ void XrBackend::SubmitFrames(bool showSkybox)
 	}
 	OOVR_FAILED_XR_SOFT_ABORT(endResult);
 	// A present: the game's eye textures shown
-	if (XR_SUCCEEDED(endResult) && app_layer)
+	if (XR_SUCCEEDED(endResult) && app_layer && frameShouldRender)
 		FrameStats::Get().OnAppPresent();
 	frameBegun = false;
 	if (overlayLock.owns_lock())

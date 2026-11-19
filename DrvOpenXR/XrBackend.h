@@ -323,6 +323,8 @@ private:
 	// Keep track of if eye textures have been submitted and if we need to create a projection layer for them
 	bool submittedEyeTextures = false;
 
+	// Whether the runtime shows the frame in flight (xrWaitFrame's shouldRender); under frameOwner
+	bool frameShouldRender = true;
 	// The space the frame's views were located in, which its projection layer is labelled with
 	XrReferenceSpaceType frameSpace = XR_REFERENCE_SPACE_TYPE_STAGE;
 	// The eyes submitted in the frame in flight
