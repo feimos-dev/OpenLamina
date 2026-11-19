@@ -3,6 +3,7 @@
 #include "stdafx.h"
 
 #include "XrHMD.h"
+#include "Reimpl/BaseSystem.h"
 
 #ifndef _WIN32
 #include "steamvr_abi.h"
@@ -165,4 +166,25 @@ TEST_CASE("The headset view's aspect ratio follows the eye and the mode")
 	CHECK(view.GetHeadsetViewAspectRatio() == doctest::Approx(0.8f));
 	view.SetHeadsetViewMode(HeadsetViewMode_Both);
 	CHECK(view.GetHeadsetViewAspectRatio() == doctest::Approx(1.6f));
+}
+
+TEST_CASE("Distortion comes back as given")
+{
+	XrHMD hmd;
+	vr::DistortionCoordinates_t out = {};
+	CHECK(hmd.ComputeDistortion(vr::Eye_Left, 0.25f, 0.75f, &out));
+	CHECK(out.rfRed[0] == 0.25f);
+	CHECK(out.rfGreen[0] == 0.25f);
+	CHECK(out.rfBlue[0] == 0.25f);
+	CHECK(out.rfRed[1] == 0.75f);
+	CHECK(out.rfGreen[1] == 0.75f);
+	CHECK(out.rfBlue[1] == 0.75f);
+	CHECK_FALSE(hmd.ComputeDistortion(vr::Eye_Left, 0.25f, 0.75f, nullptr));
+
+	BaseSystem system;
+	vr::DistortionCoordinate_t in[2] = { { 0.1f, 0.2f }, { 0.3f, 0.4f } }, set[2] = {};
+	CHECK(system.ComputeDistortionSet(vr::Eye_Right, vr::EVRDistortionChannel::Blue, false, 2, in, set));
+	CHECK(set[1].u == 0.3f);
+	CHECK(set[1].v == 0.4f);
+	CHECK_FALSE(system.ComputeDistortionSet(vr::Eye_Right, vr::EVRDistortionChannel::Blue, false, 2, nullptr, set));
 }

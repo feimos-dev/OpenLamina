@@ -16,6 +16,7 @@
 #include "convert.h"
 #include "generated/static_bases.gen.h"
 
+#include <algorithm>
 #include <cmath>
 #include <cinttypes>
 #include <string>
@@ -143,9 +144,13 @@ bool BaseSystem::ComputeDistortion(EVREye eEye, float fU, float fV, DistortionCo
 bool BaseSystem::ComputeDistortionSet(EVREye eEye, EVRDistortionChannel eChannel, bool bAsNormalizedDeviceCoordinates,
     uint32_t nNumCoordinates, const DistortionCoordinate_t* pInput, DistortionCoordinate_t* pOutput)
 {
-	// Like ComputeDistortion: the OpenXR runtime does the distortion, so there's nothing to report.
-	OOVR_SOFT_ABORT("Distortion computation not implemented for OpenXR");
-	return false;
+	// Like ComputeDistortion: the OpenXR runtime does the distortion, so the coordinates come back as given
+	if (nNumCoordinates == 0)
+		return true;
+	if (!pInput || !pOutput)
+		return false;
+	std::copy(pInput, pInput + nNumCoordinates, pOutput);
+	return true;
 }
 
 HmdMatrix34_t BaseSystem::GetEyeToHeadTransform(EVREye ovr_eye)
