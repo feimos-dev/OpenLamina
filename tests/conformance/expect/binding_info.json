@@ -3,6 +3,14 @@
   "err": 0,
   "returned_at_least_one": true,
   "odd_source_left_out": true,
-  "no_blank_entries": true
+  "no_blank_entries": true,
+  "toggle_err": 0,
+  "toggle_bindings": 1,
+  "device": "/user/hand/right",
+  "input": "/input/trigger",
+  "mode": "toggle_button",
+  "slot": "click",
+  "source_type": "trigger",
+  "origin_is_the_right_hand": true
  }
 }

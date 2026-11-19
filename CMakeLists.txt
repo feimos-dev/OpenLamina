@@ -393,6 +393,7 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/Input/Bindings/BindingFile.cpp
 	OpenOVR/Misc/Input/Bindings/Modes.cpp
 	OpenOVR/Misc/Input/Bindings/Evaluator.cpp
+	OpenOVR/Misc/Input/Bindings/BindingInfo.cpp
 	OpenOVR/Misc/Input/Bindings/BindingSearch.cpp
 	OpenOVR/Misc/Input/Bindings/Conversion.cpp
 	OpenOVR/Misc/Input/Bindings/LegacyBindings.cpp
