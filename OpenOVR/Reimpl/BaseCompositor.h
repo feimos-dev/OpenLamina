@@ -49,6 +49,11 @@ struct OOVR_Compositor_FrameTiming {
 	float m_flCompositorRenderStartMs;
 
 	vr::TrackedDevicePose_t m_HmdPose; // pose used by app to render this frame
+
+	uint32_t m_nNumVSyncsReadyForUse;
+	uint32_t m_nNumVSyncsToFirstView;
+
+	float m_flTransferLatencyMs;
 };
 
 struct OOVR_Compositor_CumulativeStats {
@@ -156,7 +161,8 @@ private:
 		uint32_t id = 0;
 		std::vector<vr::TrackedDevicePose_t> poses;
 	};
-	FramePoses recentPoses[4];
+	// About 100 ms of frames at the fastest display rates
+	FramePoses recentPoses[16];
 	uint32_t lastPoseId = 0;
 	std::mutex posesLock;
 

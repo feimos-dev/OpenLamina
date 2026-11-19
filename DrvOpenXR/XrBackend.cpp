@@ -1524,13 +1524,14 @@ bool XrBackend::GetFrameTiming(OOVR_Compositor_FrameTiming* pTiming, uint32_t un
 
 		/** The following are all relative to this frame's SystemTimeInSeconds */
 		pTiming->m_flWaitGetPosesCalledMs = 0.0f;
-		pTiming->m_flNewPosesReadyMs = 0.0f;
+		pTiming->m_flNewPosesReadyMs = measuredWaitMs; // when xrWaitFrame returned
 		pTiming->m_flNewFrameReadyMs = 0.0f; // second call to IVRCompositor::Submit
 		pTiming->m_flCompositorUpdateStartMs = 0.0f;
 		pTiming->m_flCompositorUpdateEndMs = 0.0f;
 		pTiming->m_flCompositorRenderStartMs = 0.0f;
 
-		GetPrimaryHMD()->GetPose(vr::ETrackingUniverseOrigin::TrackingUniverseSeated, &pTiming->m_HmdPose, ETrackingStateType::TrackingStateType_Rendering);
+		const auto space = BaseSystem::currentSpace == XR_REFERENCE_SPACE_TYPE_LOCAL ? vr::TrackingUniverseSeated : vr::TrackingUniverseStanding;
+		GetPrimaryHMD()->GetPose(space, &pTiming->m_HmdPose, ETrackingStateType::TrackingStateType_Rendering);
 
 		return true;
 	}
