@@ -156,6 +156,7 @@ void XrController::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDevice
 	if (!input->AreActionsLoaded()) {
 		pose->bPoseIsValid = true;
 		pose->eTrackingResult = vr::TrackingResult_Running_OK;
+		pose->mDeviceToAbsoluteTracking = G2S_m34(glm::identity<glm::mat4>());
 	}
 
 	// TODO do something with TrackingState

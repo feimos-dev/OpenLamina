@@ -13,7 +13,8 @@ XrGenericTracker::XrGenericTracker(const InteractionProfile& profile, XrXDevProp
 
 XrGenericTracker::~XrGenericTracker()
 {
-	xrDestroySpace(genericTrackerSpace);
+	if (genericTrackerSpace)
+		xrDestroySpace(genericTrackerSpace);
 }
 
 void XrGenericTracker::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDevicePose_t* pose, ETrackingStateType trackingState)
@@ -28,6 +29,7 @@ void XrGenericTracker::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDe
 		// Same workaround as XrController, unsure if needed for trackers. Better safe than sorry.
 		pose->bPoseIsValid = true;
 		pose->eTrackingResult = vr::TrackingResult_Running_OK;
+		pose->mDeviceToAbsoluteTracking = G2S_m34(glm::identity<glm::mat4>());
 
 		return;
 	}

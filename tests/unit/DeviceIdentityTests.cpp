@@ -9,6 +9,7 @@
 #include "Misc/Input/OculusInteractionProfile.h"
 #include "Misc/SoftFail.h"
 #include "XrController.h"
+#include "XrGenericTracker.h"
 
 TEST_CASE("Hmd_default_row_matches_todays_answers")
 {
@@ -164,4 +165,17 @@ TEST_CASE("Each_unknown_property_is_logged_once")
 	left.GetFloatTrackedDeviceProperty((vr::ETrackedDeviceProperty)91001, &error);
 	CHECK(error == vr::TrackedProp_UnknownProperty);
 	CHECK(oc_soft_sites().size() == before + 2);
+}
+
+TEST_CASE("A tracker without a space reports a valid pose at the origin")
+{
+	XrXDevPropertiesMNDX properties = {};
+	KhrSimpleInteractionProfile profile;
+	XrGenericTracker tracker(profile, properties, 0, XR_NULL_HANDLE);
+	vr::TrackedDevicePose_t pose = {};
+	tracker.GetPose(vr::TrackingUniverseStanding, &pose, TrackingStateType_Rendering);
+	CHECK(pose.bPoseIsValid);
+	for (int r = 0; r < 3; r++)
+		for (int c = 0; c < 4; c++)
+			CHECK(pose.mDeviceToAbsoluteTracking.m[r][c] == (r == c ? 1.0f : 0.0f));
 }
