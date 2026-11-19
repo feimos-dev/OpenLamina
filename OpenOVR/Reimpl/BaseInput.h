@@ -674,12 +674,73 @@ private:
 		std::unordered_map<const InteractionProfile*, PoseBindingInfo> poseBindingsLeft, poseBindingsRight;
 	};
 
+public:
 	enum class InputSource {
 		INVALID,
 		HAND_LEFT,
 		HAND_RIGHT,
-		// HMD and Gamepad can go in here if necessary
+		HEAD,
+		OTHER, // a device that isn't a hand or the head (gamepad, tracker...): it matches no hand
 	};
+
+	/** What a handle's path asks for. A hand named by dominance (/user/hand/primary) follows the dominant hand. */
+	enum class HandAlias {
+		NONE,
+		PRIMARY,
+		SECONDARY,
+	};
+
+	struct InputSourceInfo {
+		InputSource type = InputSource::INVALID;
+		HandAlias alias = HandAlias::NONE;
+		std::string devicePath; // the device's own path: /user/hand/left, /user/head...
+	};
+	static bool PathIsOrBelow(const std::string& path, const std::string& prefix)
+	{
+		return path == prefix || (path.size() > prefix.size() && path.starts_with(prefix) && path[prefix.size()] == '/');
+	}
+	/** What an input source path names: a hand (left or right, or by dominance), the head, another device, or nothing
+	 * the runtime knows. The path is the device's own or one of its inputs below it. */
+	static InputSourceInfo ClassifyInputSource(const std::string& path)
+	{
+		InputSourceInfo info;
+		if (PathIsOrBelow(path, "/user/hand/left")) {
+			info.type = InputSource::HAND_LEFT;
+			info.devicePath = "/user/hand/left";
+		} else if (PathIsOrBelow(path, "/user/hand/right")) {
+			info.type = InputSource::HAND_RIGHT;
+			info.devicePath = "/user/hand/right";
+		} else if (PathIsOrBelow(path, "/user/hand/primary")) {
+			info.type = InputSource::HAND_RIGHT; // the hand it is pointed at is picked from the dominant hand
+			info.alias = HandAlias::PRIMARY;
+			info.devicePath = "/user/hand/primary";
+		} else if (PathIsOrBelow(path, "/user/hand/secondary")) {
+			info.type = InputSource::HAND_LEFT;
+			info.alias = HandAlias::SECONDARY;
+			info.devicePath = "/user/hand/secondary";
+		} else if (PathIsOrBelow(path, "/user/head")) {
+			info.type = InputSource::HEAD;
+			info.devicePath = "/user/head";
+		} else {
+			for (const char* other : { "/user/gamepad", "/user/treadmill", "/user/eyes" }) {
+				if (PathIsOrBelow(path, other)) {
+					info.type = InputSource::OTHER;
+					info.devicePath = other;
+					return info;
+				}
+			}
+			// Trackers are named by their role or serial: /user/vive_tracker_htcx/role/waist
+			static const std::string trackerPrefix = "/user/vive_tracker";
+			if (path.starts_with(trackerPrefix)) {
+				size_t end = path.find('/', 1 + std::string("/user").size());
+				info.type = InputSource::OTHER;
+				info.devicePath = path.substr(0, end);
+			}
+		}
+		return info;
+	}
+
+private:
 
 	struct InputValueHandle {
 		InputValueHandle();
@@ -697,6 +758,7 @@ private:
 		 * what that input source is.
 		 */
 		InputSource type = InputSource::INVALID;
+		HandAlias alias = HandAlias::NONE;
 
 		/**
 		 * If this is a valid input source, this specifies the path of the input device it is mounted on as
@@ -789,10 +851,17 @@ private:
 	bool restartingSession = false;
 
 	vr::ETrackedControllerRole dominantHand = vr::TrackedControllerRole_RightHand;
+	vr::ETrackedControllerRole requestedDominantHand = vr::TrackedControllerRole_RightHand; // taken up at the next UpdateActionState
 
 	// TODO convert to Registry
 	std::unordered_map<std::string, std::unique_ptr<InputValueHandle>> inputHandleRegistry;
 	std::mutex inputHandleRegistryLock; // GetInputSourceHandle is called from any thread
+	/** Points a handle at the left (0) or right (1) hand */
+	void PointHandleAtHand(InputValueHandle& handle, int hand);
+	/** Points the handles named by dominance at the dominant hand's side */
+	void ResolveHandAliases();
+	/** The hand (0 left, 1 right) a handle named by dominance points at */
+	int DominantHandIndex(HandAlias alias) const;
 
 	XrActionSet legacyInputsSet = XR_NULL_HANDLE;
 

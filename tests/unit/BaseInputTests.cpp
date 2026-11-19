@@ -88,3 +88,33 @@ TEST_CASE("Active_set_hands")
 	CHECK((!head.primary[0] && !head.primary[1]));
 	CHECK((head.secondary[0] && head.secondary[1]));
 }
+
+TEST_CASE("Input_source_paths")
+{
+	using S = BaseInput::InputSource;
+	using A = BaseInput::HandAlias;
+	auto left = BaseInput::ClassifyInputSource("/user/hand/left");
+	CHECK(left.type == S::HAND_LEFT);
+	CHECK(left.devicePath == "/user/hand/left");
+	CHECK(left.alias == A::NONE);
+	auto below = BaseInput::ClassifyInputSource("/user/hand/right/input/trigger/value");
+	CHECK(below.type == S::HAND_RIGHT);
+	CHECK(below.devicePath == "/user/hand/right");
+	// Another word that starts with a hand's path isn't that hand
+	CHECK(BaseInput::ClassifyInputSource("/user/hand/leftblah").type == S::INVALID);
+	CHECK(BaseInput::ClassifyInputSource("/user/hand/rightfoo/input").type == S::INVALID);
+
+	auto primary = BaseInput::ClassifyInputSource("/user/hand/primary");
+	CHECK(primary.alias == A::PRIMARY);
+	CHECK(BaseInput::ClassifyInputSource("/user/hand/secondary/input/a").alias == A::SECONDARY);
+
+	CHECK(BaseInput::ClassifyInputSource("/user/head").type == S::HEAD);
+	CHECK(BaseInput::ClassifyInputSource("/user/gamepad/input/a/click").type == S::OTHER);
+	CHECK(BaseInput::ClassifyInputSource("/user/treadmill").type == S::OTHER);
+	CHECK(BaseInput::ClassifyInputSource("/user/eyes").type == S::OTHER);
+	auto tracker = BaseInput::ClassifyInputSource("/user/vive_tracker_htcx/role/waist/input/grip");
+	CHECK(tracker.type == S::OTHER);
+	CHECK(tracker.devicePath == "/user/vive_tracker_htcx");
+	CHECK(BaseInput::ClassifyInputSource("/user/nothing").type == S::INVALID);
+	CHECK(BaseInput::ClassifyInputSource("").type == S::INVALID);
+}

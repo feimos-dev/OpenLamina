@@ -1501,6 +1501,30 @@ EVRInputError BaseInput::GetActionHandle(const char* pchActionName, VRActionHand
 	return vr::VRInputError_None;
 }
 
+int BaseInput::DominantHandIndex(HandAlias alias) const
+{
+	const bool primaryIsLeft = dominantHand == vr::TrackedControllerRole_LeftHand;
+	return (alias == HandAlias::PRIMARY) == primaryIsLeft ? 0 : 1;
+}
+
+void BaseInput::PointHandleAtHand(InputValueHandle& handle, int hand)
+{
+	handle.type = hand == 0 ? InputSource::HAND_LEFT : InputSource::HAND_RIGHT;
+	handle.devicePathString = hand == 0 ? "/user/hand/left" : "/user/hand/right";
+	XrResult res = xr_instance ? xrStringToPath(xr_instance, handle.devicePathString.c_str(), &handle.devicePath) : XR_ERROR_HANDLE_INVALID;
+	if (XR_FAILED(res))
+		handle.devicePath = XR_NULL_PATH;
+}
+
+void BaseInput::ResolveHandAliases()
+{
+	std::lock_guard<std::mutex> registryGuard(inputHandleRegistryLock);
+	for (auto& [path, handle] : inputHandleRegistry) {
+		if (handle->alias != HandAlias::NONE)
+			PointHandleAtHand(*handle, DominantHandIndex(handle->alias));
+	}
+}
+
 EVRInputError BaseInput::GetInputSourceHandle(const char* pchInputSourcePath, VRInputValueHandle_t* pHandle)
 {
 	// Get the existing InputValueHandle if it already exists, or make a new one otherwise. Applications can
@@ -1521,27 +1545,18 @@ EVRInputError BaseInput::GetInputSourceHandle(const char* pchInputSourcePath, VR
 	InputValueHandle* ptr = handle.get();
 	handle->path = pchInputSourcePath;
 
-	// Yes, this will let through something like/user/hand/leftblah but it's probably not an issue
-	static std::string leftHand = "/user/hand/left";
-	static std::string rightHand = "/user/hand/right";
-	if (strncmp(pchInputSourcePath, leftHand.c_str(), leftHand.size()) == 0) {
-		handle->type = InputSource::HAND_LEFT;
-		handle->devicePathString = leftHand;
-	}
-	if (strncmp(pchInputSourcePath, rightHand.c_str(), rightHand.size()) == 0) {
-		handle->type = InputSource::HAND_RIGHT;
-		handle->devicePathString = rightHand;
-	}
-
-	if (!handle->devicePathString.empty()) {
+	const InputSourceInfo info = ClassifyInputSource(pchInputSourcePath);
+	handle->type = info.type;
+	handle->alias = info.alias;
+	if (info.alias != HandAlias::NONE) {
+		PointHandleAtHand(*handle, DominantHandIndex(info.alias));
+	} else if (!info.devicePath.empty()) {
+		handle->devicePathString = info.devicePath;
 		// Without an OpenXR instance (a Utility app) the handle still works; it just matches no subaction path
 		XrResult res = xr_instance ? xrStringToPath(xr_instance, handle->devicePathString.c_str(), &handle->devicePath) : XR_ERROR_HANDLE_INVALID;
 		if (XR_FAILED(res)) {
 			OOVR_LOGF("GetInputSourceHandle: no OpenXR path for %s (%d)", handle->devicePathString.c_str(), (int)res);
 			handle->devicePath = XR_NULL_PATH;
-		} else if (!std::count(allSubactionPaths.begin(), allSubactionPaths.end(), handle->devicePath)) {
-			// Very much should always be true
-			OOVR_LOGF("GetInputSourceHandle: %s isn't a hand's path", handle->devicePathString.c_str());
 		}
 	}
 
@@ -1558,6 +1573,11 @@ EVRInputError BaseInput::UpdateActionState(VR_ARRAY_COUNT(unSetCount) VRActiveAc
 
 	if (EVRInputError err = CheckActiveSets(pSets, unSizeOfVRSelectedActionSet_t, unSetCount); err != VRInputError_None)
 		return err;
+
+	if (dominantHand != requestedDominantHand) {
+		dominantHand = requestedDominantHand;
+		ResolveHandAliases();
+	}
 
 	for (uint32_t i = 0; i < unSetCount; i++) {
 		if (!cast_ASH(pSets[i].ulActionSet)) {
@@ -1889,22 +1909,23 @@ EVRInputError BaseInput::GetSkeletalActionData(VRActionHandle_t actionHandle, In
 
 EVRInputError BaseInput::GetDominantHand(vr::ETrackedControllerRole* peDominantHand)
 {
-	// The API documentation says we need allowSetDominantHand for this, but that
-	// seems like a mistake (i.e. that comment was probably meant to be on
-	// SetDominantHand), so I'll just allow it always.
 	if (!peDominantHand)
 		return VRInputError_InvalidParam;
+	// Only an app that says in its manifest it has the setting gets an answer
+	if (!allowSetDominantHand)
+		return VRInputError_PermissionDenied;
 	*peDominantHand = dominantHand;
 	return VRInputError_None;
 }
 EVRInputError BaseInput::SetDominantHand(vr::ETrackedControllerRole eDominantHand)
 {
-	if (allowSetDominantHand) {
-		dominantHand = eDominantHand;
-		return VRInputError_None;
-	} else {
+	if (!allowSetDominantHand)
 		return VRInputError_PermissionDenied;
-	}
+	if (eDominantHand != vr::TrackedControllerRole_LeftHand && eDominantHand != vr::TrackedControllerRole_RightHand)
+		return VRInputError_InvalidParam;
+	// Taken up at the next UpdateActionState
+	requestedDominantHand = eDominantHand;
+	return VRInputError_None;
 }
 EVRInputError BaseInput::GetBoneCount(VRActionHandle_t action, uint32_t* pBoneCount)
 {
