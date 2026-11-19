@@ -37,19 +37,24 @@ MboxErr BaseMailbox::ReadMessage(OOVR_mbox_handle mboxHandle, char* outBuf, uint
 	// In both cases, set msgLen
 	// If we don't have a message, return an unknown error code other than 0 and 2 (HL:A doesn't care).
 
-	static bool recvdReadyMsg = false;
-	if (!recvdReadyMsg) {
-		recvdReadyMsg = true;
+	uint32_t lenScratch = 0;
+	if (!msgLen) {
+		msgLen = &lenScratch;
+	}
+	*msgLen = 0;
 
-		const std::string msg = R"({ "type": "ready", })";
-		*msgLen = msg.size();
+	if (!readySent) {
+		static const char msg[] = R"({ "type": "ready" })";
+		const uint32_t len = (uint32_t)(sizeof(msg) - 1);
+		*msgLen = len;
 
-		if (outBufLen < msg.size() + 1) {
+		if (!outBuf || outBufLen < len + 1) {
 			return VR_MBox_BufferTooShort;
 		}
-		strcpy(outBuf, msg.c_str());
+		memcpy(outBuf, msg, len + 1);
+		readySent = true;
 
-		OOVR_LOGF("Sending fake ready message '%s'", msg.c_str());
+		OOVR_LOGF("Sending fake ready message '%s'", msg);
 		return VR_MBox_None;
 	}
 

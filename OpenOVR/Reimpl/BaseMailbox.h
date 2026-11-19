@@ -22,6 +22,10 @@ public:
 	MboxErr SendMessage(OOVR_mbox_handle mbox, const char* type, const char* message);
 
 	MboxErr ReadMessage(OOVR_mbox_handle mbox, char* outBuf, uint32_t outBufLen, uint32_t* msgLen);
+
+private:
+	// The ready message is delivered once per interface instance
+	bool readySent = false;
 };
 
 typedef BaseMailbox::MboxErr OOVR_vrmb_typeb;
