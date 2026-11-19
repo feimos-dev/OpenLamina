@@ -670,3 +670,20 @@ TEST_CASE("Template_instance_belongs_to_the_program_started_for_it")
 	CHECK(ended);
 	CHECK_FALSE(apps.IsApplicationInstalled("oc.test.instance"));
 }
+
+TEST_CASE("Launching_a_running_application_is_refused")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	BaseApplications apps(store);
+	REQUIRE(apps.AddApplicationManifest(PathToUtf8(Data("echo.vrmanifest")).c_str()) == VRApplicationError_None);
+#ifdef _WIN32
+	uint32_t other = 4; // System, always there
+#else
+	uint32_t other = (uint32_t)getppid();
+#endif
+	CHECK(apps.GetApplicationProcessId("oc.test.echo") == 0);
+	store.Update(StoreDoc::Applications, [&](Json::Value& doc) { doc["pids"][std::to_string(other)] = "oc.test.echo"; });
+	REQUIRE(apps.GetApplicationProcessId("oc.test.echo") == other);
+	CHECK(apps.LaunchApplication("oc.test.echo") == VRApplicationError_ApplicationAlreadyRunning);
+}

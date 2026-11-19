@@ -390,6 +390,9 @@ EVRApplicationError BaseApplications::LaunchApplication(const char* pchAppKey)
 		return VRApplicationError_UnknownApplication;
 	if (app->isDashboardOverlay)
 		return VRApplicationError_InvalidApplication; // LaunchDashboardOverlay's
+	// One copy of an application at a time
+	if (app->launchType != "url" && GetApplicationProcessId(pchAppKey) != 0)
+		return VRApplicationError_ApplicationAlreadyRunning;
 	return Launch(*app, "");
 }
 EVRApplicationError BaseApplications::LaunchTemplateApplication(const char* pchTemplateAppKey, const char* pchNewAppKey, VR_ARRAY_COUNT(unKeys) const AppOverrideKeys_t* pKeys, uint32_t unKeys)
