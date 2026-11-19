@@ -1298,7 +1298,11 @@ std::vector<BaseInput::ActiveSetOnHands> BaseInput::ResolveActiveSets(const VRAc
 		int restrictedHand = -1;
 		if (sets[i].ulRestrictedToDevice != vr::k_ulInvalidInputValueHandle) {
 			const InputValueHandle* ivh = cast_IVH(sets[i].ulRestrictedToDevice);
-			restrictedHand = !ivh ? 2 : ivh->type == InputSource::HAND_LEFT ? 0 : ivh->type == InputSource::HAND_RIGHT ? 1 : 2;
+			restrictedHand = 2;
+			if (ivh && ivh->type == InputSource::HAND_LEFT)
+				restrictedHand = 0;
+			else if (ivh && ivh->type == InputSource::HAND_RIGHT)
+				restrictedHand = 1;
 		}
 		const SetHands onHands = HandsForActiveSet(restrictedHand);
 		ActionSet* primary = cast_ASH(sets[i].ulActionSet);
@@ -1689,7 +1693,7 @@ EVRInputError BaseInput::GetAnalogActionData(VRActionHandle_t action, InputAnalo
 			pActionData->deltaX = a->dx;
 			pActionData->deltaY = act->type == ActionType::Vector1 ? 0 : a->dy;
 			pActionData->deltaZ = act->type == ActionType::Vector3 ? a->dz : 0;
-			pActionData->fUpdateTime = 0;
+			pActionData->fUpdateTime = UpdateTimeFromNow(a->changeTime, act->createdAt, EvaluatorClock());
 			pActionData->activeOrigin = OriginHandle(a->origin);
 		}
 	}
@@ -2349,7 +2353,11 @@ EVRInputError BaseInput::TriggerHapticVibrationAction(VRActionHandle_t action, f
 		const InputValueHandle* ivh = cast_IVH(ulRestrictToDevice);
 		if (!ivh)
 			return VRInputError_InvalidHandle;
-		restrictedHand = ivh->type == InputSource::HAND_LEFT ? 0 : ivh->type == InputSource::HAND_RIGHT ? 1 : 2;
+		restrictedHand = 2;
+		if (ivh->type == InputSource::HAND_LEFT)
+			restrictedHand = 0;
+		else if (ivh->type == InputSource::HAND_RIGHT)
+			restrictedHand = 1;
 	}
 
 	// The active sets' haptic bindings pick the hands, each scaling the amplitude. A hand ulRestrictToDevice names,
