@@ -7,7 +7,6 @@ class BaseClientCore {
 public:
 	static bool CheckAppEnabled();
 	static std::string GetAlternativeRuntimePath();
-	void SetManifestPath(std::string filename);
 	static inline vr::EVRApplicationType appType = vr::VRApplication_Max;
 	// The folder of OpenComposite's DLL, ending with a separator
 	static std::wstring GetDllDir();

@@ -19,7 +19,7 @@ add_custom_command(
 		${GENERATED_DIR}/conformance/callers.gen.cpp
 	DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/conformance/gen_callers.py ${CMAKE_SOURCE_DIR}/scripts/libparse.py
 		${CMAKE_CURRENT_SOURCE_DIR}/conformance/interfaces.txt ${CMAKE_CURRENT_SOURCE_DIR}/conformance/unsafe_methods.txt
-		${CMAKE_CURRENT_SOURCE_DIR}/conformance/not_implemented.txt ${GENERATED_DIR}/interfaces/vrtypes.h
+		${CMAKE_CURRENT_SOURCE_DIR}/conformance/custom_interfaces.txt ${CMAKE_CURRENT_SOURCE_DIR}/conformance/not_implemented.txt ${GENERATED_DIR}/interfaces/vrtypes.h
 	COMMENT "Generating the conformance callers..."
 )
 add_library(oc_callers STATIC
@@ -55,6 +55,7 @@ add_executable(oc_conformance
 	conformance/cases.cpp
 	conformance/gfx_cases.cpp
 	conformance/helper_cases.cpp
+	conformance/coverage_cases.cpp
 	conformance/gfx/GfxApi.h
 	conformance/crash_report.cpp
 )
@@ -125,6 +126,16 @@ add_executable(oc_unit_tests
 	unit/BoundsTests.cpp
 	unit/KeyboardTests.cpp
 	unit/RenderModelTests.cpp
+	unit/HmdTests.cpp
+	unit/DeviceSlotsTests.cpp
+	unit/EntryPointsTests.cpp
+	unit/BaseMailboxTests.cpp
+	unit/BaseResourcesTests.cpp
+	unit/BasePathsTests.cpp
+	unit/BaseDriverTests.cpp
+	unit/BaseIOBufferTests.cpp
+	unit/BaseNotificationsTests.cpp
+	unit/ClientCoreStandIns.cpp
 	${OC_TEST_RESOURCES}
 )
 target_include_directories(oc_unit_tests PRIVATE
@@ -149,6 +160,11 @@ target_compile_definitions(oc_unit_tests PRIVATE ${GRAPHICS_API_SUPPORT_FLAGS} D
 	OC_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/unit/data" OC_ECHO_APP="$<TARGET_FILE:oc_echo_app>")
 # The program the launch test starts
 add_dependencies(oc_unit_tests oc_echo_app)
+if (NOT WIN32)
+	# The runtime library the entry point tests load
+	add_dependencies(oc_unit_tests OCOVR)
+	target_compile_definitions(oc_unit_tests PRIVATE OC_TEST_VRCLIENT="$<TARGET_FILE:OCOVR>")
+endif ()
 if (WIN32)
 	target_link_libraries(oc_unit_tests PRIVATE OCCore DrvOpenXR OpenVR Vulkan ${XrLib} ${glmLib} oc_callers)
 else ()

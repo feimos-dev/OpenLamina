@@ -13,9 +13,12 @@
 #include "Misc/Config.h"
 #include "Misc/EnumNames.h"
 #include "Misc/Foveation.h"
+#include "Misc/xrmoreutils.h"
 #include "convert.h"
 #include "generated/static_bases.gen.h"
 
+#include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cinttypes>
 #include <string>
@@ -64,7 +67,7 @@ public:
 	DEF_PRINT_RESULT(float, "%f", result)
 	DEF_PRINT_RESULT(int32_t, "%" PRIi32, result)
 	DEF_PRINT_RESULT(uint64_t, "%" PRIu64, result)
-	DEF_PRINT_RESULT(char*, "%s", result)
+	DEF_PRINT_RESULT(char*, "%s", result ? result : "(no buffer)")
 
 	void print_result(HmdMatrix34_t result)
 	{
@@ -85,14 +88,22 @@ public:
 		OOVR_LOGF("dev: %u | prop: %u | result: %s", idx, prop, matrix.c_str());
 	}
 
+	// bytes is the size of the buffer the game gave; with no buffer only the size is known
 	template <typename T>
-	void print_result(const T* buffer, size_t size)
+	void print_result(const T* buffer, size_t bytes)
 	{
-		std::string array = "{";
-		for (size_t i = 0; i < size; i++) {
-			array.append(std::to_string(buffer[i]) + ", ");
+		if (!oovr_global_configuration.LogGetTrackedProperty())
+			return;
+		if (!buffer) {
+			OOVR_LOGF("dev: %u | prop: %u | result: no buffer", idx, prop);
+			return;
 		}
-		array.erase(array.end() - 2, array.end());
+		std::string array = "{";
+		for (size_t i = 0; i < bytes / sizeof(T); i++) {
+			if (i)
+				array.append(", ");
+			array.append(std::to_string(buffer[i]));
+		}
 		array.push_back('}');
 		OOVR_LOGF("dev: %u | prop: %u | result: %s", idx, prop, array.c_str());
 	}
@@ -143,9 +154,15 @@ bool BaseSystem::ComputeDistortion(EVREye eEye, float fU, float fV, DistortionCo
 bool BaseSystem::ComputeDistortionSet(EVREye eEye, EVRDistortionChannel eChannel, bool bAsNormalizedDeviceCoordinates,
     uint32_t nNumCoordinates, const DistortionCoordinate_t* pInput, DistortionCoordinate_t* pOutput)
 {
-	// Like ComputeDistortion: the OpenXR runtime does the distortion, so there's nothing to report.
-	OOVR_SOFT_ABORT("Distortion computation not implemented for OpenXR");
-	return false;
+	// Like ComputeDistortion: the OpenXR runtime does the distortion, so the coordinates come back as given
+	if (eEye != vr::Eye_Left && eEye != vr::Eye_Right)
+		return false;
+	if (nNumCoordinates == 0)
+		return true;
+	if (!pInput || !pOutput)
+		return false;
+	std::copy(pInput, pInput + nNumCoordinates, pOutput);
+	return true;
 }
 
 HmdMatrix34_t BaseSystem::GetEyeToHeadTransform(EVREye ovr_eye)
@@ -212,20 +229,21 @@ int32_t BaseSystem::_DxgiAdapterIndexOf(uint64_t luid)
 
 int32_t BaseSystem::GetD3D9AdapterIndex()
 {
-	// The D3D9Ex adapter with the OpenXR runtime's adapter's LUID, else the first
+	// The D3D9Ex adapter with the OpenXR runtime's adapter's LUID, else the first; -1 where there's no way to tell
 #ifdef SUPPORT_DX
 	uint64_t runtimeLuid = 0;
 	if (!_RuntimeAdapterLuid(&runtimeLuid))
-		return 0;
+		return -1;
 
 	HMODULE d3d9 = LoadLibraryW(L"d3d9.dll");
 	if (!d3d9)
-		return 0;
+		return -1;
 	using Create9Ex = HRESULT(WINAPI*)(UINT, IDirect3D9Ex**);
 	auto create = (Create9Ex)GetProcAddress(d3d9, "Direct3DCreate9Ex");
 	IDirect3D9Ex* d3d = nullptr;
-	int32_t index = 0;
+	int32_t index = -1;
 	if (create && SUCCEEDED(create(D3D_SDK_VERSION, &d3d)) && d3d) {
+		index = 0;
 		for (UINT i = 0; i < d3d->GetAdapterCount(); i++) {
 			LUID luid = {};
 			if (SUCCEEDED(d3d->GetAdapterLUID(i, &luid))
@@ -239,7 +257,7 @@ int32_t BaseSystem::GetD3D9AdapterIndex()
 	FreeLibrary(d3d9);
 	return index;
 #else
-	return 0;
+	return -1;
 #endif
 }
 
@@ -247,23 +265,23 @@ void BaseSystem::GetDXGIOutputInfo(int32_t* pnAdapterIndex, int32_t* pnAdapterOu
 {
 	GetDXGIOutputInfo(pnAdapterIndex);
 	if (pnAdapterOutputIndex)
-		*pnAdapterOutputIndex = 0;
+		*pnAdapterOutputIndex = pnAdapterIndex && *pnAdapterIndex < 0 ? -1 : 0;
 }
 
 void BaseSystem::GetDXGIOutputInfo(int32_t* adapterIndex)
 {
 	if (!adapterIndex)
 		return;
-	// The first adapter unless the OpenXR runtime names another
-	*adapterIndex = 0;
+	// The adapter the OpenXR runtime names; -1 (an error) where it names none
+	*adapterIndex = -1;
 #ifdef SUPPORT_DX
 	uint64_t luid = 0;
-	OC_SOFT_CHECK_VOID(_RuntimeAdapterLuid(&luid), "GetDXGIOutputInfo: the OpenXR runtime names no D3D adapter, answering adapter 0");
+	OC_SOFT_CHECK_VOID(_RuntimeAdapterLuid(&luid), "GetDXGIOutputInfo: the OpenXR runtime names no D3D adapter");
 	int32_t index = _DxgiAdapterIndexOf(luid);
-	OC_SOFT_CHECK_VOID(index >= 0, "GetDXGIOutputInfo: no adapter has the OpenXR runtime's LUID, answering adapter 0");
+	OC_SOFT_CHECK_VOID(index >= 0, "GetDXGIOutputInfo: no adapter has the OpenXR runtime's LUID");
 	*adapterIndex = index;
 #else
-	OC_UNSUPPORTED_VOID("GetDXGIOutputInfo: this build has no D3D support, answering adapter 0");
+	OC_UNSUPPORTED_VOID("GetDXGIOutputInfo: this build has no D3D support");
 #endif
 }
 
@@ -319,7 +337,7 @@ void BaseSystem::GetDeviceToAbsoluteTrackingPose(ETrackingUniverseOrigin toOrigi
 HmdMatrix34_t BaseSystem::GetSeatedZeroPoseToStandingAbsoluteTrackingPose()
 {
 	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
-	glm::mat4 m;
+	glm::mat4 m = glm::identity<glm::mat4>();
 	XrSpaceLocation location{ XR_TYPE_SPACE_LOCATION, nullptr, 0, {} };
 	if (!xr_gbl)
 		return G2S_m34(glm::identity<glm::mat4>());
@@ -336,40 +354,61 @@ HmdMatrix34_t BaseSystem::GetSeatedZeroPoseToStandingAbsoluteTrackingPose()
 
 HmdMatrix34_t BaseSystem::GetRawZeroPoseToStandingAbsoluteTrackingPose()
 {
-	// These *are* the same coordinate systems? They were in LibOVR, let's assume they're the same here too
-	return G2S_m34(glm::mat4());
+	// The raw space is mapped to the stage space, so the two coincide
+	return G2S_m34(glm::identity<glm::mat4>());
+}
+
+void BaseSystem::SortRightToLeft(std::vector<DeviceSortKey>& devices)
+{
+	// Devices without a position keep their order, after the ones that have one
+	std::stable_sort(devices.begin(), devices.end(), [](const DeviceSortKey& a, const DeviceSortKey& b) {
+		if (a.hasPosition != b.hasPosition)
+			return a.hasPosition;
+		return a.hasPosition && a.right > b.right;
+	});
 }
 
 uint32_t BaseSystem::GetSortedTrackedDeviceIndicesOfClass(ETrackedDeviceClass targetClass,
     vr::TrackedDeviceIndex_t* indexArray, uint32_t indexCount,
     vr::TrackedDeviceIndex_t unRelativeToTrackedDeviceIndex)
 {
+	if (!indexArray)
+		indexCount = 0;
 
-	uint32_t outCount = 0;
-
-	for (vr::TrackedDeviceIndex_t dev = 0; dev < vr::k_unMaxTrackedDeviceCount; dev++) {
-		vr::ETrackedDeviceClass cls = GetTrackedDeviceClass(dev);
-
-		if (cls != targetClass)
-			continue;
-
-		if (outCount < indexCount)
-			indexArray[outCount] = dev;
-
-		outCount++;
+	// The reference: a device's own frame, or the standing space when it isn't one
+	glm::mat4 toLocal = glm::identity<glm::mat4>();
+	std::shared_ptr<ITrackedDevice> reference = BackendManager::Instance().GetDevice(unRelativeToTrackedDeviceIndex);
+	if (reference) {
+		vr::TrackedDevicePose_t pose = {};
+		reference->GetPose(vr::TrackingUniverseStanding, &pose, TrackingStateType_Now);
+		if (pose.bPoseIsValid)
+			toLocal = glm::inverse(S2G_m34(pose.mDeviceToAbsoluteTracking));
 	}
 
-	// TODO sort the devices
-	// I'm allowing this to do in despite not sorting it, since I can't see any usecase
-	// for relying on the sort results, possibly except for determining the left and right controller.
-	//
-	// So if some game has the left and right controllers flipped then investigate it, otherwise this
-	// shouldn't be a big issue.
-	//
-	// From what I've seen, it's generally used to get a list of devices of a class, without caring about
-	// the order of the results.
+	std::vector<DeviceSortKey> found;
+	for (vr::TrackedDeviceIndex_t dev = 0; dev < vr::k_unMaxTrackedDeviceCount; dev++) {
+		if (GetTrackedDeviceClass(dev) != targetClass)
+			continue;
 
-	return outCount;
+		DeviceSortKey key{ dev, false, 0.0f };
+		std::shared_ptr<ITrackedDevice> device = BackendManager::Instance().GetDevice(dev);
+		if (device) {
+			vr::TrackedDevicePose_t pose = {};
+			device->GetPose(vr::TrackingUniverseStanding, &pose, TrackingStateType_Now);
+			if (pose.bPoseIsValid) {
+				key.hasPosition = true;
+				key.right = (toLocal * S2G_m34(pose.mDeviceToAbsoluteTracking))[3].x;
+			}
+		}
+		found.push_back(key);
+	}
+
+	SortRightToLeft(found);
+
+	for (uint32_t i = 0; i < found.size() && i < indexCount; i++)
+		indexArray[i] = found[i].index;
+
+	return (uint32_t)found.size();
 }
 
 EDeviceActivityLevel BaseSystem::GetTrackedDeviceActivityLevel(vr::TrackedDeviceIndex_t unDeviceId)
@@ -399,48 +438,41 @@ void BaseSystem::ApplyTransform(TrackedDevicePose_t* pOutputPose, const TrackedD
 
 vr::TrackedDeviceIndex_t BaseSystem::GetTrackedDeviceIndexForControllerRole(vr::ETrackedControllerRole unDeviceType)
 {
-	vr::TrackedDeviceIndex_t unDeviceIndex = -1;
+	if (unDeviceType == TrackedControllerRole_Invalid)
+		return vr::k_unTrackedDeviceIndexInvalid;
 
-	if (unDeviceType == TrackedControllerRole_LeftHand) {
-		unDeviceIndex = leftHandIndex;
-	} else if (unDeviceType == TrackedControllerRole_RightHand) {
-		unDeviceIndex = rightHandIndex;
+	for (vr::TrackedDeviceIndex_t index = 0; index < vr::k_unMaxTrackedDeviceCount; index++) {
+		std::shared_ptr<ITrackedDevice> dev = BackendManager::Instance().GetDevice(index);
+		if (dev && dev->GetControllerRole() == unDeviceType)
+			return index;
 	}
 
-	std::shared_ptr<ITrackedDevice> dev = BackendManager::Instance().GetDevice(unDeviceIndex);
-	if (!dev) {
-		return -1; // This is what SteamVR does for unknown devices
-	} else {
-		return unDeviceIndex;
-	}
+	return vr::k_unTrackedDeviceIndexInvalid; // This is what SteamVR does for unknown devices
 }
 
 vr::ETrackedControllerRole BaseSystem::GetControllerRoleForTrackedDeviceIndex(vr::TrackedDeviceIndex_t unDeviceIndex)
 {
-	if (unDeviceIndex == leftHandIndex) {
-		return TrackedControllerRole_LeftHand;
-	} else if (unDeviceIndex == rightHandIndex) {
-		return TrackedControllerRole_RightHand;
-	} else {
+	std::shared_ptr<ITrackedDevice> dev = BackendManager::Instance().GetDevice(unDeviceIndex);
+	if (!dev)
 		return TrackedControllerRole_Invalid;
-	}
+
+	return dev->GetControllerRole();
 }
 
 ETrackedDeviceClass BaseSystem::GetTrackedDeviceClass(vr::TrackedDeviceIndex_t deviceIndex)
 {
-	if (!IsTrackedDeviceConnected(deviceIndex))
+	if (deviceIndex >= vr::k_unMaxTrackedDeviceCount)
 		return TrackedDeviceClass_Invalid;
 
-	if (deviceIndex == k_unTrackedDeviceIndex_Hmd)
-		return TrackedDeviceClass_HMD;
+	// A slot that held a device keeps its class once the device is gone
+	std::shared_ptr<ITrackedDevice> dev = BackendManager::Instance().GetDevice(deviceIndex);
+	if (dev) {
+		ETrackedDeviceClass cls = dev->GetTrackedDeviceClass();
+		slotClasses[deviceIndex] = (int32_t)cls;
+		return cls;
+	}
 
-	if (deviceIndex == leftHandIndex || deviceIndex == rightHandIndex)
-		return TrackedDeviceClass_Controller;
-
-	if (deviceIndex >= thirdTouchIndex)
-		return TrackedDeviceClass_GenericTracker;
-
-	return TrackedDeviceClass_Invalid;
+	return (ETrackedDeviceClass)slotClasses[deviceIndex].load();
 }
 
 bool BaseSystem::IsTrackedDeviceConnected(vr::TrackedDeviceIndex_t deviceIndex)
@@ -544,7 +576,7 @@ uint32_t BaseSystem::GetArrayTrackedDeviceProperty(vr::TrackedDeviceIndex_t unDe
 #define ARRAY_CASE(tag_type, actual_type)                         \
 	case k_un##tag_type##PropertyTag: {                           \
 		actual_type* buffer = static_cast<actual_type*>(pBuffer); \
-		p.print_result(buffer, unBufferSize);                     \
+		p.print_result(buffer, ret <= unBufferSize ? ret : 0);    \
 	} break
 		switch (propType) {
 			ARRAY_CASE(Float, float);
@@ -590,17 +622,18 @@ bool BaseSystem::IsInputAvailable()
 
 bool BaseSystem::IsSteamVRDrawingControllers()
 {
-	return !IsInputAvailable();
+	// Not before the first frame is shown: a game that stops submitting while it's told to pause never gets there
+	return BackendManager::Instance().IsInputFocusLost();
 }
 
 bool BaseSystem::ShouldApplicationPause()
 {
-	return !IsInputAvailable();
+	return BackendManager::Instance().IsInputFocusLost();
 }
 
 bool BaseSystem::ShouldApplicationReduceRenderingWork()
 {
-	return !IsInputAvailable();
+	return BackendManager::Instance().ShouldReduceRenderingWork();
 }
 
 void BaseSystem::_OnPostFrame()
@@ -634,10 +667,37 @@ void BaseSystem::_OnPostFrame()
 	}
 }
 
+void BaseSystem::PushEventLocked(const event_info_t& e)
+{
+	if (events.size() >= maxQueuedEvents) {
+		OOVR_LOG_ONCEF("The event queue is full (%zu events, the program isn't polling): dropping the oldest", maxQueuedEvents);
+		events.pop();
+	}
+	events.push(e);
+}
+
 void BaseSystem::_EnqueueEvent(const VREvent_t& e)
 {
+	if (e.trackedDeviceIndex < announcedDevices.size()) {
+		if (e.eventType == VREvent_TrackedDeviceActivated)
+			announcedDevices[e.trackedDeviceIndex] = true;
+		else if (e.eventType == VREvent_TrackedDeviceDeactivated)
+			announcedDevices[e.trackedDeviceIndex] = false;
+	}
 	std::unique_lock lock(events_mutex);
-	events.push(e);
+	PushEventLocked(e);
+}
+
+void BaseSystem::AnnounceConnectedDevices()
+{
+	for (vr::TrackedDeviceIndex_t i = 0; i < announcedDevices.size(); i++) {
+		if (announcedDevices[i] || !IsTrackedDeviceConnected(i))
+			continue;
+		VREvent_t e{};
+		e.eventType = VREvent_TrackedDeviceActivated;
+		e.trackedDeviceIndex = i;
+		_EnqueueEvent(e);
+	}
 }
 
 void BaseSystem::_PostEvent(EVREventType type, TrackedDeviceIndex_t device, const VREvent_Data_t& data, bool alsoToOtherPrograms)
@@ -700,7 +760,7 @@ void BaseSystem::CheckControllerEvents(TrackedDeviceIndex_t hand, VRControllerSt
 			VREvent_t e = ev_base;
 			e.eventType = newState ? VREvent_ButtonPress : VREvent_ButtonUnpress;
 			std::unique_lock lock(events_mutex);
-			events.push(event_info_t(e, pose));
+			PushEventLocked(event_info_t(e, pose));
 		}
 
 		// Did the user touch or break contact with the button?
@@ -711,7 +771,7 @@ void BaseSystem::CheckControllerEvents(TrackedDeviceIndex_t hand, VRControllerSt
 			VREvent_t e = ev_base;
 			e.eventType = newState ? VREvent_ButtonTouch : VREvent_ButtonUntouch;
 			std::unique_lock lock(events_mutex);
-			events.push(event_info_t(e, pose));
+			PushEventLocked(event_info_t(e, pose));
 		}
 	}
 
@@ -730,6 +790,10 @@ bool BaseSystem::PollNextEventWithPose(ETrackingUniverseOrigin eOrigin, VREvent_
 		return false;
 	memset(pEvent, 0, uncbVREvent);
 
+	// The devices there already are when the program first asks: it builds its device list from their events
+	if (!startupDevicesAnnounced.exchange(true))
+		AnnounceConnectedDevices();
+
 	// Other programs' events first join the queue
 	std::vector<StoreEvent> others = SharedStore::Get().PollEvents(storeEventCursor);
 
@@ -737,7 +801,7 @@ bool BaseSystem::PollNextEventWithPose(ETrackingUniverseOrigin eOrigin, VREvent_
 	for (const StoreEvent& s : others) {
 		// OpenLamina's own (a pointer on an overlay) are taken by those they're for, never the game
 		if (!OcIsPrivateEvent(s.eventType))
-			events.push(OcUnpackEvent(s.eventType, s.data));
+			PushEventLocked(OcUnpackEvent(s.eventType, s.data));
 	}
 
 	if (events.empty()) {
@@ -885,7 +949,7 @@ vr::EVRFirmwareError BaseSystem::PerformFirmwareUpdate(vr::TrackedDeviceIndex_t 
 
 void BaseSystem::AcknowledgeQuit_Exiting()
 {
-	OOVR_SOFT_ABORT("No implementation");
+	// Nothing waits for it: OpenLamina never ends a program
 }
 
 void BaseSystem::AcknowledgeQuit_UserPrompt()
@@ -944,17 +1008,9 @@ void BaseSystem::ResetSeatedZeroPose()
 		OOVR_FAILED_XR_SOFT_ABORT(xrLocateSpace(xr_gbl->viewSpace, xr_gbl->seatedSpace, xr_gbl->GetBestTime(), &location));
 
 		if ((location.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) && (location.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)) {
-			XrReferenceSpaceCreateInfo spaceInfo{ XR_TYPE_REFERENCE_SPACE_CREATE_INFO, nullptr, XR_REFERENCE_SPACE_TYPE_LOCAL, xr_gbl->seatedPose };
-			// The head's place in the seated space now, turned into the space that one is made in
-			XrVector3f rotatedPos;
-			rotate_vector_by_quaternion(location.pose.position, spaceInfo.poseInReferenceSpace.orientation, rotatedPos);
-			auto rot = yRotation(location.pose.orientation, spaceInfo.poseInReferenceSpace.orientation);
-			spaceInfo.poseInReferenceSpace.position.x += rotatedPos.x;
-			spaceInfo.poseInReferenceSpace.position.y += rotatedPos.y;
-			spaceInfo.poseInReferenceSpace.position.z += rotatedPos.z;
-
-			spaceInfo.poseInReferenceSpace.orientation.y = rot.y;
-			spaceInfo.poseInReferenceSpace.orientation.w = rot.w;
+			// The origin goes to the head's place now, with only the heading kept
+			XrReferenceSpaceCreateInfo spaceInfo{ XR_TYPE_REFERENCE_SPACE_CREATE_INFO, nullptr, XR_REFERENCE_SPACE_TYPE_LOCAL,
+				xr_utils::SeatedOriginAtHead(xr_gbl->seatedPose, location.pose) };
 
 			// On failure the old seated space stays
 			XrSpace newSpace = XR_NULL_HANDLE;
@@ -962,6 +1018,7 @@ void BaseSystem::ResetSeatedZeroPose()
 			xrDestroySpace(xr_gbl->seatedSpace);
 			xr_gbl->seatedSpace = newSpace;
 			xr_gbl->seatedPose = spaceInfo.poseInReferenceSpace;
+			xr_seated_origin = xr_gbl->seatedPose;
 		}
 	}
 

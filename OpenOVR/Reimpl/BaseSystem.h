@@ -3,9 +3,12 @@
 #include "custom_types.h"
 #include "generated/interfaces/IVRSystem_017.h"
 #include "openxr/openxr.h"
+#include <array>
+#include <atomic>
 #include <memory>
 #include <chrono>
 #include <queue>
+#include <vector>
 #include <mutex>
 
 class BaseSystem {
@@ -26,6 +29,15 @@ private:
 
 	std::queue<event_info_t> events;
 	std::mutex events_mutex;
+	// Events kept at most this many: a program that never polls drops the oldest
+	static constexpr size_t maxQueuedEvents = 4096;
+	// The devices the game has been told are active (their Activated event queued, no Deactivated since)
+	std::array<std::atomic<bool>, vr::k_unMaxTrackedDeviceCount> announcedDevices{};
+	std::atomic<bool> startupDevicesAnnounced{ false };
+	// Pushes onto the queue, dropping the oldest event when it's full; events_mutex held
+	void PushEventLocked(const event_info_t& e);
+	// Queues an Activated event for each connected device the game hasn't been told of
+	void AnnounceConnectedDevices();
 	uint64_t storeEventCursor = 0; // the next of other programs' events (SharedStore) to take
 	vr::VRControllerState_t lastLegacyStates[2] = {}; // for the legacy button events
 
@@ -50,12 +62,24 @@ public:
 	inline static XrReferenceSpaceType currentSpace = XR_REFERENCE_SPACE_TYPE_STAGE; // The standing/stage origin is the default
 
 private:
+	// The class each slot last held, as ETrackedDeviceClass
+	std::array<std::atomic<int32_t>, vr::k_unMaxTrackedDeviceCount> slotClasses{};
+
 	void CheckControllerEvents(vr::TrackedDeviceIndex_t hand, vr::VRControllerState_t& last);
 
 public:
 	static const vr::TrackedDeviceIndex_t leftHandIndex = 1;
 	static const vr::TrackedDeviceIndex_t rightHandIndex = 2;
 	static const vr::TrackedDeviceIndex_t thirdTouchIndex = 3;
+
+	// A device found for a sorted list: where it is along the reference's right axis, if its pose is known
+	struct DeviceSortKey {
+		vr::TrackedDeviceIndex_t index;
+		bool hasPosition;
+		float right;
+	};
+	// Rightmost first; devices without a position follow in their given order
+	static void SortRightToLeft(std::vector<DeviceSortKey>& devices);
 
 	static float SGetIpd();
 

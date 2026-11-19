@@ -22,8 +22,9 @@ vr::IVRNotifications_001::NotificationError_t CVRNotifications_001::CreateNotifi
 
 vr::IVRNotifications_001::NotificationError_t CVRNotifications_001::DismissNotification(vr::IVRNotifications_001::VRNotificationId notificationId)
 {
-	base->RemoveNotification(notificationId);
-	return vr::IVRNotifications_001::k_ENotificationError_OK;
+	return base->RemoveNotification(notificationId) == vr::VRNotificationError_OK
+	    ? vr::IVRNotifications_001::k_ENotificationError_OK
+	    : vr::IVRNotifications_001::k_ENotificationError_Fail;
 }
 
 uint32_t CVRNotifications_001::GetErrorString(vr::IVRNotifications_001::NotificationError_t error, char* pchBuffer, uint32_t unBufferSize)

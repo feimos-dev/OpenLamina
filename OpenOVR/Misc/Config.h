@@ -68,7 +68,6 @@ private:
 	bool admitUnknownProps = false;
 	bool logGetTrackedProperty = false;
 	bool stopOnSoftAbort = false;
-	bool dx10Mode = false; // read but not used: Direct3D 10 textures are told apart from Direct3D 11 ones by their interface
 	bool enableHiddenMeshFix = true;
 	bool invertUsingShaders = false;
 	bool initUsingVulkan = false;

@@ -26,6 +26,8 @@ void OcPostEvent(vr::EVREventType type, vr::TrackedDeviceIndex_t device, const v
 using OcLocalEventSink = void (*)(const vr::VREvent_t& event);
 void OcSetLocalEventSink(OcLocalEventSink sink);
 
-/** An event as it crosses between programs: data[0..2] its data's first 24 bytes, data[3] the device; and back */
+/** An event as it crosses between programs: data[0..2] its data's first 24 bytes, data[3] the device; and back.
+ * What a payload holds past its first 24 bytes (a notification's text, a keyboard's characters) doesn't cross: the
+ * other program gets the event with that part zeroed. */
 std::array<uint64_t, 4> OcPackEvent(vr::TrackedDeviceIndex_t device, const vr::VREvent_Data_t& data);
 vr::VREvent_t OcUnpackEvent(uint32_t eventType, const uint64_t (&packed)[4]);

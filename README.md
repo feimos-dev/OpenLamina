@@ -256,9 +256,11 @@ The Windows installer is a different app from OpenComposite's and installs next 
 
 ## Configuration file
 
-On startup, OpenLamina searches for a file named `openlamina.ini` (or `opencomposite.ini`, as it was called), first next to the `openvr_api.dll` file, and if it can't find
-that, then it looks in the working directory (usually in the same folder as the EXE). If no file is found, that's fine and all
-the default values are used.
+On startup, OpenLamina reads a file named `openlamina.ini` (or `opencomposite.ini`, as it was called; where both are in a
+folder, only `openlamina.ini` is read) from two places, in this order: next to the `openvr_api.dll` file (Windows only; on
+Linux this one is not read), then the working directory (usually the folder of the EXE). Both are read when both exist,
+and an option set in the working directory's file replaces the same option from the first, one option at a time. If no
+file is found, that's fine and all the default values are used.
 
 On Windows, the OpenLamina app's *Settings* window changes the common options in the first of these files, and leaves
 everything else in it (comments, other options) as it is.
@@ -267,7 +269,8 @@ This is its configuration file, where you can specify a number of options. These
 can define a comment by starting a line with `;` or a `#`. Note the option names **are** case sensitive. An option OpenLamina
 doesn't know, or a value it can't read, is logged as a warning (in the program's log) and that option keeps its default; the game
 starts either way. Any whitespace between the name, equals sign, and value is ignored, as is whitespace on the end of the line.
-Ensure your lines do not begin with whitespace however.
+Ensure your lines do not begin with whitespace however. Options go before any `[section]` heading or under `[default]`;
+an option under any other heading is logged as ignored.
 
 The available options are:
 
@@ -287,13 +290,12 @@ The available options are:
 	* Print logging information when the app requests information about tracked devices, such as the HMD or the Touch controllers. On some games, this causes a log entry to be generated every frame, which isn't great for performance and clutters up the log. This is potentially useful for troubleshooting, and was enabled by default before the config option existed. In general, unless you've been told to enable this (or you know what you're doing while troubleshooting) you don't need to enable this.
 * `stopOnSoftAbort` - boolean, default `disabled`.
     * Ends the game at the first call OpenLamina can't answer properly, as it used to. By default such a call gets an error or an empty answer and the game goes on; each one is logged the first time, and when the game shuts OpenVR down the log ends with a compatibility summary (`OpenLamina compatibility summary: <n> unsupported calls in <m> places`, then each place with how often it was hit). That list is what's worth reporting when a game misbehaves. Only enable this to find where a game first goes wrong.
-* `dx10Mode` - boolean, default `disabled`.
-    * Ignored: Direct3D 10 textures are recognised by their interface.
+* `dx10Mode` - ignored: Direct3D 10 textures are recognised by their interface.
 * `enableHiddenMeshFix` - boolean, default `enabled`. 
 	* Alter the coordinates of the hidden area mesh mask to fit within the view's projection. The hidden area mesh mask defines a region to which the game will not draw and is used to mask off areas of the display that you typically cannot see in the headset. If you see odd black regions around the view then try disabling this fix.
 * `invertUsingShaders` - boolean, default `disabled`. 
 	* Copy every frame through the shader pass (D3D11, D3D12) or a blit (Vulkan, OpenGL), even when its bounds don't flip it. Textures whose bounds flip them (games that render upside down and rely on the runtime to turn them over) are flipped in the copy either way. This might have a minor cost in performance.
-* `initUsingVulkan` - boolean, default `true`. 
+* `initUsingVulkan` - boolean, default `disabled` on Windows, and `enabled` in builds without Direct3D 11. 
 	* If available the temporary graphics adapter at start up will use Vulkan by default. This may be incompatible with some games. This will mostly affect Oculus headsets. 
 * `hiddenMeshVerticalScale` - float, default `1.0`. 
 	* The scaling factor used for the hidden area mesh if supported by the application. The hidden area mesh is a region that the game doesn't render to. If you set this lower e.g. `0.8` then less will be drawn at the very top and very bottom of the image improving performance. Suggested range is `0.5` to `1.0`.
@@ -323,7 +325,7 @@ The available options are:
 * `drawBounds` - boolean, default `true`.
 	* A grid wall on the play area's edge (the stage's bounds the runtime reports, else the room setup's play area, as `IVRChaperoneSetup` commits it) when the HMD or a controller comes within 0.4 m of it, fading in as it comes closer. For runtimes that show no boundary of their own.
 * `sessionEvents` - boolean, default `true`.
-	* Send the events SteamVR sends when the game loses input focus to the runtime's menu or gets it back (`VREvent_InputFocusCaptured`, `VREvent_InputFocusReleased`), and when the headset is put on or taken off, on runtimes with `XR_EXT_user_presence` (the proximity sensor's `VREvent_ButtonPress` and `VREvent_ButtonUnpress`, `VREvent_TrackedDeviceUserInteractionStarted` and `VREvent_TrackedDeviceUserInteractionEnded`). Also the IPD's changes (`VREvent_IpdChanged`) and `Prop_ContainsProximitySensor_Bool` from the runtime. Some games pause on them. The proximity sensor's state is given either way.
+	* Send the events SteamVR sends when the game loses input focus to the runtime's menu or gets it back (`VREvent_InputFocusCaptured`, `VREvent_InputFocusReleased`), and when the headset is put on or taken off, on runtimes with `XR_EXT_user_presence` (the proximity sensor's `VREvent_ButtonPress` and `VREvent_ButtonUnpress`, `VREvent_TrackedDeviceUserInteractionStarted` and `VREvent_TrackedDeviceUserInteractionEnded`). The headset's standby while its session is stopped (`VREvent_EnterStandbyMode`, `VREvent_LeaveStandbyMode`). Also the IPD's changes (`VREvent_IpdChanged`) and `Prop_ContainsProximitySensor_Bool` from the runtime. Some games pause on them. The proximity sensor's state is given either way.
 * `applyZeroPoses` - boolean, default `true`.
 	* On Monado, with its `libmonado`: a room setup's standing zero pose that a program commits (`IVRChaperoneSetup`'s `SetWorkingStandingZeroPoseToRawTrackingPose`, as playspace movers and recentring tools do) moves Monado's stage. That moves it for every program using Monado, native OpenXR ones too, until Monado restarts. Without it, the zero pose is kept and reported, and nothing moves.
 * `logAllOpenVRCalls` - boolean, default `false`
@@ -339,7 +341,12 @@ The possible types are as follows:
 are not case-sensitive, so `Enabled` or `tRUe` work fine.
 * colour - same as the format used in HTML/CSS, it's a `#` followed by six hex characters. Mozilla has a
 [tool](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_Colors/Color_picker_tool) to help with this. Again, it's case-insensitive.
-* float - a floating point (decimal) number, eg `123.456`.
+* float - a floating point (decimal) number above 0, eg `123.456`. An empty value, zero or a negative number is refused.
+* whole number - digits only, `0` or more, eg `1`.
+* string - the text after the `=`, as it is. `dashboardButton`, `inputEvaluator` and `keyboardLayout` take only the words
+listed with them (not case-sensitive); `bindingEditor` takes any text.
+
+A value that isn't of its option's type is logged as a warning and the option keeps its default.
 
 Example files:
 

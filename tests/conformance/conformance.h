@@ -38,6 +38,9 @@ void InstallCrashReport(const std::string& outPath);
 
 struct CaseContext {
 	IVRClientCore* core = nullptr;
+	// VRClientCoreFactory of the loaded runtime, and a lookup of any other symbol it exports (null if it has none)
+	void* (*factory)(const char* name, int* returnCode) = nullptr;
+	void* (*symbol)(const char* name) = nullptr;
 	CallContext* call = nullptr;
 	Writer* out = nullptr;
 	std::string caseName;
@@ -53,6 +56,7 @@ using CaseFn = void (*)(CaseContext& ctx);
 const std::map<std::string, CaseFn>& Cases();
 const std::map<std::string, CaseFn>& GfxCases(); // gfx_cases.cpp, part of Cases()
 const std::map<std::string, CaseFn>& HelperCases(); // helper_cases.cpp, part of Cases()
+const std::map<std::string, CaseFn>& CoverageCases(); // coverage_cases.cpp, part of Cases()
 
 // The stand-in runtime's dump (OC_TEST_RUNTIME_DUMP), written when OpenLamina destroys its instance: read it after
 // Cleanup. Null without one (another runtime, or none written).

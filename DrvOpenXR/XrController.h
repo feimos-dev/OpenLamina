@@ -1,6 +1,7 @@
 #pragma once
 
 #include "Misc/Input/InteractionProfile.h"
+#include <atomic>
 #include "Misc/LibMonado.h"
 #include "XrTrackedDevice.h"
 
@@ -13,15 +14,14 @@ public:
 	enum XrControllerType : int {
 		XCT_LEFT,
 		XCT_RIGHT,
-		XCT_TRACKED_OBJECT,
 	};
 
 	explicit XrController(XrControllerType type, const InteractionProfile& profile);
 
 	TrackedDeviceType GetHand() override;
 
-	void GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDevicePose_t* pose, ETrackingStateType trackingState) override;
-	void GetPoseFromHandTracking(BaseInput* input, vr::TrackedDevicePose_t* pose);
+	void GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDevicePose_t* pose, ETrackingStateType trackingState, int64_t xrTime = 0) override;
+	void GetPoseFromHandTracking(BaseInput* input, vr::TrackedDevicePose_t* pose, int64_t xrTime = 0);
 
 	vr::ETrackedDeviceClass GetTrackedDeviceClass() override;
 
@@ -44,7 +44,7 @@ public:
 		switch (prop) {
 		case vr::Prop_DeviceProvidesBatteryStatus_Bool: {
 			std::optional<LibMonado::Battery> battery = role ? mnd.BatteryForRole(role) : std::nullopt;
-			return battery ? battery->present : true;
+			return battery && battery->present;
 		}
 		case vr::Prop_DeviceIsCharging_Bool: {
 			std::optional<LibMonado::Battery> battery = role ? mnd.BatteryForRole(role) : std::nullopt;
@@ -65,5 +65,5 @@ private:
 	XrControllerType type;
 	const InteractionProfile& profile;
 	bool isHandTrackingValid = false;
-	bool isPoseFromHandTracking = false;
+	std::atomic<bool> isPoseFromHandTracking{ false };
 };

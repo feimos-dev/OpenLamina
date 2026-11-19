@@ -5,6 +5,7 @@
 #include "ini.h"
 
 #include <algorithm>
+#include <cmath>
 #include <codecvt>
 #include <locale>
 #include <string>
@@ -57,7 +58,7 @@ static bool parse_bool(string orig, string name, int line)
 		return false;
 	}
 
-	string err = "Value " + orig + " for in config file for " + name + " on line "
+	string err = "Value " + orig + " for " + name + " on line "
 	    + to_string(line) + " is not a boolean - true/on/enabled/false/off/disabled";
 	BAD_VALUE(err);
 }
@@ -88,23 +89,27 @@ static HmdColor_t parse_HmdColor_t(string orig, string name, int line)
 
 invalid:
 
-	string err = "Value " + orig + " for in config file for " + name + " on line "
+	string err = "Value " + orig + " for " + name + " on line "
 	    + to_string(line) + " is not a hex (CSS) colour code";
 	BAD_VALUE(err);
 }
 
 static float parse_float(string orig, string name, int line)
 {
-	string val = str_tolower(orig);
-
-	// The whole value a number, in any locale; an empty one is 0
+	// The whole value a number, in any locale; the options that take one are scales, so it has to be above 0
 	size_t used = 0;
 	std::optional<float> parsed = Numbers::ParseFloat(orig, &used);
-	float result = parsed.value_or(0.0f);
 
-	if (!orig.empty() && (!parsed || used != orig.length())) {
-		string err = "Value " + orig + " for in config file for " + name + " on line "
+	if (!parsed || used != orig.length()) {
+		string err = "Value " + orig + " for " + name + " on line "
 		    + to_string(line) + " is not a decimal number (eg 12.34)";
+		BAD_VALUE(err);
+	}
+
+	float result = *parsed;
+	if (!std::isfinite(result) || result <= 0.0f) {
+		string err = "Value " + orig + " for " + name + " on line "
+		    + to_string(line) + " is not above 0";
 		BAD_VALUE(err);
 	}
 
@@ -187,7 +192,6 @@ int Config::ini_handler(void* user, const char* pSection,
 		CFGOPT(bool, admitUnknownProps);
 		CFGOPT(bool, logGetTrackedProperty);
 		CFGOPT(bool, stopOnSoftAbort);
-		CFGOPT(bool, dx10Mode);
 		CFGOPT(bool, enableHiddenMeshFix);
 		CFGOPT(bool, invertUsingShaders);
 		CFGOPT(bool, initUsingVulkan);
@@ -213,6 +217,16 @@ int Config::ini_handler(void* user, const char* pSection,
 			return true;
 		}
 		CFGOPT(layout, keyboardLayout);
+
+		// Accepted and ignored: Direct3D 10 textures are told apart from Direct3D 11 ones by their interface
+		if (name == "dx10Mode") {
+			OOVR_LOG("Config file key 'dx10Mode' has no effect and is ignored");
+			return true;
+		}
+	} else {
+		OOVR_LOGF("Config file key '%s' in section [%s] ignored (line %d): only keys outside any section, or in [default], are read",
+		    name.c_str(), section.c_str(), lineno);
+		return true;
 	}
 
 #undef CFGOPT
@@ -290,9 +304,13 @@ Config::Config()
 	wstring file;
 #endif
 
-	if (err == -1 || err == 0) {
-		// No such file or it was parsed successfully, check the working directory
-		// for a file that overrides some properties
+	if (err > 0) {
+		// err is the line number of the first line ini_parse couldn't read; it read the rest
+		OOVR_LOGF("Warning: the config file can't be read on line %d; that line is ignored", err);
+	}
+
+	{
+		// The working directory's file overrides, key by key, what the first one set
 		char buff[FILENAME_MAX];
 		if (GetCurrentDir(buff, FILENAME_MAX)) {
 			wstring workingDir(&buff[0], &buff[strlen(buff)]);
@@ -305,6 +323,7 @@ Config::Config()
 			err = wini_parse_in(workingDir, file, ini_handler, this);
 		} else {
 			OOVR_LOG("Couldn't get the working directory, so there's no app specific config file");
+			err = -1;
 		}
 	}
 
