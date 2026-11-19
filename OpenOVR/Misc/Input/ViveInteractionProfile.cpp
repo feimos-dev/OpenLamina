@@ -28,12 +28,14 @@ ViveWandInteractionProfile::ViveWandInteractionProfile()
 	this->rawSourceNames = { { "squeeze", "grip" }, { "menu", "application_menu" } };
 
 	hmdPropertiesMap = {
+		{ vr::Prop_TrackingSystemName_String, "lighthouse" },
 		{ vr::Prop_ManufacturerName_String, "HTC" },
 		{ vr::Prop_ModelNumber_String, "Vive. MV" },
 		{ vr::Prop_ControllerType_String, "vive" },
 	};
 
 	propertiesMap = {
+		{ vr::Prop_TrackingSystemName_String, { "lighthouse" } },
 		{ vr::Prop_ModelNumber_String, { "Vive. Controller MV" } },
 		{ vr::Prop_ControllerType_String, { GetOpenVRName().value() } },
 	};

@@ -265,14 +265,15 @@ bool LegacyStateChanged(const vr::VRControllerState_t& a, const vr::VRController
 
 void ApplyLegacyFingerCurls(const float curl[5], bool axis3Free, bool axis4Free, vr::VRControllerState_t& state)
 {
-	// Scaled as the hand's curl range is, so a closed fist reads past 1 as SteamVR's does
+	// Scaled as the hand's curl range is, so a closed fist reads 1, and held in an axis's 0 to 1
+	auto scaled = [](float c, float scale) { return std::clamp(c * scale, 0.0f, 1.0f); };
 	if (axis3Free) {
-		state.rAxis[3].x = curl[1] * 1.66f * 1.33f;
-		state.rAxis[3].y = curl[2] * 1.66f;
+		state.rAxis[3].x = scaled(curl[1], 1.66f * 1.33f);
+		state.rAxis[3].y = scaled(curl[2], 1.66f);
 	}
 	if (axis4Free) {
-		state.rAxis[4].x = curl[3] * 1.66f;
-		state.rAxis[4].y = curl[4] * 1.66f;
+		state.rAxis[4].x = scaled(curl[3], 1.66f);
+		state.rAxis[4].y = scaled(curl[4], 1.66f);
 	}
 }
 
