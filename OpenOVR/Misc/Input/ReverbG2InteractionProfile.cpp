@@ -41,15 +41,6 @@ ReverbG2InteractionProfile::ReverbG2InteractionProfile()
 	// SteamVR's names for the raw inputs the binding evaluator reads (RawComponents)
 	this->rawSourceNames = { { "squeeze", "grip" }, { "thumbstick", "joystick" }, { "menu", "application_menu" } };
 
-	pathTranslationMap = {
-		{ "grip", "squeeze" },
-		{ "joystick", "thumbstick" },
-		{ "pull", "value" },
-		{ "grip/click", "squeeze/value" },
-		{ "trigger/click", "trigger/value" },
-		{ "application_menu", "menu" }
-	};
-
 	hmdPropertiesMap = {
 		{ vr::Prop_ManufacturerName_String, "WindowsMR" },
 	};

@@ -14,35 +14,35 @@
 // an estimate not yet measured against SteamVR.
 const std::vector<ModeParameter> kModeParameters = {
 	// button and complex_button
-	{ "button", "click_activate_threshold", 0.7f, "today's BaseInput (perProfileData's default)" },
-	{ "button", "click_deactivate_threshold", 0.55f, "today's BaseInput (perProfileData's default)" },
-	{ "button", "double_press_delay", 0.5f, "today's BaseInput (500 ms between the presses, from OpenOVR merge request !186)" },
+	{ "button", "click_activate_threshold", 0.7f, "OpenLamina's default" },
+	{ "button", "click_deactivate_threshold", 0.55f, "OpenLamina's default" },
+	{ "button", "double_press_delay", 0.5f, "OpenLamina's default: 500 ms between the presses" },
 	{ "button", "long_press_delay", 0.5f, "an estimate, not measured against SteamVR" },
-	{ "complex_button", "click_activate_threshold", 0.7f, "today's BaseInput (perProfileData's default)" },
-	{ "complex_button", "click_deactivate_threshold", 0.55f, "today's BaseInput (perProfileData's default)" },
-	{ "complex_button", "double_press_delay", 0.5f, "today's BaseInput (500 ms between the presses, from OpenOVR merge request !186)" },
+	{ "complex_button", "click_activate_threshold", 0.7f, "OpenLamina's default" },
+	{ "complex_button", "click_deactivate_threshold", 0.55f, "OpenLamina's default" },
+	{ "complex_button", "double_press_delay", 0.5f, "OpenLamina's default: 500 ms between the presses" },
 	{ "complex_button", "long_press_delay", 0.5f, "an estimate, not measured against SteamVR" },
 	// toggle_button
-	{ "toggle_button", "click_activate_threshold", 0.7f, "today's BaseInput (perProfileData's default)" },
-	{ "toggle_button", "click_deactivate_threshold", 0.55f, "today's BaseInput (perProfileData's default)" },
-	// trigger: click from the pull, as today's input does for every trigger
-	{ "trigger", "click_activate_threshold", 0.7f, "today's BaseInput (perProfileData's default)" },
-	{ "trigger", "click_deactivate_threshold", 0.55f, "today's BaseInput (perProfileData's default)" },
+	{ "toggle_button", "click_activate_threshold", 0.7f, "OpenLamina's default" },
+	{ "toggle_button", "click_deactivate_threshold", 0.55f, "OpenLamina's default" },
+	// trigger: click from the pull
+	{ "trigger", "click_activate_threshold", 0.7f, "OpenLamina's default" },
+	{ "trigger", "click_deactivate_threshold", 0.55f, "OpenLamina's default" },
 	{ "trigger", "touch_threshold", 0.01f, "an estimate, not measured against SteamVR: touched as soon as it moves" },
 	// grab
-	{ "grab", "value_hold_threshold", 0.7f, "today's BaseInput (SteamVR's defaults, BaseInput.cpp)" },
-	{ "grab", "value_release_threshold", 0.65f, "today's BaseInput (SteamVR's defaults, BaseInput.cpp)" },
+	{ "grab", "value_hold_threshold", 0.7f, "SteamVR's defaults" },
+	{ "grab", "value_release_threshold", 0.65f, "SteamVR's defaults" },
 	{ "grab", "force_hold_threshold", 0.6f, "an estimate, not measured against SteamVR" },
 	{ "grab", "force_release_threshold", 0.5f, "an estimate, not measured against SteamVR" },
 	// scalar_constant
 	{ "scalar_constant", "value", 1.0f, "an estimate, not measured against SteamVR" },
 	// trackpad and joystick: position, click, touch
-	{ "trackpad", "deadzone_pct", 0.0f, "today's BaseInput (perProfileData's default)" },
-	{ "joystick", "deadzone_pct", 0.0f, "today's BaseInput (perProfileData's default)" },
-	{ "joystick", "maxzone_pct", 100.0f, "today's BaseInput (perProfileData's default)" },
-	// dpad (the click and touch sub-modes of OpenOVR merge request !186)
-	{ "dpad", "deadzone_pct", 50.0f, "today's BaseInput (DpadBindingInfo::dpadDeadzoneRadius)" },
-	{ "dpad", "overlap_pct", 0.0f, "today's BaseInput (four 90 degree sectors)" },
+	{ "trackpad", "deadzone_pct", 0.0f, "no dead zone" },
+	{ "joystick", "deadzone_pct", 0.0f, "no dead zone" },
+	{ "joystick", "maxzone_pct", 100.0f, "the full range" },
+	// dpad (the click and touch sub-modes)
+	{ "dpad", "deadzone_pct", 50.0f, "half the pad's radius" },
+	{ "dpad", "overlap_pct", 0.0f, "four 90 degree sectors" },
 	// scroll
 	{ "scroll", "discrete_scroll_step", 0.2f, "an estimate, not measured against SteamVR: a fifth of the pad per step" },
 	{ "scroll", "smooth_scroll_multiplier", 1.0f, "an estimate, not measured against SteamVR" },

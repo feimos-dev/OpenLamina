@@ -100,3 +100,28 @@ TEST_CASE("Binding_paths_lower_cased")
 	CHECK(s.mode == "button");
 	CHECK(s.inputs.at("click") == "/actions/main/in/jump");
 }
+
+TEST_CASE("Binding_file_binds_a_raw_input_of_the_controller")
+{
+	BindingFile f = LoadBindingFile(Data("bindings_all_sections.json"));
+	auto anyOutput = [](const std::string&, const std::string&) { return true; };
+
+	// A source counts when a raw input of its own is among the controller's
+	CHECK(BindsRawInput(f, { "/user/hand/right/input/trigger/value" }, anyOutput));
+	CHECK(BindsRawInput(f, { "/user/hand/left/input/thumbstick/x" }, anyOutput));
+	// Not another input of the same hand, a hand the file doesn't bind, or a source that only starts with the same letters
+	CHECK_FALSE(BindsRawInput(f, { "/user/hand/right/input/squeeze/value" }, anyOutput));
+	CHECK_FALSE(BindsRawInput(f, { "/user/hand/left/input/trigger/value" }, anyOutput));
+	CHECK_FALSE(BindsRawInput(f, { "/user/hand/right/input/trig/value" }, anyOutput));
+	// The disabled source is no binding
+	CHECK_FALSE(BindsRawInput(f, { "/user/hand/left/input/a/click" }, anyOutput));
+	CHECK_FALSE(BindsRawInput(f, {}, anyOutput));
+
+	// Only to an output of a set and action the caller accepts
+	CHECK(BindsRawInput(f, { "/user/hand/right/input/b/click" }, [](const std::string& set, const std::string& output) {
+		return set == "/actions/menu" && output == "/actions/menu/in/back";
+	}));
+	CHECK_FALSE(BindsRawInput(f, { "/user/hand/right/input/b/click" }, [](const std::string& set, const std::string&) {
+		return set == "/actions/main";
+	}));
+}

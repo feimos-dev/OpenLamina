@@ -58,16 +58,6 @@ OculusTouchInteractionProfile::OculusTouchInteractionProfile()
 	// SteamVR's names for the raw inputs the binding evaluator reads (RawComponents)
 	this->rawSourceNames = { { "squeeze", "grip" }, { "thumbstick", "joystick" }, { "menu", "application_menu" } };
 
-	this->pathTranslationMap = {
-		{ "grip", "squeeze" },
-		{ "joystick", "thumbstick" },
-		{ "pull", "value" },
-		{ "grip/click", "squeeze/value" },
-		{ "grip/force", "squeeze/value" },
-		{ "grip/value", "squeeze/value" },
-		{ "trigger/click", "trigger/value" },
-		{ "application_menu", "menu" }
-	};
 	// TODO implement the poses through the interaction profile (the raw pose is hard-coded in BaseInput at the moment):
 	// pose/raw
 	// pose/base

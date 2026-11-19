@@ -45,18 +45,6 @@ private:
 	struct in_variant<T, std::variant<Ts...>> : std::disjunction<std::is_same<T, Ts>...> {
 	};
 
-	// helper struct for ordering translationMap
-	struct translation_compare {
-		bool operator()(const std::string& lhs, const std::string& rhs) const
-		{
-			if (lhs.size() != rhs.size())
-				return lhs.size() > rhs.size();
-			else
-				// without this, strings that are the same length will be considered the same by the map
-				return lhs > rhs;
-		}
-	};
-
 public:
 	virtual ~InteractionProfile() = default;
 
@@ -114,12 +102,6 @@ public:
 	 * Returns true if the given path is present in GetValidInputsPaths.
 	 */
 	bool IsInputPathValid(const std::string& inputPath) const;
-
-	/**
-	 * Translate an unsupported path to a supported one using the pathTranslationMap.
-	 * For example, for the simple controller, this will translate any trigger paths to select paths.
-	 */
-	std::string TranslateAction(const std::string& inputPath) const;
 
 	/**
 	 * The raw inputs the SteamVR binding evaluator reads: each of this profile's button and axis components as
@@ -234,10 +216,6 @@ protected:
 
 	// The set of valid input paths for an interaction profile. An interaction profile should fill this in its constructor.
 	std::unordered_set<std::string> validInputPaths;
-
-	// A map with OpenVR action name parts as keys and OpenXR equivalents as values.
-	// For example, one common key, value pair might be "application_menu", "menu"
-	std::map<std::string, std::string, translation_compare> pathTranslationMap;
 
 	// OpenXR input source names SteamVR calls otherwise on this controller (RawComponents), for example
 	// { "squeeze", "grip" }; a source not in it keeps its name
