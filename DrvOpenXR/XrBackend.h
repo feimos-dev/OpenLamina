@@ -183,6 +183,12 @@ private:
 
 	std::vector<std::shared_ptr<XrGenericTracker>> generic_trackers;
 	std::shared_mutex generic_trackers_mutex;
+	// The session the trackers' spaces belong to, and the xdev list generation they were made from
+	XrSession generic_trackers_session = XR_NULL_HANDLE;
+	std::atomic<uint64_t> generic_trackers_generation{ UINT64_MAX };
+	std::atomic<int64_t> generic_trackers_polled_ms{ 0 };
+	// Makes the trackers again when the runtime's list of devices has changed (looked at about once a second)
+	void PollGenericTrackers();
 
 	// False if the texture can't be used (logged): no session switch then, or the switch was undone
 	bool CheckOrInitCompositors(const vr::Texture_t* tex);

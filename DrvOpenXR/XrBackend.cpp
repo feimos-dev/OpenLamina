@@ -213,6 +213,8 @@ void XrBackend::GetDeviceToAbsoluteTrackingPose(
     vr::TrackedDevicePose_t* poseArray,
     uint32_t poseArrayCount)
 {
+	PollGenericTrackers();
+
 	// All the devices are located at the one time, as far ahead as the program asked
 	XrTime poseTime = 0;
 	{
@@ -2425,9 +2427,6 @@ void XrBackend::CreateGenericTrackers()
 
 	OOVR_LOGF("Checking for generic trackers...");
 
-	// should get cleared every time this function is run to avoid stale trackers
-	generic_trackers.clear();
-
 	// list containing all generic tracked devices
 	XrXDevListMNDX generic_tracker_list;
 	std::vector<XrXDevIdMNDX> generic_tracker_ids(MAX_GENERIC_TRACKERS);
@@ -2506,54 +2505,135 @@ void XrBackend::CreateGenericTrackers()
 
 	OOVR_LOGF("Found %zu generic trackers", generic_tracker_ids.size());
 
-	OOVR_LOG("Creating generic trackers...");
+	uint64_t generation = 0;
+	if (XR_SUCCEEDED(xr_ext->xrGetXDevListGenerationNumberMNDX(generic_tracker_list, &generation)))
+		generic_trackers_generation = generation;
+
+	// A tracker the runtime still lists keeps its place, so the indices the program holds stay right. Its space goes
+	// with the session it was made in, so after a restart it is made again in the same place.
+	const bool sameSession = generic_trackers_session == xr_session.get();
+	generic_trackers_session = xr_session.get();
+
+	struct Wanted {
+		XrXDevIdMNDX id;
+		XrXDevPropertiesMNDX properties;
+		bool placed = false;
+	};
+	std::vector<Wanted> wanted;
 	for (const XrXDevIdMNDX id : generic_tracker_ids) {
-		int index = generic_trackers.size();
-
-		if (index >= MAX_GENERIC_TRACKERS) {
-			OOVR_LOGF("More trackers present than allowed (%d), skipping..", MAX_GENERIC_TRACKERS);
-			break;
-		}
-
 		cur_info.id = id;
-
 		OC_XR_LOG(xr_ext->xrGetXDevPropertiesMNDX(generic_tracker_list, &cur_info, &cur_properties));
+		wanted.push_back({ id, cur_properties });
+	}
 
-		std::string serial = cur_properties.serial;
-		std::string name = cur_properties.name;
+	BaseSystem* system = GetUnsafeBaseSystem();
+	auto sendEvent = [&](EVREventType type, TrackedDeviceIndex_t device) {
+		if (!system)
+			return;
+		VREvent_t event = {
+			.eventType = type,
+			.trackedDeviceIndex = device
+		};
+		system->_EnqueueEvent(event);
+	};
 
-		OOVR_LOGF("Generic Tracker: %s, Serial: %s, Index: %d, ID: %" PRIu64, cur_properties.name, cur_properties.serial, index, id);
+	auto createTracker = [&](Wanted& want, uint32_t index) -> std::shared_ptr<XrGenericTracker> {
+		OOVR_LOGF("Generic Tracker: %s, Serial: %s, Index: %u, ID: %" PRIu64, want.properties.name, want.properties.serial, index, want.id);
 
-		// create space
 		XrSpace space = XR_NULL_HANDLE;
 		XrPosef pose = { .orientation = { 0, 0, 0, 1 }, .position = { 0, 0, 0 } };
 		XrCreateXDevSpaceInfoMNDX create_space_info = {
 			.type = XR_TYPE_CREATE_XDEV_SPACE_INFO_MNDX,
 			.next = NULL,
 			.xdevList = generic_tracker_list,
-			.id = id,
+			.id = want.id,
 			.offset = pose,
 		};
 
 		if (XR_FAILED(xr_ext->xrCreateXDevSpaceMNDX(xr_session.get(), &create_space_info, &space))) {
-			OOVR_LOGF("xrCreateXDevSpaceMNDX failed: no tracker for serial %s", cur_properties.serial);
+			OOVR_LOGF("xrCreateXDevSpaceMNDX failed: no tracker for serial %s", want.properties.serial);
+			return nullptr;
+		}
+		return std::make_shared<XrGenericTracker>(*profile, want.properties, index, space);
+	};
+
+	std::vector<std::shared_ptr<XrGenericTracker>> current = std::move(generic_trackers);
+	generic_trackers.assign(current.size(), nullptr);
+	for (size_t slot = 0; slot < current.size(); slot++) {
+		if (!current[slot])
+			continue;
+		const TrackedDeviceIndex_t deviceIndex = (TrackedDeviceIndex_t)slot + RESERVED_DEVICE_INDICES;
+		auto it = std::find_if(wanted.begin(), wanted.end(), [&](const Wanted& w) { return !w.placed && current[slot]->Serial() == w.properties.serial; });
+		if (it == wanted.end()) {
+			sendEvent(VREvent_TrackedDeviceDeactivated, deviceIndex);
 			continue;
 		}
-
-		generic_trackers.push_back(std::make_unique<XrGenericTracker>(*profile, cur_properties, index, space));
-
-		BaseSystem* system = GetUnsafeBaseSystem();
-		if (system) {
-			VREvent_t event = {
-				.eventType = VREvent_TrackedDeviceActivated,
-				.trackedDeviceIndex = (TrackedDeviceIndex_t)generic_trackers.at(index)->DeviceIndex()
-			};
-			system->_EnqueueEvent(event);
+		it->placed = true;
+		if (sameSession) {
+			generic_trackers[slot] = current[slot];
+		} else if ((generic_trackers[slot] = createTracker(*it, (uint32_t)slot))) {
+			sendEvent(VREvent_TrackedDeviceActivated, deviceIndex);
+		} else {
+			sendEvent(VREvent_TrackedDeviceDeactivated, deviceIndex);
 		}
 	}
+	// The old trackers' spaces go with their session when it was replaced
+	if (!sameSession) {
+		for (std::shared_ptr<XrGenericTracker>& old : current)
+			if (old)
+				old->ForgetSpace();
+	}
+	current.clear();
+
+	for (Wanted& want : wanted) {
+		if (want.placed)
+			continue;
+
+		// The first free place
+		size_t slot = 0;
+		while (slot < generic_trackers.size() && generic_trackers[slot])
+			slot++;
+		if (slot >= (size_t)MAX_GENERIC_TRACKERS) {
+			OOVR_LOGF("More trackers present than allowed (%d), skipping..", MAX_GENERIC_TRACKERS);
+			break;
+		}
+		if (slot == generic_trackers.size())
+			generic_trackers.push_back(nullptr);
+
+		if ((generic_trackers[slot] = createTracker(want, (uint32_t)slot)))
+			sendEvent(VREvent_TrackedDeviceActivated, (TrackedDeviceIndex_t)slot + RESERVED_DEVICE_INDICES);
+	}
+	while (!generic_trackers.empty() && !generic_trackers.back())
+		generic_trackers.pop_back();
 
 	// cleanup
 	xr_ext->xrDestroyXDevListMNDX(generic_tracker_list);
+}
+
+void XrBackend::PollGenericTrackers()
+{
+	if (sessionLost || !xr_ext || !xr_ext->xrMndxXdevSpace_Available())
+		return;
+
+	const int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+	int64_t last = generic_trackers_polled_ms;
+	if (nowMs - last < 1000 || !generic_trackers_polled_ms.compare_exchange_strong(last, nowMs))
+		return;
+
+	auto sessionLock = xr_session.lock_shared();
+	if (!xr_session.get())
+		return;
+
+	XrCreateXDevListInfoMNDX create_info = { .type = XR_TYPE_CREATE_XDEV_LIST_INFO_MNDX };
+	XrXDevListMNDX list = XR_NULL_HANDLE;
+	if (XR_FAILED(xr_ext->xrCreateXDevListMNDX(xr_session.get(), &create_info, &list)))
+		return;
+	uint64_t generation = 0;
+	bool changed = XR_SUCCEEDED(xr_ext->xrGetXDevListGenerationNumberMNDX(list, &generation)) && generation != generic_trackers_generation;
+	xr_ext->xrDestroyXDevListMNDX(list);
+
+	if (changed)
+		CreateGenericTrackers();
 }
 
 void XrBackend::MaybeRestartForInputs()

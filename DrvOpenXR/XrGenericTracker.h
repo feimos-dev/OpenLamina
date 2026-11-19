@@ -31,6 +31,10 @@ public:
 	uint32_t GetStringTrackedDeviceProperty(vr::ETrackedDeviceProperty prop, char* pchValue, uint32_t unBufferSize, vr::ETrackedPropertyError* pErrorL) override;
 	DeviceIdentity Identity() override;
 
+	// For a space that went with its session: nothing is left to destroy
+	void ForgetSpace() { genericTrackerSpace = XR_NULL_HANDLE; }
+	std::string Serial() const { return xdevProperties.serial; }
+
 private:
 	const InteractionProfile& profile;
 	XrXDevPropertiesMNDX xdevProperties;
