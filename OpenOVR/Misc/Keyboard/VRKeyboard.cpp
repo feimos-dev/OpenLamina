@@ -22,6 +22,7 @@ constexpr uint32_t kLabel = 0xffffffff;
 constexpr uint32_t kLabelLit = 0x000000ff;
 constexpr uint32_t kTextBox = 0xffffffff;
 constexpr uint32_t kText = 0x000000ff;
+constexpr uint32_t kHint = 0x808080ff;
 constexpr uint32_t kClose = 0xb04040ff;
 constexpr uint32_t kCloseHovered = 0xd05a5aff;
 
@@ -83,6 +84,23 @@ std::wstring Wide(const std::u32string& s)
 
 } // namespace
 
+std::u32string VRKeyboard::FromUtf8Text(const std::string& utf8)
+{
+	return FromUtf8(utf8);
+}
+
+std::string VRKeyboard::TextWithoutKeyboard(const std::string& existing)
+{
+	return existing.empty() ? "Adventurer" : existing;
+}
+
+void VRKeyboard::SetText()
+{
+	text.clear();
+	for (char32_t k : chars)
+		text += Utf8(k);
+}
+
 std::string VRKeyboard::WideToUtf8(const std::wstring& s)
 {
 	std::string out;
@@ -128,9 +146,10 @@ VRKeyboard::VRKeyboard(Mode mode, bool multiline, uint32_t flags, std::string in
 		chars = FromUtf8(initialText);
 		if (maxChars && chars.size() > maxChars)
 			chars.resize(maxChars);
-		for (char32_t c : chars)
-			text += Utf8(c);
+		SetText();
+		caret = chars.size();
 	}
+	Send(vr::VREvent_KeyboardOpened_Global);
 }
 
 std::vector<vr::VREvent_t> VRKeyboard::TakeEvents()
@@ -151,27 +170,38 @@ void VRKeyboard::Send(vr::EVREventType type, const std::string& utf8)
 	events.push_back(e);
 }
 
+void VRKeyboard::Finish(bool withDone)
+{
+	if (withDone) {
+		Send(vr::VREvent_KeyboardDone);
+		done = true;
+		// A chat line stays open for the next one
+		if (mode == Mode::Submit) {
+			dirty = true;
+			return;
+		}
+	}
+	closed = true;
+	Send(vr::VREvent_KeyboardClosed);
+	Send(vr::VREvent_KeyboardClosed_Global);
+	dirty = true;
+}
+
 void VRKeyboard::Type(char32_t c)
 {
 	if (closed)
 		return;
 	if (c == kDone || (c == U'\n' && !multiline)) {
-		Send(vr::VREvent_KeyboardDone);
-		done = true;
-		// A chat line stays open for the next one
-		if (mode != Mode::Submit)
-			closed = true;
-		dirty = true;
+		Finish(true);
 		return;
 	}
 	if (c == U'\t' && !multiline)
 		return;
 	if (c == U'\b') {
-		if (mode != Mode::Minimal && !chars.empty()) {
-			chars.pop_back();
-			text.clear();
-			for (char32_t k : chars)
-				text += Utf8(k);
+		if (mode != Mode::Minimal && caret > 0) {
+			chars.erase(caret - 1, 1);
+			caret--;
+			SetText();
 		}
 		Send(vr::VREvent_KeyboardCharInput, "\b");
 		dirty = true;
@@ -182,8 +212,9 @@ void VRKeyboard::Type(char32_t c)
 	if (mode != Mode::Minimal) {
 		if (maxChars && chars.size() >= maxChars)
 			return;
-		chars += c;
-		text += Utf8(c);
+		chars.insert(caret, 1, c);
+		caret++;
+		SetText();
 	}
 	Send(vr::VREvent_KeyboardCharInput, Utf8(c));
 	dirty = true;
@@ -193,9 +224,65 @@ void VRKeyboard::Close()
 {
 	if (closed)
 		return;
-	closed = true;
-	Send(vr::VREvent_KeyboardClosed);
-	dirty = true;
+	Finish(false);
+}
+
+void VRKeyboard::PressArrow(int arrow)
+{
+	if (mode == Mode::Minimal) {
+		// The ANSI escape sequence of the key
+		static const char* const sequences[4] = { "\x1b[D", "\x1b[C", "\x1b[A", "\x1b[B" };
+		Send(vr::VREvent_KeyboardCharInput, sequences[arrow]);
+		return;
+	}
+	// Up and down move by lines in a multiline text; in a single line they go to its start and end
+	auto lineStart = [&](size_t at) {
+		while (at > 0 && chars[at - 1] != U'\n')
+			at--;
+		return at;
+	};
+	auto lineEnd = [&](size_t at) {
+		while (at < chars.size() && chars[at] != U'\n')
+			at++;
+		return at;
+	};
+	size_t to = caret;
+	switch (arrow) {
+	case Left:
+		to = caret > 0 ? caret - 1 : 0;
+		break;
+	case Right:
+		to = caret < chars.size() ? caret + 1 : caret;
+		break;
+	case Up:
+		if (!multiline) {
+			to = 0;
+		} else {
+			const size_t start = lineStart(caret);
+			if (start > 0) {
+				const size_t column = caret - start;
+				const size_t previousStart = lineStart(start - 1);
+				to = previousStart + std::min(column, start - 1 - previousStart);
+			}
+		}
+		break;
+	default:
+		if (!multiline) {
+			to = chars.size();
+		} else {
+			const size_t end = lineEnd(caret);
+			if (end < chars.size()) {
+				const size_t column = caret - lineStart(caret);
+				const size_t nextStart = end + 1;
+				to = nextStart + std::min(column, lineEnd(nextStart) - nextStart);
+			}
+		}
+		break;
+	}
+	if (to != caret) {
+		caret = to;
+		dirty = true;
+	}
 }
 
 void VRKeyboard::Press(const KeyboardLayout::Key& key)
@@ -208,7 +295,11 @@ void VRKeyboard::Press(const KeyboardLayout::Key& key)
 		return;
 	}
 	if (ch == kDoneKey) {
-		Type(kDone);
+		// Hide closes without saying it's done
+		if (flags & kFlagHideDoneKey)
+			Close();
+		else
+			Type(kDone);
 		return;
 	}
 	Type((char32_t)ch);
@@ -234,7 +325,16 @@ int VRKeyboard::KeysTop() const
 int VRKeyboard::CanvasHeight() const
 {
 	const float rows = layout ? std::max(1.0f, layout->GetHeight()) : 5.0f;
-	return KeysTop() + (int)(Pitch() * rows);
+	return KeysTop() + (int)(Pitch() * rows) + (ShowsArrows() ? Pitch() : 0);
+}
+
+VRKeyboard::Rect VRKeyboard::ArrowRect(int arrow) const
+{
+	// A row under the keys, at the right
+	const float rows = layout ? std::max(1.0f, layout->GetHeight()) : 5.0f;
+	const int y = KeysTop() + (int)(Pitch() * rows);
+	const int width = KeySize() * 2;
+	return Rect{ kWidth - kPadding - (4 - arrow) * (width + kPadding), y, width, KeySize() };
 }
 
 VRKeyboard::Rect VRKeyboard::KeyRect(const KeyboardLayout::Key& key) const
@@ -282,17 +382,23 @@ void VRKeyboard::OnPointer(const LaserMouse& mouse, const std::vector<PointerEve
 		case vr::VREvent_MouseMove: {
 			const int key = KeyAt(x, y);
 			const bool onClose = mode != Mode::Minimal && CloseRect().Contains(x, y);
-			if (key != hovered || onClose != closeHovered) {
+			int arrow = -1;
+			for (int a = 0; a < 4 && ShowsArrows(); a++)
+				if (ArrowRect(a).Contains(x, y))
+					arrow = a;
+			if (key != hovered || onClose != closeHovered || arrow != hoveredArrow) {
 				hovered = key;
 				closeHovered = onClose;
+				hoveredArrow = arrow;
 				dirty = true;
 			}
 			break;
 		}
 		case vr::VREvent_FocusLeave:
-			if (hovered != -1 || closeHovered) {
+			if (hovered != -1 || closeHovered || hoveredArrow != -1) {
 				hovered = -1;
 				closeHovered = false;
+				hoveredArrow = -1;
 				dirty = true;
 			}
 			break;
@@ -301,8 +407,15 @@ void VRKeyboard::OnPointer(const LaserMouse& mouse, const std::vector<PointerEve
 				Close();
 				break;
 			}
+			bool arrowPressed = false;
+			for (int a = 0; a < 4 && ShowsArrows(); a++) {
+				if (ArrowRect(a).Contains(x, y)) {
+					PressArrow(a);
+					arrowPressed = true;
+				}
+			}
 			const int key = KeyAt(x, y);
-			if (key >= 0 && layout)
+			if (!arrowPressed && key >= 0 && layout)
 				Press(layout->GetKeymap()[key]);
 			break;
 		}
@@ -322,9 +435,19 @@ void VRKeyboard::Draw(Canvas& canvas) const
 			const Rect r = KeyRect(key);
 			const bool lit = (key.ch == kShiftKey && caseMode == Case::Shift) || (key.ch == kCapsKey && caseMode == Case::Lock);
 			canvas.FillRect(r.x, r.y, r.w, r.h, lit ? kKeyLit : ((int)i == hovered ? kKeyHovered : kKey), 6);
-			const std::wstring& label = caseMode == Case::Lower ? key.label : key.labelShift;
+			std::wstring label = caseMode == Case::Lower ? key.label : key.labelShift;
+			if (key.ch == kDoneKey && (flags & kFlagHideDoneKey))
+				label = L"Hide";
 			const int labelWidth = canvas.TextWidth(label);
 			canvas.Text(r.x + (r.w - labelWidth) / 2, r.y + (r.h - line) / 2, label, lit ? kLabelLit : kLabel);
+		}
+	}
+	if (ShowsArrows()) {
+		static const wchar_t* const arrows[4] = { L"<", L">", L"^", L"v" };
+		for (int a = 0; a < 4; a++) {
+			const Rect r = ArrowRect(a);
+			canvas.FillRect(r.x, r.y, r.w, r.h, a == hoveredArrow ? kKeyHovered : kKey, 6);
+			canvas.Text(r.x + (r.w - canvas.TextWidth(arrows[a])) / 2, r.y + (r.h - line) / 2, arrows[a], kLabel);
 		}
 	}
 	if (mode == Mode::Minimal)
@@ -332,13 +455,13 @@ void VRKeyboard::Draw(Canvas& canvas) const
 
 	const Rect box = TextRect();
 	canvas.FillRect(box.x, box.y, box.w, box.h, kTextBox, 4);
-	// A password as stars; a long text shows its end
+	// A password as stars; a long text shows the part around the caret
 	std::wstring shown = mode == Mode::Password ? std::wstring(chars.size(), L'*') : Wide(chars);
 	const int room = box.w - 2 * kPadding;
-	// Walked back from the end, adding each advance: the start of what fits
+	size_t start = std::min(caret, shown.size()), end = start;
 	{
 		int used = 0;
-		size_t start = shown.size();
+		// Back from the caret, then forward, adding each advance
 		while (start > 0) {
 			const int advance = canvas.TextWidth(std::wstring_view(shown).substr(start - 1, 1));
 			if (used + advance > room)
@@ -346,9 +469,23 @@ void VRKeyboard::Draw(Canvas& canvas) const
 			used += advance;
 			start--;
 		}
-		shown.erase(0, start);
+		while (end < shown.size()) {
+			const int advance = canvas.TextWidth(std::wstring_view(shown).substr(end, 1));
+			if (used + advance > room)
+				break;
+			used += advance;
+			end++;
+		}
 	}
-	canvas.Text(box.x + kPadding, box.y + (box.h - line) / 2, shown, kText);
+	const std::wstring visible = shown.substr(start, end - start);
+	const int textY = box.y + (box.h - line) / 2;
+	if (chars.empty() && !description.empty())
+		canvas.Text(box.x + kPadding, textY, Wide(description), kHint);
+	canvas.Text(box.x + kPadding, textY, visible, kText);
+	if (!closed) {
+		const int caretX = box.x + kPadding + canvas.TextWidth(std::wstring_view(shown).substr(start, std::min(caret, shown.size()) - start));
+		canvas.FillRect(caretX, box.y + 4, 2, box.h - 8, kText);
+	}
 
 	const Rect close = CloseRect();
 	canvas.FillRect(close.x, close.y, close.w, close.h, closeHovered ? kCloseHovered : kClose, 6);

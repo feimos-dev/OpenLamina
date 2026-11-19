@@ -59,7 +59,9 @@ TEST_CASE("Typing_builds_text_and_events")
 	CHECK(std::string(chars[0].data.keyboard.cNewInput) == "H");
 	CHECK(std::string(chars[1].data.keyboard.cNewInput) == "i");
 	CHECK(chars[0].data.keyboard.uUserValue == 42);
-	CHECK(events.size() == 2);
+	// Opened first, then a character event per key
+	REQUIRE(events.size() == 3);
+	CHECK(events[0].eventType == vr::VREvent_KeyboardOpened_Global);
 	CHECK(kb.TakeEvents().empty());
 
 	// Backspace, a character of more than one byte, and Done
@@ -68,10 +70,12 @@ TEST_CASE("Typing_builds_text_and_events")
 	CHECK(kb.Text() == "H\xC2\xA3");
 	kb.Type(VRKeyboard::kDone);
 	events = kb.TakeEvents();
-	REQUIRE(events.size() == 3);
+	REQUIRE(events.size() == 5);
 	CHECK(std::string(events[0].data.keyboard.cNewInput) == "\b");
 	CHECK(std::string(events[1].data.keyboard.cNewInput) == "\xC2\xA3");
 	CHECK(events[2].eventType == vr::VREvent_KeyboardDone);
+	CHECK(events[3].eventType == vr::VREvent_KeyboardClosed);
+	CHECK(events[4].eventType == vr::VREvent_KeyboardClosed_Global);
 	CHECK(kb.Done());
 	CHECK(kb.Closed());
 }
@@ -164,4 +168,83 @@ TEST_CASE("Wide_and_UTF8_strings_convert_both_ways")
 	CHECK(VRKeyboard::Utf8ToWide("a\xC2\xA3") == L"a\xA3");
 	CHECK(VRKeyboard::Utf8ToWide(VRKeyboard::WideToUtf8(L"x€y")) == L"x€y");
 	CHECK(VRKeyboard::WideToUtf8(L"").empty());
+}
+
+TEST_CASE("Caret_inserts_and_deletes_where_it_is")
+{
+	REQUIRE(Us());
+	VRKeyboard kb(VRKeyboard::Mode::Normal, false, 0, "ac", 0, 0, Us());
+	CHECK(kb.Caret() == 2);
+	kb.PressArrow(VRKeyboard::Left);
+	kb.Type(U'b');
+	CHECK(kb.Text() == "abc");
+	CHECK(kb.Caret() == 2);
+	kb.Type(U'\b');
+	kb.Type(U'\b');
+	CHECK(kb.Text() == "c");
+	kb.Type(U'\b'); // at the start: nothing to delete
+	CHECK(kb.Text() == "c");
+	kb.PressArrow(VRKeyboard::Down); // a single line: to its end
+	CHECK(kb.Caret() == 1);
+	kb.PressArrow(VRKeyboard::Right);
+	CHECK(kb.Caret() == 1);
+	kb.PressArrow(VRKeyboard::Up);
+	CHECK(kb.Caret() == 0);
+}
+
+TEST_CASE("Arrows_move_between_lines_of_a_multiline_text")
+{
+	REQUIRE(Us());
+	VRKeyboard kb(VRKeyboard::Mode::Normal, true, 0, "abc\nd\nefg", 0, 0, Us());
+	CHECK(kb.Caret() == 9);
+	kb.PressArrow(VRKeyboard::Up); // column 3 of the last line, on a line of one character
+	CHECK(kb.Caret() == 5);
+	kb.PressArrow(VRKeyboard::Up);
+	CHECK(kb.Caret() == 1);
+	kb.PressArrow(VRKeyboard::Down);
+	CHECK(kb.Caret() == 5);
+}
+
+TEST_CASE("A_minimal_keyboard_sends_the_escape_sequence_of_an_arrow")
+{
+	REQUIRE(Us());
+	VRKeyboard kb(VRKeyboard::Mode::Minimal, false, VRKeyboard::kFlagMinimal | VRKeyboard::kFlagShowArrowKeys, "", 0, 0, Us());
+	kb.TakeEvents();
+	kb.PressArrow(VRKeyboard::Left);
+	std::vector<vr::VREvent_t> chars = OfType(kb.TakeEvents(), vr::VREvent_KeyboardCharInput);
+	REQUIRE(chars.size() == 1);
+	CHECK(std::string(chars[0].data.keyboard.cNewInput) == "\x1b[D");
+}
+
+TEST_CASE("Done_stays_open_for_a_chat_line_and_hide_only_closes")
+{
+	REQUIRE(Us());
+	VRKeyboard chat(VRKeyboard::Mode::Submit, false, 0, "", 0, 0, Us());
+	chat.TakeEvents();
+	chat.Type(VRKeyboard::kDone);
+	CHECK_FALSE(chat.Closed());
+	CHECK(OfType(chat.TakeEvents(), vr::VREvent_KeyboardClosed).empty());
+
+	VRKeyboard kb(VRKeyboard::Mode::Normal, false, VRKeyboard::kFlagHideDoneKey, "", 0, 0, Us());
+	kb.TakeEvents();
+	kb.Close();
+	std::vector<vr::VREvent_t> events = kb.TakeEvents();
+	CHECK(OfType(events, vr::VREvent_KeyboardDone).empty());
+	CHECK(OfType(events, vr::VREvent_KeyboardClosed).size() == 1);
+	CHECK(OfType(events, vr::VREvent_KeyboardClosed_Global).size() == 1);
+	CHECK(kb.Closed());
+}
+
+TEST_CASE("Text_without_a_keyboard_keeps_what_was_given")
+{
+	CHECK(VRKeyboard::TextWithoutKeyboard("Bob") == "Bob");
+	CHECK(VRKeyboard::TextWithoutKeyboard("") == "Adventurer");
+}
+
+TEST_CASE("Arrow_keys_add_a_row_and_a_minimal_keyboard_shows_them_only_when_asked")
+{
+	REQUIRE(Us());
+	VRKeyboard plain(VRKeyboard::Mode::Minimal, false, VRKeyboard::kFlagMinimal, "", 0, 0, Us());
+	VRKeyboard arrows(VRKeyboard::Mode::Minimal, false, VRKeyboard::kFlagMinimal | VRKeyboard::kFlagShowArrowKeys, "", 0, 0, Us());
+	CHECK(arrows.CanvasHeight() > plain.CanvasHeight());
 }

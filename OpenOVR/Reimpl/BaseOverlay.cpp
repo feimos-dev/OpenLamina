@@ -836,6 +836,10 @@ public:
 	vr::ETrackingUniverseOrigin keyboardOrigin = vr::TrackingUniverseStanding;
 	vr::VROverlayHandle_t keyboardFor = vr::k_ulOverlayHandleInvalid;
 	bool keyboardModal = false; // only the keyboard can be pointed at (KeyboardFlag_Modal)
+	// The triggers held at the last update, once one has been read since the keyboard was shown (a trigger held as it
+	// opened doesn't count as a click)
+	bool keyboardClickSeen = false;
+	bool keyboardClicking[2] = { false, false };
 
 	// A message box (ShowMessageOverlay), while one is shown
 	struct Message {
@@ -1544,6 +1548,15 @@ void BaseOverlay::_UpdatePointer()
 		}
 
 		if (keyboard) {
+			// A click off a modal keyboard closes it: a trigger newly pressed while its hand isn't on the keyboard
+			for (const PointerRay& ray : rays) {
+				const bool pressed = ray.valid && ray.click;
+				if (p.keyboardClickSeen && pressed && !p.keyboardClicking[ray.hand & 1] && keyboard->Modal()
+				    && p.mouse.Target(ray.hand) != keyboard->Handle())
+					keyboard->Close();
+				p.keyboardClicking[ray.hand & 1] = pressed;
+			}
+			p.keyboardClickSeen = true;
 			keyboard->OnPointer(p.mouse, events);
 			for (const VREvent_t& e : keyboard->TakeEvents())
 				DispatchKeyboardEvent(e, p.keyboardFor);
@@ -3487,7 +3500,11 @@ EVROverlayError BaseOverlay::ShowKeyboardWithDispatch(EGamepadTextInputMode eInp
 		mode = VRKeyboard::Mode::Submit;
 	const bool multiline = eLineInputMode == k_EGamepadTextInputLineModeMultipleLines;
 	if (!oovr_global_configuration.Keyboard()) {
-		// Answered as done at once (GetKeyboardText then has a name ready)
+		// Answered as done at once, with the text as given (or a name where there was none)
+		{
+			std::lock_guard<std::recursive_mutex> lock(layersLock);
+			keyboardCache = existing;
+		}
 		SubmitPlaceholderKeyboardEvent(VREvent_KeyboardDone, forOverlay, uUserValue);
 		return VROverlayError_None;
 	}
@@ -3497,6 +3514,8 @@ EVROverlayError BaseOverlay::ShowKeyboardWithDispatch(EGamepadTextInputMode eInp
 	std::unique_ptr<CpuSwapchain> chain;
 	if (KeyboardLayout::Current()) {
 		made = std::make_unique<VRKeyboard>(mode, multiline, unFlags, existing, unCharMax, uUserValue);
+		if (pchDescription)
+			made->SetDescription(pchDescription);
 		chain = CpuSwapchain::Create(made->CanvasWidth(), made->CanvasHeight());
 	}
 	std::unique_ptr<CpuSwapchain> old;
@@ -3528,6 +3547,7 @@ EVROverlayError BaseOverlay::ShowKeyboardWithDispatch(EGamepadTextInputMode eInp
 		p.keyboardOrigin = space;
 		p.keyboardPose = keyboard->Placement();
 		p.keyboardModal = (unFlags & VRKeyboard::kFlagModal) != 0;
+		p.keyboardClickSeen = false;
 	}
 	old.reset();
 
@@ -3550,7 +3570,9 @@ std::unique_ptr<CpuSwapchain> BaseOverlay::DropKeyboard()
 void BaseOverlay::DispatchKeyboardEvent(VREvent_t event, VROverlayHandle_t forOverlay)
 {
 	event.data.keyboard.overlayHandle = forOverlay;
-	if (forOverlay != k_ulOverlayHandleInvalid) {
+	// The global events go to the program's own queue, with the overlay it was for in their data
+	const bool global = event.eventType == VREvent_KeyboardOpened_Global || event.eventType == VREvent_KeyboardClosed_Global;
+	if (forOverlay != k_ulOverlayHandleInvalid && !global) {
 		std::lock_guard<std::recursive_mutex> lock(layersLock);
 		OverlayData* overlay = (OverlayData*)(uintptr_t)forOverlay;
 		if (validOverlays.count(overlay))
@@ -3600,13 +3622,14 @@ EVROverlayError BaseOverlay::ShowKeyboardForOverlay(VROverlayHandle_t ulOverlayH
 }
 uint32_t BaseOverlay::GetKeyboardText(char* pchText, uint32_t cchText)
 {
-	// The keyboard's text, or the last one's after it has gone. Without the keyboard, a name: Skyrim's character
-	// creation waits for one
-	std::string str = "Adventurer";
-	if (oovr_global_configuration.Keyboard()) {
+	// The keyboard's text, or the last one's after it has gone; without the keyboard, the text it was given
+	std::string str;
+	{
 		std::lock_guard<std::recursive_mutex> lock(layersLock);
 		str = keyboard ? keyboard->Text() : keyboardCache;
 	}
+	if (!oovr_global_configuration.Keyboard())
+		str = VRKeyboard::TextWithoutKeyboard(str);
 
 	if (!pchText || cchText == 0)
 		return (uint32_t)str.size() + 1;
@@ -3622,6 +3645,13 @@ void BaseOverlay::HideKeyboard()
 	std::unique_ptr<CpuSwapchain> chain;
 	{
 		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		if (keyboard && !keyboard->Closed()) {
+			// A keyboard that goes without being closed on the keyboard says so
+			const VROverlayHandle_t forOverlay = pointing->keyboardFor;
+			const uint64_t userValue = keyboard->UserValue();
+			SubmitPlaceholderKeyboardEvent(VREvent_KeyboardClosed, forOverlay, userValue);
+			SubmitPlaceholderKeyboardEvent(VREvent_KeyboardClosed_Global, forOverlay, userValue);
+		}
 		chain = DropKeyboard();
 	}
 	chain.reset();
