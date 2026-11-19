@@ -123,16 +123,16 @@ namespace RuntimeSwitcher.Core
             Bool(Tools, "helperApps", true, "Run overlay tools beside the game",
                 "Overlay and background applications (desktop viewers, playspace movers) get sessions of their own, " +
                 "where the OpenXR runtime has overlay sessions."),
-            new Setting(Tools, "dashboardButton", SettingKind.Choice, "off", "Dashboard opens with",
+            new Setting(Tools, "dashboardButton", SettingKind.Choice, "system", "Dashboard opens with",
                 "OpenLamina's dashboard shows the dashboard overlays of the tools running beside the game, and a " +
                 "\"Quit game\" button. The same button closes it. The system button works on controllers that " +
                 "have one (Index, Vive wands) where the OpenXR runtime passes it on; the left menu button is B on " +
                 "Index controllers.",
                 "off", "Nothing (no dashboard)", "system", "System button, pressed", "system_long",
                 "System button, held", "menu", "Left menu button, pressed", "menu_long", "Left menu button, held"),
-            Bool(Tools, "laserMouse", false, "Point at overlays with the controllers",
+            Bool(Tools, "laserMouse", true, "Point at overlays with the controllers",
                 "Overlays that take mouse input get a laser pointer from the controllers; the trigger clicks."),
-            Bool(Tools, "keyboard", false, "Show the keyboard when a game asks for one",
+            Bool(Tools, "keyboard", true, "Show the keyboard when a game asks for one",
                 "Typed on by pointing at it with the controllers. When off, the game is told at once that typing is " +
                 "done."),
             new Setting(Tools, "keyboardLayout", SettingKind.Choice, "", "Keyboard layout",
@@ -158,17 +158,17 @@ namespace RuntimeSwitcher.Core
             Bool(Picture, "mirrorWindow", false, "Desktop mirror window for games that ask for one",
                 "Shows the game's left eye. Costs some frame time on a headset of high resolution."),
 
-            Bool(Games, "ownFrames", false, "Keep overlays and the skybox showing while a game loads",
+            Bool(Games, "ownFrames", true, "Keep overlays and the skybox showing while a game loads",
                 "While the game runs no frames, OpenLamina runs frames of its own: the game's last frame with its " +
                 "overlays, or its skybox."),
-            Bool(Games, "sessionEvents", false, "Tell games when focus is lost or the headset is taken off",
+            Bool(Games, "sessionEvents", true, "Tell games when focus is lost or the headset is taken off",
                 "The events SteamVR sends. Some games pause on them."),
             Bool(Games, "applyZeroPoses", false, "Let recentring tools move the play space (Monado)",
                 "A standing zero pose that a program sets moves Monado's stage, for every program, until Monado " +
                 "restarts."),
-            Bool(Games, "useSubmittedPose", false, "Use the head pose a game submits with its frames",
+            Bool(Games, "useSubmittedPose", true, "Use the head pose a game submits with its frames",
                 "For games that submit the pose they rendered with."),
-            Bool(Games, "submitDepth", false, "Pass a game's depth to the OpenXR runtime",
+            Bool(Games, "submitDepth", true, "Pass a game's depth to the OpenXR runtime",
                 "For games that submit depth, on runtimes that take it (for reprojection)."),
         };
 

@@ -6,7 +6,7 @@ records. See README.md.
          --xr-runtime none|stand-in|<manifest>|monado:<manifest> --out <dir> [--script <json>] [--expected <json>]
          [--differences <json>] [--expect <json>] [--known-failures <json>] [--allow-skip <regex>] [--only <regex>]
          [--cases <a,b,...>] [--jobs N] [--ci] [--allow-failures] [--real-runtime] [--ini <openlamina.ini>]
-         [--repeat N] [--case-arg <name>=<value>]... [--apptypes <n,...>]
+         [--shipped-defaults] [--repeat N] [--case-arg <name>=<value>]... [--apptypes <n,...>]
 
 Exit code 0 only if no child was ended by OpenLamina (exit 70), crashed or timed out, and nothing differed from
 --expected (beyond --differences) or --expect, except the records --known-failures lists.
@@ -127,11 +127,20 @@ class Runner:
             raise SystemExit(f"--xr-runtime monado: no manifest {self.manifest}")
         self.out.mkdir(parents=True, exist_ok=True)
         (self.out / "raw").mkdir(exist_ok=True)
+        # The openlamina.ini next to the DLL: ini/features_off.ini (the features that are on by default turned off, so
+        # that a case shows one feature at a time), then --ini's keys, which win. --shipped-defaults leaves the first
+        # out. Not for SteamVR itself, whose folder that would be.
+        parts = []
+        if not self.args.shipped_defaults and not (self.args.real_runtime and not self.monado):
+            parts.append((HERE / "ini" / "features_off.ini").read_text(encoding="utf-8"))
         if self.args.ini:
+            parts.append(Path(self.args.ini).read_text(encoding="utf-8"))
+        self.wrote_ini = bool(parts)
+        if parts:
             # Taken out again when the run ends (Runner.cleanup), with any file that was there put back
             target = Path(self.runtime).parent / "openlamina.ini"
             self.ini_backup = target.read_bytes() if target.exists() else None
-            shutil.copy(self.args.ini, target)
+            target.write_text("\n".join(parts), encoding="utf-8", newline="\n")
         if unelevated.integrity_above_medium() and self.manifest:
             if not self.args.ci:
                 return  # children run at medium integrity (unelevated.run_medium)
@@ -246,7 +255,7 @@ class Runner:
         return records
 
     def cleanup(self):
-        if self.args.ini:
+        if getattr(self, "wrote_ini", False):
             target = Path(self.runtime).parent / "openlamina.ini"
             if getattr(self, "ini_backup", None) is not None:
                 target.write_bytes(self.ini_backup)
@@ -464,7 +473,9 @@ def main():
     ap.add_argument("--cases")
     ap.add_argument("--cases-only", action="store_true", help="only the cases of --cases, no interfaces")
     ap.add_argument("--manifest", help="the action manifest for the input-manifest case")
-    ap.add_argument("--ini", help="an openlamina.ini to put next to the DLL")
+    ap.add_argument("--ini", help="an openlamina.ini whose keys go next to the DLL, after ini/features_off.ini's")
+    ap.add_argument("--shipped-defaults", action="store_true",
+                    help="without ini/features_off.ini: OpenLamina's defaults as they ship, but for --ini's keys")
     ap.add_argument("--jobs", type=int, default=4)
     ap.add_argument("--ci", action="store_true")
     ap.add_argument("--allow-failures", action="store_true")
