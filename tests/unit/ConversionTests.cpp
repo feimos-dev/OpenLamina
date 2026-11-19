@@ -103,3 +103,23 @@ TEST_CASE("Conversion_keeps_action_outputs")
 	CHECK(unknown.sets["/actions/main"].sources.size() == 5);
 	CHECK(unknown.warnings.size() == 1);
 }
+
+TEST_CASE("Touch_to_the_other_headsets_controllers")
+{
+	for (const char* type : { "vive_cosmos_controller", "vive_focus3_controller", "pico_controller" }) {
+		BindingFile f = ConvertBindingFile(Touch(), type);
+		CHECK(f.controllerType == type);
+		CHECK(Bound(f, "/actions/main/in/left_primary")->path == "/user/hand/left/input/x");
+		CHECK(Bound(f, "/actions/main/in/right_secondary")->path == "/user/hand/right/input/b");
+		CHECK(Bound(f, "/actions/main/in/move")->path == "/user/hand/right/input/joystick");
+		CHECK(f.warnings.empty());
+	}
+}
+
+TEST_CASE("Touch_to_the_simple_controller")
+{
+	BindingFile f = ConvertBindingFile(Touch(), "khr_simple_controller");
+	CHECK(f.controllerType == "khr_simple_controller");
+	CHECK_FALSE(f.warnings.empty()); // its face buttons and stick have no counterpart
+	CHECK(Bound(f, "/actions/main/in/left_primary") == nullptr);
+}

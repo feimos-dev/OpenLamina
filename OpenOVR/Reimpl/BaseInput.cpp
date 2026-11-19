@@ -1232,10 +1232,11 @@ bool BaseInput::SuggestRawBindings(const InteractionProfile& profile, const std:
 {
 	// The binding file chosen for this controller; turned into one for this controller if it's another's
 	BindingFile file = LoadBindingFile(PathFromUtf8(bindingsPath));
-	std::optional<const char*> type = profile.GetOpenVRName();
-	if (type && !file.controllerType.empty() && lowerStr(file.controllerType) != *type) {
-		OOVR_LOGF("Binding file: %s's bindings converted for %s", file.controllerType.c_str(), *type);
-		file = ConvertBindingFile(file, *type);
+	// The simple controller is the one profile with no OpenVR controller type of its own
+	const std::string type = profile.GetOpenVRName().value_or("khr_simple_controller");
+	if (!file.controllerType.empty() && lowerStr(file.controllerType) != type) {
+		OOVR_LOGF("Binding file: %s's bindings converted for %s", file.controllerType.c_str(), type.c_str());
+		file = ConvertBindingFile(file, type);
 	}
 
 	// Whether the file binds an input this controller has to an action of the manifest, or a haptic was suggested
