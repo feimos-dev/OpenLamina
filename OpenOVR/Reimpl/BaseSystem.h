@@ -5,6 +5,7 @@
 #include "openxr/openxr.h"
 #include <memory>
 #include <queue>
+#include <atomic>
 #include <mutex>
 
 class BaseSystem {
@@ -31,8 +32,11 @@ private:
 
 	// The input subsystem. This is used for the old-style inputs and haptics.
 	std::shared_ptr<class BaseInput> inputSystem;
+	std::recursive_mutex inputSystemLock;
+	// The input system, looked for (and made, with create) the first time; under inputSystemLock
+	std::shared_ptr<class BaseInput> InputSystem(bool create);
 
-	uint64_t frameNumber = 0;
+	std::atomic<uint64_t> frameNumber{ 0 };
 
 public:
 	// To be called by other base classes

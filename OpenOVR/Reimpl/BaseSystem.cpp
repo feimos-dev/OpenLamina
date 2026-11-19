@@ -611,23 +611,16 @@ void BaseSystem::_OnPostFrame()
 
 	// Create the input system, if the game hasn't already done so
 	// See the comment in GetControllerState for the rationale here
-	if (!inputSystem) {
-		inputSystem = GetBaseInput();
+	// We used to load an empty manifest here. Instead, we now wait until games first read the legacy
+	// inputs. This way games that wait until several frames in to load their manifest will still work.
+	std::shared_ptr<BaseInput> input = InputSystem(true);
 
-		if (!inputSystem) {
-			inputSystem = GetCreateBaseInput();
-
-			// We used to load an empty manifest here. Instead, we now wait until games first read the legacy
-			// inputs. This way games that wait until several frames in to load their manifest will still work.
-		}
-	}
-
-	if (inputSystem) {
-		inputSystem->InternalUpdate();
+	if (input) {
+		input->InternalUpdate();
 
 		// The legacy button events, once the game reads the legacy input (asking for the controller state before
 		// then would load the empty manifest, and a game's own manifest after that couldn't be bound)
-		if (inputSystem->IsUsingLegacyInput()) {
+		if (input->IsUsingLegacyInput()) {
 			CheckControllerEvents(leftHandIndex, lastLegacyStates[0]);
 			CheckControllerEvents(rightHandIndex, lastLegacyStates[1]);
 		}
@@ -788,9 +781,7 @@ bool BaseSystem::GetControllerState(vr::TrackedDeviceIndex_t controllerDeviceInd
 		return hmd && hmd->GetControllerState(controllerState);
 	}
 
-	if (!inputSystem) {
-		inputSystem = GetBaseInput();
-	}
+	std::shared_ptr<BaseInput> input = InputSystem(false);
 
 	// Since we can only bind the manifest once, and some games may never call it or may
 	//  try reading the controller state first, wait until the first frame has been submitted (returning
@@ -800,13 +791,13 @@ bool BaseSystem::GetControllerState(vr::TrackedDeviceIndex_t controllerDeviceInd
 	//  be unnecessary.) and for games that load their manifest late (Jet Island does as of 29/05/2022).
 	// This won't work for games that need hand positions but don't use either legacy or new input, but
 	//  it seems unlikely any shipping game falls into that category.
-	if (!inputSystem) {
+	if (!input) {
 		return true;
 	}
 	if (frameNumber > 0)
-		inputSystem->LoadEmptyManifestIfRequired();
+		input->LoadEmptyManifestIfRequired();
 
-	const bool result = inputSystem->GetLegacyControllerState(controllerDeviceIndex, controllerState);
+	const bool result = input->GetLegacyControllerState(controllerDeviceIndex, controllerState);
 	// Held by OpenLamina's dashboard: read (the dashboard's button is in it) and zeroed
 	if (BaseInput::HeldByDashboard()) {
 		const uint32_t packet = controllerState->unPacketNum;
@@ -825,6 +816,18 @@ bool BaseSystem::GetControllerStateWithPose(ETrackingUniverseOrigin eOrigin, vr:
 	return GetControllerState(unControllerDeviceIndex, pControllerState, unControllerStateSize);
 }
 
+std::shared_ptr<BaseInput> BaseSystem::InputSystem(bool create)
+{
+	// The game's threads read the controllers while its frames are submitted: the pointer is set under a lock, and
+	// used from a copy
+	std::lock_guard<std::recursive_mutex> lock(inputSystemLock);
+	if (!inputSystem)
+		inputSystem = GetBaseInput();
+	if (!inputSystem && create)
+		inputSystem = GetCreateBaseInput();
+	return inputSystem;
+}
+
 void BaseSystem::TriggerHapticPulse(vr::TrackedDeviceIndex_t unControllerDeviceIndex, uint32_t unAxisId, unsigned short usDurationMicroSec)
 {
 	if (!oovr_global_configuration.Haptics())
@@ -833,11 +836,12 @@ void BaseSystem::TriggerHapticPulse(vr::TrackedDeviceIndex_t unControllerDeviceI
 	if (unControllerDeviceIndex == leftHandIndex || unControllerDeviceIndex == rightHandIndex) {
 
 		// Similar to GetControllerState, wait until the input system is ready
-		if (!inputSystem) {
+		std::shared_ptr<BaseInput> input = InputSystem(false);
+		if (!input) {
 			return;
 		}
 
-		inputSystem->TriggerLegacyHapticPulse(unControllerDeviceIndex, (uint64_t)usDurationMicroSec * 1000);
+		input->TriggerLegacyHapticPulse(unControllerDeviceIndex, (uint64_t)usDurationMicroSec * 1000);
 	}
 	// if index is invalid, nothing to do
 	return;
