@@ -193,7 +193,7 @@ void XrHMD::GetProjectionRaw(vr::EVREye eEye, float* pfLeft, float* pfRight, flo
 bool XrHMD::ComputeDistortion(vr::EVREye eEye, float fU, float fV, vr::DistortionCoordinates_t* pDistortionCoordinates)
 {
 	// The OpenXR runtime distorts the frames itself and doesn't say how: the coordinates come back as given
-	if (!pDistortionCoordinates)
+	if (!pDistortionCoordinates || (eEye != vr::Eye_Left && eEye != vr::Eye_Right))
 		return false;
 	pDistortionCoordinates->rfRed[0] = pDistortionCoordinates->rfGreen[0] = pDistortionCoordinates->rfBlue[0] = fU;
 	pDistortionCoordinates->rfRed[1] = pDistortionCoordinates->rfGreen[1] = pDistortionCoordinates->rfBlue[1] = fV;

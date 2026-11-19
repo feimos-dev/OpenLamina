@@ -155,6 +155,8 @@ bool BaseSystem::ComputeDistortionSet(EVREye eEye, EVRDistortionChannel eChannel
     uint32_t nNumCoordinates, const DistortionCoordinate_t* pInput, DistortionCoordinate_t* pOutput)
 {
 	// Like ComputeDistortion: the OpenXR runtime does the distortion, so the coordinates come back as given
+	if (eEye != vr::Eye_Left && eEye != vr::Eye_Right)
+		return false;
 	if (nNumCoordinates == 0)
 		return true;
 	if (!pInput || !pOutput)

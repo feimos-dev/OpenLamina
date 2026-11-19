@@ -179,6 +179,9 @@ TEST_CASE("Distortion comes back as given")
 	CHECK(set[1].u == 0.3f);
 	CHECK(set[1].v == 0.4f);
 	CHECK_FALSE(system.ComputeDistortionSet(vr::Eye_Right, vr::EVRDistortionChannel::Blue, false, 2, nullptr, set));
+	// An eye that isn't one: refused, whatever count is given, and nothing is read or written
+	CHECK_FALSE(system.ComputeDistortionSet((vr::EVREye)0x7fffffff, vr::EVRDistortionChannel::Blue, false, 0xffffffffu, in, set));
+	CHECK_FALSE(hmd.ComputeDistortion((vr::EVREye)2, 0.25f, 0.75f, &out));
 }
 
 #ifndef SUPPORT_DX
