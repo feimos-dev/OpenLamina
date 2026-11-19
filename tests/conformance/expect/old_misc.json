@@ -20,9 +20,13 @@
  "old-misc/IVRNotifications_001/-/-": {
   "size": 26,
   "name": "k_ENotificationError_Fail",
+  "create without overlay": 1,
+  "id set without overlay": false,
+  "dismiss unknown": 1,
   "create": 0,
   "id set": true,
-  "dismiss": 0
+  "dismiss": 0,
+  "dismiss again": 1
  },
  "old-misc/IVRControlPanel_001/-/-": {
   "drivers": 0,

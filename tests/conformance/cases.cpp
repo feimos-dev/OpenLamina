@@ -1003,9 +1003,18 @@ void OldMisc(CaseContext& c)
 	r["size"] = notes->GetErrorString(vr::IVRNotifications_001::k_ENotificationError_Fail, name, sizeof(name));
 	r["name"] = name;
 	vr::IVRNotifications_001::VRNotificationId id = 0;
-	r["create"] = (int)notes->CreateNotification(vr::k_ulOverlayHandleInvalid, 0, "type", "text", "category", nullptr, &id);
-	r["id set"] = id != 0;
-	r["dismiss"] = (int)notes->DismissNotification(id);
+	r["create without overlay"] = (int)notes->CreateNotification(vr::k_ulOverlayHandleInvalid, 0, "type", "text", "category", nullptr, &id);
+	r["id set without overlay"] = id != 0;
+	r["dismiss unknown"] = (int)notes->DismissNotification(12345);
+	auto* ov = (vr::IVROverlay_028::IVROverlay*)c.core->GetGenericInterface("IVROverlay_028", &le);
+	vr::VROverlayHandle_t oh = vr::k_ulOverlayHandleInvalid;
+	if (ov && ov->CreateOverlay("oc.notes", "Notes", &oh) == 0) {
+		r["create"] = (int)notes->CreateNotification(oh, 0, "type", "text", "category", nullptr, &id);
+		r["id set"] = id != 0;
+		r["dismiss"] = (int)notes->DismissNotification(id);
+		r["dismiss again"] = (int)notes->DismissNotification(id);
+		ov->DestroyOverlay(oh);
+	}
 	c.Record("IVRNotifications_001", r);
 
 	r = Json::Value();

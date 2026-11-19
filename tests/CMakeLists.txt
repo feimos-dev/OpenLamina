@@ -126,6 +126,7 @@ add_executable(oc_unit_tests
 	unit/RenderModelTests.cpp
 	unit/EntryPointsTests.cpp
 	unit/BaseMailboxTests.cpp
+	unit/BaseNotificationsTests.cpp
 	${OC_TEST_RESOURCES}
 )
 target_include_directories(oc_unit_tests PRIVATE
