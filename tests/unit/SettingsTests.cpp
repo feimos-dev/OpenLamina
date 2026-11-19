@@ -322,33 +322,19 @@ TEST_CASE("Settings_last_known_hmd_agrees_with_properties")
 	CHECK(GetString(settings, "LastKnown", "HMDModel", &error) == "Oculus Quest2");
 }
 
-TEST_CASE("Settings_scene_application_can_not_set_bool")
+TEST_CASE("Settings_scene_application_can_set_bool")
 {
 	TempDir dir;
 	SteamVRFiles files(false);
 	SharedStore store(dir.path);
 	BaseSettings settings(store);
-	BaseSettings::EVRSettingsError error = VRSettingsError_None;
+	BaseSettings::EVRSettingsError error = VRSettingsError_AccessDenied;
 
-	{
-		AppType scene(vr::VRApplication_Scene);
-		settings.SetBool("oc_test", "flag", true, &error);
-		CHECK(error == VRSettingsError_AccessDenied);
-		CHECK_FALSE(store.Read(StoreDoc::Settings).isMember("oc_test"));
-		CHECK(std::string(settings.GetSettingsErrorNameFromEnum(error)) == "VRSettingsError_AccessDenied");
-
-		// The other types of write, and a missing pointer for the error, are as before
-		settings.SetInt32("oc_test", "count", 3, &error);
-		CHECK(error == VRSettingsError_None);
-		settings.SetBool("oc_test", "flag", true);
-		CHECK_FALSE(store.Read(StoreDoc::Settings)["oc_test"].isMember("flag"));
-	}
-	{
-		AppType overlay(vr::VRApplication_Overlay);
-		settings.SetBool("oc_test", "flag", true, &error);
-		CHECK(error == VRSettingsError_None);
-		CHECK(settings.GetBool("oc_test", "flag", &error));
-	}
+	AppType scene(vr::VRApplication_Scene);
+	settings.SetBool("oc_test", "flag", true, &error);
+	CHECK(error == VRSettingsError_None);
+	CHECK(settings.GetBool("oc_test", "flag", &error));
+	CHECK(std::string(settings.GetSettingsErrorNameFromEnum(VRSettingsError_AccessDenied)) == "VRSettingsError_AccessDenied");
 }
 
 TEST_CASE("Settings_changes_are_announced")

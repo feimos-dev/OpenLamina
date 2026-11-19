@@ -8,7 +8,6 @@
 #include "Misc/ProgramEvents.h"
 #include "Misc/SharedStore.h"
 #include "Misc/SteamVRSettings.h"
-#include "BaseClientCore.h"
 #include "../DrvOpenXR/DeviceIdentity.h"
 #include "generated/interfaces/IVRSettings_001.h"
 #include "generated/interfaces/IVRSettings_002.h"
@@ -331,10 +330,6 @@ void BaseSettings::Set(const char* pchSection, const char* pchSettingsKey, const
 
 void BaseSettings::SetBool(const char* pchSection, const char* pchSettingsKey, bool bValue, EVRSettingsError* peError)
 {
-	if (pchSection && pchSettingsKey && BaseClientCore::appType == vr::VRApplication_Scene) {
-		SetError(peError, VRSettingsError_AccessDenied);
-		return;
-	}
 	Set(pchSection, pchSettingsKey, Json::Value(bValue), peError);
 }
 void BaseSettings::SetInt32(const char* pchSection, const char* pchSettingsKey, int32_t nValue, EVRSettingsError* peError)
