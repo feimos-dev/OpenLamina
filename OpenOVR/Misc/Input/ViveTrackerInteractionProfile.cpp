@@ -4,6 +4,7 @@
 ViveTrackerInteractionProfile::ViveTrackerInteractionProfile()
 {
 	propertiesMap = {
+		{ vr::Prop_TrackingSystemName_String, { "lighthouse" } },
 		{ vr::Prop_ControllerType_String, { GetOpenVRName().value() } }
 	};
 }
