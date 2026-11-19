@@ -456,9 +456,9 @@ void MailboxCase(CaseContext& c)
 	c.Record("register", r);
 
 	r = Json::Value();
-	char small[4] = {};
+	char tooShort[4] = {};
 	uint32_t length = 0;
-	r["read_small"] = (int)box->ReadMessage(a, small, sizeof(small), &length);
+	r["read_small"] = (int)box->ReadMessage(a, tooShort, sizeof(tooShort), &length);
 	r["read_small_length"] = length;
 	char text[256] = {};
 	r["read"] = (int)box->ReadMessage(a, text, sizeof(text), &length);
