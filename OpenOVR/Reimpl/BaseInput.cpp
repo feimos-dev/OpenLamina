@@ -1720,6 +1720,36 @@ EVRInputError BaseInput::GetAnalogActionData(VRActionHandle_t action, InputAnalo
 	return VRInputError_None;
 }
 
+void BaseInput::ApplyPoseComponent(const vr::TrackedDevicePose_t& rawPose, ITrackedDevice::TrackedDeviceType hand, const char* componentName, vr::TrackedDevicePose_t& out)
+{
+	if (!rawPose.bPoseIsValid)
+		return;
+
+	glm::mat4 handMat = S2G_m34(rawPose.mDeviceToAbsoluteTracking);
+
+	// Add the component transform, if required
+	OOVR_RenderModel_ComponentState_t state = {};
+	const bool hasTransform = componentName && GetBaseRenderModels()->TryGetComponentState(hand, componentName, &state);
+	if (hasTransform)
+		handMat = handMat * S2G_m34(state.mTrackingToComponentLocal);
+
+	// Store the final hand matrix
+	out.mDeviceToAbsoluteTracking = G2S_m34(handMat);
+	out.bPoseIsValid = true;
+	out.bDeviceIsConnected = true;
+	out.eTrackingResult = rawPose.eTrackingResult;
+
+	// The velocities stay in the tracking space. The angular one is the same everywhere on the device; the
+	// component's point is away from the device's, so its linear one adds the turn's: w x (component - device).
+	glm::vec3 velocity = S2G_v3f(rawPose.vVelocity);
+	if (hasTransform) {
+		const glm::vec3 offset = glm::vec3(handMat[3]) - glm::vec3(S2G_m34(rawPose.mDeviceToAbsoluteTracking)[3]);
+		velocity += glm::cross(S2G_v3f(rawPose.vAngularVelocity), offset);
+	}
+	out.vVelocity = G2S_v3f(velocity);
+	out.vAngularVelocity = rawPose.vAngularVelocity;
+}
+
 EVRInputError BaseInput::GetPoseActionData(VRActionHandle_t action, ETrackingUniverseOrigin eOrigin, float fPredictedSecondsFromNow,
     InputPoseActionData_t* pActionData, uint32_t unActionDataSize, VRInputValueHandle_t ulRestrictToDevice)
 {
@@ -1738,9 +1768,15 @@ EVRInputError BaseInput::GetPoseActionData(VRActionHandle_t action, ETrackingUni
 		if (!dev)
 			return vr::VRInputError_InvalidDevice;
 
-		dev->GetPose(eOrigin, &pActionData->pose, ETrackingStateType::TrackingStateType_Now);
+		// The skeleton's root is at the hand's grip, as a pose bound to the hand's own grip is
+		vr::TrackedDevicePose_t rawPose = {};
+		dev->GetPose(eOrigin, &rawPose, ETrackingStateType::TrackingStateType_Now);
+		const int hand = act->skeletalHand == ITrackedDevice::HAND_LEFT ? 0 : 1;
+		pActionData->pose = rawPose;
+		ApplyPoseComponent(rawPose, act->skeletalHand, "handgrip", pActionData->pose);
 		pActionData->bActive = pActionData->pose.bPoseIsValid && pActionData->pose.bDeviceIsConnected;
-		pActionData->activeOrigin = vr::k_ulInvalidInputValueHandle; // TODO implement activeOrigin
+		pActionData->activeOrigin = vr::k_ulInvalidInputValueHandle;
+		GetInputSourceHandle(allSubactionPathNames[hand].c_str(), &pActionData->activeOrigin);
 
 		return vr::VRInputError_None;
 	}
@@ -1791,61 +1827,27 @@ EVRInputError BaseInput::GetPoseActionData(VRActionHandle_t action, ETrackingUni
 		vr::TrackedDevicePose_t rawPose = {};
 		dev->GetPose(eOrigin, &rawPose, TrackingStateType_Now);
 
-		if (rawPose.bPoseIsValid) {
-			glm::mat4 handMat = S2G_m34(rawPose.mDeviceToAbsoluteTracking);
-
-			const char* componentName = nullptr;
-			switch (binding.point) {
-			case PoseBindingPoint::RAW:
-			case PoseBindingPoint::BODY:
-			case PoseBindingPoint::GDC2015:
-				// No component name
-				break;
-			case PoseBindingPoint::GRIP:
-				componentName = "grip";
-				break;
-			case PoseBindingPoint::BASE:
-				componentName = "base";
-				break;
-			case PoseBindingPoint::HANDGRIP:
-				componentName = "handgrip";
-				break;
-			case PoseBindingPoint::TIP:
-				componentName = "tip";
-				break;
-			}
-
-			// Add the component transform, if required
-			OOVR_RenderModel_ComponentState_t state = {};
-			bool hasTransform = false;
-			glm::mat4 transform = glm::identity<glm::mat4>();
-			if (componentName) {
-				hasTransform = GetBaseRenderModels()->TryGetComponentState(handType, componentName, &state);
-			}
-			if (hasTransform) {
-				transform = S2G_m34(state.mTrackingToComponentLocal);
-
-				handMat = handMat * transform;
-			}
-
-			// Store the final hand matrix
-			pActionData->pose.mDeviceToAbsoluteTracking = G2S_m34(handMat);
-			pActionData->pose.bPoseIsValid = true;
-			pActionData->pose.bDeviceIsConnected = true;
-			pActionData->pose.eTrackingResult = rawPose.eTrackingResult;
-
-			// The velocities stay in the tracking space. The angular one is the same everywhere on the device; the
-			// component's point is away from the device's, so its linear one adds the turn's: w x (component - device).
-			glm::vec3 velocity = S2G_v3f(rawPose.vVelocity);
-			if (hasTransform) {
-				const glm::vec3 offset = glm::vec3(handMat[3]) - glm::vec3(S2G_m34(rawPose.mDeviceToAbsoluteTracking)[3]);
-				velocity += glm::cross(S2G_v3f(rawPose.vAngularVelocity), offset);
-			}
-			pActionData->pose.vVelocity = G2S_v3f(velocity);
-			pActionData->pose.vAngularVelocity = rawPose.vAngularVelocity;
+		const char* componentName = nullptr;
+		switch (binding.point) {
+		case PoseBindingPoint::RAW:
+		case PoseBindingPoint::BODY:
+		case PoseBindingPoint::GDC2015:
+			// No component name
+			break;
+		case PoseBindingPoint::GRIP:
+			componentName = "grip";
+			break;
+		case PoseBindingPoint::BASE:
+			componentName = "base";
+			break;
+		case PoseBindingPoint::HANDGRIP:
+			componentName = "handgrip";
+			break;
+		case PoseBindingPoint::TIP:
+			componentName = "tip";
+			break;
 		}
-
-		// TODO implement the deltas
+		ApplyPoseComponent(rawPose, handType, componentName, pActionData->pose);
 
 		// Stop as soon as we find the first available input (and a disconnected controller is
 		// fine to count as available - that's probably not how it should be, but it'd be a

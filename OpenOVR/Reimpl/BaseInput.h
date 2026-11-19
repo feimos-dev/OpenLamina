@@ -906,6 +906,8 @@ private:
 	};
 	std::map<std::string, LegacyEvaluator> legacyEvaluators; // by controller type
 	void UpdateEvaluators(const VRActiveActionSet_t* sets, uint32_t count);
+	/** Writes a device's pose with a render model component's offset (none for a null or unknown name) into out */
+	void ApplyPoseComponent(const vr::TrackedDevicePose_t& rawPose, ITrackedDevice::TrackedDeviceType hand, const char* componentName, vr::TrackedDevicePose_t& out);
 	/** The eye tracking read at an XrTime (0: the frame being predicted) */
 	EVRInputError GetEyeTrackingDataAt(VRActionHandle_t action, vr::ETrackingUniverseOrigin eOrigin, XrTime time,
 	    vr::VREyeTrackingData_t* pEyeTrackingData, uint32_t ulEyeTrackingDataSize);
