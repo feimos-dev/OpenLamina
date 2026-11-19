@@ -557,6 +557,27 @@ public:
 		EyeTracking,
 	};
 
+	/** Which hands (0 left, 1 right) an active action set is on, and which its secondary set is on. restrictedHand is
+	 * -1 when the set isn't restricted, 0 or 1 for a hand, and 2 for a device that isn't a hand (the set is then on
+	 * no hand, and the secondary set is on both: the secondary set is for every device but the restricted one). */
+	struct SetHands {
+		bool primary[2] = { false, false };
+		bool secondary[2] = { false, false };
+	};
+	static SetHands HandsForActiveSet(int restrictedHand)
+	{
+		SetHands hands;
+		if (restrictedHand < 0) {
+			hands.primary[0] = hands.primary[1] = true;
+		} else if (restrictedHand < 2) {
+			hands.primary[restrictedHand] = true;
+			hands.secondary[1 - restrictedHand] = true;
+		} else {
+			hands.secondary[0] = hands.secondary[1] = true;
+		}
+		return hands;
+	}
+
 	/** GetDigitalActionData's answer for an action of this type: only a boolean action is read as digital. */
 	static EVRInputError DigitalReadError(ActionType type)
 	{
@@ -816,6 +837,15 @@ private:
 	};
 	std::map<std::string, LegacyEvaluator> legacyEvaluators; // by controller type
 	void UpdateEvaluators(const VRActiveActionSet_t* sets, uint32_t count);
+	/** An action set active for one frame, with the hands it's on */
+	struct ActiveSetOnHands {
+		ActionSet* set = nullptr;
+		int32_t priority = 0;
+		bool hands[2] = { false, false };
+	};
+	/** The sets a game's UpdateActionState named, with a restricted set on its hand and its secondary set on the
+	 * others; a set named by a handle that isn't there is left out */
+	std::vector<ActiveSetOnHands> ResolveActiveSets(const VRActiveActionSet_t* sets, uint32_t count);
 
 	// Haptic pulses a game asked to start later, applied at the first sync once they're due
 	struct PendingHaptic {

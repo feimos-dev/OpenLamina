@@ -68,3 +68,23 @@ TEST_CASE("Only_boolean_actions_read_as_digital")
 	for (T type : { T::Vector1, T::Vector2, T::Vector3, T::Vibration, T::Pose, T::Skeleton, T::EyeTracking })
 		CHECK(BaseInput::DigitalReadError(type) == vr::VRInputError_WrongType);
 }
+
+TEST_CASE("Active_set_hands")
+{
+	using H = BaseInput::SetHands;
+	// Unrestricted: both hands, and the secondary set is ignored
+	H all = BaseInput::HandsForActiveSet(-1);
+	CHECK((all.primary[0] && all.primary[1]));
+	CHECK((!all.secondary[0] && !all.secondary[1]));
+	// A hand: that hand, with the secondary set on the other
+	H left = BaseInput::HandsForActiveSet(0);
+	CHECK((left.primary[0] && !left.primary[1]));
+	CHECK((!left.secondary[0] && left.secondary[1]));
+	H right = BaseInput::HandsForActiveSet(1);
+	CHECK((!right.primary[0] && right.primary[1]));
+	CHECK((right.secondary[0] && !right.secondary[1]));
+	// A device that isn't a hand: no hand for the set, both for the secondary
+	H head = BaseInput::HandsForActiveSet(2);
+	CHECK((!head.primary[0] && !head.primary[1]));
+	CHECK((head.secondary[0] && head.secondary[1]));
+}

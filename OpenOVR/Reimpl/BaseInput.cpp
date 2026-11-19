@@ -1291,6 +1291,32 @@ std::optional<std::vector<ActionBinding>> BaseInput::BindingsFromFiles(const Act
 	return found;
 }
 
+std::vector<BaseInput::ActiveSetOnHands> BaseInput::ResolveActiveSets(const VRActiveActionSet_t* sets, uint32_t count)
+{
+	std::vector<ActiveSetOnHands> resolved;
+	for (uint32_t i = 0; i < count; i++) {
+		int restrictedHand = -1;
+		if (sets[i].ulRestrictedToDevice != vr::k_ulInvalidInputValueHandle) {
+			const InputValueHandle* ivh = cast_IVH(sets[i].ulRestrictedToDevice);
+			restrictedHand = !ivh ? 2 : ivh->type == InputSource::HAND_LEFT ? 0 : ivh->type == InputSource::HAND_RIGHT ? 1 : 2;
+		}
+		const SetHands onHands = HandsForActiveSet(restrictedHand);
+		ActionSet* primary = cast_ASH(sets[i].ulActionSet);
+		ActionSet* secondary = restrictedHand >= 0 ? cast_ASH(sets[i].ulSecondaryActionSet) : nullptr;
+		for (auto [set, hands] : { std::pair<ActionSet*, const bool*>{ primary, onHands.primary }, { secondary, onHands.secondary } }) {
+			if (!set || !(hands[0] || hands[1]))
+				continue;
+			ActiveSetOnHands on;
+			on.set = set;
+			on.priority = sets[i].nPriority;
+			on.hands[0] = hands[0];
+			on.hands[1] = hands[1];
+			resolved.push_back(on);
+		}
+	}
+	return resolved;
+}
+
 void BaseInput::UpdateEvaluators(const VRActiveActionSet_t* sets, uint32_t count)
 {
 	std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
@@ -1300,17 +1326,11 @@ void BaseInput::UpdateEvaluators(const VRActiveActionSet_t* sets, uint32_t count
 
 	// Each active set with the hand it's restricted to (ulRestrictedToDevice)
 	std::vector<BindingEvaluator::ActiveSet> active;
-	for (uint32_t i = 0; i < count; i++) {
-		ActionSet* as = cast_ASH(sets[i].ulActionSet);
-		if (!as)
-			continue;
+	for (const ActiveSetOnHands& on : ResolveActiveSets(sets, count)) {
 		std::string restrictTo;
-		if (sets[i].ulRestrictedToDevice != vr::k_ulInvalidInputValueHandle) {
-			std::shared_ptr<ITrackedDevice> dev = ivhToDev(sets[i].ulRestrictedToDevice);
-			if (dev && dev->GetHand() != ITrackedDevice::HAND_NONE && (size_t)dev->GetHand() < allSubactionPathNames.size())
-				restrictTo = allSubactionPathNames[dev->GetHand()];
-		}
-		active.push_back({ as->manifestName, sets[i].nPriority, restrictTo });
+		if (!(on.hands[0] && on.hands[1]))
+			restrictTo = allSubactionPathNames[on.hands[0] ? 0 : 1];
+		active.push_back({ on.set->manifestName, on.priority, restrictTo });
 	}
 
 	// Each profile a hand uses: its raw inputs from those hands, then its evaluator
@@ -1535,42 +1555,36 @@ EVRInputError BaseInput::UpdateActionState(VR_ARRAY_COUNT(unSetCount) VRActiveAc
 	if (EVRInputError err = CheckActiveSets(pSets, unSizeOfVRSelectedActionSet_t, unSetCount); err != VRInputError_None)
 		return err;
 
-	// Make sure all the ActionSets have the same priority, since we don't have any way around that without the
-	// binding evaluator, which honours them
-	if (unSetCount > 1 && rawInputsSet == XR_NULL_HANDLE) {
-		int priority = pSets[0].nPriority;
-		for (uint32_t i = 1; i < unSetCount; i++) {
-			if (pSets[i].nPriority != priority) {
-				ActionSet* as1 = cast_ASH(pSets[0].ulActionSet);
-				ActionSet* curAs = cast_ASH(pSets[i].ulActionSet);
-				if (as1 && curAs)
-					OOVR_SOFT_ABORTF("Active action set %s (%d) and %s (%d) have different priorities, this is not yet supported",
-					    as1->fullName.c_str(), pSets[0].nPriority, curAs->fullName.c_str(), pSets[i].nPriority);
-			}
+	for (uint32_t i = 0; i < unSetCount; i++) {
+		if (!cast_ASH(pSets[i].ulActionSet)) {
+			OOVR_LOG_ONCE("WARNING: Invalid action set handle passed!");
+			return VRInputError_InvalidHandle;
 		}
 	}
 
-	std::vector<XrActiveActionSet> aas(unSetCount + 1 + (rawInputsSet != XR_NULL_HANDLE ? 1 : 0));
-
-	for (uint32_t i = 0; i < unSetCount; i++) {
-		VRActiveActionSet_t& set = pSets[i];
-
-		GET_ACTION_SET_FROM_HANDLE(as, set.ulActionSet);
-		aas[i].actionSet = as->xr;
-
-		if (set.ulRestrictedToDevice != vr::k_ulInvalidInputValueHandle) {
-			std::shared_ptr<ITrackedDevice> dev = ivhToDev(set.ulRestrictedToDevice);
-			if (dev && dev->GetHand() != ITrackedDevice::HAND_NONE) {
-				LegacyControllerActions& ctrl = legacyControllers[dev->GetHand()];
-				aas[i].subactionPath = ctrl.handPathXr;
-			}
+	// A set on both hands (named twice, once for each, or by a secondary set) is one entry for every hand
+	std::vector<XrActiveActionSet> aas;
+	std::vector<std::array<bool, 2>> onHands;
+	for (const ActiveSetOnHands& on : ResolveActiveSets(pSets, unSetCount)) {
+		auto entry = std::find_if(aas.begin(), aas.end(), [&](const XrActiveActionSet& a) { return a.actionSet == on.set->xr; });
+		if (entry == aas.end()) {
+			aas.push_back({ on.set->xr, XR_NULL_PATH });
+			onHands.push_back({ false, false });
+			entry = aas.end() - 1;
 		}
+		std::array<bool, 2>& hands = onHands[entry - aas.begin()];
+		hands[0] = hands[0] || on.hands[0];
+		hands[1] = hands[1] || on.hands[1];
+	}
+	for (size_t i = 0; i < aas.size(); i++) {
+		if (!(onHands[i][0] && onHands[i][1]))
+			aas[i].subactionPath = allSubactionPaths.at(onHands[i][0] ? 0 : 1);
 	}
 
 	// Ad the last set, the legacy input set; then the raw inputs the evaluator reads
-	aas.at(unSetCount).actionSet = legacyInputsSet;
+	aas.push_back({ legacyInputsSet, XR_NULL_PATH });
 	if (rawInputsSet != XR_NULL_HANDLE)
-		aas.at(unSetCount + 1).actionSet = rawInputsSet;
+		aas.push_back({ rawInputsSet, XR_NULL_PATH });
 
 	// A set OpenXR refused to create is left out, or the whole sync would fail
 	aas.erase(std::remove_if(aas.begin(), aas.end(), [](const XrActiveActionSet& a) { return a.actionSet == XR_NULL_HANDLE; }), aas.end());
