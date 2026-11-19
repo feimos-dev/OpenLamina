@@ -103,6 +103,14 @@ public:
 	ID3D11Texture2D* CopyOverlayTexture(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, std::string* why, const void* owner);
 	// The overlay (CopyOverlayTexture's owner) shows no texture any more: what was kept to copy its textures is let go
 	void ForgetOverlayTextures(const void* owner);
+	/**
+	 * For an overlay application that reads its overlay's texture back and writes it directly: a shared texture of
+	 * like's device with like's contents (program) and the same texture on the overlay session's device (session),
+	 * both referenced for the caller (OverlayTextureCopy::MakeLive). False, with why, if it can't be made.
+	 */
+	bool MakeLiveOverlayTexture(ID3D11Texture2D* like, ID3D11Texture2D** program, ID3D11Texture2D** session, std::string* why);
+	/** A DXGI shared handle's texture on the overlay session's device, referenced for the caller; nullptr, with why */
+	ID3D11Texture2D* OpenSharedOverlayTexture(void* handle, std::string* why);
 	/** A compositor for such a copy */
 	std::shared_ptr<Compositor> MakeOverlayCompositor(ID3D11Texture2D* copy);
 

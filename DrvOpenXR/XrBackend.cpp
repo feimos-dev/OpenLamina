@@ -2033,6 +2033,28 @@ ID3D11Texture2D* XrBackend::CopyOverlayTexture(const vr::Texture_t* texture, con
 	return overlayCopy->CopyIn(texture, bounds, why, owner);
 }
 
+bool XrBackend::MakeLiveOverlayTexture(ID3D11Texture2D* like, ID3D11Texture2D** program, ID3D11Texture2D** session, std::string* why)
+{
+	if (!overlayCopy) {
+		*program = nullptr;
+		*session = nullptr;
+		if (why)
+			*why = "the overlay session's device isn't a D3D11 one";
+		return false;
+	}
+	return overlayCopy->MakeLive(like, program, session, why);
+}
+
+ID3D11Texture2D* XrBackend::OpenSharedOverlayTexture(void* handle, std::string* why)
+{
+	if (!overlayCopy) {
+		if (why)
+			*why = "the overlay session's device isn't a D3D11 one";
+		return nullptr;
+	}
+	return overlayCopy->OpenShared(handle, why);
+}
+
 std::shared_ptr<Compositor> XrBackend::MakeOverlayCompositor(ID3D11Texture2D* copy)
 {
 #if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
