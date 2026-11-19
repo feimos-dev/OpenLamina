@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <map>
 #include <set>
 #include <thread>
 #include <vector>
@@ -98,6 +99,24 @@ Json::Value StoreDocument(const char* name)
 	if (!in || !Json::parseFromStream(rb, in, &root, &errors))
 		return Json::Value();
 	return root["data"];
+}
+
+// The last frame in the dump that has as many quads as any frame has: the frame to judge a program's overlays by.
+// The frames after it have fewer, as the program destroys its overlays one by one while OpenLamina's frames go on.
+uint64_t LastFrameWithEveryQuad(const Json::Value& dump)
+{
+	std::map<Json::UInt64, int> quads;
+	for (const Json::Value& layer : dump["layers"])
+		if (layer["type"].asString() == "quad")
+			quads[layer["frame"].asUInt64()]++;
+	int most = 0;
+	for (const auto& [frame, count] : quads)
+		most = std::max(most, count);
+	uint64_t last = 0;
+	for (const auto& [frame, count] : quads)
+		if (count == most)
+			last = frame;
+	return last;
 }
 
 // Whether the Overlays document has an entry of another program than this one (with an overlay, if withOverlay)
@@ -762,13 +781,13 @@ void OverlayAppTexturesCase(CaseContext& c, const char* label, std::vector<Overl
 	r["binding"] = summary["binding"];
 	r["session_overlay"] = summary["overlay"];
 	r["frame_order_errors"] = summary["frame_order_errors"];
-	// The last frame's quads that show the pattern: red top left, white bottom right
+	// The quads that show the pattern (red top left, white bottom right) in the last frame that has them all
 	Json::Value dump = ReadStandInDump();
 	const Json::Value& layers = dump["layers"];
-	const Json::Value lastFrame = layers.size() ? layers[layers.size() - 1]["frame"] : Json::Value();
+	const uint64_t lastFrame = LastFrameWithEveryQuad(dump);
 	int shown = 0;
 	for (const Json::Value& layer : layers) {
-		if (layer["frame"] == lastFrame && layer["type"].asString() == "quad" && layer["samples"]["tl"].asString() == "ff0000ff"
+		if (layer["frame"].asUInt64() == lastFrame && layer["type"].asString() == "quad" && layer["samples"]["tl"].asString() == "ff0000ff"
 		    && layer["samples"]["br"].asString() == "ffffffff")
 			shown++;
 	}
@@ -886,11 +905,11 @@ void OverlayAppSharedTextureCase(CaseContext& c)
 	Json::Value dump = ReadStandInDump();
 	r["frame_order_errors"] = dump["frame_order_errors"];
 	r["frames_refused"] = (Json::UInt64)dump["frames_refused"].asUInt64();
-	// The last frame's quads, told apart by where they are
+	// The quads of the last frame that has both, told apart by where they are
 	const Json::Value& layers = dump["layers"];
-	const Json::Value lastFrame = layers.size() ? layers[layers.size() - 1]["frame"] : Json::Value();
+	const uint64_t lastFrame = LastFrameWithEveryQuad(dump);
 	for (const Json::Value& layer : layers) {
-		if (layer["frame"] != lastFrame || layer["type"].asString() != "quad")
+		if (layer["frame"].asUInt64() != lastFrame || layer["type"].asString() != "quad")
 			continue;
 		const Json::Value& s = layer["samples"];
 		const Json::Value position = RoundedPosition(layer["pose"]);
