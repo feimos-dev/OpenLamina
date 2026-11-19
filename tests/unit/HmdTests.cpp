@@ -272,3 +272,20 @@ TEST_CASE("The eye relief property is zero without a complaint")
 	CHECK(err == vr::TrackedProp_Success);
 	CHECK(logged.empty());
 }
+
+TEST_CASE("Scaled image sizes stay within what the runtime allows")
+{
+	CHECK(XrHMD::ScaledImageSize(1000, 4000, 1.0f) == 1000);
+	CHECK(XrHMD::ScaledImageSize(1000, 4000, 1.5f) == 1500);
+	// Rounded, not cut off
+	CHECK(XrHMD::ScaledImageSize(1001, 4000, 0.9995f) == 1000);
+	CHECK(XrHMD::ScaledImageSize(999, 4000, 1.0006f) == 1000);
+	// Clamped to the largest
+	CHECK(XrHMD::ScaledImageSize(2000, 3000, 2.0f) == 3000);
+	// No limit given, no scale given
+	CHECK(XrHMD::ScaledImageSize(2000, 0, 2.0f) == 4000);
+	CHECK(XrHMD::ScaledImageSize(2000, 4000, 0.0f) == 2000);
+	// Never nothing for a view that has a size
+	CHECK(XrHMD::ScaledImageSize(10, 4000, 0.001f) == 1);
+	CHECK(XrHMD::ScaledImageSize(0, 4000, 1.0f) == 0);
+}

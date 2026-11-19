@@ -17,8 +17,10 @@
 #include "../OpenOVR/convert.h"
 #include "generated/static_bases.gen.h"
 
+#include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <cmath>
 #include <thread>
 #include <mutex>
 
@@ -46,15 +48,33 @@ float XrHMD::AnsweredRenderScale()
 	return answeredRenderScale;
 }
 
+uint32_t XrHMD::ScaledImageSize(uint32_t recommended, uint32_t maximum, float scale)
+{
+	if (!(scale > 0.0f))
+		scale = 1.0f;
+	double scaled = std::round((double)recommended * (double)scale);
+	if (maximum > 0 && scaled > (double)maximum)
+		scaled = (double)maximum;
+	// Never zero for a view that has a size
+	return recommended > 0 && scaled < 1.0 ? 1 : (uint32_t)scaled;
+}
+
 void XrHMD::GetRecommendedRenderTargetSize(uint32_t* width, uint32_t* height)
 {
 	// openlamina.ini's supersampleRatio, unless a program or the user's SteamVR settings chose another
 	float scale = BaseSettings::RenderScale(SharedStore::Get(), oovr_global_configuration.SupersampleRatio());
 	answeredRenderScale = scale;
+
+	// One size for both eyes: what the larger of the two needs, within what the smaller can have
+	const XrViewConfigurationView& left = xr_main_view(XruEyeLeft);
+	const XrViewConfigurationView& right = xr_main_view(XruEyeRight);
+	auto smaller = [](uint32_t a, uint32_t b) { return a && b ? std::min(a, b) : std::max(a, b); };
 	if (width)
-		*width = (uint32_t)((float)xr_main_view(XruEyeLeft).recommendedImageRectWidth * scale);
+		*width = ScaledImageSize(std::max(left.recommendedImageRectWidth, right.recommendedImageRectWidth),
+		    smaller(left.maxImageRectWidth, right.maxImageRectWidth), scale);
 	if (height)
-		*height = (uint32_t)((float)xr_main_view(XruEyeLeft).recommendedImageRectHeight * scale);
+		*height = ScaledImageSize(std::max(left.recommendedImageRectHeight, right.recommendedImageRectHeight),
+		    smaller(left.maxImageRectHeight, right.maxImageRectHeight), scale);
 }
 
 // from BaseSystem

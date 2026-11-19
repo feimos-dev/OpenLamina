@@ -46,6 +46,9 @@ public:
 	// from BaseSystem
 
 	void GetRecommendedRenderTargetSize(uint32_t* width, uint32_t* height) override;
+	/** One dimension of an image size: the recommended one times the render scale, rounded, within the largest the
+	 * runtime allows (0 for no limit) and at least one pixel */
+	static uint32_t ScaledImageSize(uint32_t recommended, uint32_t maximum, float scale);
 	// The render scale GetRecommendedRenderTargetSize last answered with, 0 before it has
 	static float AnsweredRenderScale();
 
