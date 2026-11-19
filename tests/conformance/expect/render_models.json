@@ -1,8 +1,8 @@
 {
  "#": "SteamVR's render models read from its install, on the stand-in (run.py --cases render-models --expect expect/render_models.json; run.py makes tests/unit/data/steamvr, our own fixture, SteamVR's install for this case). The fixture's models are listed with the built-in ones it doesn't have. test_controller has no OBJ of its own, so it is its two components together (a four-cornered plate and a triangle: 7 vertices, 3 triangles) with its 2x2 PNG, also as a D3D11 texture. Each component's render model is <model>/<component>; the trigger (controller_axis 1, so Axis1's button bit) turns -20 degrees about X through its pivot when pulled, its local frame with it; the body is static at its component_local. The thumbnail is the JSON's, as a file URL; the original path is the model's OBJ. vive_tracker's JSON isn't JSON: the built-in tracker (10659 vertices, no texture) is answered.",
  "render-models/models/-/-": {
-  "count": 4,
-  "names": ["test_controller", "vive_tracker", "renderLeftHand", "renderRightHand"]
+  "count": 8,
+  "names": ["test_controller", "vive_tracker", "renderLeftHand", "renderRightHand", "oculus_quest2_controller_left", "oculus_quest2_controller_right", "{indexcontroller}valve_controller_knu_1_0_left", "{indexcontroller}valve_controller_knu_1_0_right"]
  },
  "render-models/load test_controller/-/-": {
   "ret": 0,
@@ -71,6 +71,13 @@
   "unknown_original": 0,
   "unknown_original_error": 301,
   "short_buffer_error": 306,
-  "short_buffer_needs_more": true
+  "short_buffer_needs_more": true,
+  "unknown_texture": 300,
+  "unknown_texture_null": true,
+  "hand_textured": true,
+  "hand_texture_ret": 0,
+  "hand_texture": "1x1",
+  "path_ret": 0,
+  "path_has_vertices": true
  }
 }

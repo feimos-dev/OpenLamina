@@ -4,6 +4,7 @@
 #define BASE_IMPL
 #include "BaseRenderModels.h"
 #include "Misc/AppManifest.h"
+#include "Misc/BuiltInResource.h"
 #include "Misc/Config.h"
 #include "Misc/SteamVRRenderModels.h"
 #include "convert.h"
@@ -106,20 +107,23 @@ typedef OOVR_EVRRenderModelError EVRRenderModelError;
 typedef OOVR_RenderModel_TextureMap_t RenderModel_TextureMap_t;
 typedef OOVR_TextureID_t TextureID_t;
 
-// The render models OpenComposite has (LoadRenderModel_Async), each with one component named after it
+// The render models OpenLamina builds in, each with one component named after it: every name LoadRenderModel_Async loads
+static const char* const kOwnModelNames[] = {
+	"renderLeftHand",
+	"renderRightHand",
+	"vive_tracker",
+	"oculus_quest2_controller_left",
+	"oculus_quest2_controller_right",
+	"{indexcontroller}valve_controller_knu_1_0_left",
+	"{indexcontroller}valve_controller_knu_1_0_right",
+};
+
+// The own models and the headset's name, which is known but has nothing to draw
 static bool IsKnownRenderModel(const char* name)
 {
-	static const char* const known[] = {
-		"renderLeftHand",
-		"renderRightHand",
-		"oculusHmdRenderModel",
-		"oculus_quest2_controller_left",
-		"oculus_quest2_controller_right",
-		"{indexcontroller}valve_controller_knu_1_0_left",
-		"{indexcontroller}valve_controller_knu_1_0_right",
-		"vive_tracker",
-	};
-	for (const char* k : known)
+	if (strcmp(name, "oculusHmdRenderModel") == 0)
+		return true;
+	for (const char* k : kOwnModelNames)
 		if (strcmp(k, name) == 0)
 			return true;
 	return false;
@@ -244,6 +248,9 @@ static TextureID_t SteamVRTextureId(const std::filesystem::path& file)
 	return id;
 }
 
+// The id of the texture of OpenLamina's own models: the hand colour, 1x1. SteamVR's ids are small numbers from 1
+static constexpr TextureID_t kOwnTextureId = 1000000;
+
 static std::shared_ptr<const Image> SteamVRTexture(TextureID_t id)
 {
 	SteamVRTextures& t = Textures();
@@ -271,6 +278,24 @@ static std::shared_ptr<const Image> SteamVRTexture(TextureID_t id)
 	return image;
 }
 
+static std::shared_ptr<const Image> OwnTexture()
+{
+	vr::HmdColor_t colour = oovr_global_configuration.HandColour();
+	auto image = std::make_shared<Image>();
+	image->width = 1;
+	image->height = 1;
+	image->rgba = { (uint8_t)(colour.r * 255), (uint8_t)(colour.g * 255), (uint8_t)(colour.b * 255), (uint8_t)(colour.a * 255) };
+	return image;
+}
+
+// The pixels of a texture id: SteamVR's, or the hand colour for the own models'; null for any other id
+static std::shared_ptr<const Image> ResolveTexture(TextureID_t id)
+{
+	if (id == kOwnTextureId)
+		return OwnTexture();
+	return SteamVRTexture(id);
+}
+
 // A model of SteamVR's install by name: a model ("<name>" or "{<driver>}<name>"), one of its components
 // ("<model>/<component>", what GetComponentRenderModelName answers) or an OBJ file's absolute path (what
 // GetRenderModelOriginalPath answers). nullopt without SteamVR or for anything it can't load.
@@ -283,8 +308,6 @@ static std::optional<RmMesh> SteamVRMesh(const string& name)
 		if (std::shared_ptr<const RmModel> model = FindSteamVRRenderModel(name.substr(0, slash)))
 			return LoadRenderModelMesh(*model, name.substr(slash + 1));
 	}
-	if (SteamVRRenderModelNames().empty())
-		return std::nullopt; // no SteamVR
 	try {
 		std::filesystem::path file = PathFromUtf8(name);
 		std::error_code ec;
@@ -317,45 +340,12 @@ static const std::vector<string>& AllModelNames()
 {
 	static const std::vector<string>& names = *[] {
 		auto* all = new std::vector<string>(SteamVRRenderModelNames());
-		for (const char* own : { "renderLeftHand", "renderRightHand", "vive_tracker" })
+		for (const char* own : kOwnModelNames)
 			if (std::find(all->begin(), all->end(), own) == all->end())
 				all->push_back(own);
 		return all;
 	}();
 	return names;
-}
-
-static string loadResource(int rid)
-{
-#ifndef _WIN32
-	const char *start = nullptr, *end = nullptr;
-	FindResourceLinux(rid, &start, &end);
-	if (!start || !end)
-		return {};
-	return { start, (size_t)(end - start) };
-#else
-	// Open our OBJ file
-	HRSRC ref = FindResource(openovr_module_id, MAKEINTRESOURCE(rid), MAKEINTRESOURCE(RES_T_OBJ));
-	// An empty string if it can't be read: LoadRenderModel_Async then answers NotSupported
-	if (!ref) {
-		OOVR_LOGF("FindResource error: %lu", GetLastError());
-		return {};
-	}
-
-	char* cstr = (char*)LoadResource(openovr_module_id, ref);
-	if (!cstr) {
-		OOVR_LOGF("LoadResource error: %lu", GetLastError());
-		return {};
-	}
-
-	DWORD len = SizeofResource(openovr_module_id, ref);
-	if (!len) {
-		OOVR_LOGF("SizeofResource error: %lu", GetLastError());
-		return {};
-	}
-
-	return string(cstr, len);
-#endif
 }
 
 static OOVR_RenderModel_Vertex_t split_face(
@@ -394,6 +384,100 @@ static OOVR_RenderModel_Vertex_t split_face(
 	out.rfTextureCoord[0] = uvs[uv].v[0];
 	out.rfTextureCoord[1] = uvs[uv].v[1];
 	return out;
+}
+
+// The model built into the DLL as the game gets it, built once
+struct BuiltInMesh {
+	std::vector<OOVR_RenderModel_Vertex_t> vertices;
+};
+
+static std::shared_ptr<const BuiltInMesh> BuildBuiltInMesh(int rid, float sided)
+{
+	std::vector<char> resource = ReadBuiltInResource(rid, RES_T_OBJ);
+	if (resource.empty())
+		return nullptr;
+	std::istringstream res(string(resource.data(), resource.size()));
+
+	std::vector<vr::HmdVector3_t> verts;
+	std::vector<vr::HmdVector2_t> uvs;
+	std::vector<vr::HmdVector3_t> normals;
+	std::vector<OOVR_RenderModel_Vertex_t> vertexData;
+
+	// Transform to line up the model with the Touch controller
+	mat4 modelTransform = mat4(glm::rotate(sided * std::numbers::pi_v<float> / 2, vec3(0, 0, 1)));
+	modelTransform[3] = vec4(sided * 0.015f, 0.0f, 0.03f, 1.0f);
+
+	// SteamVR rotates it's models 180deg around the Y axis for some reason
+	modelTransform *= mat4(glm::rotate(std::numbers::pi_v<float>, vec3(0, 1, 0)));
+
+	mat4 transform = glm::inverse(rid == RES_O_VIVE_TRACKER ? BaseCompositor::GetTrackerTransform() : BaseCompositor::GetHandTransform()) * modelTransform;
+
+	while (!res.eof()) {
+		string op;
+		res >> op;
+
+		if (op == "v") {
+			// Vertex
+			vec3 v;
+			res >> v.x >> v.y >> v.z;
+			// Maya exports in cm, so translate that to meters
+			v *= 0.01f;
+
+			verts.push_back(G2S_v3f(v));
+		} else if (op == "vt") {
+			// UV
+			float x, y;
+			res >> x >> y;
+			uvs.push_back(vr::HmdVector2_t{ x, y });
+		} else if (op == "vn") {
+			// Normal
+			vec3 v;
+			res >> v.x >> v.y >> v.z;
+
+			normals.push_back(G2S_v3f(v));
+		} else if (op == "f") {
+			// Face
+			string a, b, c;
+			res >> a >> b >> c;
+
+			vertexData.push_back(split_face(a, verts, uvs, normals));
+			vertexData.push_back(split_face(b, verts, uvs, normals));
+			vertexData.push_back(split_face(c, verts, uvs, normals));
+		}
+	}
+
+	auto mesh = std::make_shared<BuiltInMesh>();
+	mesh->vertices.resize(vertexData.size());
+	for (size_t i = 0; i < vertexData.size(); i++) {
+		vec4 vertex = transform * vec4(vertexData[i].vPosition.v[0], vertexData[i].vPosition.v[1], vertexData[i].vPosition.v[2], 1.0f);
+		OOVR_RenderModel_Vertex_t& out = mesh->vertices[i];
+		out.vPosition.v[0] = vertex.x;
+		out.vPosition.v[1] = vertex.y;
+		out.vPosition.v[2] = vertex.z;
+		out.vNormal = vertexData[i].vNormal;
+		out.rfTextureCoord[0] = vertexData[i].rfTextureCoord[0];
+		out.rfTextureCoord[1] = vertexData[i].rfTextureCoord[1];
+	}
+	return mesh;
+}
+
+// A model for the game from the built, as a copy it frees with FreeRenderModel
+static EVRRenderModelError MakeRenderModel(const BuiltInMesh& mesh, RenderModel_t** renderModel)
+{
+	auto* rm = new RenderModel_t();
+	rm->unVertexCount = (uint32_t)mesh.vertices.size();
+	auto* vertices = new OOVR_RenderModel_Vertex_t[mesh.vertices.size()];
+	memcpy(vertices, mesh.vertices.data(), mesh.vertices.size() * sizeof(OOVR_RenderModel_Vertex_t));
+	rm->rVertexData = vertices;
+	auto* indices = new uint16_t[mesh.vertices.size()];
+	for (size_t i = 0; i < mesh.vertices.size(); i++)
+		indices[i] = static_cast<uint16_t>(i);
+	rm->rIndexData = indices;
+	rm->unTriangleCount = rm->unVertexCount / 3;
+	rm->diffuseTextureId = kOwnTextureId;
+	AddLive(LiveModels(), rm);
+	*renderModel = rm;
+	return VRRenderModelError_None;
 }
 
 EVRRenderModelError BaseRenderModels::LoadRenderModel_Async(const char* pchRenderModelName, RenderModel_t** renderModel)
@@ -461,88 +545,20 @@ EVRRenderModelError BaseRenderModels::LoadRenderModel_Async(const char* pchRende
 		OC_UNSUPPORTED(VRRenderModelError_InvalidModel, "LoadRenderModel_Async: no render model '%s'", pchRenderModelName);
 	}
 
-	string resource = loadResource(rid);
-	if (resource.empty())
-		return VRRenderModelError_NotSupported;
-	std::istringstream res = std::istringstream(resource);
-
-	std::vector<vr::HmdVector3_t> verts;
-	std::vector<vr::HmdVector2_t> uvs;
-	std::vector<vr::HmdVector3_t> normals;
-	std::vector<OOVR_RenderModel_Vertex_t> vertexData;
-
-	// Transform to line up the model with the Touch controller
-	mat4 modelTransform = mat4(glm::rotate(sided * std::numbers::pi_v<float> / 2, vec3(0, 0, 1)));
-	modelTransform[3] = vec4(sided * 0.015f, 0.0f, 0.03f, 1.0f);
-
-	// SteamVR rotates it's models 180deg around the Y axis for some reason
-	modelTransform *= mat4(glm::rotate(std::numbers::pi_v<float>, vec3(0, 1, 0)));
-
-	mat4 transform = glm::inverse(rid == RES_O_VIVE_TRACKER ? BaseCompositor::GetTrackerTransform() : BaseCompositor::GetHandTransform()) * modelTransform;
-
-	while (!res.eof()) {
-		string op;
-		res >> op;
-
-		if (op == "v") {
-			// Vertex
-			vec3 v;
-			res >> v.x >> v.y >> v.z;
-			// Maya exports in cm, so translate that to meters
-			v *= 0.01f;
-
-			verts.push_back(G2S_v3f(v));
-		} else if (op == "vt") {
-			// UV
-			float x, y;
-			res >> x >> y;
-			uvs.push_back(vr::HmdVector2_t{ x, y });
-		} else if (op == "vn") {
-			// Normal
-			vec3 v;
-			res >> v.x >> v.y >> v.z;
-
-			normals.push_back(G2S_v3f(v));
-		} else if (op == "f") {
-			// Face
-			string a, b, c;
-			res >> a >> b >> c;
-
-			vertexData.push_back(split_face(a, verts, uvs, normals));
-			vertexData.push_back(split_face(b, verts, uvs, normals));
-			vertexData.push_back(split_face(c, verts, uvs, normals));
+	{
+		// Built once per model: the parse is the slow part
+		static std::mutex builtInLock;
+		static std::map<string, std::shared_ptr<const BuiltInMesh>> builtIn;
+		std::lock_guard<std::mutex> guard(builtInLock);
+		auto it = builtIn.find(name);
+		if (it == builtIn.end()) {
+			std::shared_ptr<const BuiltInMesh> mesh = BuildBuiltInMesh(rid, sided);
+			it = builtIn.emplace(name, mesh).first;
 		}
+		if (!it->second)
+			return VRRenderModelError_NotSupported;
+		return MakeRenderModel(*it->second, renderModel);
 	}
-
-	*renderModel = new RenderModel_t();
-	RenderModel_t& rm = **renderModel;
-
-	rm.unVertexCount = (uint32_t)vertexData.size();
-	OOVR_RenderModel_Vertex_t* vertexData_arr = new OOVR_RenderModel_Vertex_t[rm.unVertexCount];
-	rm.rVertexData = vertexData_arr;
-	for (uint32_t i = 0; i < rm.unVertexCount; i++) {
-		vec4 vertex = vec4(vertexData[i].vPosition.v[0], vertexData[i].vPosition.v[1], vertexData[i].vPosition.v[2], 1.0f);
-		vertex = transform * vertex;
-		vertexData_arr[i].vPosition.v[0] = vertex.x;
-		vertexData_arr[i].vPosition.v[1] = vertex.y;
-		vertexData_arr[i].vPosition.v[2] = vertex.z;
-		vertexData_arr[i].vNormal = vertexData[i].vNormal;
-		vertexData_arr[i].rfTextureCoord[0] = vertexData[i].rfTextureCoord[0];
-		vertexData_arr[i].rfTextureCoord[1] = vertexData[i].rfTextureCoord[1];
-	}
-
-	uint16_t* indexData = new uint16_t[rm.unVertexCount];
-	for (uint32_t i = 0; i < rm.unVertexCount; i++) {
-		indexData[i] = static_cast<uint16_t>(i);
-	}
-	rm.rIndexData = indexData;
-	rm.unTriangleCount = rm.unVertexCount / 3;
-	AddLive(LiveModels(), *renderModel);
-
-	// Texture
-	rm.diffuseTextureId = -1; // Disabled for now
-
-	return VRRenderModelError_None;
 }
 
 void BaseRenderModels::FreeRenderModel(RenderModel_t* renderModel)
@@ -585,7 +601,7 @@ bool BaseRenderModels::LoadRenderModelInline(const char* pchRenderModelName, vr:
 	if (LoadRenderModel_Async(pchRenderModelName, &model) != VRRenderModelError_None || !model)
 		return false;
 	RenderModel_TextureMap_t* texture = nullptr;
-	if (LoadTexture_Async(std::max(model->diffuseTextureId, 0), &texture) != VRRenderModelError_None || !texture) {
+	if (LoadTexture_Async(model->diffuseTextureId >= 0 ? model->diffuseTextureId : kOwnTextureId, &texture) != VRRenderModelError_None || !texture) {
 		FreeRenderModel(model);
 		return false;
 	}
@@ -628,34 +644,24 @@ EVRRenderModelError BaseRenderModels::LoadTexture_Async(TextureID_t textureId, R
 {
 	if (!texture)
 		return VRRenderModelError_InvalidArg;
-	*texture = new RenderModel_TextureMap_t();
-	AddLive(LiveTextures(), *texture);
-	RenderModel_TextureMap_t& tx = **texture;
-	tx.format = 0;
-	tx.unMipLevels = 1;
+	*texture = nullptr;
 
-	// A SteamVR model's texture
-	if (std::shared_ptr<const Image> steamvr = SteamVRTexture(textureId)) {
-		tx.unWidth = (uint16_t)steamvr->width;
-		tx.unHeight = (uint16_t)steamvr->height;
-		uint8_t* pixels = new uint8_t[steamvr->rgba.size()];
-		memcpy(pixels, steamvr->rgba.data(), steamvr->rgba.size());
-		tx.rubTextureMapData = pixels;
-		return VRRenderModelError_None;
-	}
+	// A SteamVR model's texture, or the own models' hand colour
+	std::shared_ptr<const Image> image = ResolveTexture(textureId);
+	if (!image)
+		return VRRenderModelError_InvalidArg;
 
-	// OpenLamina's own models: a 1x1 texture of the hand colour
-	tx.unWidth = 1;
-	tx.unHeight = 1;
-	uint8_t* d = new uint8_t[tx.unWidth * tx.unHeight * 4];
-	tx.rubTextureMapData = d;
-
-	vr::HmdColor_t colour = oovr_global_configuration.HandColour();
-	d[0] = (uint8_t)(colour.r * 255);
-	d[1] = (uint8_t)(colour.g * 255);
-	d[2] = (uint8_t)(colour.b * 255);
-	d[3] = (uint8_t)(colour.a * 255);
-
+	// The newest layout of the struct: programs built with an older SDK read a prefix of it
+	auto* tx = new RenderModel_TextureMap_t();
+	tx->unWidth = (uint16_t)image->width;
+	tx->unHeight = (uint16_t)image->height;
+	uint8_t* pixels = new uint8_t[image->rgba.size()];
+	memcpy(pixels, image->rgba.data(), image->rgba.size());
+	tx->rubTextureMapData = pixels;
+	tx->format = 0;
+	tx->unMipLevels = 1;
+	AddLive(LiveTextures(), tx);
+	*texture = tx;
 	return VRRenderModelError_None;
 }
 
@@ -673,10 +679,9 @@ EVRRenderModelError BaseRenderModels::LoadTextureD3D11_Async(TextureID_t texture
 {
 	if (ppD3D11Texture2D)
 		*ppD3D11Texture2D = nullptr;
-	std::shared_ptr<const Image> tex = SteamVRTexture(textureId);
-	// OpenLamina's own models have no texture ids (only the hand colour LoadTexture_Async gives)
+	std::shared_ptr<const Image> tex = ResolveTexture(textureId);
 	if (!tex)
-		OC_UNSUPPORTED(VRRenderModelError_NotSupported, "LoadTextureD3D11_Async: no texture %d (only SteamVR's models have textures)", (int)textureId);
+		return VRRenderModelError_InvalidArg;
 #ifndef SUPPORT_DX11
 	OC_UNSUPPORTED(VRRenderModelError_NotSupported, "LoadTextureD3D11_Async: this build has no D3D11 support");
 #else
@@ -687,15 +692,22 @@ EVRRenderModelError BaseRenderModels::LoadTextureD3D11_Async(TextureID_t texture
 	D3D11_TEXTURE2D_DESC desc{};
 	desc.Width = tex->width;
 	desc.Height = tex->height;
-	desc.MipLevels = 1;
+	// The whole mip chain, each level with its own pixels
+	std::vector<Image> mips = BuildMipChain(*tex, 0);
+	desc.MipLevels = (UINT)mips.size();
 	desc.ArraySize = 1;
 	desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
 	desc.SampleDesc.Count = 1;
 	desc.Usage = D3D11_USAGE_DEFAULT;
 	desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
-	D3D11_SUBRESOURCE_DATA init{ tex->rgba.data(), tex->width * 4, 0 };
+	std::vector<D3D11_SUBRESOURCE_DATA> init(mips.size());
+	for (size_t i = 0; i < mips.size(); i++) {
+		init[i].pSysMem = mips[i].rgba.data();
+		init[i].SysMemPitch = mips[i].width * 4;
+		init[i].SysMemSlicePitch = 0;
+	}
 	ID3D11Texture2D* out = nullptr;
-	HRESULT hr = ((ID3D11Device*)pD3D11Device)->CreateTexture2D(&desc, &init, &out);
+	HRESULT hr = ((ID3D11Device*)pD3D11Device)->CreateTexture2D(&desc, init.data(), &out);
 	if (FAILED(hr) || !out)
 		OC_UNSUPPORTED(VRRenderModelError_InvalidTexture, "LoadTextureD3D11_Async: CreateTexture2D failed (0x%08lx)", (unsigned long)hr);
 	AddLive(LiveD3D11Textures(), out);
@@ -714,16 +726,9 @@ EVRRenderModelError BaseRenderModels::LoadIntoTextureD3D11_Async(TextureID_t tex
 	if ((uintptr_t)output < 0x10000)
 		return VRRenderModelError_InvalidArg;
 
-	struct pix_t {
-		uint8_t r, g, b, a;
-	};
-
-	// Grab the desired colour
-	vr::HmdColor_t colour = oovr_global_configuration.HandColour();
-
-	pix_t pixColour = { (uint8_t)(colour.r * 255), (uint8_t)(colour.g * 255), (uint8_t)(colour.b * 255), 255 };
-
-	// Since we don't know what the map flags are, make an identical texture and copy across
+	std::shared_ptr<const Image> source = ResolveTexture(textureId);
+	if (!source)
+		return VRRenderModelError_InvalidArg;
 
 	// D3D11 setup
 	ID3D11Device* device;
@@ -731,32 +736,34 @@ EVRRenderModelError BaseRenderModels::LoadIntoTextureD3D11_Async(TextureID_t tex
 	output->GetDevice(&device);
 	device->GetImmediateContext(&context);
 
-	// Create the temporary texture
 	D3D11_TEXTURE2D_DESC desc;
 	output->GetDesc(&desc);
 
-	// Quite conveniently, HmdColor_t happens to have the perfect layout for this
-	int px_count = desc.Width * desc.Height;
-	pix_t* pixels = new pix_t[px_count];
-	for (int i = 0; i < px_count; i++) {
-		pixels[i] = pixColour;
+	// Only four-byte RGBA targets can take the pixels
+	if (desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM && desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
+	    && desc.Format != DXGI_FORMAT_R8G8B8A8_TYPELESS) {
+		context->Release();
+		device->Release();
+		return VRRenderModelError_InvalidTexture;
 	}
-	// A SteamVR model's texture of the texture's size: its pixels
-	std::shared_ptr<const Image> steamvr = SteamVRTexture(textureId);
-	if (steamvr && steamvr->width == desc.Width && steamvr->height == desc.Height)
-		memcpy(pixels, steamvr->rgba.data(), (size_t)px_count * sizeof(pix_t));
 
-	// Cross our fingers it's a four-byte RGBA format.
-	int count = desc.MipLevels * desc.ArraySize;
-	D3D11_SUBRESOURCE_DATA* init = new D3D11_SUBRESOURCE_DATA[count];
-	for (int i = 0; i < count; i++) {
-		init[i] = { pixels, desc.Width * (UINT)sizeof(pix_t), 0 };
+	// Since we don't know what the map flags are, make an identical texture and copy across: the texture scaled to the
+	// target's size, with a mip chain down from it for every array slice
+	Image base = ResampleImage(*source, desc.Width, desc.Height);
+	std::vector<Image> mips = BuildMipChain(base, desc.MipLevels);
+	std::vector<D3D11_SUBRESOURCE_DATA> init;
+	for (UINT slice = 0; slice < desc.ArraySize; slice++) {
+		for (UINT level = 0; level < desc.MipLevels; level++) {
+			const Image& mip = mips[level < mips.size() ? level : mips.size() - 1];
+			D3D11_SUBRESOURCE_DATA data{};
+			data.pSysMem = mip.rgba.data();
+			data.SysMemPitch = mip.width * 4;
+			init.push_back(data);
+		}
 	}
 
 	ID3D11Texture2D* tempTex = nullptr;
-	HRESULT hr = device->CreateTexture2D(&desc, init, &tempTex);
-	delete[] init;
-	delete[] pixels;
+	HRESULT hr = device->CreateTexture2D(&desc, init.data(), &tempTex);
 	if (FAILED(hr)) {
 		// The app's texture keeps what it had
 		context->Release();

@@ -3223,6 +3223,28 @@ void RenderModelsCase(CaseContext& c)
 	uint32_t needed = rm->GetRenderModelOriginalPath("test_controller", text, sizeof(text), &pe);
 	r["short_buffer_error"] = (int)pe;
 	r["short_buffer_needs_more"] = needed > sizeof(text);
+	RenderModel_TextureMap_t* missing = nullptr;
+	r["unknown_texture"] = (int)rm->LoadTexture_Async(-5, &missing);
+	r["unknown_texture_null"] = missing == nullptr;
+	RenderModel_t* hand = nullptr;
+	if (load("renderLeftHand", &hand) == VRRenderModelError_None && hand) {
+		RenderModel_TextureMap_t* handTexture = nullptr;
+		r["hand_textured"] = hand->diffuseTextureId >= 0;
+		r["hand_texture_ret"] = (int)rm->LoadTexture_Async(hand->diffuseTextureId, &handTexture);
+		if (handTexture) {
+			r["hand_texture"] = std::to_string(handTexture->unWidth) + "x" + std::to_string(handTexture->unHeight);
+			rm->FreeTexture(handTexture);
+		}
+		rm->FreeRenderModel(hand);
+	}
+	// An OBJ file by its absolute path
+	std::string objPath = (std::filesystem::path(OC_TEST_DATA_DIR) / "steamvr" / "resources" / "rendermodels" / "test_controller" / "body.obj").string();
+	RenderModel_t* byPath = nullptr;
+	r["path_ret"] = load(objPath.c_str(), &byPath);
+	if (byPath) {
+		r["path_has_vertices"] = byPath->unVertexCount > 0;
+		rm->FreeRenderModel(byPath);
+	}
 	c.Record("answers", r);
 
 	c.core->Cleanup();
