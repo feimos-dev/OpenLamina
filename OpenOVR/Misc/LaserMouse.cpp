@@ -106,6 +106,9 @@ void LaserMouse::Update(const std::array<PointerRay, 2>& rays, const std::vector
 	const Hand& driver = hands[active];
 	const vr::TrackedDeviceIndex_t device = rays[active].device;
 
+	if (driver.target != vr::k_ulOverlayHandleInvalid)
+		hover = driver.target;
+
 	const vr::VROverlayHandle_t newFocus = clickOwner >= 0 ? clickTarget : driver.target;
 	if (newFocus != focus) {
 		if (focus != vr::k_ulOverlayHandleInvalid) {

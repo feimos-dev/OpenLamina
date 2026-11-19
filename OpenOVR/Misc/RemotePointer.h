@@ -39,6 +39,9 @@ struct RemotePointerEvent {
 StoreEvent MakeRemotePointerEvent(const RemotePointerEvent& e);
 RemotePointerEvent UnpackRemotePointer(const uint64_t (&data)[4]);
 
+// An overlay's "mask" list from the Overlays document: its primitives, in units of the overlay's width and height
+std::vector<OOVR_VROverlayIntersectionMaskPrimitive_t> MaskFromJson(const Json::Value& mask);
+
 // Each one to the other programs, in order, without waiting for the store (they're posted from the game's frame): how
 // many of them, from the first, were posted. The rest are the caller's to post again.
 size_t PostRemotePointerEvents(const std::vector<StoreEvent>& events);

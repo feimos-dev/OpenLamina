@@ -165,3 +165,21 @@ TEST_CASE("Any_overlay_event_is_polled_with_its_overlay_handle")
 	CHECK_FALSE(overlays.PollNextAnyOverlayEvent(&e, sizeof(e), &from));
 	(void)first;
 }
+
+TEST_CASE("An_intersection_mask_has_at_most_32_primitives_of_known_types")
+{
+	BaseOverlay overlays;
+	const VROverlayHandle_t h = Make(overlays, "oc.test.mask");
+	std::vector<OOVR_VROverlayIntersectionMaskPrimitive_t> prims(33);
+	for (auto& p : prims) {
+		p = {};
+		p.m_nPrimitiveType = OverlayIntersectionPrimitiveType_Circle;
+		p.m_Primitive.m_Circle = { 0.5f, 0.5f, 0.25f };
+	}
+	const uint32_t size = sizeof(OOVR_VROverlayIntersectionMaskPrimitive_t);
+	CHECK(overlays.SetOverlayIntersectionMask(h, prims.data(), 32, size) == VROverlayError_None);
+	CHECK(overlays.SetOverlayIntersectionMask(h, prims.data(), 33, size) == VROverlayError_TooManyMaskPrimitives);
+	CHECK(overlays.SetOverlayIntersectionMask(h, prims.data(), 1, size + 4) == VROverlayError_BadMaskPrimitive);
+	prims[0].m_nPrimitiveType = (OOVR_EVROverlayIntersectionMaskPrimitiveType)7;
+	CHECK(overlays.SetOverlayIntersectionMask(h, prims.data(), 1, size) == VROverlayError_BadMaskPrimitive);
+}

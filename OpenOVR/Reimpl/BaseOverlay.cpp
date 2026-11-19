@@ -2652,7 +2652,7 @@ bool BaseOverlay::ComputeOverlayIntersection(VROverlayHandle_t ulOverlayHandle, 
 {
 	Json::Value remote;
 	if (RemoteOverlayEntry(ulOverlayHandle, remote)) {
-		// Another program's overlay: its whole area (its intersection mask is its owner's)
+		// Another program's overlay, with its owner's intersection mask
 		overlay_maths::Placement there{};
 		if (!pParams || !pResults || !RemoteOverlayPlacement(remote, pParams->eOrigin, there))
 			return false;
@@ -2666,7 +2666,8 @@ bool BaseOverlay::ComputeOverlayIntersection(VROverlayHandle_t ulOverlayHandle, 
 		pResults->vNormal = { hit.normal.x, hit.normal.y, hit.normal.z };
 		pResults->vUVs = { hit.u, hit.v };
 		pResults->fDistance = hit.distance;
-		return on;
+		// The mask is in units of the overlay's width and height, from its lower left
+		return on && overlay_maths::InMask(MaskFromJson(remote["mask"]), hit.u, hit.v);
 	}
 	USEHB();
 
@@ -2819,9 +2820,9 @@ bool BaseOverlay::IsFocusOverlay(VROverlayHandle_t ulOverlayHandle)
 bool BaseOverlay::IsHoverTargetOverlay(VROverlayHandle_t ulOverlayHandle)
 {
 	USEHB();
-	// The overlay the laser driving the mouse is on
+	// The last overlay the laser driving the mouse was on
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
-	return pointing->mouse.Focus() == ulOverlayHandle;
+	return pointing->mouse.Hover() == ulOverlayHandle;
 }
 VROverlayHandle_t BaseOverlay::GetGamepadFocusOverlay()
 {
@@ -3557,13 +3558,16 @@ EVROverlayError BaseOverlay::SetOverlayIntersectionMask(VROverlayHandle_t ulOver
 		return VROverlayError_None;
 	}
 	if (unPrimitiveSize != sizeof(OOVR_VROverlayIntersectionMaskPrimitive_t))
-		OC_UNSUPPORTED(VROverlayError_None, "SetOverlayIntersectionMask: primitives of %u bytes, not %u: kept as the whole overlay",
-		    unPrimitiveSize, (unsigned)sizeof(OOVR_VROverlayIntersectionMaskPrimitive_t));
-	// Bounded: a mask is a few shapes, not a texture's worth
-	static constexpr uint32_t maxPrimitives = 4096;
+		return VROverlayError_BadMaskPrimitive;
+	// k_unMaxOverlayIntersectionMaskPrimitivesCount
+	static constexpr uint32_t maxPrimitives = 32;
 	if (unNumMaskPrimitives > maxPrimitives)
-		OC_UNSUPPORTED(VROverlayError_None, "SetOverlayIntersectionMask: %u primitives, more than %u: kept as the whole overlay",
-		    unNumMaskPrimitives, maxPrimitives);
+		return VROverlayError_TooManyMaskPrimitives;
+	for (uint32_t i = 0; i < unNumMaskPrimitives; i++) {
+		const int type = (int)pMaskPrimitives[i].m_nPrimitiveType;
+		if (type != OverlayIntersectionPrimitiveType_Rectangle && type != OverlayIntersectionPrimitiveType_Circle)
+			return VROverlayError_BadMaskPrimitive;
+	}
 	overlay->intersectionMask.assign(pMaskPrimitives, pMaskPrimitives + unNumMaskPrimitives);
 	return VROverlayError_None;
 }
