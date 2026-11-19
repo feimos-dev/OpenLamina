@@ -404,7 +404,6 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/Input/HolographicInteractionProfile.cpp
 	OpenOVR/Misc/Input/ReverbG2InteractionProfile.cpp
 	OpenOVR/Misc/Input/ViveTrackerInteractionProfile.cpp
-	OpenOVR/OpenOVR.cpp
 	OpenOVR/Reimpl/BaseApplications.cpp
 	OpenOVR/Reimpl/BaseChaperone.cpp
 	OpenOVR/Reimpl/BaseChaperoneSetup.cpp
