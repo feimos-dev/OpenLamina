@@ -251,6 +251,20 @@ jobs:
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases laser-mouse --script tests/conformance/scripts/laser.json --ini tests/conformance/ini/laser_mouse_steamvr.ini --expect tests/conformance/expect/laser_mouse.json --out conformance/laser-mouse-steamvr
           if ($LASTEXITCODE) { $failed++ }
+          # The features that are on by default, with the defaults as they ship (every other run starts from
+          # ini/features_off.ini): the same answers as their own runs above
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --shipped-defaults --cases laser-mouse --script tests/conformance/scripts/laser.json --expect tests/conformance/expect/laser_mouse.json --out conformance/defaults-laser-mouse
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --shipped-defaults --cases session-events --script tests/conformance/scripts/session_events.json --expect tests/conformance/expect/session_events.json --out conformance/defaults-session-events
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --shipped-defaults --cases gfx-d3d11-pose-depth,gfx-d3d12-pose-depth,gfx-vk-pose-depth,gfx-gl-pose-depth --script tests/conformance/scripts/gfx_depth.json --expect tests/conformance/expect/gfx_pose_depth.json --allow-skip ".*-(vk|gl)(-.*)?" --out conformance/defaults-pose-depth
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --shipped-defaults --cases own-frames,own-frames-race,own-frames-nothing-shown,own-frames-overlay-churn --repeat 2 --jobs 2 --expect tests/conformance/expect/own_frames.json --out conformance/defaults-own-frames
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --shipped-defaults --cases message-overlay --script tests/conformance/scripts/message_box.json --expect tests/conformance/expect/message_overlay.json --out conformance/defaults-message-overlay
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --shipped-defaults --cases bounds --script tests/conformance/scripts/bounds.json --expect tests/conformance/expect/bounds.json --out conformance/defaults-bounds
+          if ($LASTEXITCODE) { $failed++ }
           # A message box in OpenLamina's own frames, answered with the laser
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases message-overlay --script tests/conformance/scripts/message_box.json --ini tests/conformance/ini/own_frames.ini --expect tests/conformance/expect/message_overlay.json --out conformance/message-overlay
           if ($LASTEXITCODE) { $failed++ }

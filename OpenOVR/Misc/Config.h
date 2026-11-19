@@ -51,8 +51,8 @@ public:
 	inline bool LogAllOpenVRCalls() const { return logAllOpenVRCalls; }
 	/** The program OpenBindingUI starts; empty for none */
 	const std::string& BindingEditor() const { return bindingEditor; }
-	/** How IVRInput evaluates a game's binding files: "direct" (default, each binding turned into OpenXR
-	 * bindings) or "steamvr" (OpenLamina evaluates SteamVR's modes on the controller's raw inputs) */
+	/** How IVRInput evaluates a game's binding files: "direct" (each binding turned into OpenXR
+	 * bindings) or "steamvr" (default: OpenLamina evaluates SteamVR's modes on the controller's raw inputs) */
 	std::string InputEvaluator() const { return inputEvaluator; }
 	/** The keyboard's layout: "us", "uk", or empty to choose by the user's locale (UK for en-GB, else US) */
 	const std::string& KeyboardLayout() const { return keyboardLayout; }
@@ -75,23 +75,23 @@ private:
 	bool enableHiddenMeshFix = true;
 	bool invertUsingShaders = false;
 	bool initUsingVulkan = false;
-	bool useSubmittedPose = false;
-	bool submitDepth = false;
-	bool ownFrames = false;
+	bool useSubmittedPose = true;
+	bool submitDepth = true;
+	bool ownFrames = true;
 	bool mirrorWindow = false;
-	bool keyboard = false;
-	bool laserMouse = false;
-	bool steamvrRenderModels = false;
+	bool keyboard = true;
+	bool laserMouse = true;
+	bool steamvrRenderModels = true;
 	bool helperApps = true;
 	uint32_t overlayLayersPlacement = 1;
-	std::string dashboardButton = "off";
-	bool drawBounds = false;
-	bool sessionEvents = false;
-	bool applyZeroPoses = false;
+	std::string dashboardButton = "system";
+	bool drawBounds = true;
+	bool sessionEvents = true;
+	bool applyZeroPoses = true;
 	float hiddenMeshVerticalScale = 1.0f;
 	bool logAllOpenVRCalls = false;
 	std::string bindingEditor;
-	std::string inputEvaluator = "direct";
+	std::string inputEvaluator = "steamvr";
 	std::string keyboardLayout;
 };
 

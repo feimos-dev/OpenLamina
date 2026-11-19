@@ -33,7 +33,7 @@ Upstream merge requests are linked as !*n* with their authors. Everything else w
   `tests/conformance/not_implemented.txt`). Old versions get the old struct layouts.
 - Settings, the application registry, room setup and their events are kept for real and shared by every program using
   OpenLamina, as SteamVR shares them.
-- SteamVR's binding files can be evaluated by OpenLamina itself, behind `inputEvaluator=steamvr` (see
+- SteamVR's binding files are evaluated by OpenLamina itself, with SteamVR's binding modes (`inputEvaluator`, see
   [the configuration file](#configuration-file)).
 - A conformance test program runs every method of every interface version and compares the answers with SteamVR's.
 
@@ -91,8 +91,8 @@ Upstream merge requests are linked as !*n* with their authors. Everything else w
   runtimes with overlay and headless sessions (`XR_EXTX_overlay`, `XR_MND_headless`, as Monado has): an overlay
   application's overlays are shown over the game, and a background application reads poses and events while another
   OpenLamina program runs. On Linux a background application gets a scene session.
-- With `dashboardButton`, a dashboard of OpenLamina's own opens over the game: the dashboard overlays of the overlay
-  applications running beside it, a tab for each, and a button to quit the game.
+- A dashboard of OpenLamina's own opens over the game with a controller's system button (`dashboardButton`): the
+  dashboard overlays of the overlay applications running beside it, a tab for each, and a button to quit the game.
 - A render scale another program sets (`supersampleScale`, the game's `resolutionScale`) reaches the game at its next
   frame, with the event SteamVR sends for it, so a game that asks for the recommended size again renders at the new one.
 
@@ -296,38 +296,38 @@ The available options are:
 	* If available the temporary graphics adapter at start up will use Vulkan by default. This may be incompatible with some games. This will mostly affect Oculus headsets. 
 * `hiddenMeshVerticalScale` - float, default `1.0`. 
 	* The scaling factor used for the hidden area mesh if supported by the application. The hidden area mesh is a region that the game doesn't render to. If you set this lower e.g. `0.8` then less will be drawn at the very top and very bottom of the image improving performance. Suggested range is `0.5` to `1.0`.
-* `useSubmittedPose` - boolean, default `false`.
+* `useSubmittedPose` - boolean, default `true`.
 	* For games that submit the head pose they rendered with (`Submit_TextureWithPose`): each eye's view is placed by that pose, rather than by the one OpenLamina located for the frame.
-* `submitDepth` - boolean, default `false`.
+* `submitDepth` - boolean, default `true`.
 	* For games that submit depth (`Submit_TextureWithDepth`), on runtimes with `XR_KHR_composition_layer_depth`: the depth goes to the runtime with each view (for reprojection), with the near and far planes of the game's projection. A Direct3D 12 game's depth texture is taken to be in `D3D12_RESOURCE_STATE_PIXEL_SHADER_RESOURCE` when it's submitted, as its colour texture is, and is left in it.
-* `ownFrames` - boolean, default `false`.
+* `ownFrames` - boolean, default `true`.
 	* While the game runs no frames (loading, a stall) and has an overlay or a skybox to show, OpenLamina runs frames of its own: the game's last frame again, which the runtime keeps reprojecting, with the overlays on top, or the skybox (`SetSkyboxOverride`) as equirect layers in its place. They start 100 ms after the game's last `WaitGetPoses` and never while its frame is open. On a Direct3D 11 session the device's immediate context is made multithread protected (logged), since these frames end on a thread of their own; a Vulkan or OpenGL session runs none, since its queue or context is the game's (Vulkan and OpenGL games whose frames go through Direct3D 11 have them). Without it, a skybox is shown at once as a quad, and the runtime is left with the game's last frame.
 * `mirrorWindow` - boolean, default `false`.
 	* A window on the desktop with the game's left eye, for games that ask for one (`ShowMirrorWindow`); closing it hides it. Its image is read back from the game's texture at full size, about 30 times a second, which costs frame time on a headset of high resolution. Without it the call does nothing, and the OpenXR runtime may have a mirror of its own. Windows only.
-* `keyboard` - boolean, default `false`.
+* `keyboard` - boolean, default `true`.
 	* The keyboard a game asks for (`ShowKeyboard`), typed by pointing at it with the controllers. The game still gets the controllers' input while it's up. Without it, the keyboard is answered as done at once.
 * `keyboardLayout` - `us` or `uk`, default by the user's locale (`uk` for en-GB, `us` otherwise).
 	* The layout of the keyboard games show to type text on, with the controllers' lasers.
-* `laserMouse` - boolean, default `false`.
-	* The controllers point at overlays that take mouse input (`VROverlayInputMethod_Mouse`) as a mouse: focus and mouse events, clicks with the trigger, a cursor where the laser meets the overlay, and laser haptics. Without it, such an overlay gets no events from the controllers. The keyboard and message boxes are pointed at with the lasers regardless (behind `keyboard` and `ownFrames`). The game's lasers also reach the mouse overlays of overlay applications running beside it (`helperApps`), which then don't point at them themselves (their own keyboard they still do). Where a game's own mouse overlay and another program's are both under the laser, both get the click.
-* `steamvrRenderModels` - boolean, default `false`.
+* `laserMouse` - boolean, default `true`.
+	* The controllers point at overlays that take mouse input (`VROverlayInputMethod_Mouse`) as a mouse: focus and mouse events, clicks with the trigger, a cursor where the laser meets the overlay, and laser haptics. Without it, such an overlay gets no events from the controllers. The keyboard and message boxes are pointed at with the lasers regardless (with `keyboard` and `ownFrames`). The game's lasers also reach the mouse overlays of overlay applications running beside it (`helperApps`), which then don't point at them themselves (their own keyboard they still do). Where a game's own mouse overlay and another program's are both under the laser, both get the click.
+* `steamvrRenderModels` - boolean, default `true`.
 	* Controller and tracker models from the user's SteamVR install, with their moving parts. Without it, OpenLamina's built-in hands and tracker.
 * `helperApps` - boolean, default `true`.
 	* Overlay and background applications get sessions of their own where the OpenXR runtime has overlay sessions (`XR_EXTX_overlay`) and headless sessions (`XR_MND_headless`). An overlay application's session is on a D3D11 device of OpenLamina's own, on the runtime's adapter, with frames OpenLamina runs for it; its textures are copied onto that device: Direct3D 11 and 12 textures through shared textures, OpenGL ones through `WGL_NV_DX_interop2` and Vulkan ones through `VK_KHR_external_memory_win32` (which the application's device must have enabled). Direct3D 10 textures, textures on another graphics adapter than the runtime's, and every texture on a runtime without D3D11 (Linux) are refused (`VROverlayError_InvalidTexture`, logged); images from memory (`SetOverlayRaw`, `SetOverlayFromFile`) are shown everywhere. `GetOverlayTexture` hands an overlay application a shared D3D11 texture with the overlay's contents, which it may then write in place (flushing its context) without another `SetOverlayTexture`; that texture's DXGI shared handle, or any other's, set on another overlay (`TextureType_DXGISharedHandle`) shows the same texture there, read every frame. An overlay gets `VREvent_OverlayShown` and `VREvent_OverlayHidden` when it's shown and hidden, a dashboard overlay when it becomes the one the dashboard shows. `FindOverlay` also finds the overlays of the other programs running beside the game, by their keys: their visibility, key, name, width, flags, placement and intersection can be read through that handle, and nothing changed. A background application joins only while another OpenLamina program runs (a game, or an overlay application), as it would join SteamVR only while SteamVR runs, so it never starts the runtime; until then it gets 121 `NoServerForBackgroundApp`. A native OpenXR game alone doesn't count. Its session has no graphics; it reads poses at the time now where the runtime converts the system's clock (`XR_KHR_win32_convert_performance_counter_time`, `XR_KHR_convert_timespec_time`). On Linux a background application gets a scene session. Without those extensions, with this off, or when the runtime fails to start, `VR_Init` refuses them (130 `InvalidApplicationType`, 121 `NoServerForBackgroundApp`).
 * `overlayLayersPlacement` - whole number, default `1`.
 	* Where an overlay application's layers go among other programs' (`XrSessionCreateInfoOverlayEXTX::sessionLayersPlacement`): higher numbers are drawn over lower ones.
-* `dashboardButton` - `system`, `system_long`, `menu`, `menu_long` or `off`, default `off`.
+* `dashboardButton` - `system`, `system_long`, `menu`, `menu_long` or `off`, default `system`.
 	* What opens OpenLamina's dashboard over the game: either controller's system button pressed (`system`) or held for 0.6 s (`system_long`), as SteamVR's opens, on controllers that have one (Index, Vive wands) and runtimes that hand it to applications (Monado does); or the left controller's menu button pressed (`menu`) or held for 0.6 s (`menu_long`), which on Index controllers is the B button. It shows the dashboard overlays (`CreateDashboardOverlay`) of the overlay applications running beside the game in a panel ahead of you, a tab for each and a "Quit game" button, pointed at with the lasers. While it's open the game gets `VREvent_DashboardActivated`, its input is held (its actions read inactive), and the same button closes it again. With `off` there is no dashboard.
-* `drawBounds` - boolean, default `false`.
+* `drawBounds` - boolean, default `true`.
 	* A grid wall on the play area's edge (the stage's bounds the runtime reports, else the room setup's play area, as `IVRChaperoneSetup` commits it) when the HMD or a controller comes within 0.4 m of it, fading in as it comes closer. For runtimes that show no boundary of their own.
-* `sessionEvents` - boolean, default `false`.
+* `sessionEvents` - boolean, default `true`.
 	* Send the events SteamVR sends when the game loses input focus to the runtime's menu or gets it back (`VREvent_InputFocusCaptured`, `VREvent_InputFocusReleased`), and when the headset is put on or taken off, on runtimes with `XR_EXT_user_presence` (the proximity sensor's `VREvent_ButtonPress` and `VREvent_ButtonUnpress`, `VREvent_TrackedDeviceUserInteractionStarted` and `VREvent_TrackedDeviceUserInteractionEnded`). Also the IPD's changes (`VREvent_IpdChanged`) and `Prop_ContainsProximitySensor_Bool` from the runtime. Some games pause on them. The proximity sensor's state is given either way.
-* `applyZeroPoses` - boolean, default `false`.
+* `applyZeroPoses` - boolean, default `true`.
 	* On Monado, with its `libmonado`: a room setup's standing zero pose that a program commits (`IVRChaperoneSetup`'s `SetWorkingStandingZeroPoseToRawTrackingPose`, as playspace movers and recentring tools do) moves Monado's stage. That moves it for every program using Monado, native OpenXR ones too, until Monado restarts. Without it, the zero pose is kept and reported, and nothing moves.
 * `logAllOpenVRCalls` - boolean, default `false`
 	* Log every OpenVR call a game makes. Similar to `logGetTrackedProperty`, this clutters logs and should not be enabled unless necessary.
-* `inputEvaluator` - `direct` or `steamvr`, default `direct`.
-	* How a game's SteamVR bindings become input. `direct` turns each binding into OpenXR bindings, as before. `steamvr` has OpenLamina run SteamVR's binding modes (toggles, dpads, chords and the rest) on the controller's raw inputs, and maps legacy input as SteamVR does. `steamvr` hasn't been tried in many games yet; try it when a game's controls don't work under `direct`.
+* `inputEvaluator` - `direct` or `steamvr`, default `steamvr`.
+	* How a game's SteamVR bindings become input. `steamvr` has OpenLamina run SteamVR's binding modes (toggles, dpads, chords and the rest) on the controller's raw inputs, and maps legacy input as SteamVR does. `direct` turns each binding into OpenXR bindings and leaves the rest to the runtime, without those modes; try it when a game's controls don't work under `steamvr`.
 * `bindingEditor` - string, default empty.
 	* The program a game's "open binding UI" request starts.
 
