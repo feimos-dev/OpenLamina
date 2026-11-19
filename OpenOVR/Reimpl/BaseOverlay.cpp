@@ -336,6 +336,7 @@ struct BaseOverlay::DashboardState {
 	bool open = false;
 	uint32_t activePid = 0;
 	uint64_t activeOverlay = 0;
+	uint32_t scenePid = 0; // the scene app whose dashboard it is
 	XrPosef panelPose{ { 0, 0, 0, 1 }, { 0, 0, 0 } }; // in the standing space
 	// The scene app's frame, filled on the game's thread
 	std::unique_ptr<CpuSwapchain> chain;
@@ -346,6 +347,8 @@ struct BaseOverlay::DashboardState {
 	XrPosef framePose{ { 0, 0, 0, 1 }, { 0, 0, 0 } }; // in the frame's space
 	XrCompositionLayerQuad layer{};
 	vr::VROverlayHandle_t Handle() const { return (vr::VROverlayHandle_t)(uintptr_t)this; }
+	// Whether the overlay is meant for the scene app whose dashboard this is (SetDashboardOverlaySceneProcess; none set: any)
+	bool ForScene(const OverlayData& o) const { return !o.dashboardScenePid || o.dashboardScenePid == scenePid; }
 };
 
 struct BaseOverlay::BoundsState {
@@ -1026,13 +1029,14 @@ void BaseOverlay::_UpdateDashboard()
 		d.open = open;
 		d.activePid = PidOf(doc["active_pid"]);
 		d.activeOverlay = doc["active_overlay"].isUInt64() ? doc["active_overlay"].asUInt64() : 0;
+		d.scenePid = PidOf(doc["scene_pid"]);
 		d.panelPose = panel;
 		// A dashboard overlay is told when it becomes the one shown, and when it no longer is
 		for (const auto& kv : overlays) {
 			OverlayData* o = kv.second;
 			if (!o || !o->dashboard || o->thumbnail)
 				continue;
-			const bool shown = open && d.activePid == self && d.activeOverlay == (uint64_t)(uintptr_t)o;
+			const bool shown = open && d.activePid == self && d.activeOverlay == (uint64_t)(uintptr_t)o && d.ForScene(*o);
 			if (shown != o->shownInDashboard) {
 				o->shownInDashboard = shown;
 				o->QueueVisibilityEvent(shown);
@@ -1223,7 +1227,7 @@ void BaseOverlay::DashboardChanged(bool open, const char* overlayKey)
 bool BaseOverlay::DashboardPlacement(const OverlayData& overlay, vr::ETrackingUniverseOrigin origin, overlay_maths::Placement& out) const
 {
 	const DashboardState& d = *dash;
-	if (!overlay.dashboard || overlay.thumbnail || !d.open || d.activePid != oc_current_pid() || d.activeOverlay != (uint64_t)(uintptr_t)&overlay)
+	if (!overlay.dashboard || overlay.thumbnail || !d.open || d.activePid != oc_current_pid() || d.activeOverlay != (uint64_t)(uintptr_t)&overlay || !d.ForScene(overlay))
 		return false;
 	out.pose = origin == vr::TrackingUniverseStanding ? d.panelPose : overlay_maths::ChangeOrigin(d.panelPose, vr::TrackingUniverseStanding, origin, SeatedInStanding());
 	out.width = overlay.widthMeters;
@@ -1701,7 +1705,7 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 			o = (const OverlayData*)o->relativeParent;
 			if (!validOverlays.count(const_cast<OverlayData*>(o)))
 				return true; // gone: the chain's placement decides
-			const bool shown = o->dashboard ? !o->thumbnail && dash->open && dash->activePid == oc_current_pid() && dash->activeOverlay == (uint64_t)(uintptr_t)o : o->visible;
+			const bool shown = o->dashboard ? !o->thumbnail && dash->open && dash->activePid == oc_current_pid() && dash->activeOverlay == (uint64_t)(uintptr_t)o && dash->ForScene(*o) : o->visible;
 			if (!shown)
 				return false;
 		}
@@ -2643,7 +2647,7 @@ bool BaseOverlay::IsOverlayVisible(VROverlayHandle_t ulOverlayHandle)
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	// A dashboard overlay: while it's the one the open dashboard shows
 	if (overlay->dashboard)
-		return !overlay->thumbnail && dash->open && dash->activePid == oc_current_pid() && dash->activeOverlay == (uint64_t)(uintptr_t)overlay;
+		return !overlay->thumbnail && dash->open && dash->activePid == oc_current_pid() && dash->activeOverlay == (uint64_t)(uintptr_t)overlay && dash->ForScene(*overlay);
 	return overlay->visible;
 }
 EVROverlayError BaseOverlay::GetTransformForOverlayCoordinates(VROverlayHandle_t ulOverlayHandle, ETrackingUniverseOrigin eTrackingOrigin, HmdVector2_t coordinatesInOverlay, HmdMatrix34_t* pmatTransform)
@@ -3431,13 +3435,16 @@ bool BaseOverlay::IsActiveDashboardOverlay(VROverlayHandle_t ulOverlayHandle)
 	USEHB();
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	return overlay->dashboard && !overlay->thumbnail && dash->open && dash->activePid == oc_current_pid()
-	    && dash->activeOverlay == (uint64_t)(uintptr_t)overlay;
+	    && dash->activeOverlay == (uint64_t)(uintptr_t)overlay && dash->ForScene(*overlay);
 }
 EVROverlayError BaseOverlay::SetDashboardOverlaySceneProcess(VROverlayHandle_t ulOverlayHandle, uint32_t unProcessId)
 {
 	USEH();
-	// Kept and returned: every program's dashboard overlays are shown over whichever game runs
-	overlay->dashboardScenePid = unProcessId;
+	// Shown only over that program's dashboard (0: any); the dashboard's next update applies it
+	{
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		overlay->dashboardScenePid = unProcessId;
+	}
 	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::GetDashboardOverlaySceneProcess(VROverlayHandle_t ulOverlayHandle, uint32_t* punProcessId)
@@ -3468,6 +3475,8 @@ void BaseOverlay::ShowDashboard(const char* pchOverlayToShow)
 	}
 	// Another program asks the scene app to, through the store: unless it's open already
 	const uint32_t self = oc_current_pid();
+	if (!SharedStore::IsProcessAlive(PidOf(SharedStore::Get().Read(StoreDoc::Scene)["pid"])))
+		OOVR_LOG("ShowDashboard: no scene application is running to open the dashboard");
 	SharedStore::Get().Update(StoreDoc::Dashboard, [&](Json::Value& doc) {
 		if (DashboardDocOpen(doc, SharedStore::IsSameProcessAlive))
 			return;
@@ -3483,11 +3492,16 @@ TrackedDeviceIndex_t BaseOverlay::GetPrimaryDashboardDevice()
 {
 	if (IsSceneApp() && !SceneDashboard())
 		OC_UNSUPPORTED(k_unTrackedDeviceIndexInvalid, "GetPrimaryDashboardDevice: there's no dashboard (dashboardButton is off)");
-	// The left controller opens it
 	if (!IsDashboardVisible())
 		return k_unTrackedDeviceIndexInvalid;
-	std::shared_ptr<ITrackedDevice> left = BackendManager::Instance().GetDeviceByHand(ITrackedDevice::HAND_LEFT);
-	return left ? left->DeviceIndex() : k_unTrackedDeviceIndexInvalid;
+	// The hand whose laser is on the dashboard, else the one that last drove the mouse
+	int hand;
+	{
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		hand = Dashboard::PrimaryHand(pointing->mouse.HandOn(dash->Handle()), pointing->mouse.ActiveHand());
+	}
+	std::shared_ptr<ITrackedDevice> device = BackendManager::Instance().GetDeviceByHand(hand == 0 ? ITrackedDevice::HAND_LEFT : ITrackedDevice::HAND_RIGHT);
+	return device ? device->DeviceIndex() : k_unTrackedDeviceIndexInvalid;
 }
 EVROverlayError BaseOverlay::ShowKeyboardWithDispatch(EGamepadTextInputMode eInputMode, EGamepadTextInputLineMode eLineInputMode,
     uint32_t unFlags, const char* pchDescription, uint32_t unCharMax, const char* pchExistingText, uint64_t uUserValue,

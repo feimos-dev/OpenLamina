@@ -60,6 +60,10 @@ public:
 	void Draw(Canvas& canvas, const Json::Value& dashboardDoc, const Json::Value& overlaysDoc) const;
 	std::optional<std::string> OnClick(float u, float v); // "tab:<pid>:<handle>" or "quit"; u, v from the top left, 0 to 1
 
+	// The hand (0 left, 1 right) that IVROverlay::GetPrimaryDashboardDevice names: the one whose laser is on the dashboard
+	// (onDashboard, -1 for none), else the one that last drove the mouse (lastDriver)
+	static int PrimaryHand(int onDashboard, int lastDriver) { return onDashboard >= 0 ? onDashboard : (lastDriver == 0 ? 0 : 1); }
+
 	// The programs' dashboard overlays in the Overlays document, live ones only: each tab's id and label
 	struct Tab {
 		uint32_t pid;
