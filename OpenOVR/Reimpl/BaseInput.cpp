@@ -864,7 +864,7 @@ void BaseInput::LoadEmptyManifestIfRequired()
 		suggestedBindings.interactionProfile = interactionProfilePath;
 		suggestedBindings.suggestedBindings = bindings.data();
 		suggestedBindings.countSuggestedBindings = bindings.size();
-		OC_XR_LOG(xr_suggest_bindings_logged(suggestedBindings));
+		OC_XR_LOG(SuggestBindings(suggestedBindings, bindings));
 	}
 
 	// Attach everything to the current session
@@ -1278,7 +1278,26 @@ void BaseInput::LoadBindingsSet(const InteractionProfile& profile, const std::st
 	suggestedBindings.interactionProfile = interactionProfilePath;
 	suggestedBindings.suggestedBindings = bindings.data();
 	suggestedBindings.countSuggestedBindings = bindings.size();
-	OC_XR_LOG(xr_suggest_bindings_logged(suggestedBindings));
+	OC_XR_LOG(SuggestBindings(suggestedBindings, bindings));
+}
+
+XrResult BaseInput::SuggestBindings(XrInteractionProfileSuggestedBinding& suggested, std::vector<XrActionSuggestedBinding>& bindings)
+{
+	XrResult res = xr_suggest_bindings_logged(suggested);
+	if (XR_SUCCEEDED(res))
+		return res;
+	// A runtime needn't offer a controller's system button, and takes a profile's bindings all or none: refused with
+	// the dashboard's among them, the rest are suggested again
+	const size_t before = bindings.size();
+	std::erase_if(bindings, [&](const XrActionSuggestedBinding& b) {
+		return b.action != XR_NULL_HANDLE && (b.action == legacyControllers[0].dashboard || b.action == legacyControllers[1].dashboard);
+	});
+	if (bindings.size() == before || bindings.empty())
+		return res;
+	OOVR_LOG("The runtime refused the bindings with the system button among them: suggesting them without it (dashboardButton=system won't open the dashboard)");
+	suggested.suggestedBindings = bindings.data();
+	suggested.countSuggestedBindings = (uint32_t)bindings.size();
+	return xr_suggest_bindings_logged(suggested);
 }
 
 void BaseInput::LoadDpadAction(const InteractionProfile& profile, const std::string& importBasePath, const std::string& inputName, const std::string& subMode, Action* action, std::vector<XrActionSuggestedBinding>& bindings, bool isKnuckles)
@@ -1463,6 +1482,7 @@ void BaseInput::CreateLegacyActions()
 		};
 
 		create(&ctrl.system, "system", "System Button", XR_ACTION_TYPE_BOOLEAN_INPUT);
+		create(&ctrl.dashboard, "dashboard", "Dashboard Button", XR_ACTION_TYPE_BOOLEAN_INPUT);
 		create(&ctrl.menu, "menu", "Menu Button", XR_ACTION_TYPE_BOOLEAN_INPUT);
 		create(&ctrl.menuTouch, "menu-touch", "Menu Button (Touch)", XR_ACTION_TYPE_BOOLEAN_INPUT);
 		create(&ctrl.btnA, "btn-a", "'A' Button", XR_ACTION_TYPE_BOOLEAN_INPUT);
@@ -3708,10 +3728,9 @@ bool BaseInput::HeldByDashboard()
 	return heldByDashboard;
 }
 
-bool BaseInput::GetHandMenu(int hand)
+bool BaseInput::GetDashboardButton(bool system)
 {
-	if (hand < 0 || hand > 1)
-		return false;
+	const int hand = 0;
 	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
 	if (!hasLoadedActions || legacyInputsSet == XR_NULL_HANDLE || !xr_session.get())
@@ -3725,6 +3744,10 @@ bool BaseInput::GetHandMenu(int hand)
 		XrActionStateBoolean state = { XR_TYPE_ACTION_STATE_BOOLEAN };
 		return XR_SUCCEEDED(xrGetActionStateBoolean(xr_session.get(), &getInfo, &state)) && state.isActive && state.currentState;
 	};
+	// The system button of either controller, as SteamVR's dashboard opens
+	if (system)
+		return held(legacyControllers[0].dashboard, XR_NULL_PATH) || held(legacyControllers[1].dashboard, XR_NULL_PATH);
+	// The left controller's menu button
 	if (useEvaluator && rawInputsSet != XR_NULL_HANDLE) {
 		const XrPath subaction = (size_t)hand < allSubactionPaths.size() ? allSubactionPaths[hand] : XR_NULL_PATH;
 		for (const char* component : { "/input/system/click", "/input/menu/click", "/input/b/click", "/input/y/click" }) {

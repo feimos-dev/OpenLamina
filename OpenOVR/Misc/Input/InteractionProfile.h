@@ -204,6 +204,9 @@ protected:
 		const char* system = nullptr;
 		const char *menu = nullptr, *menuTouch = nullptr;
 		const char *btnA = nullptr, *btnATouch = nullptr;
+		// The system button, where the controller has one a runtime may hand to applications. It isn't among the
+		// profile's valid input paths: no game's bindings use it, and a runtime needn't offer it.
+		const char* dashboard = nullptr;
 
 		const char *trackpadX = nullptr, *trackpadY = nullptr, *trackpadTouch = nullptr, *trackpadForce = nullptr,
 		           *stickX = nullptr, *stickY = nullptr, *stickBtn = nullptr, *stickBtnTouch = nullptr;

@@ -22,7 +22,9 @@
 
 class Dashboard {
 public:
-	enum class Button { MenuLong, Menu, Off }; // ini dashboardButton=menu_long|menu|off, default off (0.6 s on the left menu button for menu_long)
+	// How its button opens it. ini dashboardButton=system|system_long|menu|menu_long|off, default off: the button is a
+	// controller's system button or the left menu button, pressed (Menu) or held for 0.6 s (MenuLong)
+	enum class Button { MenuLong, Menu, Off };
 
 	// The frame's canvas, and its size in metres: the panel in its middle, tabs above, "Quit game" below
 	static constexpr int kWidth = 1024, kHeight = 768;

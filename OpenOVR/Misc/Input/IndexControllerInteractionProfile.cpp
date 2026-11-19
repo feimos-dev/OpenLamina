@@ -172,6 +172,7 @@ const InteractionProfile::LegacyBindings* IndexControllerInteractionProfile::Get
 	// Index controllers are exactly symmetrical, so we can just drop handPath on the floor.
 	static LegacyBindings bindings = {};
 	//	this->bindingsLegacy.system = "input/system/click"; - causes issues on Oculus runtime
+	bindings.dashboard = "input/system/click";
 	bindings.menu = "input/b/click";
 	bindings.menuTouch = "input/b/touch";
 	bindings.btnA = "input/a/click";
