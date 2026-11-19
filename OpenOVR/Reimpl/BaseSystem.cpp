@@ -944,7 +944,7 @@ void BaseSystem::ResetSeatedZeroPose()
 		OOVR_FAILED_XR_SOFT_ABORT(xrLocateSpace(xr_gbl->viewSpace, xr_gbl->seatedSpace, xr_gbl->GetBestTime(), &location));
 
 		if ((location.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) && (location.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)) {
-			static XrReferenceSpaceCreateInfo spaceInfo{ XR_TYPE_REFERENCE_SPACE_CREATE_INFO, nullptr, XR_REFERENCE_SPACE_TYPE_LOCAL, { { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } } };
+			XrReferenceSpaceCreateInfo spaceInfo{ XR_TYPE_REFERENCE_SPACE_CREATE_INFO, nullptr, XR_REFERENCE_SPACE_TYPE_LOCAL, xr_gbl->seatedPose };
 			// The head's place in the seated space now, turned into the space that one is made in
 			XrVector3f rotatedPos;
 			rotate_vector_by_quaternion(location.pose.position, spaceInfo.poseInReferenceSpace.orientation, rotatedPos);
@@ -956,12 +956,12 @@ void BaseSystem::ResetSeatedZeroPose()
 			spaceInfo.poseInReferenceSpace.orientation.y = rot.y;
 			spaceInfo.poseInReferenceSpace.orientation.w = rot.w;
 
-			spaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
 			// On failure the old seated space stays
 			XrSpace newSpace = XR_NULL_HANDLE;
 			OC_XR_SOFT_VOID(xrCreateReferenceSpace(xr_session.get(), &spaceInfo, &newSpace));
 			xrDestroySpace(xr_gbl->seatedSpace);
 			xr_gbl->seatedSpace = newSpace;
+			xr_gbl->seatedPose = spaceInfo.poseInReferenceSpace;
 		}
 	}
 

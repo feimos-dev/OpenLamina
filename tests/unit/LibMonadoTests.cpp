@@ -669,7 +669,11 @@ TEST_CASE("Recentre_without_libmonado_or_its_get_call_moves_nothing")
 	SetEnv("FAKE_MND_NO_GET", "1");
 	CHECK_FALSE(BaseChaperoneSetup::MoveStage(offsets, origin, mnd).has_value());
 	SetEnv("FAKE_MND_NO_GET", nullptr);
-	// Monado refusing it
+	// Monado giving the offset and refusing the new one
+	SetEnv("FAKE_MND_NO_SET", "1");
+	CHECK_FALSE(BaseChaperoneSetup::MoveStage(offsets, origin, mnd).has_value());
+	SetEnv("FAKE_MND_NO_SET", nullptr);
+	// Monado refusing both calls
 	SetEnv("FAKE_MND_NO_OFFSETS", "1");
 	{
 		LibMonado refusing("Monado(XRT) by Collabora et al");

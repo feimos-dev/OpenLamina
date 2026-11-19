@@ -1027,7 +1027,7 @@ void BaseOverlay::_RecentreIfAsked()
 	if (BaseSystem* system = GetUnsafeBaseSystem())
 		system->ResetSeatedZeroPose();
 	OOVR_LOGF("Recentred from the %s controller's system button: %s", hand == 0 ? "left" : "right",
-	    stageMoved ? "the stage and the seated origin" : "the seated origin (the stage can't be moved here)");
+	    stageMoved ? "the stage and the seated origin" : "the seated origin only");
 	// A short pulse on the controller that was held
 	if (BaseInput* input = GetUnsafeBaseInput())
 		input->TriggerHandHaptic(hand, kRecentreHapticSeconds, 0.0f, kRecentreHapticAmplitude);
