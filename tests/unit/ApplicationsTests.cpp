@@ -632,14 +632,9 @@ TEST_CASE("Template_instance_belongs_to_the_program_started_for_it")
 	Json::Value app(Json::objectValue);
 	app["app_key"] = "oc.test.template";
 	app["launch_type"] = "binary";
-#ifdef _WIN32
-	app["binary_path"] = OC_ECHO_APP;
-	app["arguments"] = "marker.txt x";
-#else
 	// Runs for a while, so the instance is still there to look at
-	app["binary_path"] = "/bin/sleep";
-	app["arguments"] = "2";
-#endif
+	app["binary_path"] = OC_ECHO_APP;
+	app["arguments"] = "marker.txt --stay 2";
 	app["working_directory"] = PathToUtf8(dir.path);
 	app["is_template"] = true;
 	Json::Value root(Json::objectValue);
@@ -650,11 +645,6 @@ TEST_CASE("Template_instance_belongs_to_the_program_started_for_it")
 	REQUIRE(apps.LaunchTemplateApplication("oc.test.template", "oc.test.instance", nullptr, 0) == VRApplicationError_None);
 	Json::Value doc = store.Read(StoreDoc::Applications);
 	Json::Value instance = doc["manifests"]["template:oc.test.instance"];
-#ifdef _WIN32
-	// The echo program may have ended already
-	if (instance.isNull())
-		return;
-#endif
 	REQUIRE(instance.isObject());
 	uint32_t owner = instance["owner_pid"].asUInt();
 	CHECK(owner != oc_current_pid());
