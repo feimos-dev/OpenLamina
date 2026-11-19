@@ -41,6 +41,7 @@
 #include "../OpenOVR/Reimpl/BaseSystem.h"
 #include "../OpenOVR/Compositor/DepthRange.h"
 #include "../OpenOVR/Misc/Equirect.h"
+#include "../OpenOVR/Misc/Fade.h"
 #include "../OpenOVR/Misc/Config.h"
 #include "../OpenOVR/Misc/FrameStats.h"
 #include "../OpenOVR/Misc/MirrorWindow.h"
@@ -791,6 +792,9 @@ void XrBackend::WaitForTrackingData()
 		return;
 	}
 
+	// A skybox set before the session ran is shown now, ahead of this frame
+	ShowPendingSkybox();
+
 	// The game's frame from here to its xrEndFrame (SubmitFrames): an own frame in flight is ended first
 	std::unique_lock<std::mutex> owner(frameOwner);
 	if (ownFrames)
@@ -1277,145 +1281,176 @@ int XrBackend::SetEquirectSkybox(const vr::Texture_t* textures, uint32_t count)
 	return 0;
 }
 
+bool XrBackend::EquirectSkyboxAvailable() const
+{
+	return ownFrames && xr_ext && xr_ext->Equirect2KHR_Available();
+}
+
 IBackend::openvr_enum_t XrBackend::SetSkyboxOverride(const vr::Texture_t* pTextures, uint32_t unTextureCount)
 {
-	// With equirect layers: one lat-long texture, a stereo pair or six cube faces, held and shown in OpenLamina's own
-	// frames while the game runs none (as SteamVR shows it), until ClearSkyboxOverride
-	if (ownFrames && xr_ext && xr_ext->Equirect2KHR_Available() && pTextures && (unTextureCount == 1 || unTextureCount == 2 || unTextureCount == 6)) {
-		if (!CheckOrInitCompositors(pTextures))
-			return 1; // VRCompositorError_RequestFailed
-		auto lock = xr_session.lock_shared();
-		if (!sessionActive || !usingApplicationGraphicsAPI)
-			return 0;
-		return SetEquirectSkybox(pTextures, unTextureCount);
-	}
+	if (!SkyboxTexturesValid(pTextures, unTextureCount))
+		return 102; // VRCompositorError_InvalidTexture
 
-	// Otherwise one texture (or the first of a stereo pair), shown at once as a quad (rFactor2's loading screens). Six
-	// faces are a cube map: one face as a flat picture would be wrong, so that's RequestFailed.
-	if (unTextureCount >= 6) {
+	// Six faces are a cube map, which only equirect layers can show: one face as a flat picture would be wrong
+	if (unTextureCount == 6 && !EquirectSkyboxAvailable()) {
 		OOVR_LOG_ONCE("SetSkyboxOverride with a cube map: not supported yet");
 		return 1; // VRCompositorError_RequestFailed
 	}
-	if (unTextureCount && pTextures) {
-		if (!CheckOrInitCompositors(pTextures))
-			return 1; // VRCompositorError_RequestFailed
 
-		if (!sessionActive || !usingApplicationGraphicsAPI)
-			return 0;
+	if (!CheckOrInitCompositors(pTextures))
+		return 1; // VRCompositorError_RequestFailed
 
-		// Taken after CheckOrInitCompositors, which may restart the session, and held to the end: a session restart
-		// on another thread replaces xr_gbl
-		auto lock = xr_session.lock_shared();
-		if (!sessionActive)
-			return 0; // a restart this thread waited behind left no running session
+	// Taken after CheckOrInitCompositors, which may restart the session, and held to the end: a session restart on
+	// another thread replaces xr_gbl
+	auto lock = xr_session.lock_shared();
+	if (!sessionActive || !usingApplicationGraphicsAPI) {
+		// The session hasn't started running yet (it has just been restarted on the game's device, say): shown once
+		// the game's frames begin
+		std::lock_guard<std::mutex> pending(pendingSkyboxLock);
+		pendingSkybox.Set(pTextures, unTextureCount);
+		return 0;
+	}
+	{
+		std::lock_guard<std::mutex> pending(pendingSkyboxLock);
+		pendingSkybox.Clear();
+	}
+	return ShowSkybox(pTextures, unTextureCount);
+}
 
-		// This frame is run here, from its xrWaitFrame to its xrEndFrame (see frameOwner)
-		std::unique_lock<std::mutex> owner(frameOwner);
-		if (ownFrames)
-			ownFrames->OnAppFrameStart();
+void XrBackend::ShowPendingSkybox()
+{
+	SkyboxRequest request;
+	{
+		std::lock_guard<std::mutex> pending(pendingSkyboxLock);
+		if (pendingSkybox.Empty() || !usingApplicationGraphicsAPI)
+			return;
+		request = pendingSkybox;
+		pendingSkybox.Clear();
+	}
+	ShowSkybox(request.Textures(), request.Count());
+}
 
-		// Make sure any unfinished frames don't call xrEndFrame after this call
-		renderingFrame = false;
+IBackend::openvr_enum_t XrBackend::ShowSkybox(const vr::Texture_t* pTextures, uint32_t unTextureCount)
+{
+	// With equirect layers: one lat-long texture, a stereo pair or six cube faces, held and shown in OpenLamina's own
+	// frames while the game runs none (as SteamVR shows it), until ClearSkyboxOverride
+	if (EquirectSkyboxAvailable())
+		return SetEquirectSkybox(pTextures, unTextureCount);
 
-		XrFrameWaitInfo waitInfo{ XR_TYPE_FRAME_WAIT_INFO };
-		XrFrameState state{ XR_TYPE_FRAME_STATE };
+	// Otherwise one texture (or the first of a stereo pair), shown at once as a quad (rFactor2's loading screens)
+	return ShowSkyboxQuad(pTextures);
+}
 
-		// A waited frame not yet begun (WaitForTrackingData's) is begun here instead
-		if (!frameAwaitingBegin) {
-			if (XrResult res = xrWaitFrame(xr_session.get(), &waitInfo, &state); XR_FAILED(res)) {
-				OOVR_LOG_ONCE("SetSkyboxOverride: xrWaitFrame failed");
-				OnFrameCallFailed(res);
-				return 1; // VRCompositorError_RequestFailed
-			}
-			xr_gbl->nextPredictedFrameTime = state.predictedDisplayTime;
-			frameAwaitingBegin = true;
-		}
+IBackend::openvr_enum_t XrBackend::ShowSkyboxQuad(const vr::Texture_t* pTextures)
+{
+	// This frame is run here, from its xrWaitFrame to its xrEndFrame (see frameOwner)
+	std::unique_lock<std::mutex> owner(frameOwner);
+	if (ownFrames)
+		ownFrames->OnAppFrameStart();
 
-		// Not one of the app's frames, so its display slot isn't a dropped frame
-		RestartFrameTiming();
+	// Make sure any unfinished frames don't call xrEndFrame after this call
+	renderingFrame = false;
 
-		// This submits a frame when a skybox override is set. This is designed around rFactor2 where the skybox is used as
-		// a loading screen and is frequently updated, and most other games probably behave in a similar manner. It'd be
-		// ideal to run a separate thread while the skybox override is set to submit frames if IVRCompositor->Submit is not
-		// being called frequently enough, and that'd need to be carefully synchronised with the main submit thread. That's
-		// not yet implemented since it's not currently worth the hassle, but if someone in the future wants to do it:
-		// TODO submit skybox frames in their own thread.
-		XrFrameBeginInfo beginInfo{ XR_TYPE_FRAME_BEGIN_INFO };
-		if (XrResult res = xrBeginFrame(xr_session.get(), &beginInfo); XR_FAILED(res)) {
-			OOVR_LOG_ONCE("SetSkyboxOverride: xrBeginFrame failed");
-			if (res == XR_ERROR_CALL_ORDER_INVALID)
-				frameAwaitingBegin = false;
+	XrFrameWaitInfo waitInfo{ XR_TYPE_FRAME_WAIT_INFO };
+	XrFrameState state{ XR_TYPE_FRAME_STATE };
+
+	// A waited frame not yet begun (WaitForTrackingData's) is begun here instead
+	if (!frameAwaitingBegin) {
+		if (XrResult res = xrWaitFrame(xr_session.get(), &waitInfo, &state); XR_FAILED(res)) {
+			OOVR_LOG_ONCE("SetSkyboxOverride: xrWaitFrame failed");
 			OnFrameCallFailed(res);
 			return 1; // VRCompositorError_RequestFailed
 		}
-		frameAwaitingBegin = false;
-		frameBegun = true;
-		frameCallFailures = 0;
-		// Every way out of here ends the frame
-		auto ended = [this] {
-			frameBegun = false;
-			if (ownFrames)
-				ownFrames->OnAppFrameEnd();
-		};
-
-		if (skybox_compositor == nullptr)
-			skybox_compositor = BaseCompositor::CreateCompositorAPI(pTextures);
-		if (skybox_compositor == nullptr) {
-			// No compositor for this texture: end the begun frame empty
-			XrFrameEndInfo empty{ XR_TYPE_FRAME_END_INFO };
-			empty.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-			empty.displayTime = xr_gbl->nextPredictedFrameTime;
-			xrEndFrame(xr_session.get(), &empty);
-			ended();
-			return 1; // VRCompositorError_RequestFailed
-		}
-
-		vr::VRTextureBounds_t bounds;
-		bounds.uMin = 0.0;
-		bounds.uMax = 1.0;
-		bounds.vMin = 1.0;
-		bounds.vMax = 0.0;
-
-		XrCompositionLayerQuad layerQuad = { XR_TYPE_COMPOSITION_LAYER_QUAD };
-		skybox_compositor->Invoke(pTextures, &bounds, layerQuad.subImage);
-		if (XR_FAILED(skybox_compositor->LastResult())) {
-			// No image this frame: end the begun frame empty
-			XrFrameEndInfo empty{ XR_TYPE_FRAME_END_INFO };
-			empty.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-			empty.displayTime = xr_gbl->nextPredictedFrameTime;
-			xrEndFrame(xr_session.get(), &empty);
-			ended();
-			return 1; // VRCompositorError_RequestFailed
-		}
-		layerQuad.type = XR_TYPE_COMPOSITION_LAYER_QUAD;
-		layerQuad.next = NULL;
-		layerQuad.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
-		layerQuad.space = xr_space_from_ref_space_type(BaseSystem::currentSpace);
-		layerQuad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-		layerQuad.pose = { { 0.f, 0.f, 0.f, 1.f },
-			{ 0.0f, 0.0f, -0.65f } };
-		layerQuad.size = { 1.0f, 1.0f / 1.333f };
-
-		XrCompositionLayerBaseHeader* layers[1];
-		layers[0] = (XrCompositionLayerBaseHeader*)&layerQuad;
-		XrFrameEndInfo info{ XR_TYPE_FRAME_END_INFO };
-		info.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
-		info.displayTime = xr_gbl->nextPredictedFrameTime;
-		info.layers = layers;
-		info.layerCount = 1;
-
-		OOVR_FAILED_XR_SOFT_ABORT(xrEndFrame(xr_session.get(), &info));
-		ended();
-
-	} else {
-		OOVR_SOFT_ABORT("Unsupported texture count");
+		xr_gbl->nextPredictedFrameTime = state.predictedDisplayTime;
+		frameAwaitingBegin = true;
 	}
+
+	// Not one of the app's frames, so its display slot isn't a dropped frame
+	RestartFrameTiming();
+
+	// This submits a frame when a skybox override is set. This is designed around rFactor2 where the skybox is used as
+	// a loading screen and is frequently updated, and most other games probably behave in a similar manner. It'd be
+	// ideal to run a separate thread while the skybox override is set to submit frames if IVRCompositor->Submit is not
+	// being called frequently enough, and that'd need to be carefully synchronised with the main submit thread. That's
+	// not yet implemented since it's not currently worth the hassle, but if someone in the future wants to do it:
+	// TODO submit skybox frames in their own thread.
+	XrFrameBeginInfo beginInfo{ XR_TYPE_FRAME_BEGIN_INFO };
+	if (XrResult res = xrBeginFrame(xr_session.get(), &beginInfo); XR_FAILED(res)) {
+		OOVR_LOG_ONCE("SetSkyboxOverride: xrBeginFrame failed");
+		if (res == XR_ERROR_CALL_ORDER_INVALID)
+			frameAwaitingBegin = false;
+		OnFrameCallFailed(res);
+		return 1; // VRCompositorError_RequestFailed
+	}
+	frameAwaitingBegin = false;
+	frameBegun = true;
+	frameCallFailures = 0;
+	// Every way out of here ends the frame
+	auto ended = [this] {
+		frameBegun = false;
+		if (ownFrames)
+			ownFrames->OnAppFrameEnd();
+	};
+
+	if (skybox_compositor == nullptr)
+		skybox_compositor = BaseCompositor::CreateCompositorAPI(pTextures);
+	if (skybox_compositor == nullptr) {
+		// No compositor for this texture: end the begun frame empty
+		XrFrameEndInfo empty{ XR_TYPE_FRAME_END_INFO };
+		empty.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+		empty.displayTime = xr_gbl->nextPredictedFrameTime;
+		xrEndFrame(xr_session.get(), &empty);
+		ended();
+		return 1; // VRCompositorError_RequestFailed
+	}
+
+	vr::VRTextureBounds_t bounds;
+	bounds.uMin = 0.0;
+	bounds.uMax = 1.0;
+	bounds.vMin = 1.0;
+	bounds.vMax = 0.0;
+
+	XrCompositionLayerQuad layerQuad = { XR_TYPE_COMPOSITION_LAYER_QUAD };
+	skybox_compositor->Invoke(pTextures, &bounds, layerQuad.subImage);
+	if (XR_FAILED(skybox_compositor->LastResult())) {
+		// No image this frame: end the begun frame empty
+		XrFrameEndInfo empty{ XR_TYPE_FRAME_END_INFO };
+		empty.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+		empty.displayTime = xr_gbl->nextPredictedFrameTime;
+		xrEndFrame(xr_session.get(), &empty);
+		ended();
+		return 1; // VRCompositorError_RequestFailed
+	}
+	layerQuad.type = XR_TYPE_COMPOSITION_LAYER_QUAD;
+	layerQuad.next = NULL;
+	layerQuad.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+	// In front of the head, wherever it turns
+	layerQuad.space = xr_gbl->viewSpace;
+	layerQuad.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+	layerQuad.pose = { { 0.f, 0.f, 0.f, 1.f },
+		{ 0.0f, 0.0f, -0.65f } };
+	layerQuad.size = { 1.0f, 1.0f / 1.333f };
+
+	XrCompositionLayerBaseHeader* layers[1];
+	layers[0] = (XrCompositionLayerBaseHeader*)&layerQuad;
+	XrFrameEndInfo info{ XR_TYPE_FRAME_END_INFO };
+	info.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
+	info.displayTime = xr_gbl->nextPredictedFrameTime;
+	info.layers = layers;
+	info.layerCount = 1;
+
+	OOVR_FAILED_XR_SOFT_ABORT(xrEndFrame(xr_session.get(), &info));
+	ended();
 
 	return 0;
 }
 
 void XrBackend::ClearSkyboxOverride()
 {
+	{
+		std::lock_guard<std::mutex> pending(pendingSkyboxLock);
+		pendingSkybox.Clear();
+	}
 	std::lock_guard<std::mutex> lock(skyboxLock);
 	skybox.layerCount = 0;
 }

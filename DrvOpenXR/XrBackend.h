@@ -10,6 +10,7 @@
 
 #include "XrDriverPrivate.h"
 
+#include "../OpenOVR/Misc/Fade.h"
 #include "OwnFrameLoop.h"
 #include "XrController.h"
 #include "XrHMD.h"
@@ -214,6 +215,14 @@ private:
 	XrCompositionLayerProjectionView lastProjectionViews[2]{};
 	bool haveLastProjection = false;
 	bool SkyboxShown();
+	// A skybox asked for while the session wasn't running, shown at the next frame's start; under pendingSkyboxLock
+	std::mutex pendingSkyboxLock;
+	SkyboxRequest pendingSkybox;
+	bool EquirectSkyboxAvailable() const;
+	// The session lock held (shared) and the session running
+	IBackend::openvr_enum_t ShowSkybox(const vr::Texture_t* textures, uint32_t count);
+	IBackend::openvr_enum_t ShowSkyboxQuad(const vr::Texture_t* texture);
+	void ShowPendingSkybox();
 	// The skybox from lat-long textures or cube faces; an OpenVR compositor error
 	int SetEquirectSkybox(const vr::Texture_t* textures, uint32_t count);
 	std::vector<std::shared_ptr<Compositor>> overlay_compositors;

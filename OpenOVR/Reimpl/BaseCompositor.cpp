@@ -3,6 +3,7 @@
 #define BASE_IMPL
 
 #include "Misc/Config.h"
+#include "Misc/Fade.h"
 #include "Misc/FrameStats.h"
 #include "Misc/MirrorWindow.h"
 
@@ -491,6 +492,9 @@ ovr_enum_t BaseCompositor::SetSkyboxOverride(const Texture_t* pTextures, uint32_
 	// The scene app's: SteamVR answers an overlay or background application DoNotHaveFocus
 	if (IsHelperSession())
 		return VRCompositorError_DoNotHaveFocus;
+	// One lat-long texture, a stereo pair or six cube faces
+	if (!SkyboxTexturesValid(pTextures, unTextureCount))
+		return VRCompositorError_InvalidTexture;
 	return BackendManager::Instance().SetSkyboxOverride(pTextures, unTextureCount);
 }
 
