@@ -8,8 +8,6 @@
 #include <algorithm>
 #include <cstring>
 
-std::wstring_convert<std::codecvt_utf8<wchar_t>> VRKeyboard::CHAR_CONV;
-
 namespace {
 
 // The layout's special keys (KeyboardLayout's escapes)
@@ -84,6 +82,39 @@ std::wstring Wide(const std::u32string& s)
 }
 
 } // namespace
+
+std::string VRKeyboard::WideToUtf8(const std::wstring& s)
+{
+	std::string out;
+	for (size_t i = 0; i < s.size(); i++) {
+		char32_t c = (char32_t)s[i];
+		if (sizeof(wchar_t) == 2 && c >= 0xd800 && c < 0xdc00) {
+			// A surrogate pair; a lone one is left out
+			if (i + 1 >= s.size() || (char32_t)s[i + 1] < 0xdc00 || (char32_t)s[i + 1] > 0xdfff)
+				continue;
+			c = 0x10000 + ((c - 0xd800) << 10) + ((char32_t)s[++i] - 0xdc00);
+		} else if ((c >= 0xd800 && c <= 0xdfff) || c > 0x10ffff) {
+			continue;
+		}
+		out += Utf8(c);
+	}
+	return out;
+}
+
+std::wstring VRKeyboard::Utf8ToWide(const std::string& s)
+{
+	std::wstring out;
+	for (char32_t c : FromUtf8(s)) {
+		if (sizeof(wchar_t) == 2 && c >= 0x10000) {
+			c -= 0x10000;
+			out += (wchar_t)(0xd800 + (c >> 10));
+			out += (wchar_t)(0xdc00 + (c & 0x3ff));
+		} else {
+			out += (wchar_t)c;
+		}
+	}
+	return out;
+}
 
 VRKeyboard::VRKeyboard(Mode mode, bool multiline, uint32_t flags, std::string initialText, uint32_t maxChars, uint64_t userValue)
     : VRKeyboard(mode, multiline, flags, std::move(initialText), maxChars, userValue, KeyboardLayout::Current())

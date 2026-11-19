@@ -4,9 +4,7 @@
 
 #include <openxr/openxr.h>
 
-#include <codecvt>
 #include <cstdint>
-#include <locale>
 #include <string>
 #include <vector>
 
@@ -71,7 +69,9 @@ public:
 	// The pointer target it is (an address no overlay's handle can have)
 	vr::VROverlayHandle_t Handle() const { return (vr::VROverlayHandle_t)(uintptr_t)this; }
 
-	static std::wstring_convert<std::codecvt_utf8<wchar_t>> CHAR_CONV;
+	// UTF-8 to and from wchar_t strings (UTF-16 where wchar_t is 16 bits wide); what can't be converted is left out
+	static std::string WideToUtf8(const std::wstring& s);
+	static std::wstring Utf8ToWide(const std::string& s);
 
 private:
 	enum class Case { Lower, Shift, Lock };

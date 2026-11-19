@@ -5,6 +5,7 @@
 
 #include "Misc/Canvas.h"
 #include "Misc/Keyboard/KeyboardLayout.h"
+#include "Misc/Keyboard/SudoFontMeta.h"
 #include "Misc/Keyboard/VRKeyboard.h"
 
 #include <cstring>
@@ -135,4 +136,32 @@ TEST_CASE("Us_layout_has_at_above_2")
 	CHECK(KeyboardLayout::ForLocale("en_GB.UTF-8") == KeyboardLayout::Name::UK);
 	CHECK(KeyboardLayout::ForLocale("en-US") == KeyboardLayout::Name::US);
 	CHECK(KeyboardLayout::ForLocale("") == KeyboardLayout::Name::US);
+}
+
+TEST_CASE("Font_data_that_is_cut_short_gives_a_font_without_characters")
+{
+	const std::string header = "\x0bSudoFont1.1";
+	// A header alone, a section that claims more bytes than there are, and nothing at all
+	for (std::vector<char> data : { std::vector<char>(header.begin(), header.end()),
+	         std::vector<char>{ header.begin(), header.end() }, std::vector<char>{} }) {
+		if (data.size() == header.size()) {
+			data.push_back(1); // a section id cut short
+		}
+		SudoFontMeta font(data, std::vector<char>{});
+		CHECK(font.Find(L'A') == nullptr);
+		CHECK(font.ImageWidth() == 0);
+	}
+	std::vector<char> big(header.begin(), header.end());
+	for (char c : { 0, 0, 100, 0, 0, 0 }) // font info section of 100 bytes, none there
+		big.push_back(c);
+	SudoFontMeta font(big, std::vector<char>{});
+	CHECK(font.Find(L'A') == nullptr);
+}
+
+TEST_CASE("Wide_and_UTF8_strings_convert_both_ways")
+{
+	CHECK(VRKeyboard::WideToUtf8(L"a\xA3") == "a\xC2\xA3");
+	CHECK(VRKeyboard::Utf8ToWide("a\xC2\xA3") == L"a\xA3");
+	CHECK(VRKeyboard::Utf8ToWide(VRKeyboard::WideToUtf8(L"x€y")) == L"x€y");
+	CHECK(VRKeyboard::WideToUtf8(L"").empty());
 }
