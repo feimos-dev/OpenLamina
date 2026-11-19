@@ -61,3 +61,9 @@ BindingFile LoadBindingFile(const std::filesystem::path& path);
  * that wanted accepts, given its action set's path */
 bool BindsRawInput(const BindingFile& file, const std::vector<std::string>& rawPaths,
     const std::function<bool(const std::string& setPath, const std::string& output)>& wanted);
+
+/** The names an action manifest's "localization" tables and "localization_files" give, for the table of the language
+ * closest to language (a tag such as "en_US"): lower-cased action and action set path ("/actions/main/in/fire") to
+ * its text. Files are read from manifestDir. A table or file that can't be used is skipped, never an error. */
+std::map<std::string, std::string> ReadManifestLocalization(const Json::Value& manifest, const std::filesystem::path& manifestDir,
+    std::string_view language);

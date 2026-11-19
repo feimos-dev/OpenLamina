@@ -229,3 +229,84 @@ bool BindsRawInput(const BindingFile& file, const std::vector<std::string>& rawP
 	}
 	return false;
 }
+
+namespace {
+std::string LanguageKey(std::string tag)
+{
+	std::replace(tag.begin(), tag.end(), '-', '_');
+	return Lower(tag);
+}
+std::string LanguagePart(const std::string& key)
+{
+	return key.substr(0, key.find('_'));
+}
+} // namespace
+
+std::map<std::string, std::string> ReadManifestLocalization(const Json::Value& manifest, const std::filesystem::path& manifestDir,
+    std::string_view language)
+{
+	std::vector<Json::Value> tables;
+	auto addTables = [&](const Json::Value& v) {
+		if (v.isObject())
+			tables.push_back(v);
+		else if (v.isArray())
+			for (const Json::Value& t : v)
+				if (t.isObject())
+					tables.push_back(t);
+	};
+	if (manifest.isObject()) {
+		addTables(manifest["localization"]);
+		const Json::Value& files = manifest["localization_files"];
+		if (files.isArray()) {
+			for (const Json::Value& f : files) {
+				std::string name = f.isString() ? f.asString() : StringField(f, "file");
+				if (name.empty())
+					continue;
+				Json::Value contents;
+				std::string error;
+				try {
+					std::u8string utf8(name.begin(), name.end());
+					if (!ReadJsonFileLenient(manifestDir / std::filesystem::path(utf8), contents, error))
+						continue;
+				} catch (const std::exception&) {
+					continue;
+				}
+				// A file that doesn't name its language has the one its entry gives
+				std::string tag = StringField(f, "language_tag");
+				if (contents.isObject() && !tag.empty() && !contents.isMember("language_tag"))
+					contents["language_tag"] = tag;
+				addTables(contents);
+			}
+		}
+	}
+
+	// The table of the wanted language, else of the same language in another country, else English, else the first
+	const std::string wanted = LanguageKey(std::string(language));
+	auto score = [&](const Json::Value& t) {
+		std::string key = LanguageKey(StringField(t, "language_tag"));
+		if (key == wanted)
+			return 3;
+		if (LanguagePart(key) == LanguagePart(wanted))
+			return 2;
+		return LanguagePart(key) == "en" ? 1 : 0;
+	};
+	int best = -1;
+	std::string bestKey;
+	for (const Json::Value& t : tables) {
+		if (score(t) > best) {
+			best = score(t);
+			bestKey = LanguageKey(StringField(t, "language_tag"));
+		}
+	}
+
+	std::map<std::string, std::string> names;
+	for (const Json::Value& t : tables) {
+		if (LanguageKey(StringField(t, "language_tag")) != bestKey)
+			continue;
+		for (const std::string& name : t.getMemberNames()) {
+			if (name != "language_tag" && t[name].isString() && !t[name].asString().empty())
+				names[Lower(name)] = t[name].asString();
+		}
+	}
+	return names;
+}

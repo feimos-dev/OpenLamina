@@ -5,6 +5,7 @@
 #define BASE_IMPL
 #include "BaseInput.h"
 #include "Misc/AppManifest.h"
+#include "Misc/Input/Bindings/BindingFile.h"
 #include "Misc/Input/Bindings/BindingSearch.h"
 #include "Misc/Input/Bindings/Conversion.h"
 #include "Misc/Input/Bindings/LegacyBindings.h"
@@ -659,15 +660,28 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 	/// Now we've got everything done, load the actions into OpenXR
 	//////////////////////////
 
+	// The names the manifest gives for the binding UI; OpenXR wants the ones of a kind (action sets, an action set's
+	// actions) different, so a name already used falls back to the short one
+	const std::map<std::string, std::string> localized = ReadManifestLocalization(root, PathFromUtf8(dirnameOf(pchActionManifestPath)), "en_US");
+	auto localizedName = [&](const std::string& manifestName, const std::string& fallback, std::set<std::string>& used) {
+		auto it = localized.find(manifestName);
+		if (it != localized.end() && used.insert(it->second).second)
+			return it->second;
+		used.insert(fallback);
+		return fallback;
+	};
+
+	std::set<std::string> usedSetNames;
 	for (const std::unique_ptr<ActionSet>& as : actionSets.GetItems()) {
 		XrActionSetCreateInfo createInfo = { XR_TYPE_ACTION_SET_CREATE_INFO };
 		std::string safeName = escapePathString(as->name);
 		strcpy_arr(createInfo.actionSetName, safeName.c_str());
-		strcpy_arr(createInfo.localizedActionSetName, as->name.c_str()); // TODO localisation
+		strcpy_arr(createInfo.localizedActionSetName, localizedName(as->manifestName, as->name, usedSetNames).c_str());
 
 		OC_XR_LOG(xrCreateActionSet(xr_instance, &createInfo, &as->xr));
 	}
 
+	std::map<const ActionSet*, std::set<std::string>> usedActionNames;
 	for (const std::unique_ptr<Action>& act : actions.GetItems()) {
 		// Only a vibration has an OpenXR action of its own: the other types are read from the raw inputs, and a pose,
 		// a skeleton and the eye tracking come from the legacy set
@@ -677,7 +691,7 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 		XrActionCreateInfo info = { XR_TYPE_ACTION_CREATE_INFO };
 		std::string safeName = escapePathString(act->shortName);
 		strcpy_arr(info.actionName, safeName.c_str());
-		strcpy_arr(info.localizedActionName, act->shortName.c_str()); // TODO localisation
+		strcpy_arr(info.localizedActionName, localizedName(act->manifestName, act->shortName, usedActionNames[act->set]).c_str());
 		info.actionType = XR_ACTION_TYPE_VIBRATION_OUTPUT;
 
 		// Listen on all the subactions
