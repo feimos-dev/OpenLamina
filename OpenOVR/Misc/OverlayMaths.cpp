@@ -224,6 +224,19 @@ float QuadAspect(int32_t texelsWide, int32_t texelsHigh, float texelAspect)
 	return texelAspect > 0 && std::isfinite(texelAspect) ? aspect * texelAspect : aspect;
 }
 
+XrRect2Di ImageRect(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1, uint32_t width, uint32_t height, bool mirrorX, bool mirrorY)
+{
+	if (mirrorX) {
+		const uint32_t from = width - x1, to = width - x0;
+		x0 = from, x1 = to;
+	}
+	if (mirrorY) {
+		const uint32_t from = height - y1, to = height - y0;
+		y0 = from, y1 = to;
+	}
+	return XrRect2Di{ { (int32_t)x0, (int32_t)y0 }, { (int32_t)(x1 - x0), (int32_t)(y1 - y0) } };
+}
+
 XrColor4f ColourScale(float r, float g, float b, float a, bool premultiplied)
 {
 	auto clamp = [](float v) { return v >= 0 ? (v <= 1 ? v : 1.0f) : 0.0f; }; // NaN gives 0

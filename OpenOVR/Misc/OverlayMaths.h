@@ -117,6 +117,10 @@ bool DrawnBefore(const DrawOrder& a, const DrawOrder& b);
 // aspect of 2 means texels twice as wide as tall; a size or aspect that makes no sense gives 1.
 float QuadAspect(int32_t texelsWide, int32_t texelsHigh, float texelAspect);
 
+// The rectangle of an image of width x height texels that shows the texel columns x0..x1 and rows y0..y1 of the texture
+// it was copied from, where the copy was mirrored left to right (mirrorX) and/or top to bottom (mirrorY)
+XrRect2Di ImageRect(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1, uint32_t width, uint32_t height, bool mirrorX, bool mirrorY);
+
 // The scale of an overlay's layer for its colour and alpha, each kept between 0 and 1. A premultiplied texture's colour
 // is faded with its alpha too.
 XrColor4f ColourScale(float r, float g, float b, float a, bool premultiplied);

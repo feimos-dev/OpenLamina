@@ -269,3 +269,28 @@ TEST_CASE("Draw_order_puts_the_high_quality_overlay_on_top_then_sort_order_then_
 	CHECK_FALSE(DrawnBefore(high, sorted));
 	CHECK_FALSE(DrawnBefore(high, high));
 }
+
+TEST_CASE("Image_rectangle_selects_the_area_of_a_copy_and_follows_its_mirroring")
+{
+	XrRect2Di r = ImageRect(10, 20, 50, 60, 100, 200, false, false);
+	CHECK(r.offset.x == 10);
+	CHECK(r.offset.y == 20);
+	CHECK(r.extent.width == 40);
+	CHECK(r.extent.height == 40);
+
+	r = ImageRect(10, 20, 50, 60, 100, 200, true, false);
+	CHECK(r.offset.x == 50);
+	CHECK(r.offset.y == 20);
+	CHECK(r.extent.width == 40);
+
+	r = ImageRect(10, 20, 50, 60, 100, 200, false, true);
+	CHECK(r.offset.x == 10);
+	CHECK(r.offset.y == 140);
+	CHECK(r.extent.height == 40);
+
+	r = ImageRect(0, 0, 100, 200, 100, 200, true, true);
+	CHECK(r.offset.x == 0);
+	CHECK(r.offset.y == 0);
+	CHECK(r.extent.width == 100);
+	CHECK(r.extent.height == 200);
+}
