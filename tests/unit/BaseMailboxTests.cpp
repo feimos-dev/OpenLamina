@@ -53,3 +53,31 @@ TEST_CASE("Mailbox_each_instance_sends_ready")
 	BaseMailbox again;
 	CHECK(again.ReadMessage(1, buf, sizeof(buf), &len) == BaseMailbox::VR_MBox_None);
 }
+
+TEST_CASE("Mailbox_names_have_their_own_handles")
+{
+	BaseMailbox mb;
+	OOVR_mbox_handle a = 0, b = 0, again = 0;
+	REQUIRE(mb.RegisterMailbox("one", &a) == BaseMailbox::VR_MBox_None);
+	REQUIRE(mb.RegisterMailbox("two", &b) == BaseMailbox::VR_MBox_None);
+	REQUIRE(mb.RegisterMailbox("one", &again) == BaseMailbox::VR_MBox_None);
+	CHECK(a != 0);
+	CHECK(b != 0);
+	CHECK(a != b);
+	CHECK(again == a);
+
+	// A name that was unregistered gets a handle of its own again
+	CHECK(mb.UnregisterMailbox(a) == BaseMailbox::VR_MBox_None);
+	REQUIRE(mb.RegisterMailbox("one", &again) == BaseMailbox::VR_MBox_None);
+	CHECK(again != a);
+	CHECK(again != b);
+}
+
+TEST_CASE("Mailbox_register_with_missing_pointers")
+{
+	BaseMailbox mb;
+	OOVR_mbox_handle h = 5;
+	CHECK(mb.RegisterMailbox(nullptr, &h) != BaseMailbox::VR_MBox_None);
+	CHECK(h == 0);
+	CHECK(mb.RegisterMailbox("x", nullptr) != BaseMailbox::VR_MBox_None);
+}

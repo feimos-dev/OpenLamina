@@ -3,6 +3,10 @@
 #include "../BaseCommon.h"
 #include "custom_interfaces/IVRMailbox_001.h"
 
+#include <map>
+#include <mutex>
+#include <string>
+
 typedef vr::IVRMailbox_001::mbox_handle OOVR_mbox_handle;
 
 class BaseMailbox {
@@ -24,6 +28,9 @@ public:
 	MboxErr ReadMessage(OOVR_mbox_handle mbox, char* outBuf, uint32_t outBufLen, uint32_t* msgLen);
 
 private:
+	std::mutex mutex;
+	std::map<std::string, OOVR_mbox_handle> handles;
+	OOVR_mbox_handle nextHandle = 1;
 	// The ready message is delivered once per interface instance
 	bool readySent = false;
 };
