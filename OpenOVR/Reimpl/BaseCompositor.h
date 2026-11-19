@@ -2,6 +2,7 @@
 
 #include <atomic>
 #include <cmath>
+#include <cstring>
 #include <cstdint>
 #include "../BaseCommon.h" // TODO don't import from OCOVR, and remove the "../"
 #include "generated/interfaces/IVRCompositor_022.h"
@@ -187,6 +188,25 @@ public:
 		if (space == XR_REFERENCE_SPACE_TYPE_LOCAL)
 			return vr::TrackingUniverseSeated;
 		return set == vr::TrackingUniverseRawAndUncalibrated ? vr::TrackingUniverseRawAndUncalibrated : vr::TrackingUniverseStanding;
+	}
+	// The Vulkan extensions a game needs for its frames to be copied through D3D11 when the runtime has no Vulkan
+	// support (space separated, as the runtime lists its own)
+	static const char* InteropVulkanExtensions(bool device)
+	{
+		return device ? "VK_KHR_external_memory VK_KHR_external_memory_win32 VK_KHR_dedicated_allocation VK_KHR_get_memory_requirements2"
+		              : "VK_KHR_external_memory_capabilities VK_KHR_get_physical_device_properties2";
+	}
+	// Copies a list into the game's buffer (as much as fits, always ended) and answers the size it needs, as with the
+	// runtime's own lists
+	static uint32_t ExtensionListSize(const char* list, char* buffer, uint32_t bufferSize)
+	{
+		const uint32_t needed = (uint32_t)strlen(list) + 1;
+		if (buffer && bufferSize) {
+			const uint32_t count = needed < bufferSize ? needed : bufferSize;
+			memcpy(buffer, list, count);
+			buffer[count - 1] = 0;
+		}
+		return needed;
 	}
 	static bool SubmitEndsFrame(int32_t timingMode, bool calledHandoff)
 	{

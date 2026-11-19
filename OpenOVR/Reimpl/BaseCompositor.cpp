@@ -769,6 +769,11 @@ uint32_t BaseCompositor::GetVulkanInstanceExtensionsRequired(char* pchValue, uin
 	if (pchValue && unBufferSize)
 		pchValue[0] = 0;
 #if defined(SUPPORT_VK)
+#if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+	// A runtime with D3D11 but no Vulkan gets the game's frames through D3D11, which needs the game's Vulkan to share memory
+	if (!xr_ext->xrGetVulkanInstanceExtensionsKHR_Available() && xr_ext->xrGetD3D11GraphicsRequirementsKHR_Available())
+		return ExtensionListSize(InteropVulkanExtensions(false), pchValue, unBufferSize);
+#endif
 	// Without a buffer, only the size is asked for (a runtime writes into whatever buffer it's given)
 	// Whaddya know, the OpenXR, Oculus and Valve methods work almost identically...
 	uint32_t size = 0;
@@ -786,6 +791,10 @@ uint32_t BaseCompositor::GetVulkanDeviceExtensionsRequired(VkPhysicalDevice_T* p
 	if (pchValue && unBufferSize)
 		pchValue[0] = 0;
 #if defined(SUPPORT_VK)
+#if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+	if (!xr_ext->xrGetVulkanDeviceExtensionsKHR_Available() && xr_ext->xrGetD3D11GraphicsRequirementsKHR_Available())
+		return ExtensionListSize(InteropVulkanExtensions(true), pchValue, unBufferSize);
+#endif
 	uint32_t size = 0;
 	XrResult res = xr_ext->xrGetVulkanDeviceExtensionsKHR(xr_instance, xr_system, pchValue ? unBufferSize : 0, &size, pchValue);
 	if (res != XR_ERROR_SIZE_INSUFFICIENT)
