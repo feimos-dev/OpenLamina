@@ -64,6 +64,16 @@ public:
 	 * format (which is read but never written), or the lock wasn't had in time */
 	bool Update(StoreDoc doc, const std::function<void(Json::Value& data)>& edit, Wait wait = Wait::UpToTwoSeconds);
 
+	/** Update from the game's frame: the edit is made on the process's writer thread (one per store), so the frame
+	 * never waits for the store's lock or its file. A later edit with the same non-empty key replaces one not yet
+	 * made (only the last of them is made); edits without a key are all made, in order. Reads in this process see
+	 * the edits not yet made, and an Update of the document makes them first. The edit is kept and called later,
+	 * maybe more than once (each read before it's made): it captures by value. */
+	void UpdateLater(StoreDoc doc, const std::string& key, std::function<void(Json::Value& data)> edit);
+
+	/** Waits, a few seconds at most, until the edits UpdateLater was given so far are made (or given up on) */
+	void Flush();
+
 	/** Changes with every Update of the document, in any process; 0 if the store can't be used */
 	uint64_t Generation(StoreDoc doc);
 
@@ -85,6 +95,12 @@ public:
 	/** Whether pid is running and is the process that started at start; with start 0 (an entry written without it),
 	 * whether any process with that pid is running */
 	static bool IsSameProcessAlive(uint32_t pid, uint64_t start);
+	/** Ends pid at once if it's the process that started at start (not 0), checked as near to the kill as the system
+	 * allows; false if it isn't, or couldn't be ended */
+	static bool KillProcess(uint32_t pid, uint64_t start);
+	/** The start time the store has for a pid (the Applications document's processes, the scene's, the overlay
+	 * programs'), if it's still that process; 0 for a pid the store doesn't know or that's gone */
+	uint64_t KnownProcessStart(uint32_t pid);
 	/** Whether a program other than self has an entry in the Overlays document and is still running */
 	static bool OtherLiveProgram(const Json::Value& overlaysDoc, uint32_t self);
 	/** The same, or the Scene document's scene application (other than self) is still running */
@@ -110,7 +126,7 @@ private:
 	std::unique_ptr<Platform> platform;
 	uint8_t* state = nullptr; // state.bin, mapped
 
-	std::mutex writeLock; // this store's writers, which share its lock file handle
+	std::timed_mutex writeLock; // this store's writers, which share its lock file handle
 	std::mutex lock; // the cache and ownEvents
 	struct Cached {
 		uint64_t generation = 0;
@@ -119,4 +135,13 @@ private:
 	};
 	std::map<StoreDoc, Cached> cache;
 	std::set<uint64_t> ownEvents; // seqs this store posted, which its own polls skip
+
+	// UpdateLater's edits not yet made, and the writer thread that makes them
+	struct Later;
+	std::unique_ptr<Later> later;
+	/** The document's edits not yet made, with their ids */
+	std::vector<std::pair<uint64_t, std::function<void(Json::Value&)>>> PendingEdits(StoreDoc doc);
+	/** Update, making the pending edits first (and, with pendingOnly, writing nothing if there are none) */
+	bool WriteUpdate(StoreDoc doc, const std::function<void(Json::Value& data)>* edit, Wait wait, bool pendingOnly);
+	void WriterLoop();
 };

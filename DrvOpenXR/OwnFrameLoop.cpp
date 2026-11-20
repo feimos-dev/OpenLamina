@@ -15,7 +15,9 @@ constexpr milliseconds kRetry{ 11 };
 OwnFrameLoop::OwnFrameLoop(Mode mode, LayerSource source, milliseconds idleAfter, FrameRunner runner, ContentCheck hasContent)
     : mode(mode), source(std::move(source)), idleAfter(idleAfter), runner(std::move(runner)), hasContent(std::move(hasContent))
 {
-	thread = std::thread([this] { Thread(); });
+	// A Vulkan queue or an OpenGL context is the game's: used only from inside its calls, so no thread of their own
+	if (mode != Mode::InCallsOnly)
+		thread = std::thread([this] { Thread(); });
 }
 
 OwnFrameLoop::~OwnFrameLoop()

@@ -669,15 +669,22 @@ DeviceIdentity XrHMD::Identity()
 	// The OpenXR system's name picks the row; read once per instance (it doesn't change while the instance lives)
 	static std::mutex nameMutex;
 	static XrInstance nameInstance = XR_NULL_HANDLE;
-	static std::string systemName;
+	static std::string systemName, runtimeName;
+	static uint32_t vendorId = 0;
 	{
 		std::lock_guard<std::mutex> guard(nameMutex);
 		if (xr_instance == XR_NULL_HANDLE) {
 			systemName.clear();
+			runtimeName.clear();
+			vendorId = 0;
 			nameInstance = XR_NULL_HANDLE;
 		} else if (xr_instance != nameInstance || systemName.empty()) {
 			XrSystemProperties properties = { XR_TYPE_SYSTEM_PROPERTIES };
-			systemName = XR_SUCCEEDED(xrGetSystemProperties(xr_instance, xr_system, &properties)) ? properties.systemName : "";
+			const bool got = XR_SUCCEEDED(xrGetSystemProperties(xr_instance, xr_system, &properties));
+			systemName = got ? properties.systemName : "";
+			vendorId = got ? properties.vendorId : 0;
+			XrInstanceProperties instance = { XR_TYPE_INSTANCE_PROPERTIES };
+			runtimeName = XR_SUCCEEDED(xrGetInstanceProperties(xr_instance, &instance)) ? instance.runtimeName : "";
 			nameInstance = xr_instance;
 		}
 	}
@@ -686,12 +693,15 @@ DeviceIdentity XrHMD::Identity()
 		device.name = head->name;
 		device.serial = head->serial;
 	}
-	std::string name;
+	std::string name, runtime;
+	uint32_t vendor = 0;
 	{
 		std::lock_guard<std::mutex> guard(nameMutex);
 		name = systemName;
+		runtime = runtimeName;
+		vendor = vendorId;
 	}
-	return HmdIdentity(name, device);
+	return HmdIdentity(name, device, vendor, runtime);
 }
 
 int32_t XrHMD::GetInt32TrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::ETrackedPropertyError* pErrorL)

@@ -351,8 +351,14 @@ XrResult MakeInstance(const InstancePlan& plan, XrInstance* instance, XrVersion*
 #endif
 
 	XrResult res = DrvOpenXR::CreateInstanceNewestVersion(createInfo, instance, version, xrCreateInstance);
-	if (XR_SUCCEEDED(res))
+	if (XR_SUCCEEDED(res)) {
 		OOVR_LOGF("Created the OpenXR instance for OpenXR %d.%d", (int)XR_VERSION_MAJOR(*version), (int)XR_VERSION_MINOR(*version));
+		XrInstanceProperties properties = { XR_TYPE_INSTANCE_PROPERTIES };
+		if (XR_SUCCEEDED(xrGetInstanceProperties(*instance, &properties))) {
+			OOVR_LOGF("OpenXR runtime: %s %d.%d.%d", properties.runtimeName, (int)XR_VERSION_MAJOR(properties.runtimeVersion),
+			    (int)XR_VERSION_MINOR(properties.runtimeVersion), (int)XR_VERSION_PATCH(properties.runtimeVersion));
+		}
+	}
 	return res;
 }
 

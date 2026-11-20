@@ -1,14 +1,14 @@
 {
- "#": "The HMD's answers on the stand-in: the generic answers games branch on, and the manufacturer the stand-in's system name (run.py --cases device-identity --expect expect/device_identity.json). A string that doesn't fit: its size with the terminator, BufferTooSmall (3), an empty string. IVRSystem_003's ComputeDistortion: the coordinates given, as the OpenXR runtime distorts the frames itself.",
+ "#": "The HMD's answers on the stand-in: the generic answers games branch on, and the manufacturer from the stand-in's vendor ID, which no maker has, so the first word of its runtime name (run.py --cases device-identity --expect expect/device_identity.json). A string that doesn't fit: its size with the terminator, BufferTooSmall (3), an empty string. IVRSystem_003's ComputeDistortion: the coordinates given, as the OpenXR runtime distorts the frames itself.",
  "device-identity/HMD TrackingSystemName/-/-": {
   "ret": 7,
   "error": 0,
   "value": "oculus"
  },
  "device-identity/HMD ManufacturerName/-/-": {
-  "ret": 27,
+  "ret": 14,
   "error": 0,
-  "value": "OpenComposite test runtime"
+  "value": "OpenComposite"
  },
  "device-identity/HMD RenderModelName/-/-": {
   "ret": 21,

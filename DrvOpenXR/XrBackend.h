@@ -21,6 +21,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 #include <mutex>
 
@@ -186,8 +187,10 @@ public:
 	 */
 	void StopOwnFrames(bool forGood = false);
 
-	/** Whether OpenLamina runs frames of its own on this session (RunOwnFramesWhile can show something) */
-	bool HasOwnFrames() const { return ownFrames != nullptr; }
+	/** Whether own frames can run on the calling thread now: there are some, and on a session whose frames run only
+	 * inside the game's calls, this is its render thread (OpenGL: the session's context is current here; Vulkan: the
+	 * thread that last waited for a frame, so none before the game's first) */
+	bool OwnFramesHere() const;
 
 	/**
 	 * Runs OpenLamina's own frames on the calling thread while keepGoing() holds (OwnFrameLoop::RunWhile): a blocking
@@ -208,6 +211,15 @@ public:
 
 private:
 	std::shared_ptr<XrHMD> hmd = std::make_shared<XrHMD>();
+	// The stage's bounds rectangle, asked of the runtime once per session and again after the stage changes
+	// (XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING); under playAreaLock
+	std::mutex playAreaLock;
+	XrSession playAreaSession = XR_NULL_HANDLE;
+	bool playAreaKnown = false;
+	XrExtent2Df playAreaRect{};
+	// Until the stage's change takes effect (its event's changeTime), the bounds are asked each time, not kept
+	XrTime playAreaChangeTime = 0;
+	void ForgetPlayArea(XrTime changeTime = 0);
 	// Replaced when a hand's interaction profile changes, while other threads read input: copied and replaced only
 	// under hands_mutex (Hand), which is held for nothing else
 	std::shared_ptr<XrController> hand_left;
@@ -259,6 +271,17 @@ private:
 	XrCompositionLayerProjection lastProjection{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
 	XrCompositionLayerProjectionView lastProjectionViews[2]{};
 	std::atomic<bool> haveLastProjection{ false };
+	// SubmitFrames shows the game's last frame again if this frame has none of its own (a frame the game didn't submit
+	// to, ended for it)
+	std::atomic<bool> repeatLastFrame{ false };
+	// An OpenGL session's context, which its own frames (run only inside the game's calls) need current; else null
+	std::atomic<const void*> ownFramesGlContext{ nullptr };
+	// The game's OpenGL context on Linux, current when its session's binding was made
+	const void* gameGlContext = nullptr;
+	// A Vulkan session's own frames run inside the game's calls on the thread it renders on (the last to wait for a
+	// frame), where OpenVR may use its queue
+	std::atomic<bool> ownFramesInCalls{ false };
+	std::atomic<std::thread::id> gameFrameThread{};
 	bool SkyboxShown();
 	// The layers of the frame being ended, under frameOwner
 	std::vector<const XrCompositionLayerBaseHeader*> frameLayers;
@@ -367,7 +390,7 @@ private:
 	// waiting for the session lock or for the own frames' thread.
 	std::mutex frameOwner;
 	// A frame was begun (by the game, or SetSkyboxOverride) and not yet ended; under frameOwner
-	bool frameBegun = false;
+	std::atomic<bool> frameBegun{ false };
 	// OpenLamina's frames while the game runs none; created with each session, stopped before it ends
 	std::unique_ptr<OwnFrameLoop> ownFrames;
 	bool ownFramesStopped = false; // for good: OpenLamina is shutting down

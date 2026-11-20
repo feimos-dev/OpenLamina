@@ -343,3 +343,70 @@ TEST_CASE("Store_leaves_no_temporary_file_and_refuses_a_runaway_document")
 	CHECK_FALSE(store.Read(StoreDoc::Settings).isMember("big"));
 	CHECK_FALSE(fs::exists(dir.path / "settings.json.tmp"));
 }
+
+TEST_CASE("Frame_edits_are_written_later_and_read_at_once")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	SharedStore other(dir.path); // another program's view of the same store
+	store.UpdateLater(StoreDoc::Dashboard, "open", [](Json::Value& doc) { doc["open"] = true; });
+	// This process reads it straight away
+	CHECK(store.Read(StoreDoc::Dashboard)["open"].asBool());
+	CHECK(store.ReadAt(StoreDoc::Dashboard, { "open" }).asBool());
+	store.Flush();
+	// Written for the others
+	CHECK(other.Read(StoreDoc::Dashboard)["open"].asBool());
+}
+
+TEST_CASE("Only_the_last_frame_edit_with_a_key_is_made")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	// Held up: the writer can't have the store while this Update is in its edit
+	std::atomic<bool> inEdit{ false }, release{ false };
+	std::thread holder([&] {
+		store.Update(StoreDoc::Overlays, [&](Json::Value&) {
+			inEdit = true;
+			while (!release)
+				std::this_thread::sleep_for(std::chrono::milliseconds(1));
+		});
+	});
+	while (!inEdit)
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	for (int i = 1; i <= 5; i++) {
+		store.UpdateLater(StoreDoc::Scene, "count", [i](Json::Value& doc) { doc["calls"] = doc["calls"].asInt() + 1, doc["last"] = i; });
+		// Not keyed: each made
+		store.UpdateLater(StoreDoc::Scene, "", [](Json::Value& doc) { doc["unkeyed"] = doc["unkeyed"].asInt() + 1; });
+	}
+	release = true;
+	holder.join();
+	store.Flush();
+	SharedStore other(dir.path);
+	const Json::Value doc = other.Read(StoreDoc::Scene);
+	CHECK(doc["last"].asInt() == 5);
+	CHECK(doc["calls"].asInt() == 1);
+	CHECK(doc["unkeyed"].asInt() == 5);
+}
+
+TEST_CASE("An_update_makes_the_frame_edits_before_its_own")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	store.UpdateLater(StoreDoc::Overlays, "overlays", [](Json::Value& doc) { doc["123"]["start"] = 1; });
+	// The program's entry removed as it shuts down: not put back by the frame's edit after it
+	store.Update(StoreDoc::Overlays, [](Json::Value& doc) { doc.removeMember("123"); });
+	store.Flush();
+	SharedStore other(dir.path);
+	CHECK_FALSE(other.Read(StoreDoc::Overlays).isMember("123"));
+}
+
+TEST_CASE("A_store_destroyed_writes_its_frame_edits")
+{
+	TempDir dir;
+	{
+		SharedStore store(dir.path);
+		store.UpdateLater(StoreDoc::Settings, "k", [](Json::Value& doc) { doc["written"] = true; });
+	}
+	SharedStore other(dir.path);
+	CHECK(other.Read(StoreDoc::Settings)["written"].asBool());
+}

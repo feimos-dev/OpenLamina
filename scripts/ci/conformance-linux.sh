@@ -8,8 +8,9 @@
 #   scripts/ci/conformance-linux.sh x64|x86 [build-dir] [out-dir]
 #
 # Exits non-zero if any run failed; every run is made all the same. Left out, as they don't apply here: the cases of
-# Direct3D (their Vulkan and OpenGL counterparts run), OpenGL and Vulkan through D3D11, OpenLamina's own frames (on
-# D3D sessions only), the Steam client observer and the background apps' refusals (background apps get a scene session
+# Direct3D (their Vulkan and OpenGL counterparts run), OpenGL and Vulkan through D3D11, OpenLamina's own frames on a
+# thread of their own when the game is idle (on D3D sessions only: Vulkan and OpenGL ones run them only inside the
+# game's calls), the Steam client observer and the background apps' refusals (background apps get a scene session
 # on Linux, for Proton).
 set -u
 
@@ -103,6 +104,8 @@ run --cases remote-pointer-peer-dies,remote-pointer-dying-overlay --jobs 2 --scr
 run --cases dashboard,dashboard-overlay --jobs 2 --script tests/conformance/scripts/dashboard.json --ini tests/conformance/ini/dashboard.ini --manifest tests/unit/data/manifest_basic.json --expect tests/conformance/expect/dashboard.json --out "$out"/dashboard
 # A controller's system button held recentres and opens no dashboard; pressed, it opens and closes the dashboard
 run --cases recentre --script tests/conformance/scripts/recentre.json --ini tests/conformance/ini/recentre.ini --expect tests/conformance/expect/recentre.json --out "$out"/recentre
+# Controllers found from the game's first frames
+run --cases controllers-early --script tests/conformance/scripts/controllers_early.json --expect tests/conformance/expect/controllers_early.json --out "$out"/controllers-early
 # The play area's walls near its edge with drawBounds, and none without
 run --cases bounds --script tests/conformance/scripts/bounds.json --ini tests/conformance/ini/draw_bounds.ini --expect tests/conformance/expect/bounds.json --out "$out"/bounds
 run --cases bounds-room-setup --script tests/conformance/scripts/bounds_room_setup.json --ini tests/conformance/ini/draw_bounds.ini --expect tests/conformance/expect/bounds_room_setup.json --out "$out"/bounds-room-setup
@@ -113,11 +116,21 @@ run --shipped-defaults --cases laser-mouse --script tests/conformance/scripts/la
 run --shipped-defaults --cases session-events --script tests/conformance/scripts/session_events.json --expect tests/conformance/expect/session_events.json --out "$out"/defaults-session-events
 run --shipped-defaults --cases bounds --script tests/conformance/scripts/bounds.json --expect tests/conformance/expect/bounds.json --out "$out"/defaults-bounds
 run --shipped-defaults --cases recentre --script tests/conformance/scripts/recentre.json --expect tests/conformance/expect/recentre.json --out "$out"/defaults-recentre
+# A message box in OpenLamina's own frames, run inside the blocked call (no thread on a Vulkan or OpenGL session),
+# answered with the laser; one the session ends under answers as the game's quit
+run --cases message-overlay --script tests/conformance/scripts/message_box.json --ini tests/conformance/ini/own_frames.ini --expect tests/conformance/expect/message_overlay.json --out "$out"/message-overlay
+run --cases message-overlay --script tests/conformance/scripts/message_box_exit.json --ini tests/conformance/ini/own_frames.ini --expect tests/conformance/expect/message_overlay_exit.json --out "$out"/message-overlay-exit
+run --shipped-defaults --cases message-overlay --script tests/conformance/scripts/message_box.json --expect tests/conformance/expect/message_overlay.json --out "$out"/defaults-message-overlay
+# A game that calls WaitGetPoses without Submit: its frames are ended for it inside the call
+run --cases wait-without-submit --ini tests/conformance/ini/own_frames.ini --expect tests/conformance/expect/wait_without_submit.json --out "$out"/wait-without-submit
+run --cases gfx-vk-wait-without-submit,gfx-gl-wait-without-submit --script tests/conformance/scripts/gfx_all_apis.json --ini tests/conformance/ini/own_frames.ini --expect tests/conformance/expect/gfx_wait_without_submit.json --out "$out"/gfx-wait-without-submit
 # The keyboard, typed on with the laser
 run --cases keyboard --script tests/conformance/scripts/keyboard.json --ini tests/conformance/ini/keyboard_us.ini --expect tests/conformance/expect/keyboard.json --out "$out"/keyboard
 # Frames and overlays from the Vulkan and OpenGL games, as the stand-in reads them back (the Direct3D cases skip)
 d3d='gfx-d3d1[012]-.*|overlay-(raw|texture-readback)-d3d1[12]|overlay-images'
 run --cases overlay-images,gfx-d3d11-basic,gfx-d3d12-basic,gfx-vk-basic,gfx-gl-basic,gfx-d3d10-basic,gfx-d3d11-odd,gfx-d3d11-bounds,gfx-d3d12-bounds,gfx-vk-bounds,gfx-gl-bounds,overlay-raw-d3d11,overlay-raw-d3d12,overlay-raw-vk,overlay-raw-gl,overlay-texture-readback-d3d11,overlay-texture-readback-d3d12,overlay-texture-readback-vk,overlay-texture-readback-gl --script tests/conformance/scripts/gfx_all_apis.json --expect tests/conformance/expect/gfx.json --allow-skip "$d3d" --out "$out"/gfx
+# CompositorDumpImages: the eyes' next images as PNGs in the log folder
+run --cases gfx-vk-dump-images,gfx-gl-dump-images --script tests/conformance/scripts/gfx_all_apis.json --expect tests/conformance/expect/dump_images.json --out "$out"/dump-images
 # Formats the runtime doesn't offer (it has RGBA8 sRGB only), converted into the one it has
 run --cases gfx-d3d11-formats,gfx-d3d12-formats,gfx-vk-formats,gfx-gl-formats --script tests/conformance/scripts/gfx_rgba8_only.json --expect tests/conformance/expect/gfx_formats.json --allow-skip "$d3d" --out "$out"/gfx-formats
 # The pose and depth a frame was submitted with: used with useSubmittedPose and submitDepth on, not without

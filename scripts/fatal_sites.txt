@@ -3,3 +3,4 @@
 OpenOVR/logging.cpp|oovr_abort_raw_va|_Exit|1|the hard stop itself, which the macros above lead to: only reached from an allowed site
 OpenOVR/logging.cpp|oovr_abort_raw_va|abort|1|the hard stop itself, which the macros above lead to: only reached from an allowed site
 OpenOVR/logging.cpp|oovr_message_raw|MessageBoxA|1|OOVR_MESSAGE's box: shown only by the hard stop above (and debug_helper's GetStackWalk, which nothing calls)
+OpenOVR/Misc/SharedStore.cpp|SharedStore::KillProcess|TerminateProcess|1|ends another OpenLamina program (ForceQuitProcess, a scene app ignoring a launch's quit), checked by its start time on the handle it ends; never this one

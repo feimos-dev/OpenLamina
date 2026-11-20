@@ -37,6 +37,7 @@
 #include "../OpenOVR/Misc/ProgramEvents.h"
 #include "../OpenOVR/Reimpl/BaseApplications.h"
 #include "../OpenOVR/Reimpl/BaseClientCore.h"
+#include "../OpenOVR/Reimpl/BaseCompositor.h"
 #include "../OpenOVR/Reimpl/BaseInput.h"
 #include "../OpenOVR/Reimpl/BaseOverlay.h"
 #include "../OpenOVR/Reimpl/BaseScreenshots.h"
@@ -752,6 +753,7 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 				None,
 			};
 			// clang-format on
+			gameGlContext = glXGetCurrentContext(); // the game's, which own frames need current: the session's is shared with it
 			binding.glxContext = pfn_glXCreateContextAttribsARB(binding.xDisplay, binding.glxFBConfig, glXGetCurrentContext(), true, contextAttribs);
 			if (!binding.glxContext)
 				return giveUp("glXCreateContextAttribsARB failed");
@@ -804,6 +806,7 @@ void XrBackend::WaitForTrackingData()
 {
 	// A game that waits for frames before its first submit still sees the session become ready
 	PumpEvents();
+	gameFrameThread = std::this_thread::get_id();
 
 	// Make sure the OpenXR session is active before doing anything else, and if not then skip
 	if (!sessionActive) {
@@ -829,8 +832,17 @@ void XrBackend::WaitForTrackingData()
 	ShowPendingSkybox();
 
 	// A frame the game gave one eye (or ended no other way) is ended with what it has before the next begins
-	if (renderingFrame && submittedEyeTextures)
+	if (renderingFrame && submittedEyeTextures) {
 		SubmitFrames(false);
+	} else if (frameBegun && ownFrames && OwnFramesHere()) {
+		// One it waited for and didn't submit to (a game that calls WaitGetPoses without Submit, maybe before it has
+		// given a texture, on OpenLamina's own session) is ended as an own frame would be: its last frame again, the
+		// skybox, the overlays; not left to be discarded
+		renderingFrame = true;
+		repeatLastFrame = true;
+		SubmitFrames(false);
+		repeatLastFrame = false;
+	}
 
 	// The game's frame from here to its xrEndFrame (SubmitFrames): an own frame in flight is ended first
 	std::unique_lock<std::mutex> owner(frameOwner);
@@ -1049,6 +1061,12 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 			Image mirror;
 			if (eye == vr::Eye_Left && MirrorWindow::Get().WantsFrame() && comp.ReadbackToCpu(texture, bounds, mirror))
 				MirrorWindow::Get().Offer(std::move(mirror));
+			// CompositorDumpImages: this eye's image, read back once
+			if (BaseCompositor::_WantsDumpImage(eye)) {
+				Image dumped;
+				if (comp.ReadbackToCpu(texture, bounds, dumped))
+					BaseCompositor::_OfferDumpImage(eye, dumped);
+			}
 			// A screenshot the compositor takes: this eye's image, read back
 			if (BaseScreenshots::_WantsEyeImages()) {
 				Image shot;
@@ -1233,6 +1251,13 @@ void XrBackend::SubmitFrames(bool showSkybox)
 		}
 	}
 
+	// A frame ended for the game without its eye textures: its last frame again, which the runtime reprojects
+	bool repeated = false;
+	if (!app_layer && repeatLastFrame && haveLastProjection && !sceneCleared && !renderingSuspended) {
+		app_layer = (XrCompositionLayerBaseHeader*)&lastProjection;
+		repeated = true;
+	}
+
 	// The scene (the game's layer, or the skybox in its place once the grid is fully in), the fade over it, then the
 	// overlays. The overlays' layers stay as they are until the frame has ended.
 	const ScenePlan plan = PlanScene(app_layer != nullptr, SkyboxShown(), CompositorFades::Get().GridAlphaAt(CompositorClockSeconds()));
@@ -1309,7 +1334,7 @@ void XrBackend::SubmitFrames(bool showSkybox)
 	const float presentMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - endCall).count();
 	OOVR_FAILED_XR_SOFT_ABORT(endResult);
 	// A present: the game's eye textures shown
-	const bool presented = XR_SUCCEEDED(endResult) && app_layer && sceneShown && frameShouldRender;
+	const bool presented = XR_SUCCEEDED(endResult) && app_layer && !repeated && sceneShown && frameShouldRender;
 	if (presented) {
 		FrameStats::Get().OnAppPresent();
 		BaseApplications::SetSceneDrawn();
@@ -1915,10 +1940,24 @@ bool XrBackend::GetPlayAreaPoints(vr::HmdVector3_t* points, int* count)
 		return false; // the session is lost
 
 	XrExtent2Df bounds;
-	XrResult res = xrGetReferenceSpaceBoundsRect(xr_session.get(), XR_REFERENCE_SPACE_TYPE_STAGE, &bounds);
-
-	if (res == XR_SPACE_BOUNDS_UNAVAILABLE || XR_FAILED(res))
-		return false; // no play area (set up, or at all)
+	{
+		std::lock_guard<std::mutex> lock(playAreaLock);
+		if (playAreaSession != xr_session.get()) {
+			XrExtent2Df asked{};
+			const XrTime askedAt = xr_time_now();
+			XrResult res = xrGetReferenceSpaceBoundsRect(xr_session.get(), XR_REFERENCE_SPACE_TYPE_STAGE, &asked);
+			playAreaKnown = XR_SUCCEEDED(res) && res != XR_SPACE_BOUNDS_UNAVAILABLE && asked.width > 0 && asked.height > 0;
+			playAreaRect = playAreaKnown ? asked : XrExtent2Df{};
+			// A failed call is asked again next time; an answer (bounds, or none) is kept once the stage's change is in
+			if (XR_SUCCEEDED(res) && (!playAreaChangeTime || askedAt >= playAreaChangeTime)) {
+				playAreaSession = xr_session.get();
+				playAreaChangeTime = 0;
+			}
+		}
+		if (!playAreaKnown)
+			return false; // no play area (set up, or at all)
+		bounds = playAreaRect;
+	}
 
 	if (count)
 		*count = 4;
@@ -1934,6 +1973,13 @@ bool XrBackend::GetPlayAreaPoints(vr::HmdVector3_t* points, int* count)
 
 	return true;
 }
+void XrBackend::ForgetPlayArea(XrTime changeTime)
+{
+	std::lock_guard<std::mutex> lock(playAreaLock);
+	playAreaSession = XR_NULL_HANDLE;
+	playAreaChangeTime = changeTime;
+}
+
 /** Determine whether the bounds are showing right now **/
 bool XrBackend::AreBoundsVisible()
 {
@@ -2050,6 +2096,7 @@ void XrBackend::PumpEvents()
 			switch ((int)change->referenceSpaceType) {
 			case (int)XR_REFERENCE_SPACE_TYPE_STAGE:
 			case (int)OC_XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR:
+				ForgetPlayArea(change->changeTime); // the stage's bounds may change with it
 				OcPostEvent(VREvent_StandingZeroPoseReset, k_unTrackedDeviceIndex_Hmd, VREvent_Data_t{}, false);
 				OcPostEvent(VREvent_ChaperoneUniverseHasChanged, k_unTrackedDeviceIndexInvalid, VREvent_Data_t{}, false);
 				break;
@@ -2220,16 +2267,20 @@ void XrBackend::PumpEvents()
 	   Some runtimes (WMR) do not instantly return an interaction profile,
 	   so we will keep tryinig to query it until it does.
 
-	   Note that we check that the session is focused because this means that the application
-	   has already submitted a frame, that frame is visible, and we have input focus.
-	   Waiting until the application has input focus allows us to avoid unnecessarily restarting the
-	   session when we can't even receive input anyway, as well as before the session is restarted for
-	   the temporary session.
+	   Note that we wait for the session to be synchronised, which means the application has waited
+	   for a frame. That may still be on the temporary session, which is restarted at the game's first
+	   Submit: the controllers are found again on the new one, and the game has them in the meantime.
    */
 	// Not while a session is being ended (ShutdownSession pumps events while it waits, maybe under the input restart)
 	BaseInput* input = GetUnsafeBaseInput();
-	if (input && !exitExpected && !input->AreActionsLoaded() && sessionState == XR_SESSION_STATE_FOCUSED && !Hand(XrController::XCT_LEFT) && !Hand(XrController::XCT_RIGHT)) {
+	// From the game's first frame (SYNCHRONIZED on), not only once it has focus: games look for their controllers in
+	// their first frames, and runtimes can take seconds to give focus. The profile is read straight after, in case
+	// the runtime gives it without an event.
+	const bool framesStarted = sessionState == XR_SESSION_STATE_SYNCHRONIZED || sessionState == XR_SESSION_STATE_VISIBLE
+	    || sessionState == XR_SESSION_STATE_FOCUSED;
+	if (input && !exitExpected && !input->AreActionsLoaded() && framesStarted && !Hand(XrController::XCT_LEFT) && !Hand(XrController::XCT_RIGHT)) {
 		QueryForInteractionProfile();
+		UpdateInteractionProfile();
 	}
 }
 
@@ -2269,7 +2320,7 @@ void XrBackend::OnSessionLost()
 // Own frames call xrEndFrame on their own thread, where the runtime may use the session's device while the game's
 // threads use it too. A D3D11 device's immediate context is made safe for that (multithread protection, logged once);
 // a D3D12 queue is free-threaded. A Vulkan queue or an OpenGL context can't be shared with the game's threads that
-// way: false, logged once, and there are no own frames.
+// way: false, and their own frames run only inside the game's calls (OwnFramesInCallsOnly).
 static bool DeviceReadyForOwnFrames(const void* binding)
 {
 	const auto* header = (const XrBaseInStructure*)binding;
@@ -2299,15 +2350,41 @@ static bool DeviceReadyForOwnFrames(const void* binding)
 		return true;
 #endif
 	default:
-		OOVR_LOG_ONCEF("ownFrames: no own frames on a session of graphics binding type %d (a Vulkan queue or an OpenGL context "
-		               "is the game's own)",
-		    (int)header->type);
+		return false;
+	}
+}
+
+// A Vulkan queue or an OpenGL context is the game's own: own frames on its session run only inside the game's calls
+// to OpenLamina (where OpenVR may use the queue, and on the thread where the context is current), with no thread of
+// their own. True for those, with the OpenGL context to look for; false, logged once, for anything else.
+static bool OwnFramesInCallsOnly(const void* binding, const void* gameGlContext, const void** glContext)
+{
+	*glContext = nullptr;
+	const auto* header = (const XrBaseInStructure*)binding;
+	if (!header)
+		return false;
+	switch (header->type) {
+	case XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR:
+		return true;
+#if defined(SUPPORT_GL) && defined(_WIN32)
+	case XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR:
+		*glContext = (const void*)((const XrGraphicsBindingOpenGLWin32KHR*)binding)->hGLRC;
+		return *glContext != nullptr;
+#elif defined(SUPPORT_GL) && !defined(ANDROID)
+	case XR_TYPE_GRAPHICS_BINDING_OPENGL_XLIB_KHR:
+		// The game's context, not the session's (a context of OpenLamina's shared with it)
+		*glContext = gameGlContext;
+		return *glContext != nullptr;
+#endif
+	default:
+		OOVR_LOG_ONCEF("ownFrames: no own frames on a session of graphics binding type %d", (int)header->type);
 		return false;
 	}
 }
 
 void XrBackend::OnSessionCreated()
 {
+	ForgetPlayArea();
 	sessionLost = false;
 	exitExpected = false;
 	toldIpd = NAN; // the new session's first IPD is the one the game has
@@ -2350,10 +2427,22 @@ void XrBackend::OnSessionCreated()
 
 	// Frames of OpenLamina's own while the game runs none and there's a skybox or an overlay to show
 	StopOwnFrames();
-	if (ownFramesStopped || !oovr_global_configuration.OwnFrames() || !DeviceReadyForOwnFrames(GetCurrentGraphicsBinding()))
+	ownFramesGlContext = nullptr;
+	ownFramesInCalls = false;
+	if (ownFramesStopped || !oovr_global_configuration.OwnFrames())
 		return;
+	const void* binding = GetCurrentGraphicsBinding();
+	OwnFrameLoop::Mode mode = OwnFrameLoop::Mode::WhenAppIdle;
+	if (!DeviceReadyForOwnFrames(binding)) {
+		const void* glContext = nullptr;
+		if (!OwnFramesInCallsOnly(binding, gameGlContext, &glContext))
+			return;
+		mode = OwnFrameLoop::Mode::InCallsOnly;
+		ownFramesGlContext = glContext;
+		ownFramesInCalls = true;
+	}
 	ownFrames = std::make_unique<OwnFrameLoop>(
-	    OwnFrameLoop::Mode::WhenAppIdle,
+	    mode,
 	    [this](XrTime, std::vector<const XrCompositionLayerBaseHeader*>& layers) {
 		    // RunOwnFrame holds frameOwner, under which the skybox and the game's last frame are replaced: the skybox in
 		    // the game's place, else its last frame again (which the runtime reprojects); then the overlays
@@ -2570,7 +2659,7 @@ OwnFrameLoop::OwnFrameLoop(Mode mode, LayerSource source, std::chrono::milliseco
 
 bool XrBackend::RunOwnFramesWhile(const std::function<bool()>& keepGoing)
 {
-	if (!ownFrames)
+	if (!ownFrames || !OwnFramesHere())
 		return false;
 	ownFrames->RunWhile(keepGoing);
 	return true;
@@ -2578,8 +2667,27 @@ bool XrBackend::RunOwnFramesWhile(const std::function<bool()>& keepGoing)
 
 void XrBackend::EndOpenAppFrame()
 {
-	// As if the game had submitted
+	// As if the game had submitted: with its last frame again
+	repeatLastFrame = true;
 	SubmitFrames(false);
+	repeatLastFrame = false;
+}
+
+bool XrBackend::OwnFramesHere() const
+{
+	if (!ownFrames)
+		return false;
+	if (!ownFramesGlContext) {
+		const std::thread::id renderThread = gameFrameThread;
+		return !ownFramesInCalls || renderThread == std::this_thread::get_id();
+	}
+#if defined(SUPPORT_GL) && defined(_WIN32)
+	return (const void*)wglGetCurrentContext() == ownFramesGlContext;
+#elif defined(SUPPORT_GL) && !defined(ANDROID)
+	return (const void*)glXGetCurrentContext() == ownFramesGlContext;
+#else
+	return false;
+#endif
 }
 
 void XrBackend::ClearSubmittedFrame()
@@ -2880,12 +2988,12 @@ void XrBackend::UpdateInteractionProfile()
 			}
 			if (!Hand(XrController::XCT_LEFT) && !Hand(XrController::XCT_RIGHT)) {
 				// Runtime returned an unknown interaction profile: no controller until it gives one we know
-				OOVR_LOGF("Runtime unexpectedly returned an unknown interaction profile: %s", path_name);
+				OOVR_LOG_ONCEF("Runtime unexpectedly returned an unknown interaction profile: %s", path_name);
 			}
 		} else {
 			// interaction profile lost/not detected
-			OOVR_LOGF("%s - No interaction profile detected", info.pathstr);
 			if (Hand(info.hand)) {
+				OOVR_LOGF("%s - No interaction profile detected", info.pathstr);
 				{
 					std::unique_lock handsLock(hands_mutex);
 					info.controller.reset();

@@ -16,6 +16,9 @@ namespace Json {
 class Value;
 }
 
+// The SteamVR version GetRuntimeVersion answers: one new enough that games checking for features don't turn them off
+constexpr const char* OPENVR_RUNTIME_VERSION = "2.15.6";
+
 class BaseSystem {
 	// Copied from IVRSystem, because MSVC made me.
 

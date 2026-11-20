@@ -302,6 +302,7 @@ XrResult XRAPI_CALL CreateInstance(const XrInstanceCreateInfo* info, XrInstance*
 		d.root["layers"] = Json::Value(Json::arrayValue);
 		d.root["frame_order_errors"] = 0;
 		d.root["refresh_rate_requests"] = 0;
+		d.root["bounds_rect_calls"] = 0;
 	}
 	*instance = kInstance;
 	return XR_SUCCESS;
@@ -636,6 +637,11 @@ XrResult XRAPI_CALL LocateSpace(XrSpace space, XrSpace base, XrTime time, XrSpac
 
 XrResult XRAPI_CALL GetReferenceSpaceBoundsRect(XrSession, XrReferenceSpaceType type, XrExtent2Df* bounds)
 {
+	{
+		Dump& d = GetDump();
+		std::lock_guard<std::mutex> dg(d.lock);
+		d.root["bounds_rect_calls"] = d.root["bounds_rect_calls"].asInt() + 1;
+	}
 	if (type != XR_REFERENCE_SPACE_TYPE_STAGE) {
 		*bounds = { 0, 0 };
 		return XR_SPACE_BOUNDS_UNAVAILABLE;

@@ -150,6 +150,9 @@ class BaseCompositor {
 private:
 	std::shared_ptr<Compositor> overlayReader; // reads SetOverlay's textures back
 	std::atomic<bool> leftEyeSubmitted{ false }, rightEyeSubmitted{ false };
+	// Held through Submit: the eyes' flags are checked and set, and the frame ended, as one step when a game submits
+	// its eyes from two threads
+	std::mutex submitLock;
 
 	// The old compositor window calls (IVRCompositor_005-008) and SetGraphicsDevice (005, 006)
 	bool oldVSync = true;
@@ -172,12 +175,20 @@ private:
 	// True if the current frame has only nullptr textures supplied, and should be ignored
 	std::atomic<bool> isNullRender{ false };
 	std::atomic<int32_t> explicitTimingMode{ 0 };
-	// The game has called PostPresentHandoff: it ends its frames there, not at its second Submit
-	std::atomic<bool> usesPostPresentHandoff{ false };
 	// What the game last set with SetTrackingSpace
 	std::atomic<int> trackingUniverse{ vr::TrackingUniverseStanding };
 
 public:
+	// CompositorDumpImages: whether the eye's next submitted image is wanted, and that image (written to the log
+	// folder as a PNG)
+	static bool _WantsDumpImage(vr::EVREye eye);
+	static void _OfferDumpImage(vr::EVREye eye, const Image& image);
+	// The file an eye's image is dumped to, in that folder, by the process's id
+	static std::string DumpImageName(uint32_t pid, vr::EVREye eye)
+	{
+		return "compositor-dump." + std::to_string(pid) + (eye == vr::Eye_Left ? ".left.png" : ".right.png");
+	}
+
 	// Submitted bounds with a NaN in them are no bounds at all
 	static bool BoundsAreNumbers(const vr::VRTextureBounds_t* bounds)
 	{
@@ -210,11 +221,11 @@ public:
 		}
 		return needed;
 	}
-	// Whether the second eye's Submit ends the frame: not for a game that ends its frames with PostPresentHandoff,
-	// whether it says so in its timing mode or has called it
-	static bool SubmitEndsFrame(int32_t timingMode, bool calledHandoff)
+	// Whether the second eye's Submit ends the frame: not in the timing mode (SetExplicitTimingMode) where the game
+	// ends its frames with PostPresentHandoff
+	static bool SubmitEndsFrame(int32_t timingMode)
 	{
-		return timingMode != (int32_t)VRCompositorTimingMode_Explicit_ApplicationPerformsPostPresentHandoff && !calledHandoff;
+		return timingMode != (int32_t)VRCompositorTimingMode_Explicit_ApplicationPerformsPostPresentHandoff;
 	}
 
 	typedef int ovr_enum_t;
@@ -367,7 +378,8 @@ public:
 	/** Returns true if the mirror window is shown. */
 	bool IsMirrorWindowVisible();
 
-	/** Writes all images that the compositor knows about (including overlays) to a 'screenshots' folder in the SteamVR runtime root. */
+	/** Writes all images that the compositor knows about (including overlays) to a 'screenshots' folder in the SteamVR runtime root.
+	 * Here: each eye's next submitted image, as a PNG in the log folder (DumpImageName). */
 	void CompositorDumpImages();
 
 	/** Let an app know it should be rendering with low resources. */
