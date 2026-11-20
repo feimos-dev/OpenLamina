@@ -56,7 +56,10 @@ that keep state across a Shutdown and Init, with SteamVR's resource files (`stat
 `app-type-answers` starts each application type in turn (scene, overlay, background, utility, other) and records the
 answers that depend on the session and the controllers: device roles and properties, the compositor's, overlays',
 applications' and chaperone's state. Run it with both controllers on (`scripts/controllers_on.json` on the stand-in;
-switched on with SteamVR), so a SteamVR recording gives the answers to compare with.
+switched on with SteamVR), so a SteamVR recording gives the answers to compare with. `steamvr_run_cases.cpp` has more
+of those, run the same way: device properties and roles, a second Init, chaperone bounds and colours, refused submits,
+skeletal input (`manifest_skeleton.json`), legacy controller state, render model components, a new overlay's defaults
+and events, settings defaults, the application list and IVRIOBuffer.
 
 `out/summary.txt` has the counts per status (`ok`, `ended`: OpenLamina ended the program, `crashed`, `timeout`) and
 every record that wasn't ok; `out/results.json` has every record. When a child ends early the runner starts it again

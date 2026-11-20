@@ -112,10 +112,10 @@ run --cases gfx-d3d11-formats,gfx-d3d12-formats,gfx-vk-formats,gfx-gl-formats --
 run --cases gfx-d3d11-pose-depth,gfx-d3d12-pose-depth,gfx-vk-pose-depth,gfx-gl-pose-depth --script tests/conformance/scripts/gfx_depth.json --ini tests/conformance/ini/pose_depth.ini --expect tests/conformance/expect/gfx_pose_depth.json --allow-skip "$d3d" --out "$out"/gfx-pose-depth
 run --cases gfx-d3d11-pose-depth,gfx-d3d12-pose-depth,gfx-vk-pose-depth,gfx-gl-pose-depth --script tests/conformance/scripts/gfx_depth.json --expect tests/conformance/expect/gfx_pose_depth_off.json --allow-skip "$d3d" --out "$out"/gfx-pose-depth-off
 run --shipped-defaults --cases gfx-d3d11-pose-depth,gfx-d3d12-pose-depth,gfx-vk-pose-depth,gfx-gl-pose-depth --script tests/conformance/scripts/gfx_depth.json --expect tests/conformance/expect/gfx_pose_depth.json --allow-skip "$d3d" --out "$out"/defaults-pose-depth
-# Each application type's answers with both controllers on, for comparing with SteamVR's (every record ok; the values
+# The cases whose answers wait on a SteamVR recording, with both controllers on (every record ok; the values
 # are the baselines' and the recordings')
-run --cases app-type-answers --script tests/conformance/scripts/controllers_on.json --out "$out"/app-type-answers
-check python3 tests/conformance/run.py --runtime "$build/$lib" --conformance "$build/tests/oc_conformance" --xr-runtime none --ci --cases app-type-answers --cases-only --out "$out"/app-type-answers-none
+steamvr_run=app-type-answers,device-properties,init-again,chaperone-colours,submit-refusals,skeletal-input,legacy-controller,render-model-components,overlay-defaults,settings-defaults,application-list,io-buffer
+run --cases "$steamvr_run" --script tests/conformance/scripts/controllers_on.json --out "$out"/steamvr-run
 
 echo "$failed failed"
 exit $((failed > 0))

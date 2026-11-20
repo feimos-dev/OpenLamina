@@ -39,7 +39,9 @@ from list_games import pe_machine  # noqa: E402
 ARGSETS = ["valid", "edge", "null", "invalid"]
 APPTYPES_VALID_ONLY = [2, 3, 4, 0]  # Overlay, Background, Utility, Other
 CASES = ["init-matrix", "init-repeat", "init-other-thread", "lookup-before-init", "unknown-interface",
-         "overlay-lifecycle", "input-manifest", "frame-loop", "submit-edges", "applications", "app-type-answers"]
+         "overlay-lifecycle", "input-manifest", "frame-loop", "submit-edges", "applications", "app-type-answers",
+         "device-properties", "init-again", "chaperone-colours", "submit-refusals", "skeletal-input", "legacy-controller",
+         "render-model-components", "overlay-defaults", "settings-defaults", "application-list", "io-buffer"]
 TIMEOUT = 60
 CASE_TIMEOUT = 600  # init-repeat starts OpenLamina 200 times
 MAX_REPEAT = 100  # --repeat's bound: each round is a child process

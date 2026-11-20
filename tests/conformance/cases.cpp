@@ -3353,6 +3353,7 @@ void AppTypeAnswersCase(CaseContext& c)
 		{ vr::VRApplication_Background, "background" },
 		{ vr::VRApplication_Utility, "utility" },
 		{ vr::VRApplication_Other, "other" },
+		{ vr::VRApplication_VRMonitor, "vrmonitor" },
 	};
 	for (const auto& [type, name] : types) {
 		const std::string t = name;
@@ -3543,6 +3544,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		m.insert(GfxCases().begin(), GfxCases().end());
 		m.insert(HelperCases().begin(), HelperCases().end());
 		m.insert(CoverageCases().begin(), CoverageCases().end());
+		m.insert(SteamVRRunCases().begin(), SteamVRRunCases().end());
 		return m;
 	}();
 	return all;
