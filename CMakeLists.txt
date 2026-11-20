@@ -255,6 +255,8 @@ add_library(DrvOpenXR STATIC
 	DrvOpenXR/GfxInterop.h
 	DrvOpenXR/OverlayTextureCopy.cpp
 	DrvOpenXR/OverlayTextureCopy.h
+	DrvOpenXR/OverlayTextureShare.cpp
+	DrvOpenXR/OverlayTextureShare.h
 
 	DrvOpenXR/tmp_gfx/TemporaryGraphics.cpp
 	DrvOpenXR/tmp_gfx/TemporaryGraphics.h

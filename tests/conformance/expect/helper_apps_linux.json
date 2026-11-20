@@ -1,5 +1,5 @@
 {
- "#": "An overlay app's Vulkan and OpenGL textures on Linux, read back into memory and shown from OpenLamina's own Vulkan device (scripts/helper_apps.json)",
+ "#": "An overlay app's Vulkan and OpenGL textures on Linux, shown from OpenLamina's own Vulkan device: shared with it, or read back into memory where the program can't share them (scripts/helper_apps.json)",
  "overlay-app-vk/textures/-/-": {
   "init": 0,
   "vulkan": 0,

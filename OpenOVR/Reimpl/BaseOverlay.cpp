@@ -199,6 +199,19 @@ public:
 	// The texture's size as it said when it was set, for before it's copied
 	std::optional<std::pair<uint32_t, uint32_t>> givenSize;
 	bool copyMirrorX = false, copyMirrorY = false;
+	// The texture is shown from an image whose rows run the other way up (an OpenGL texture shared into a Vulkan
+	// image): its bounds are taken upside down
+	bool shownFlipY = false;
+	// The bounds as they apply to the image shown
+	VRTextureBounds_t ShownBounds() const
+	{
+		VRTextureBounds_t b = textureBounds;
+		if (shownFlipY)
+			std::swap(b.vMin, b.vMax);
+		return b;
+	}
+	// The shared image's texture data (OverlayTextureShare), which the shown texture points at
+	vr::VRVulkanTextureData_t sharedImage{};
 
 	// Sets the layer's image rectangle to the bounds' area of the texture's copy
 	void ApplyTextureBounds()
@@ -206,7 +219,8 @@ public:
 		if (!texture.handle || textureCopySize.width <= 0 || textureCopySize.height <= 0)
 			return;
 		TextureRegion region;
-		if (!RegionFromBounds(&textureBounds, (uint32_t)textureCopySize.width, (uint32_t)textureCopySize.height, region))
+		const VRTextureBounds_t shownBounds = ShownBounds();
+		if (!RegionFromBounds(&shownBounds, (uint32_t)textureCopySize.width, (uint32_t)textureCopySize.height, region))
 			return;
 		compositionLayer.quad.subImage.imageRect = overlay_maths::ImageRect(region.x0, region.y0, region.x1, region.y1,
 		    (uint32_t)textureCopySize.width, (uint32_t)textureCopySize.height, copyMirrorX, copyMirrorY);
@@ -215,8 +229,9 @@ public:
 	// Copies the texture whole into the compositor's swapchain, mirrored where the bounds run backwards
 	void CopyTexture(Compositor& compositor, const Texture_t& shown)
 	{
-		copyMirrorX = textureBounds.uMin > textureBounds.uMax;
-		copyMirrorY = textureBounds.vMin > textureBounds.vMax;
+		const VRTextureBounds_t shownBounds = ShownBounds();
+		copyMirrorX = shownBounds.uMin > shownBounds.uMax;
+		copyMirrorY = shownBounds.vMin > shownBounds.vMax;
 		const VRTextureBounds_t whole = { copyMirrorX ? 1.0f : 0.0f, copyMirrorY ? 1.0f : 0.0f, copyMirrorX ? 0.0f : 1.0f, copyMirrorY ? 0.0f : 1.0f };
 		XrSwapchainSubImage& subImage = compositionLayer.quad.subImage; // the same for quad and cylinder layers
 		compositor.Invoke(&shown, &whole, subImage);
@@ -3345,10 +3360,14 @@ EVROverlayError BaseOverlay::SetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 #else
 		copy = xrBackend ? xrBackend->CopyOverlayTexture(&texture, &overlay->textureBounds, &why, overlay) : nullptr;
 #endif
-		// A Vulkan or OpenGL texture that can't be copied onto the session's device (on Linux, where that's OpenLamina's
-		// own Vulkan device) is read back into memory on the program's thread, and shown as an image from memory is
-		if (!copy && (texture.eType == TextureType_Vulkan || texture.eType == TextureType_OpenGL))
+		// A Vulkan or OpenGL texture that can't be copied onto the session's device through D3D11 (on Windows; never
+		// on Linux, where that's OpenLamina's own Vulkan device) is shared with that device where it can be; else it's
+		// read back into memory on the program's thread and shown as an image from memory is
+		if (!copy && (texture.eType == TextureType_Vulkan || texture.eType == TextureType_OpenGL)) {
+			if (std::optional<EVROverlayError> shared = ShowShared(*overlay, texture))
+				return *shared;
 			return ShowReadBack(*overlay, texture, why);
+		}
 		if (!copy)
 			OC_UNSUPPORTED(VROverlayError_InvalidTexture, "SetOverlayTexture: the overlay application's texture (type %d) can't be shown: %s", (int)texture.eType, why.c_str());
 		shown = Texture_t{ copy, TextureType_DirectX, texture.eColorSpace };
@@ -3391,6 +3410,47 @@ EVROverlayError BaseOverlay::SetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 
 	return VROverlayError_None;
 }
+std::optional<EVROverlayError> BaseOverlay::ShowShared(OverlayData& overlay, const Texture_t& texture)
+{
+	auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
+	if (!backend)
+		return std::nullopt;
+	bool flipY = false;
+	std::string why;
+	const VRVulkanTextureData_t* image = backend->ShareOverlayTexture(&texture, &overlay, &flipY, &why);
+	if (!image) {
+		OOVR_LOG_ONCEF("SetOverlayTexture: an overlay application's texture (type %d) isn't shared with the session's device (%s): it's read back", (int)texture.eType, why.c_str());
+		return std::nullopt;
+	}
+	overlay.sharedImage = *image;
+	Texture_t shown{ &overlay.sharedImage, TextureType_Vulkan, texture.eColorSpace };
+	shown.eColorSpace = overlay.TextureColourSpace(shown.eColorSpace);
+
+	// No image from memory (an earlier read back) any more
+	overlay.raw.reset();
+	overlay.rawImage = {};
+	overlay.SetTexture(texture);
+	overlay.textureCopySize = {};
+	overlay.givenSize = OverlayTextureSize(texture);
+	overlay.shownFlipY = flipY;
+	std::shared_ptr<Compositor> compositor = overlay.compositor.lock();
+	if (!compositor) {
+		compositor = backend->MakeSessionOverlayCompositor(&shown);
+		if (!compositor) {
+			backend->ReleaseSharedOverlayTexture(&overlay);
+			return std::nullopt;
+		}
+		overlay.compositor = std::weak_ptr(compositor);
+		backend->RegisterOverlayCompositor(compositor);
+	}
+	compositor->LoadSubmitContext();
+	overlay.CopyTexture(*compositor, shown);
+	compositor->ResetSubmitContext();
+	// Back to the program's side once the copy from it has run
+	backend->ReleaseSharedOverlayTexture(&overlay);
+	overlay.compositionLayer.base.space = xr_space_from_ref_space_type(BaseSystem::currentSpace);
+	return VROverlayError_None;
+}
 EVROverlayError BaseOverlay::ShowReadBack(OverlayData& overlay, const Texture_t& texture, const std::string& whyNotCopied)
 {
 	// Under the session's and the layers' locks. The texture's own API reads its bounds' area back (the program's queue
@@ -3413,6 +3473,7 @@ EVROverlayError BaseOverlay::ShowReadBack(OverlayData& overlay, const Texture_t&
 	// The texture stays the overlay's (GetOverlayTexture's type and colour space); its image, already in its bounds'
 	// area and their flip, is what's shown, whole
 	overlay.SetTexture(texture);
+	overlay.shownFlipY = false;
 	overlay.textureCopySize = {};
 	overlay.givenSize = OverlayTextureSize(texture);
 	overlay.rawImage = std::move(image);

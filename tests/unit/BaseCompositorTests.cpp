@@ -171,6 +171,17 @@ TEST_CASE("A_Vulkan_loader_older_than_the_runtime_needs_is_refused")
 	CHECK_FALSE(VulkanVersionMeetsXr(VK_MAKE_VERSION(1, 0, 65), XR_MAKE_VERSION(1, 1, 0)));
 	CHECK(VulkanVersionMeetsXr(VK_MAKE_VERSION(2, 0, 0), XR_MAKE_VERSION(1, 3, 0)));
 }
+
+TEST_CASE("The_temporary_Vulkan_instance_is_1_1_where_the_loader_and_runtime_have_it")
+{
+	// Raised to 1.1 for device UUIDs and image sharing
+	CHECK(TemporaryVkApiVersion(VK_API_VERSION_1_3, XR_MAKE_VERSION(1, 0, 0), XR_MAKE_VERSION(1, 3, 0)) == VK_API_VERSION_1_1);
+	// Not past a loader or a runtime that stops at 1.0
+	CHECK(TemporaryVkApiVersion(VK_API_VERSION_1_0, XR_MAKE_VERSION(1, 0, 0), XR_MAKE_VERSION(1, 3, 0)) == VK_API_VERSION_1_0);
+	CHECK(TemporaryVkApiVersion(VK_API_VERSION_1_3, XR_MAKE_VERSION(1, 0, 0), XR_MAKE_VERSION(1, 0, 0)) == VK_API_VERSION_1_0);
+	// The runtime's lowest stays when it's higher
+	CHECK(TemporaryVkApiVersion(VK_API_VERSION_1_3, XR_MAKE_VERSION(1, 2, 0), XR_MAKE_VERSION(1, 3, 0)) == VK_API_VERSION_1_2);
+}
 #endif
 
 TEST_CASE("The_interop_extension_list_fills_the_buffer_it_fits_in")
