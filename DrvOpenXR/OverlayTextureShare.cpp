@@ -276,6 +276,19 @@ struct OverlayTextureShare::Impl {
 #endif
 	}
 
+	// Not while a copy on the session's queue may still use it: left, if it doesn't finish in time
+	void DropWhenIdle(std::map<const void*, Shared>::iterator it)
+	{
+		if (session.busy && vkWaitForFences(device, 1, &session.fence, VK_TRUE, kWaitNs) != VK_SUCCESS) {
+			OOVR_LOG("Overlay texture sharing: a copy still running; its shared image isn't freed");
+			shared.erase(it);
+			return;
+		}
+		session.busy = false;
+		Drop(it->second);
+		shared.erase(it);
+	}
+
 	void Drop(Shared& s)
 	{
 		DropProgramSide(s);
@@ -310,10 +323,8 @@ struct OverlayTextureShare::Impl {
 		auto it = shared.find(owner);
 		if (it != shared.end() && it->second.format == format && it->second.width == width && it->second.height == height)
 			return &it->second;
-		if (it != shared.end()) {
-			Drop(it->second);
-			shared.erase(it);
-		}
+		if (it != shared.end())
+			DropWhenIdle(it);
 
 		// Whether an image like it can be exported and imported as an opaque file descriptor, and how
 		VkPhysicalDeviceExternalImageFormatInfo externalInfo{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_EXTERNAL_IMAGE_FORMAT_INFO };
@@ -691,17 +702,8 @@ void OverlayTextureShare::Release(const void* owner)
 void OverlayTextureShare::Forget(const void* owner)
 {
 	auto it = impl->shared.find(owner);
-	if (it == impl->shared.end())
-		return;
-	// Not under a copy still running on the session's queue
-	if (impl->session.busy && vkWaitForFences(impl->device, 1, &impl->session.fence, VK_TRUE, kWaitNs) != VK_SUCCESS) {
-		OOVR_LOG("Overlay texture sharing: a copy still running; its shared image isn't freed");
-		impl->shared.erase(it);
-		return;
-	}
-	impl->session.busy = false;
-	impl->Drop(it->second);
-	impl->shared.erase(it);
+	if (it != impl->shared.end())
+		impl->DropWhenIdle(it);
 }
 
 #endif
