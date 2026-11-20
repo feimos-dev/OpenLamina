@@ -5,7 +5,9 @@
 
 #include "Drivers/Backend.h"
 #include <algorithm>
+#include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <map>
 #include <mutex>
@@ -192,6 +194,25 @@ struct OOVR_InputBindingInfo_t {
 	 * @since OpenVR 1.10.30
 	 */
 	char rchInputSourceType[32];
+};
+
+/** A hand's touches as the estimated skeleton shows them: the thumb and the index finger each move between lifted (0)
+ * and touching (1) at kSpeed a second, so a touch doesn't snap the finger. Each hand has its own, under its own lock. */
+struct HandTouchEase {
+	static constexpr float kSpeed = 8.0f;
+	using Clock = std::chrono::steady_clock;
+
+	struct Eased {
+		float thumb = 0.0f, trigger = 0.0f;
+	};
+
+	/** Moves towards the touches by the time since the last step (none on the first) and returns where they are */
+	Eased Step(bool thumbTouch, bool triggerTouch, Clock::time_point now);
+
+private:
+	std::mutex lock;
+	std::optional<Clock::time_point> last;
+	Eased eased;
 };
 
 class BaseInput {
@@ -992,6 +1013,8 @@ private:
 	 */
 	EVRInputError getEstimatedSkeletalSummary(ITrackedDevice::TrackedDeviceType hand, VRSkeletalSummaryData_t* pSkeletalSummaryData);
 	EVRInputError getEstimatedBoneData(ITrackedDevice::TrackedDeviceType hand, EVRSkeletalTransformSpace transformSpace, EVRSkeletalMotionRange eMotionRange, std::span<VRBoneTransform_t, eBone_Count> boneData);
+	/** Each hand's touches for the estimated skeleton (left, right) */
+	std::array<HandTouchEase, 2> handTouches;
 
 	/**
 	 * Some games (i.e. newer Unity games) won't explicitly call SetActionManifestPath, but instead will set the path through
