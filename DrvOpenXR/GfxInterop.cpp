@@ -515,8 +515,18 @@ public:
 	VkQueue queue = VK_NULL_HANDLE;
 	uint32_t family = 0;
 	VkCommandPool pool = VK_NULL_HANDLE;
-	VkCommandBuffer commands = VK_NULL_HANDLE;
-	VkFence fence = VK_NULL_HANDLE;
+	// The copies' command buffers and fences, used in turn: a frame's two eyes, two frames running. A copy waits only
+	// for its slot's copy before, not for the other eye's of the same frame, which still waits behind the game's work
+	// when the GPU wait is used. pending: submitted, and its fence not seen signalled yet (its command buffer, and the
+	// images it copies, are in use until it is).
+	struct Slot {
+		VkCommandBuffer commands = VK_NULL_HANDLE;
+		VkFence fence = VK_NULL_HANDLE;
+		bool pending = false;
+	};
+	static constexpr int kSlots = 4;
+	Slot slots[kSlots];
+	int nextSlot = 0;
 	PFN_vkGetMemoryWin32HandlePropertiesKHR getHandleProperties = nullptr;
 	// The GPU-side wait, where the game's device has VK_KHR_external_semaphore_win32 and D3D11 has shared fences
 	// (ID3D11Device5): fences[0] is signalled by D3D11 once it's done with the copies so far, which the Vulkan copy
@@ -527,9 +537,6 @@ public:
 	ComPtr<ID3D11DeviceContext4> context4;
 	uint64_t fenceValue = 0;
 	bool gpuWait = false;
-	// A copy was submitted and its fence hasn't been seen signalled: the command buffer, the fence and the images are
-	// in use until it is
-	bool pending = false;
 
 	struct Copy {
 		uint32_t width = 0, height = 0;
@@ -550,21 +557,32 @@ public:
 			vkFreeMemory(vkDevice, copy.memory, nullptr);
 	}
 
-	// Waits up to timeoutNs for the copy submitted last: VK_SUCCESS once it's done (or there was none), VK_TIMEOUT
-	// while it still runs, when nothing it uses may be reset or freed, or the error of a lost device, which ends it.
-	VkResult WaitForCopy(uint64_t timeoutNs)
+	// Waits up to timeoutNs for the slot's copy: VK_SUCCESS once it's done (or there was none), VK_TIMEOUT while it
+	// still runs, when nothing it uses may be reset or freed, or the error of a lost device, which ends it.
+	VkResult WaitForSlot(Slot& slot, uint64_t timeoutNs)
 	{
-		if (!pending)
+		if (!slot.pending)
 			return VK_SUCCESS;
-		VkResult result = vkWaitForFences(vkDevice, 1, &fence, VK_TRUE, timeoutNs);
+		VkResult result = vkWaitForFences(vkDevice, 1, &slot.fence, VK_TRUE, timeoutNs);
 		if (result != VK_TIMEOUT)
-			pending = false;
+			slot.pending = false;
 		return result;
+	}
+
+	// The same for every copy submitted: before the copies' images or the command buffers are freed
+	VkResult WaitForCopies(uint64_t timeoutNs)
+	{
+		for (Slot& slot : slots) {
+			VkResult result = WaitForSlot(slot, timeoutNs);
+			if (result == VK_TIMEOUT)
+				return result;
+		}
+		return VK_SUCCESS;
 	}
 
 	~VkInterop() override
 	{
-		if (WaitForCopy(kShutdownTimeoutNs) == VK_TIMEOUT) {
+		if (WaitForCopies(kShutdownTimeoutNs) == VK_TIMEOUT) {
 			// Still running on the game's queue: its objects are left to the device
 			OOVR_LOG("Graphics interop: the last Vulkan copy never finished; its objects aren't freed");
 			return;
@@ -575,8 +593,10 @@ public:
 			if (semaphore)
 				vkDestroySemaphore(vkDevice, semaphore, nullptr);
 		}
-		if (fence)
-			vkDestroyFence(vkDevice, fence, nullptr);
+		for (Slot& slot : slots) {
+			if (slot.fence)
+				vkDestroyFence(vkDevice, slot.fence, nullptr);
+		}
 		if (pool)
 			vkDestroyCommandPool(vkDevice, pool, nullptr);
 	}
@@ -604,11 +624,13 @@ public:
 			return false;
 		}
 
-		// Signalled, so a teardown before the first copy doesn't wait for it (CopyIn resets it before each submit)
+		// Signalled, so a teardown before the first copy doesn't wait for them (CopyIn resets one before each submit)
 		VkFenceCreateInfo fenceInfo{ VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
 		fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
-		if (vkCreateFence(vkDevice, &fenceInfo, nullptr, &fence) != VK_SUCCESS)
-			return false;
+		for (Slot& slot : slots) {
+			if (vkCreateFence(vkDevice, &fenceInfo, nullptr, &slot.fence) != VK_SUCCESS)
+				return false;
+		}
 		gpuWait = SetUpGpuWait();
 		OOVR_LOGF("Graphics interop: Vulkan copies are waited for %s", gpuWait ? "on the GPU (shared fences)" : "on the CPU");
 		return true;
@@ -655,15 +677,18 @@ public:
 		return ok;
 	}
 
-	// A command buffer of the game's queue's family (which comes with each texture)
+	// The slots' command buffers, of the game's queue's family (which comes with each texture)
 	bool CommandsFor(uint32_t queueFamily)
 	{
 		if (pool && family == queueFamily)
 			return true;
+		if (WaitForCopies(kCopyTimeoutNs) == VK_TIMEOUT)
+			return false;
 		if (pool)
 			vkDestroyCommandPool(vkDevice, pool, nullptr);
 		pool = VK_NULL_HANDLE;
-		commands = VK_NULL_HANDLE;
+		for (Slot& slot : slots)
+			slot.commands = VK_NULL_HANDLE;
 		family = queueFamily;
 		VkCommandPoolCreateInfo poolInfo{ VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
 		poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
@@ -672,11 +697,19 @@ public:
 			pool = VK_NULL_HANDLE;
 			return false;
 		}
+		VkCommandBuffer buffers[kSlots] = {};
 		VkCommandBufferAllocateInfo bufferInfo{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
 		bufferInfo.commandPool = pool;
-		bufferInfo.commandBufferCount = 1;
+		bufferInfo.commandBufferCount = kSlots;
 		bufferInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-		return vkAllocateCommandBuffers(vkDevice, &bufferInfo, &commands) == VK_SUCCESS;
+		if (vkAllocateCommandBuffers(vkDevice, &bufferInfo, buffers) != VK_SUCCESS) {
+			vkDestroyCommandPool(vkDevice, pool, nullptr);
+			pool = VK_NULL_HANDLE;
+			return false;
+		}
+		for (int i = 0; i < kSlots; i++)
+			slots[i].commands = buffers[i];
+		return true;
 	}
 
 	Copy* CopyFor(const vr::VRVulkanTextureData_t* data)
@@ -686,6 +719,11 @@ public:
 		if (it != copies.end() && it->second.width == data->m_nWidth && it->second.height == data->m_nHeight
 		    && it->second.format == (VkFormat)data->m_nFormat)
 			return &it->second;
+		// A copy freed below may still be written by one running
+		if ((it != copies.end() || copies.size() >= kMaxCopies) && WaitForCopies(kCopyTimeoutNs) == VK_TIMEOUT) {
+			OOVR_LOG_ONCE("Graphics interop: an earlier Vulkan copy is still running: frame left out");
+			return nullptr;
+		}
 		if (it != copies.end()) {
 			Drop(it->second);
 			copies.erase(it);
@@ -773,9 +811,10 @@ public:
 			layer = *slice;
 		else if (submitFlags & vr::Submit_VulkanTextureWithArrayData)
 			layer = ((const vr::VRVulkanTextureArrayData_t*)data)->m_unArrayIndex;
-		// The command buffer is reused: the copy before must be over (on the CPU: it was submitted a frame ago)
-		if (WaitForCopy(kCopyTimeoutNs) == VK_TIMEOUT) {
-			OOVR_LOG_ONCE("Graphics interop: the last Vulkan copy is still running: frame left out");
+		// The slot's command buffer is reused: its copy before (two frames ago) must be over
+		Slot& slot = slots[nextSlot];
+		if (WaitForSlot(slot, kCopyTimeoutNs) == VK_TIMEOUT) {
+			OOVR_LOG_ONCE("Graphics interop: an earlier Vulkan copy is still running: frame left out");
 			return {};
 		}
 		if (!CommandsFor(data->m_nQueueFamilyIndex)) {
@@ -786,10 +825,10 @@ public:
 		if (!copy)
 			return {};
 
-		vkResetCommandBuffer(commands, 0);
+		vkResetCommandBuffer(slot.commands, 0);
 		VkCommandBufferBeginInfo begin{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
 		begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-		vkBeginCommandBuffer(commands, &begin);
+		vkBeginCommandBuffer(slot.commands, &begin);
 
 		// The game's image is in TRANSFER_SRC_OPTIMAL, as OpenVR asks of Vulkan textures; the copy is made ready to be
 		// written, and afterwards handed to D3D11
@@ -801,17 +840,17 @@ public:
 		toDst.srcQueueFamilyIndex = toDst.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 		toDst.image = copy->image;
 		toDst.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
-		vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toDst);
+		vkCmdPipelineBarrier(slot.commands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toDst);
 
 		VkImageSubresourceLayers from{ VK_IMAGE_ASPECT_COLOR_BIT, 0, layer, 1 };
 		VkImageSubresourceLayers layers{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
 		if (data->m_nSampleCount > 1) {
 			VkImageResolve region{ from, { 0, 0, 0 }, layers, { 0, 0, 0 }, { copy->width, copy->height, 1 } };
-			vkCmdResolveImage(commands, (VkImage)data->m_nImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, copy->image,
+			vkCmdResolveImage(slot.commands, (VkImage)data->m_nImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, copy->image,
 			    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 		} else {
 			VkImageCopy region{ from, { 0, 0, 0 }, layers, { 0, 0, 0 }, { copy->width, copy->height, 1 } };
-			vkCmdCopyImage(commands, (VkImage)data->m_nImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, copy->image,
+			vkCmdCopyImage(slot.commands, (VkImage)data->m_nImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, copy->image,
 			    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
 		}
 
@@ -822,12 +861,12 @@ public:
 		release.newLayout = VK_IMAGE_LAYOUT_GENERAL;
 		release.srcQueueFamilyIndex = family;
 		release.dstQueueFamilyIndex = VK_QUEUE_FAMILY_EXTERNAL;
-		vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &release);
-		vkEndCommandBuffer(commands);
+		vkCmdPipelineBarrier(slot.commands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT, 0, 0, nullptr, 0, nullptr, 1, &release);
+		vkEndCommandBuffer(slot.commands);
 
 		VkSubmitInfo submit{ VK_STRUCTURE_TYPE_SUBMIT_INFO };
 		submit.commandBufferCount = 1;
-		submit.pCommandBuffers = &commands;
+		submit.pCommandBuffers = &slot.commands;
 		// On the GPU: the copy waits for D3D11 to be done with the copies so far (it may still read last frame's), and
 		// D3D11 waits for the copy. Signal goes to the GPU with the Flush, which the Vulkan wait needs.
 		const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
@@ -852,18 +891,19 @@ public:
 			submit.signalSemaphoreCount = 1;
 			submit.pSignalSemaphores = &semaphores[1];
 		}
-		vkResetFences(vkDevice, 1, &fence);
+		vkResetFences(vkDevice, 1, &slot.fence);
 		// On the queue that comes with the texture, the game's own
 		VkQueue target = data->m_pQueue ? (VkQueue)data->m_pQueue : queue;
-		if (vkQueueSubmit(target, 1, &submit, fence) != VK_SUCCESS) {
+		if (vkQueueSubmit(target, 1, &submit, slot.fence) != VK_SUCCESS) {
 			OOVR_LOG_ONCE("Graphics interop: vkQueueSubmit failed: frame left out");
 			return {};
 		}
-		pending = true;
+		slot.pending = true;
+		nextSlot = (nextSlot + 1) % kSlots;
 		// Done before D3D11 reads it: D3D11's own work waits on the GPU, or this thread waits for it
 		if (waitOnGpu && SUCCEEDED(context4->Wait(fences[1].Get(), copiedValue)))
 			return { copy->tex.Get(), false };
-		if (WaitForCopy(kCopyTimeoutNs) != VK_SUCCESS) {
+		if (WaitForSlot(slot, kCopyTimeoutNs) != VK_SUCCESS) {
 			OOVR_LOG_ONCE("Graphics interop: the Vulkan copy didn't finish in time: frame left out");
 			return {};
 		}
