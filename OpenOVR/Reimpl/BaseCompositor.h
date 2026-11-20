@@ -146,8 +146,6 @@ enum OOVR_Compositor_DeviceType {
 struct Image;
 struct SceneOverlayImage;
 
-struct Image;
-
 class BaseCompositor {
 private:
 	std::shared_ptr<Compositor> overlayReader; // reads SetOverlay's textures back

@@ -800,6 +800,7 @@ void XrBackend::WaitForTrackingData()
 {
 	// A game that waits for frames before its first submit still sees the session become ready
 	PumpEvents();
+	gameFrameThread = std::this_thread::get_id();
 
 	// Make sure the OpenXR session is active before doing anything else, and if not then skip
 	if (!sessionActive) {
@@ -1940,7 +1941,9 @@ bool XrBackend::GetPlayAreaPoints(vr::HmdVector3_t* points, int* count)
 			XrResult res = xrGetReferenceSpaceBoundsRect(xr_session.get(), XR_REFERENCE_SPACE_TYPE_STAGE, &asked);
 			playAreaKnown = XR_SUCCEEDED(res) && res != XR_SPACE_BOUNDS_UNAVAILABLE && asked.width > 0 && asked.height > 0;
 			playAreaRect = playAreaKnown ? asked : XrExtent2Df{};
-			playAreaSession = xr_session.get();
+			// A failed call is asked again next time; an answer (bounds, or none) is kept
+			if (XR_SUCCEEDED(res))
+				playAreaSession = xr_session.get();
 		}
 		if (!playAreaKnown)
 			return false; // no play area (set up, or at all)
@@ -2254,9 +2257,9 @@ void XrBackend::PumpEvents()
 	   Some runtimes (WMR) do not instantly return an interaction profile,
 	   so we will keep tryinig to query it until it does.
 
-	   Note that we wait for the session to be synchronised because this means that the application
-	   has already waited for a frame: the session isn't the temporary one any more, which avoids
-	   restarting the session unnecessarily.
+	   Note that we wait for the session to be synchronised, which means the application has waited
+	   for a frame. That may still be on the temporary session, which is restarted at the game's first
+	   Submit: the controllers are found again on the new one, and the game has them in the meantime.
    */
 	// Not while a session is being ended (ShutdownSession pumps events while it waits, maybe under the input restart)
 	BaseInput* input = GetUnsafeBaseInput();
@@ -2414,6 +2417,7 @@ void XrBackend::OnSessionCreated()
 	// Frames of OpenLamina's own while the game runs none and there's a skybox or an overlay to show
 	StopOwnFrames();
 	ownFramesGlContext = nullptr;
+	ownFramesInCalls = false;
 	if (ownFramesStopped || !oovr_global_configuration.OwnFrames())
 		return;
 	const void* binding = GetCurrentGraphicsBinding();
@@ -2424,6 +2428,7 @@ void XrBackend::OnSessionCreated()
 			return;
 		mode = OwnFrameLoop::Mode::InCallsOnly;
 		ownFramesGlContext = glContext;
+		ownFramesInCalls = true;
 	}
 	ownFrames = std::make_unique<OwnFrameLoop>(
 	    mode,
@@ -2621,8 +2626,10 @@ bool XrBackend::OwnFramesHere() const
 {
 	if (!ownFrames)
 		return false;
-	if (!ownFramesGlContext)
-		return true;
+	if (!ownFramesGlContext) {
+		const std::thread::id renderThread = gameFrameThread;
+		return !ownFramesInCalls || renderThread == std::thread::id() || renderThread == std::this_thread::get_id();
+	}
 #if defined(SUPPORT_GL) && defined(_WIN32)
 	return (const void*)wglGetCurrentContext() == ownFramesGlContext;
 #elif defined(SUPPORT_GL) && !defined(ANDROID)

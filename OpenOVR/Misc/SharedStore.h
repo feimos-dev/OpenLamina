@@ -98,8 +98,8 @@ public:
 	/** Ends pid at once if it's the process that started at start (not 0), checked as near to the kill as the system
 	 * allows; false if it isn't, or couldn't be ended */
 	static bool KillProcess(uint32_t pid, uint64_t start);
-	/** The start time the store has for an OpenLamina program's pid (the Applications document's processes, the
-	 * scene's, the overlay programs'), if it's still that process; 0 for a pid the store doesn't know or that's gone */
+	/** The start time the store has for a pid (the Applications document's processes, the scene's, the overlay
+	 * programs'), if it's still that process; 0 for a pid the store doesn't know or that's gone */
 	uint64_t KnownProcessStart(uint32_t pid);
 	/** Whether a program other than self has an entry in the Overlays document and is still running */
 	static bool OtherLiveProgram(const Json::Value& overlaysDoc, uint32_t self);
@@ -139,7 +139,9 @@ private:
 	// UpdateLater's edits not yet made, and the writer thread that makes them
 	struct Later;
 	std::unique_ptr<Later> later;
-	/** Takes the document's edits not yet made (to be made now), or copies them (peek) */
-	std::vector<std::function<void(Json::Value&)>> PendingEdits(StoreDoc doc, bool peek);
+	/** The document's edits not yet made, with their ids */
+	std::vector<std::pair<uint64_t, std::function<void(Json::Value&)>>> PendingEdits(StoreDoc doc);
+	/** Update, making the pending edits first (and, with pendingOnly, writing nothing if there are none) */
+	bool WriteUpdate(StoreDoc doc, const std::function<void(Json::Value& data)>* edit, Wait wait, bool pendingOnly);
 	void WriterLoop();
 };

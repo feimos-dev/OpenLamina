@@ -512,6 +512,9 @@ VR_INTERFACE void VR_CALLTYPE VR_ShutdownInternal()
 	// Shut down OpenXR
 	BackendManager::Reset();
 
+	// The frames' last store edits are written before the program can end
+	SharedStore::Get().Flush();
+
 	// The origin outlives the interfaces (SetTrackingSpace may come without IVRSystem): the next Init starts on the default
 	BaseSystem::currentSpace = XR_REFERENCE_SPACE_TYPE_STAGE;
 

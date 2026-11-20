@@ -155,13 +155,14 @@ bool BaseControlPanel::QuitProcess(uint32_t pidProcessToQuit)
 
 bool BaseControlPanel::ForceQuitProcess(uint32_t pidProcessToQuit)
 {
-	// Only an OpenLamina program the store knows, and only if it's still the process the store has (its start time):
-	// any other process, or one that took over a listed pid, isn't OpenLamina's to end. Not this one.
+	// Only a process the store knows (an application, the scene's, an overlay program), and only if it's still the
+	// one the store has (its start time): any other, or one that took over a listed pid, isn't OpenLamina's to end.
+	// Not this one.
 	if (pidProcessToQuit == 0 || pidProcessToQuit == oc_current_pid())
 		return false;
 	const uint64_t start = SharedStore::Get().KnownProcessStart(pidProcessToQuit);
 	if (!start) {
-		OOVR_LOG_ONCE("ForceQuitProcess (IVRControlPanel_001): a process that isn't a running OpenLamina program isn't OpenLamina's to end");
+		OOVR_LOG_ONCE("ForceQuitProcess (IVRControlPanel_001): a process the store doesn't know isn't OpenLamina's to end");
 		return false;
 	}
 	const bool ended = SharedStore::KillProcess(pidProcessToQuit, start);

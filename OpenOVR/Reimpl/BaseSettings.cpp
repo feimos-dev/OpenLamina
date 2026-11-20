@@ -44,8 +44,8 @@ std::optional<Json::Value> StoredValue(SharedStore& store, const std::string& se
 	return v;
 }
 
-// The OpenXR system's name, which picks the HMD's identity row; empty before a session (and in the unit tests)
-// The OpenXR system's name, with its vendor ID and the runtime's name
+// The OpenXR system's name, which picks the HMD's identity row, with its vendor ID and the runtime's name; empty before
+// a session (and in the unit tests)
 std::string HmdSystemName(uint32_t* vendorId, std::string* runtimeName)
 {
 	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it

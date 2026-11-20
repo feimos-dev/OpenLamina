@@ -55,7 +55,7 @@ public:
 	}
 
 	// The button of each hand (0 left, 1 right) at a time in seconds: opens and closes it. Returns the hand whose button
-	// has now been held long enough to recentre (once a press, and that press doesn't open or close it), else kNoHand.
+	// was just let go after a recentre's hold (that press doesn't open or close it), else kNoHand.
 	int OnInput(bool leftDown, bool rightDown, double now);
 	int OnInput(bool leftDown, double now) { return OnInput(leftDown, false, now); }
 	bool Open() const { return open; }
@@ -87,7 +87,7 @@ private:
 	double heldSince = 0;
 	int heldHand = 0; // the hand that began the press
 	int recentreHand = 0; // the hand a recentre would come from: the one that began the press, while it's held
-	bool toggledThisPress = false; // or recentred
+	bool toggledThisPress = false;
 	mutable std::vector<Tab> drawnTabs; // as last drawn, for OnClick
 };
 

@@ -16,6 +16,7 @@
 #include "XrHMD.h"
 
 #include <atomic>
+#include <thread>
 #include <cmath>
 #include <functional>
 #include <memory>
@@ -176,9 +177,9 @@ public:
 	void StopOwnFrames(bool forGood = false);
 
 	/** Whether OpenLamina runs frames of its own on this session (RunOwnFramesWhile can show something) */
-	bool HasOwnFrames() const { return ownFrames != nullptr; }
-	/** Whether own frames can run on the calling thread now: there are some, and on an OpenGL session (whose frames
-	 * run only inside the game's calls) the session's context is current here */
+	/** Whether own frames can run on the calling thread now: there are some, and on a session whose frames run only
+	 * inside the game's calls, this is its render thread (OpenGL: the session's context is current here; Vulkan: the
+	 * thread that last waited for a frame) */
 	bool OwnFramesHere() const;
 
 	/**
@@ -259,10 +260,14 @@ private:
 	XrCompositionLayerProjectionView lastProjectionViews[2]{};
 	std::atomic<bool> haveLastProjection{ false };
 	// SubmitFrames shows the game's last frame again if this frame has none of its own (a frame the game didn't submit
-	// to, ended for it); under frameOwner's caller
-	bool repeatLastFrame = false;
+	// to, ended for it)
+	std::atomic<bool> repeatLastFrame{ false };
 	// An OpenGL session's context, which its own frames (run only inside the game's calls) need current; else null
 	const void* ownFramesGlContext = nullptr;
+	// A Vulkan session's own frames run inside the game's calls on the thread it renders on (the last to wait for a
+	// frame), where OpenVR may use its queue
+	bool ownFramesInCalls = false;
+	std::atomic<std::thread::id> gameFrameThread{};
 	bool SkyboxShown();
 	// The layers of the frame being ended, under frameOwner
 	std::vector<const XrCompositionLayerBaseHeader*> frameLayers;
