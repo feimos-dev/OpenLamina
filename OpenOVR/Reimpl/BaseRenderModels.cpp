@@ -300,7 +300,7 @@ static std::shared_ptr<const Image> ResolveTexture(TextureID_t id)
 
 // A model of SteamVR's install by name: a model ("<name>" or "{<driver>}<name>"), one of its components
 // ("<model>/<component>", what GetComponentRenderModelName answers) or an OBJ file's absolute path (what
-// GetRenderModelOriginalPath answers). nullopt without SteamVR or for anything it can't load.
+// GetRenderModelOriginalPath answers; that one loads without SteamVR). nullopt for anything it can't load.
 static std::optional<RmMesh> SteamVRMesh(const string& name)
 {
 	if (std::shared_ptr<const RmModel> model = FindSteamVRRenderModel(name))
