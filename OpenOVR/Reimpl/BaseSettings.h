@@ -53,6 +53,9 @@ public:
 	static float RenderScale(SharedStore& store, float iniRatio);
 	/** RenderScale without the app's own resolutionScale */
 	static float GlobalRenderScale(SharedStore& store, float iniRatio);
+	/** steamvr.ipdOffset (meters added to the IPD) from the store, else from the user's steamvr.vrsettings; 0 if neither
+	 * has one, or one of more than 5 cm either way */
+	static float IpdOffset(SharedStore& store);
 	/** steamvr.preferredRefreshRate from the store, else from the user's steamvr.vrsettings; 0 if neither has one */
 	static float PreferredRefreshRate(SharedStore& store);
 

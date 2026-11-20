@@ -137,6 +137,9 @@ public:
 	uint32_t GetArrayTrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::PropertyTypeTag_t propType, void* pBuffer,
 	    uint32_t unBufferSize, vr::ETrackedPropertyError* pError) override;
 
+	/** The user's IPD offset (steamvr.ipdOffset), in meters: the eyes are moved apart by it */
+	static float IpdOffset();
+
 	/** The refresh rates the display has (XR_FB_display_refresh_rate); none where the runtime can't say */
 	static std::vector<float> RefreshRates();
 	/** Of rates, the one nearest to wanted; 0 if there are none or nothing is wanted */

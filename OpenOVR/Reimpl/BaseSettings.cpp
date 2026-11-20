@@ -284,6 +284,19 @@ float BaseSettings::GlobalRenderScale(SharedStore& store, float iniRatio)
 	return scale;
 }
 
+float BaseSettings::IpdOffset(SharedStore& store)
+{
+	auto offsetOf = [](const std::optional<Json::Value>& v) -> std::optional<float> {
+		std::optional<double> offset = v ? AsNumber(*v) : std::nullopt;
+		if (!offset || !(std::fabs(*offset) <= 0.05))
+			return std::nullopt;
+		return (float)*offset;
+	};
+	if (std::optional<float> stored = offsetOf(StoredValue(store, kk::k_pch_SteamVR_Section, kk::k_pch_SteamVR_IpdOffset_Float)))
+		return *stored;
+	return offsetOf(SteamVRUserSettingValue(kk::k_pch_SteamVR_Section, kk::k_pch_SteamVR_IpdOffset_Float)).value_or(0.0f);
+}
+
 float BaseSettings::PreferredRefreshRate(SharedStore& store)
 {
 	// A rate no display could have isn't one

@@ -23,6 +23,10 @@ XrTime PoseTimeForPrediction(float secondsFromNow, XrTime now, XrTime frameTime)
 // the other where it's unknown (zero or one); zero if neither is known, and the caller keeps its default.
 XrTime PoseTimeForState(bool latest, XrTime requested, XrTime now, XrTime frameTime);
 
+// Moves two eyes apart by offset (closer together for a negative one), each by half of it along the line between them;
+// eyes at the same place stay
+void WidenEyes(XrPosef& left, XrPosef& right, float offset);
+
 // The heading of a pose's forward direction as a rotation about the vertical axis, ignoring pitch and roll
 XrQuaternionf YawOnly(const XrQuaternionf& orientation);
 

@@ -259,6 +259,22 @@ TEST_CASE("Settings_shared_between_instances")
 	CHECK(error == VRSettingsError_None);
 }
 
+TEST_CASE("Settings_ipd_offset")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	BaseSettings settings(store);
+	SteamVRFiles files(false);
+	CHECK(BaseSettings::IpdOffset(store) == 0.0f);
+	settings.SetFloat("steamvr", "ipdOffset", 0.002f);
+	CHECK(BaseSettings::IpdOffset(store) == doctest::Approx(0.002f));
+	settings.SetFloat("steamvr", "ipdOffset", -0.003f);
+	CHECK(BaseSettings::IpdOffset(store) == doctest::Approx(-0.003f));
+	// Not an offset a person's eyes could have
+	settings.SetFloat("steamvr", "ipdOffset", 0.5f);
+	CHECK(BaseSettings::IpdOffset(store) == 0.0f);
+}
+
 TEST_CASE("Settings_preferred_refresh_rate")
 {
 	TempDir dir;

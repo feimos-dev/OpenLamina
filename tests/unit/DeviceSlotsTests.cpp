@@ -337,3 +337,22 @@ TEST_CASE("Pose prediction ids are the frames' indices, and a frame to come gets
 	CHECK(compositor.GetPosesForFrame(5100, ahead, 2) == 107 /* IndexOutOfRange */);
 	CHECK(compositor.GetPosesForFrame(4000, ahead, 2) == 107 /* IndexOutOfRange */);
 }
+
+TEST_CASE("An IPD offset moves the eyes apart along the line between them")
+{
+	XrPosef left{ { 0, 0, 0, 1 }, { -0.032f, 1.6f, 0 } }, right{ { 0, 0, 0, 1 }, { 0.032f, 1.6f, 0 } };
+	xr_utils::WidenEyes(left, right, 0.004f);
+	CHECK(left.position.x == doctest::Approx(-0.034f));
+	CHECK(right.position.x == doctest::Approx(0.034f));
+	CHECK(left.position.y == doctest::Approx(1.6f));
+	// Narrower, along a turned head's line
+	XrPosef l2{ { 0, 0, 0, 1 }, { 0, 0, -0.03f } }, r2{ { 0, 0, 0, 1 }, { 0, 0, 0.03f } };
+	xr_utils::WidenEyes(l2, r2, -0.01f);
+	CHECK(l2.position.z == doctest::Approx(-0.025f));
+	CHECK(r2.position.z == doctest::Approx(0.025f));
+	CHECK(l2.position.x == doctest::Approx(0.0f));
+	// Eyes at one place stay
+	XrPosef same{ { 0, 0, 0, 1 }, { 1, 1, 1 } }, same2 = same;
+	xr_utils::WidenEyes(same, same2, 0.01f);
+	CHECK(same.position.x == 1.0f);
+}

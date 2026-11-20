@@ -216,6 +216,7 @@ vr::HmdMatrix34_t XrHMD::GetEyeToHeadTransform(vr::EVREye eEye)
 		eEye = vr::Eye_Left;
 
 	std::lock_guard<std::mutex> viewsLock(viewsMutex);
+	const float offset = IpdOffset();
 	if (time != xr_gbl->GetBestTime()) {
 		const XruCachedViews& cachedViews = xr_gbl->GetCachedViews(xr_gbl->viewSpace);
 		const XrViewState& viewState = cachedViews.viewState;
@@ -228,7 +229,28 @@ vr::HmdMatrix34_t XrHMD::GetEyeToHeadTransform(vr::EVREye eEye)
 		}
 	}
 
-	return G2S_m34(X2G_om34_pose(views[eEye].pose));
+	// The eyes moved apart by the user's IPD offset
+	XrPosef eyes[XruEyeCount] = { views[0].pose, views[1].pose };
+	xr_utils::WidenEyes(eyes[0], eyes[1], offset);
+	return G2S_m34(X2G_om34_pose(eyes[eEye]));
+}
+
+float XrHMD::IpdOffset()
+{
+	// Read again only when the settings changed
+	static std::mutex lock;
+	static bool read = false;
+	static uint64_t generation = 0;
+	static float offset = 0.0f;
+	SharedStore& store = SharedStore::Get();
+	const uint64_t now = store.Generation(StoreDoc::Settings);
+	std::lock_guard<std::mutex> g(lock);
+	if (!read || now != generation) {
+		read = true;
+		generation = now;
+		offset = BaseSettings::IpdOffset(store);
+	}
+	return offset;
 }
 
 bool XrHMD::VsyncPhase(XrTime now, XrTime anchor, XrDuration period, float* secondsSinceVsync, uint64_t* vsyncCount)
@@ -396,7 +418,8 @@ std::optional<float> XrHMD::ViewsIpd()
 	const XrViewState& state = cachedViews.viewState;
 	if (cachedViews.viewCount != XruEyeCount || !(state.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT) || !(state.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT))
 		return {};
-	return cachedViews.views[vr::Eye_Right].pose.position.x - cachedViews.views[vr::Eye_Left].pose.position.x;
+	// With the user's IPD offset
+	return cachedViews.views[vr::Eye_Right].pose.position.x - cachedViews.views[vr::Eye_Left].pose.position.x + IpdOffset();
 }
 
 // The average adult IPD, 64 mm, until the runtime's views say otherwise
@@ -405,7 +428,7 @@ static const float kDefaultIpd = 0.064f;
 float XrHMD::GetIPD()
 {
 	if (!xr_gbl)
-		return kDefaultIpd;
+		return kDefaultIpd + IpdOffset();
 
 	static float ipd = kDefaultIpd;
 

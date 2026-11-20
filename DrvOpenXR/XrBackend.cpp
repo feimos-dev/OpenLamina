@@ -910,6 +910,9 @@ void XrBackend::WaitForTrackingData()
 		// No depth until this frame's texture brings some
 		projectionViews[eye].next = nullptr;
 	}
+	// The eyes the game renders from (GetEyeToHeadTransform) are moved apart by the user's IPD offset: the layer says so
+	if (viewState.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT)
+		xr_utils::WidenEyes(projectionViews[0].pose, projectionViews[1].pose, XrHMD::IpdOffset());
 
 	// If we're not on the game's graphics API yet, don't actually mark us as having started the frame.
 	// Instead, set a different flag so we'll call this method again when it's available.
@@ -1071,7 +1074,10 @@ void XrBackend::UseSubmittedPose(vr::EVREye eye, const vr::Texture_t* texture, v
 	const XrViewStateFlags valid = XR_VIEW_STATE_ORIENTATION_VALID_BIT | XR_VIEW_STATE_POSITION_VALID_BIT;
 	if ((inHead.viewState.viewStateFlags & valid) != valid)
 		return;
-	const XrPosef& eyePose = inHead.views[eye].pose;
+	// Moved apart by the user's IPD offset, as GetEyeToHeadTransform gives them
+	XrPosef eyes[XruEyeCount] = { inHead.views[0].pose, inHead.views[1].pose };
+	xr_utils::WidenEyes(eyes[0], eyes[1], XrHMD::IpdOffset());
+	const XrPosef& eyePose = eyes[eye];
 	XrPosef& pose = projectionViews[eye].pose;
 	pose.orientation = G2X_quat(glm::normalize(q * X2G_quat(eyePose.orientation)));
 	pose.position = G2X_v3f(position + q * X2G_v3f(eyePose.position));
