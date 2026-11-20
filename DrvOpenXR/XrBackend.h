@@ -178,7 +178,7 @@ public:
 
 	/** Whether own frames can run on the calling thread now: there are some, and on a session whose frames run only
 	 * inside the game's calls, this is its render thread (OpenGL: the session's context is current here; Vulkan: the
-	 * thread that last waited for a frame) */
+	 * thread that last waited for a frame, so none before the game's first) */
 	bool OwnFramesHere() const;
 
 	/**
@@ -376,7 +376,7 @@ private:
 	// waiting for the session lock or for the own frames' thread.
 	std::mutex frameOwner;
 	// A frame was begun (by the game, or SetSkyboxOverride) and not yet ended; under frameOwner
-	bool frameBegun = false;
+	std::atomic<bool> frameBegun{ false };
 	// OpenLamina's frames while the game runs none; created with each session, stopped before it ends
 	std::unique_ptr<OwnFrameLoop> ownFrames;
 	bool ownFramesStopped = false; // for good: OpenLamina is shutting down

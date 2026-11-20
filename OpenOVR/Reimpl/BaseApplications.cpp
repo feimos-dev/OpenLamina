@@ -427,7 +427,8 @@ void BaseApplications::TakeOverPendingLaunch(SharedStore& store)
 		const uint64_t start = UInt64Or(pending["old_start"], 0);
 		if (start && now >= since + kForceQuitMs && now < since + kTakeOverMs) {
 			const uint32_t oldPid = PidOf(pending["old_pid"]);
-			if (SharedStore::KillProcess(oldPid, start))
+			static std::atomic<uint64_t> loggedStart{ 0 }; // a process not yet reaped is ended again: logged once
+			if (SharedStore::KillProcess(oldPid, start) && loggedStart.exchange(start) != start)
 				OOVR_LOGF("The scene application (pid %u) didn't quit for the launch of %s: ended", oldPid, StringOr(pending["app_key"]).c_str());
 		}
 		return;

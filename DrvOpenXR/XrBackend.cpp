@@ -2633,7 +2633,7 @@ bool XrBackend::OwnFramesHere() const
 		return false;
 	if (!ownFramesGlContext) {
 		const std::thread::id renderThread = gameFrameThread;
-		return !ownFramesInCalls || renderThread == std::thread::id() || renderThread == std::this_thread::get_id();
+		return !ownFramesInCalls || renderThread == std::this_thread::get_id();
 	}
 #if defined(SUPPORT_GL) && defined(_WIN32)
 	return (const void*)wglGetCurrentContext() == ownFramesGlContext;
@@ -2942,12 +2942,12 @@ void XrBackend::UpdateInteractionProfile()
 			}
 			if (!Hand(XrController::XCT_LEFT) && !Hand(XrController::XCT_RIGHT)) {
 				// Runtime returned an unknown interaction profile: no controller until it gives one we know
-				OOVR_LOGF("Runtime unexpectedly returned an unknown interaction profile: %s", path_name);
+				OOVR_LOG_ONCEF("Runtime unexpectedly returned an unknown interaction profile: %s", path_name);
 			}
 		} else {
 			// interaction profile lost/not detected
-			OOVR_LOGF("%s - No interaction profile detected", info.pathstr);
 			if (Hand(info.hand)) {
+				OOVR_LOGF("%s - No interaction profile detected", info.pathstr);
 				{
 					std::unique_lock handsLock(hands_mutex);
 					info.controller.reset();
