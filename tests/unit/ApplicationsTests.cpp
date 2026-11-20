@@ -1002,6 +1002,7 @@ TEST_CASE("A_launch_left_by_an_application_that_ended_without_its_session_s_end_
 		doc["transition"]["app_key"] = "oc.test.next";
 		doc["transition"]["old_pid"] = gone;
 		doc["transition"]["launch"] = true;
+		doc["transition"]["since_ms"] = (Json::UInt64)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 	});
 	// The next look at the transition launches it, once
 	CHECK(apps.GetTransitionState() == VRApplicationTransition_NewAppLaunched);
@@ -1046,4 +1047,47 @@ TEST_CASE("Asking_about_a_transition_whose_old_application_runs_writes_nothing")
 	const uint64_t generation = store.Generation(StoreDoc::Scene);
 	CHECK(apps.GetTransitionState() == VRApplicationTransition_OldAppQuitSent);
 	CHECK(store.Generation(StoreDoc::Scene) == generation);
+}
+
+TEST_CASE("A_launch_asked_for_long_ago_is_dropped_not_taken_over")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	BaseApplications apps(store);
+	AppType type(vr::VRApplication_Utility);
+	REQUIRE(apps.AddApplicationManifest(PathToUtf8(WriteEchoManifest(dir.path, "oc.test.next")).c_str()) == VRApplicationError_None);
+	const uint32_t gone = ExitedProcessId();
+	store.Update(StoreDoc::Scene, [&](Json::Value& doc) {
+		doc["transition"]["state"] = VRApplicationTransition_OldAppQuitSent;
+		doc["transition"]["app_key"] = "oc.test.next";
+		doc["transition"]["old_pid"] = gone;
+		doc["transition"]["launch"] = true;
+		doc["transition"]["since_ms"] = (Json::UInt64)1; // long ago
+	});
+	CHECK(apps.GetTransitionState() == VRApplicationTransition_None);
+	CHECK_FALSE(store.Read(StoreDoc::Scene).isMember("transition"));
+	std::this_thread::sleep_for(std::chrono::milliseconds(300));
+	CHECK_FALSE(fs::exists(dir.path / "marker.txt"));
+}
+
+TEST_CASE("A_taken_over_launch_starts_no_second_copy")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	BaseApplications apps(store);
+	AppType type(vr::VRApplication_Utility);
+	REQUIRE(apps.AddApplicationManifest(PathToUtf8(WriteEchoManifest(dir.path, "oc.test.next")).c_str()) == VRApplicationError_None);
+	// Started by hand meanwhile: this program is it
+	REQUIRE(apps.IdentifyApplication(0, "oc.test.next") == VRApplicationError_None);
+	const uint32_t gone = ExitedProcessId();
+	store.Update(StoreDoc::Scene, [&](Json::Value& doc) {
+		doc["transition"]["state"] = VRApplicationTransition_OldAppQuitSent;
+		doc["transition"]["app_key"] = "oc.test.next";
+		doc["transition"]["old_pid"] = gone;
+		doc["transition"]["launch"] = true;
+		doc["transition"]["since_ms"] = (Json::UInt64)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+	});
+	CHECK(apps.GetTransitionState() == VRApplicationTransition_None);
+	std::this_thread::sleep_for(std::chrono::milliseconds(300));
+	CHECK_FALSE(fs::exists(dir.path / "marker.txt"));
 }

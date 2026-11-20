@@ -52,7 +52,9 @@ vr::EVRNotificationError BaseNotifications::Add(OOVR_EVRNotificationType type, u
 	uint32_t next = nextId++;
 	if (next == 0)
 		next = nextId++;
-	live[next] = { type == kTypeSystemWithUserValue, type == kTypePersistent, userValue, overlay, text };
+	// The panel shows three lines at most
+	constexpr size_t kMaxText = 1024;
+	live[next] = { type == kTypeSystemWithUserValue, type == kTypePersistent, userValue, overlay, text.substr(0, kMaxText) };
 	waiting.push_back(next);
 	*id = next;
 	return vr::VRNotificationError_OK;

@@ -82,6 +82,8 @@ constexpr vr::EVREventType kTransitionNewAppLaunchComplete = (vr::EVREventType)1
 
 // How long a launched application has to become the scene application before the transition is over anyway
 constexpr uint64_t kNewAppLaunchMs = 30000;
+// How long after the old application was asked to quit its launch is taken over, if it ended without launching
+constexpr uint64_t kTakeOverMs = 5 * 60 * 1000;
 
 // Launch arguments kept for running applications at most: the oldest go first
 constexpr size_t kMaxLaunchArgs = 32;
@@ -369,7 +371,8 @@ void BaseApplications::LaunchForTransition(SharedStore& store, const std::string
 	BaseApplications apps(store);
 	std::optional<AppManifestEntry> app = apps.Find(appKey.c_str());
 	uint32_t started = 0;
-	if (app && apps.Launch(*app, "", &started) == VRApplicationError_None) {
+	// Started already (by hand, say): not a second copy
+	if (app && !apps.GetApplicationProcessId(appKey.c_str()) && apps.Launch(*app, "", &started) == VRApplicationError_None) {
 		vr::VREvent_Data_t data{};
 		data.process.pid = started;
 		data.process.oldPid = oldPid;
@@ -391,6 +394,7 @@ void BaseApplications::TakeOverPendingLaunch(SharedStore& store)
 	    || pending["state"].asInt() != VRApplicationTransition_OldAppQuitSent || PidOf(pending["old_pid"]) == oc_current_pid()
 	    || SharedStore::IsSameProcessAlive(PidOf(pending["old_pid"]), UInt64Or(pending["old_start"], 0)))
 		return;
+	const bool stale = NowMs() >= UInt64Or(pending["since_ms"], 0) + kTakeOverMs;
 	std::string key;
 	uint32_t oldPid = 0;
 	store.Update(StoreDoc::Scene, [&](Json::Value& scene) {
@@ -402,6 +406,11 @@ void BaseApplications::TakeOverPendingLaunch(SharedStore& store)
 		oldPid = PidOf(tr["old_pid"]);
 		if (oldPid == oc_current_pid() || SharedStore::IsSameProcessAlive(oldPid, UInt64Or(tr["old_start"], 0)))
 			return;
+		// Asked for too long ago: dropped, not launched
+		if (stale) {
+			scene.removeMember("transition");
+			return;
+		}
 		key = StringOr(tr["app_key"]);
 		tr["state"] = VRApplicationTransition_NewAppLaunched;
 		tr["since_ms"] = (Json::UInt64)NowMs();

@@ -3640,6 +3640,8 @@ EVROverlayError BaseOverlay::CreateDashboardOverlay(const char* pchOverlayKey, c
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	OverlayData* main = OverlayAt(*pMainHandle);
 	OverlayData* thumbnail = OverlayAt(*pThumbnailHandle);
+	if (!main || !thumbnail)
+		return VROverlayError_InvalidHandle; // destroyed by another thread meanwhile
 	main->dashboard = true;
 	main->pair = thumbnail->handle;
 	thumbnail->pair = main->handle;
