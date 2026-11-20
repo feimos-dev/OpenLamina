@@ -269,22 +269,23 @@ InstancePlan PlanInstance(const std::set<std::string>& available, SessionKind ki
 	// Notices that the runtime's CPU or GPU load is high (ShouldApplicationReduceRenderingWork)
 	if (available.contains(XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME))
 		plan.extensions.push_back(XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME);
-	// A helper program's session. A headless one runs no frames, so its poses are located at the time now, which the
-	// runtime converts from the system's clock where it can.
+	// A helper program's session
 	if (kind == SessionKind::Overlay) {
 		plan.extensions.push_back(XR_EXTX_OVERLAY_EXTENSION_NAME);
 	} else if (kind == SessionKind::Headless) {
 		plan.extensions.push_back(XR_MND_HEADLESS_EXTENSION_NAME);
-#ifdef _WIN32
-		const char* clock = "XR_KHR_win32_convert_performance_counter_time";
-#else
-		const char* clock = "XR_KHR_convert_timespec_time";
-#endif
-		if (available.contains(clock))
-			plan.extensions.push_back(clock);
-		else
-			OOVR_LOGF("The OpenXR runtime has no %s: a background application's poses are located at its session's last state change", clock);
 	}
+	// The time now, which the runtime converts from the system's clock: the latest tracking data, poses predicted from
+	// now, the time since the last vsync, and a headless session's poses (it runs no frames)
+#ifdef _WIN32
+	const char* clock = "XR_KHR_win32_convert_performance_counter_time";
+#else
+	const char* clock = "XR_KHR_convert_timespec_time";
+#endif
+	if (available.contains(clock))
+		plan.extensions.push_back(clock);
+	else if (kind == SessionKind::Headless)
+		OOVR_LOGF("The OpenXR runtime has no %s: a background application's poses are located at its session's last state change", clock);
 	// The local space at the floor's height, for standing poses where the runtime has no stage
 	if (available.contains(OC_XR_EXT_LOCAL_FLOOR_EXTENSION_NAME))
 		plan.extensions.push_back(OC_XR_EXT_LOCAL_FLOOR_EXTENSION_NAME);
