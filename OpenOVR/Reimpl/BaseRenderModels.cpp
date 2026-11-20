@@ -118,15 +118,18 @@ static const char* const kOwnModelNames[] = {
 	"{indexcontroller}valve_controller_knu_1_0_right",
 };
 
-// The own models and the headset's name, which is known but has nothing to draw
-static bool IsKnownRenderModel(const char* name)
+static bool IsOwnRenderModel(const char* name)
 {
-	if (strcmp(name, "oculusHmdRenderModel") == 0)
-		return true;
 	for (const char* k : kOwnModelNames)
 		if (strcmp(k, name) == 0)
 			return true;
 	return false;
+}
+
+// The own models and the headset's name, which is known but has nothing to draw
+static bool IsKnownRenderModel(const char* name)
+{
+	return strcmp(name, "oculusHmdRenderModel") == 0 || IsOwnRenderModel(name);
 }
 
 // Copies value into an app's buffer, cut short and terminated if it doesn't fit; returns the size needed with the
@@ -988,8 +991,10 @@ bool BaseRenderModels::GetComponentState(const char* pchRenderModelName, const c
 			hand = ITrackedDevice::HAND_RIGHT;
 		} else if (renderModelName == "vive_tracker") {
 			hand = ITrackedDevice::GENERIC_TRACKER;
-		} else {
-			hand = ITrackedDevice::HAND_NONE;
+		} else if (IsOwnRenderModel(renderModelName.c_str()) && renderModelName.ends_with("_left")) {
+			hand = ITrackedDevice::HAND_LEFT;
+		} else if (IsOwnRenderModel(renderModelName.c_str()) && renderModelName.ends_with("_right")) {
+			hand = ITrackedDevice::HAND_RIGHT;
 		}
 	}
 

@@ -32,7 +32,6 @@ public:
 	// Returns true if file sync occurred (force or settings dirty)
 	bool Sync(bool bForce = false, EVRSettingsError* peError = nullptr);
 
-	// SetBool from a scene application answers VRSettingsError_AccessDenied and writes nothing, as SteamVR does
 	void SetBool(const char* pchSection, const char* pchSettingsKey, bool bValue, EVRSettingsError* peError = nullptr);
 	void SetInt32(const char* pchSection, const char* pchSettingsKey, int32_t nValue, EVRSettingsError* peError = nullptr);
 	void SetFloat(const char* pchSection, const char* pchSettingsKey, float flValue, EVRSettingsError* peError = nullptr);

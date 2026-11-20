@@ -34,6 +34,14 @@ constexpr size_t kStateSize = 16 * 1024;
 constexpr size_t kHeaderSize = 128;
 constexpr const char* kDocNames[] = { "settings", "applications", "chaperone", "scene", "dashboard", "overlays", "offsets" };
 
+// The documents the user would lose work in (settings, registered applications, the room): written through to the
+// disk with a last good copy beside them. The others describe running programs, change often (some from a game's
+// frame), and are rebuilt as those programs run.
+bool Kept(StoreDoc doc)
+{
+	return doc == StoreDoc::Settings || doc == StoreDoc::Applications || doc == StoreDoc::Chaperone || doc == StoreDoc::Offsets;
+}
+
 uint64_t Load(uint64_t& v)
 {
 	return std::atomic_ref<uint64_t>(v).load(std::memory_order_acquire);
@@ -143,7 +151,7 @@ constexpr size_t kMaxDocBytes = 16 * 1024 * 1024;
 
 // Writes the file, and with durable asks the disk to have it before returning, so that a crash or power loss after
 // the rename that follows doesn't leave a truncated document
-bool WriteFile(const fs::path& path, const std::string& text, bool durable = true)
+bool WriteFile(const fs::path& path, const std::string& text, bool durable)
 {
 #ifdef _WIN32
 	FILE* f = _wfopen(path.c_str(), L"wb");
@@ -543,7 +551,8 @@ bool SharedStore::Update(StoreDoc doc, const std::function<void(Json::Value& dat
 			if (root["data"].isObject())
 				data = root["data"];
 			// The document as it was is the last good copy, for if the next write is cut short
-			backup = text;
+			if (Kept(doc))
+				backup = text;
 		} else {
 			// Kept for a look, and replaced below, starting from the last good copy if there is one
 			fs::path bad = path;
@@ -588,7 +597,7 @@ bool SharedStore::Update(StoreDoc doc, const std::function<void(Json::Value& dat
 		good += ".bak";
 		WriteFile(good, backup, false);
 	}
-	if (!WriteFile(tmp, out) || !Replace(tmp, path)) {
+	if (!WriteFile(tmp, out, Kept(doc)) || !Replace(tmp, path)) {
 		std::error_code ec;
 		fs::remove(tmp, ec);
 		return false;

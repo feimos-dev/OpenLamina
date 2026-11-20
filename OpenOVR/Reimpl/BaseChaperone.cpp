@@ -17,10 +17,8 @@ using namespace vr;
 
 BaseChaperone::BaseChaperoneCalibrationState BaseChaperone::GetCalibrationState()
 {
-	// The play area and the collision bounds both come from the runtime's stage
-	vr::HmdVector3_t minPoint, maxPoint;
-	if (!GetMinMaxPoints(minPoint, maxPoint))
-		return ChaperoneCalibrationState_Error_PlayAreaInvalid;
+	// OK whether or not the runtime gives stage bounds: runtimes without them (Monado among them) have nothing for the
+	// player to set up, and games read an error here as a room setup to do first
 	return ChaperoneCalibrationState_OK;
 }
 bool BaseChaperone::GetPlayAreaSize(float* pSizeX, float* pSizeZ)

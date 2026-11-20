@@ -496,6 +496,8 @@ std::optional<uint32_t> LaunchProcess(const fs::path& binary, const std::string&
 		return std::nullopt;
 #ifdef _WIN32
 	std::wstring wideArguments = WideFromUtf8(arguments);
+	if (!arguments.empty() && wideArguments.empty())
+		return std::nullopt; // not UTF-8: not started with arguments it didn't ask for
 	std::wstring commandLine = L"\"" + binary.wstring() + L"\"";
 	if (!wideArguments.empty())
 		commandLine += L" " + wideArguments;
