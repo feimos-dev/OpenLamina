@@ -402,6 +402,11 @@ XrResult XRAPI_CALL GetSystem(XrInstance, const XrSystemGetInfo* info, XrSystemI
 	FAIL_POINT("xrGetSystem");
 	if (info->formFactor != XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY)
 		return XR_ERROR_FORM_FACTOR_UNSUPPORTED;
+	{
+		std::lock_guard<std::recursive_mutex> g(St().lock);
+		if (std::chrono::steady_clock::now() < St().systemBackAt)
+			return XR_ERROR_FORM_FACTOR_UNAVAILABLE; // gone after a scripted loss
+	}
 	*system = kSystem;
 	return XR_SUCCESS;
 }
@@ -503,6 +508,11 @@ XrResult XRAPI_CALL CreateSession(XrInstance, const XrSessionCreateInfo* info, X
 		d.root["session"]["binding"] = binding;
 		d.root["session"]["overlay"] = session->overlay;
 	}
+	if (Dump::Enabled()) {
+		Dump& d = GetDump();
+		std::lock_guard<std::mutex> dg(d.lock);
+		d.root["sessions_created"] = d.root["sessions_created"].asUInt64() + 1;
+	}
 	RtSession* raw = session.get();
 	St().session = std::move(session);
 	QueueState(raw, XR_SESSION_STATE_IDLE);
@@ -529,6 +539,8 @@ XrResult XRAPI_CALL BeginSession(XrSession, const XrSessionBeginInfo* info)
 	RtSession* s = St().session.get();
 	if (!s)
 		return XR_ERROR_HANDLE_INVALID;
+	if (s->lost)
+		return XR_ERROR_SESSION_LOST;
 	if (s->running)
 		return XR_ERROR_SESSION_RUNNING;
 	if (info->primaryViewConfigurationType != XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO)
@@ -543,6 +555,8 @@ XrResult XRAPI_CALL EndSession(XrSession)
 	RtSession* s = St().session.get();
 	if (!s)
 		return XR_ERROR_HANDLE_INVALID;
+	if (s->lost)
+		return XR_ERROR_SESSION_LOST;
 	if (!s->running)
 		return XR_ERROR_SESSION_NOT_RUNNING;
 	if (s->state != XR_SESSION_STATE_STOPPING)
@@ -558,6 +572,8 @@ XrResult XRAPI_CALL RequestExitSession(XrSession)
 {
 	std::lock_guard<std::recursive_mutex> g(St().lock);
 	RtSession* s = St().session.get();
+	if (s && s->lost)
+		return XR_ERROR_SESSION_LOST;
 	if (!s || !s->running)
 		return XR_ERROR_SESSION_NOT_RUNNING;
 	s->exitRequested = true;
@@ -820,6 +836,8 @@ XrResult XRAPI_CALL WaitFrame(XrSession, const XrFrameWaitInfo*, XrFrameState* f
 	RtSession* s = St().session.get();
 	if (!s)
 		return XR_ERROR_HANDLE_INVALID;
+	if (s->lost)
+		return XR_ERROR_SESSION_LOST;
 	if (!s->running)
 		return XR_ERROR_SESSION_NOT_RUNNING;
 	// A second wait before the first one's frame began
@@ -832,7 +850,29 @@ XrResult XRAPI_CALL WaitFrame(XrSession, const XrFrameWaitInfo*, XrFrameState* f
 		QueueState(s, XR_SESSION_STATE_VISIBLE);
 	else if (s->framesWaited == 3)
 		QueueState(s, XR_SESSION_STATE_FOCUSED);
-	for (const ScriptEvent& ev : GetScript().events) {
+	for (size_t i = 0; i < GetScript().events.size(); i++) {
+		const ScriptEvent& ev = GetScript().events[i];
+		const bool loss = ev.type == "session_state" && ev.state == "LOSS_PENDING";
+		// A loss is sent once: the session made after it runs on
+		if (loss && ev.frame == s->framesWaited && St().lossesSent.insert(i).second) {
+			QueueState(s, XR_SESSION_STATE_LOSS_PENDING);
+			s->lost = true;
+			St().systemBackAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(GetScript().lossUnavailableMs);
+			if (Dump::Enabled()) {
+				Dump& d = GetDump();
+				std::lock_guard<std::mutex> dg(d.lock);
+				d.root["sessions_lost"] = d.root["sessions_lost"].asUInt64() + 1;
+			}
+			continue;
+		}
+		if (loss)
+			continue;
+		// EXITING is the user quitting from the runtime: STOPPING first, EXITING once the session has ended
+		if (ev.frame == s->framesWaited && ev.type == "session_state" && ev.state == "EXITING" && s->running) {
+			s->exitRequested = true;
+			QueueState(s, XR_SESSION_STATE_STOPPING);
+			continue;
+		}
 		if (ev.frame == s->framesWaited && ev.type == "session_state")
 			QueueState(s, StateFromName(ev.state));
 		if (ev.frame == s->framesWaited && ev.type == "refresh_rate" && ev.rate > 0)
@@ -854,6 +894,8 @@ XrResult XRAPI_CALL BeginFrame(XrSession, const XrFrameBeginInfo*)
 	RtSession* s = St().session.get();
 	if (!s)
 		return XR_ERROR_HANDLE_INVALID;
+	if (s->lost)
+		return XR_ERROR_SESSION_LOST;
 	if (!s->running)
 		return XR_ERROR_SESSION_NOT_RUNNING;
 	// As Monado answers a headless session: it has no frames to begin
@@ -1193,6 +1235,8 @@ XrResult XRAPI_CALL EndFrame(XrSession, const XrFrameEndInfo* info)
 	RtSession* s = St().session.get();
 	if (!s)
 		return XR_ERROR_HANDLE_INVALID;
+	if (s->lost)
+		return XR_ERROR_SESSION_LOST;
 	if (s->headless || !s->frameOpen) {
 		CountFrameOrderError(); // an end without a begin
 		return XR_ERROR_CALL_ORDER_INVALID;

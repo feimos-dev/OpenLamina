@@ -786,6 +786,12 @@ void BaseInput::LoadEmptyManifestIfRequired()
 {
 	if (hasLoadedActions)
 		return;
+	// Asked for, legacy input comes in place of the info set (which would cost a session restart)
+	legacyInputAsked = true;
+	// Not before the game's first frame on its own device: the session restart for it would come anyway, and a
+	// manifest the game loads by then would need another
+	if (!XrBackend::InputsMayAttach())
+		return;
 
 	// As in SetActionManifestPath, exclusive to the end; another thread may have loaded the actions while this waited
 	auto sessionLock = xr_session.lock();
@@ -852,6 +858,9 @@ void BaseInput::BindInputsForSession()
 	// going to bind the inputs ourselves anyway, so we don't want to do that twice.
 	// If we didn't request the restart but we also haven't even loaded actions yet, there's nothing to bind yet.
 	if (restartingSession || !hasLoadedActions)
+		return;
+	// No session to bind to (a lost one was destroyed): the one made again binds them
+	if (!xr_gbl || !xr_session.get())
 		return;
 
 	// Since the session has changed, any actionspaces we previously created are now invalid

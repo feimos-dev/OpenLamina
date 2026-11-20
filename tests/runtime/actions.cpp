@@ -170,6 +170,11 @@ XrResult XRAPI_CALL AttachSessionActionSets(XrSession session, const XrSessionAc
 		it->second->attached = true;
 	}
 	s->actionsAttached = true;
+	if (Dump::Enabled()) {
+		Dump& d = GetDump();
+		std::lock_guard<std::mutex> dg(d.lock);
+		d.root["action_attaches"] = d.root["action_attaches"].asUInt64() + 1;
+	}
 	return XR_SUCCESS;
 }
 

@@ -304,6 +304,10 @@ public:
 	// IVROverlayView::PostOverlayEvent: queued on this program's overlay, or sent to the program whose overlay it is
 	void _PostOverlayEvent(vr::VROverlayHandle_t handle, const vr::VREvent_t* event);
 
+	// A new session (XrBackend::RebuildSession): the overlays' texture swapchains went with the old one, and are made
+	// again from their textures as they're next shown
+	void _OnSessionRebuilt();
+
 	// Whether the keyboard is shown
 	bool _KeyboardShown()
 	{

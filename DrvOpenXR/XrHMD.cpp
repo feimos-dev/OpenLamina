@@ -391,7 +391,7 @@ void XrHMD::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDevicePose_t*
 {
 	// Held to the end: a session restart on another thread replaces xr_gbl and its spaces, and waits for this to end
 	auto lock = xr_session.lock_shared();
-	if (!xr_gbl) {
+	if (XrBackend::CurrentSessionGone()) {
 		// No session (it was lost, or a restart failed): no pose
 		if (pose) {
 			*pose = {};
@@ -427,7 +427,11 @@ static const float kDefaultIpd = 0.064f;
 
 float XrHMD::GetIPD()
 {
-	if (!xr_gbl)
+	const bool haveSession = [] {
+		auto lock = xr_session.lock_shared(); // held while reading: a session restart waits for it
+		return xr_gbl != nullptr;
+	}();
+	if (!haveSession)
 		return kDefaultIpd + IpdOffset();
 
 	static float ipd = kDefaultIpd;

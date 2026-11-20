@@ -160,6 +160,11 @@ public:
 	[[nodiscard]] SessionLock try_lock_shared();
 
 	/*
+	 * The exclusive lock if it's free now, without waiting (see SessionLock::IsHeld)
+	 */
+	[[nodiscard]] SessionLock try_lock();
+
+	/*
 	 * Resets the underlying XrSession to XR_NULL_HANDLE. Does not actually call xrDestroySession.
 	 */
 	void reset();
@@ -183,10 +188,12 @@ class SessionLock {
 
 public:
 	struct TryShared {};
+	struct TryExclusive {};
 
 	SessionLock(SessionWrapper& p, bool exclusive);
 	SessionLock(SessionWrapper& p, std::chrono::milliseconds limit);
 	SessionLock(SessionWrapper& p, TryShared);
+	SessionLock(SessionWrapper& p, TryExclusive);
 	~SessionLock();
 	operator XrSession&();
 	// Whether this thread holds the lock, through this SessionLock or an outer one

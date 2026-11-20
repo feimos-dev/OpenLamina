@@ -7,6 +7,9 @@
 //               and XR_KHR_win32_convert_performance_counter_time is XR_KHR_convert_timespec_time),
 //   "ipd": 0.063, "display_hz": 90, "stage_bounds": [width, depth],
 //   "events":   [{ "frame": 60, "type": "session_state", "state": "LOSS_PENDING" }]
+//               (LOSS_PENDING loses the session for real, once per process: its calls answer XR_ERROR_SESSION_LOST
+//               from then on, and xrGetSystem answers XR_ERROR_FORM_FACTOR_UNAVAILABLE for loss_unavailable_ms;
+//               EXITING on a running session is the user quitting: STOPPING, then EXITING after xrEndSession),
 //               (or { "frame": 10, "type": "refresh_rate", "rate": 120 }: the display changes to that rate, announced
 //               with XrEventDataDisplayRefreshRateChangedFB),
 //   "fail":     [{ "function": "xrEndFrame", "result": "XR_ERROR_RUNTIME_FAILURE", "after": 29, "count": 1 }]
@@ -132,6 +135,7 @@ struct Script {
 	std::vector<float> refreshRates; // empty: displayHz alone
 	std::vector<ScriptIpd> ipdChanges;
 	std::vector<ScriptViveTracker> viveTrackers;
+	uint32_t lossUnavailableMs = 0; // how long the system is gone after a scripted LOSS_PENDING
 };
 
 // The scripted pose of a path at a frame (the last entry whose from_frame has been reached), nullptr if none

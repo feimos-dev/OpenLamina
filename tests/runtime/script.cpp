@@ -146,6 +146,7 @@ static Script LoadScript()
 				add(v);
 		}
 	}
+	s.lossUnavailableMs = root["loss_unavailable_ms"].asUInt();
 	for (const Json::Value& r : root["refresh_rates"])
 		s.refreshRates.push_back(r.asFloat());
 	auto addIpd = [&](const Json::Value& e) {

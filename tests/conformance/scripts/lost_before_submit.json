@@ -1,0 +1,1 @@
+{ "#": "The session is lost at its first frame, before the game's first Submit, and the headset is gone for 300 ms: the game's Submits answer an error until the session is made again, which then moves to the game's device; no VREvent_Quit", "events": [{ "frame": 1, "type": "session_state", "state": "LOSS_PENDING" }], "loss_unavailable_ms": 300 }
