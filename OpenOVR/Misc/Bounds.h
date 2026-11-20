@@ -27,8 +27,9 @@ struct BoundsWall {
 // committed room setup (the store's Chaperone document), else 0 by 0
 XrExtent2Df BoundsPlayArea(const XrExtent2Df* runtime, const Json::Value& chaperoneDoc);
 
-// The walls to draw for a play area width (X) by depth (Z), given the tracked points in the stage
-std::vector<BoundsWall> BoundsWalls(float width, float depth, const std::vector<XrVector3f>& points);
+// The walls to draw for a play area width (X) by depth (Z), given the tracked points in the stage. With preview (a
+// room setup tool's ShowWorkingSetPreview), every wall, whole, wherever the points are.
+std::vector<BoundsWall> BoundsWalls(float width, float depth, const std::vector<XrVector3f>& points, bool preview = false);
 
 // A wall's grid, alpha times as opaque as it is at the edge
 void DrawBoundsGrid(Canvas& canvas, float alpha);
