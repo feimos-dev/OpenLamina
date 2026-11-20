@@ -5,7 +5,9 @@
 
 #include "Drivers/Backend.h"
 #include <algorithm>
+#include <array>
 #include <atomic>
+#include <chrono>
 #include <cmath>
 #include <map>
 #include <mutex>
@@ -192,6 +194,25 @@ struct OOVR_InputBindingInfo_t {
 	 * @since OpenVR 1.10.30
 	 */
 	char rchInputSourceType[32];
+};
+
+/** A hand's touches as the estimated skeleton shows them: the thumb and the index finger each move between lifted (0)
+ * and touching (1) at kSpeed a second, so a touch doesn't snap the finger. Each hand has its own, under its own lock. */
+struct HandTouchEase {
+	static constexpr float kSpeed = 8.0f;
+	using Clock = std::chrono::steady_clock;
+
+	struct Eased {
+		float thumb = 0.0f, trigger = 0.0f;
+	};
+
+	/** Moves towards the touches by the time since the last step (none on the first) and returns where they are */
+	Eased Step(bool thumbTouch, bool triggerTouch, Clock::time_point now);
+
+private:
+	std::mutex lock;
+	std::optional<Clock::time_point> last;
+	Eased eased;
 };
 
 class BaseInput {
@@ -518,6 +539,12 @@ public: // INTERNAL FUNCTIONS
 	 */
 	static void SetHeldByDashboard(bool held);
 	static bool HeldByDashboard();
+	/**
+	 * Whether the game's input is held: by the dashboard, or while the compositor's grid is fully faded in (the game
+	 * is loading, and the user sees the grid, not the game). Held, its digital and analog actions read inactive and its
+	 * old controller states zero.
+	 */
+	static bool InputHeld();
 	/** A vibration on one hand (0 the left, 1 the right), through the old input's haptic action */
 	void TriggerHandHaptic(int hand, float seconds, float frequency, float amplitude);
 
@@ -665,6 +692,8 @@ private:
 		// If this is a pose action, we calculate it from the legacy pose inputs rather than giving it
 		// it's own OpenXR action, since it may need some special transforms to make it line up properly.
 		std::unordered_map<const InteractionProfile*, PoseBindingInfo> poseBindingsLeft, poseBindingsRight;
+		// Those on a hand named by dominance (/user/hand/primary/pose/raw), on whichever hand that is when it's read
+		std::unordered_map<const InteractionProfile*, PoseBindingInfo> poseBindingsPrimary, poseBindingsSecondary;
 	};
 
 public:
@@ -881,6 +910,15 @@ private:
 	std::vector<const BindingEvaluator*> evaluatedThisSync;
 	// Each profile's binding file: what GetActionBindingInfo and GetActionOrigins answer
 	std::map<const InteractionProfile*, BindingFile> bindingFiles;
+	// The binding files that name a hand by dominance, as they are, with the controller type they're used for:
+	// bindingFiles has them on the dominant hand
+	struct AliasedBindingFile {
+		BindingFile file;
+		std::string controllerType;
+	};
+	std::map<const InteractionProfile*, AliasedBindingFile> aliasedBindingFiles;
+	/** Puts the files of aliasedBindingFiles, and their evaluators, on the dominant hand. Call it with evaluatorLock held. */
+	void ResolveBindingFileHands();
 	// Guards everything above and the legacy evaluators: a game reads input on its own thread while OpenComposite
 	// reads the old input after each frame on the thread that submits.
 	// Lock order: the session lock (xr_session, shared or exclusive) is taken before evaluatorLock, never after. Every
@@ -906,7 +944,8 @@ private:
 		uint64_t evaluatedAt = 0;
 		bool evaluated = false;
 	};
-	std::map<std::string, LegacyEvaluator> legacyEvaluators; // by controller type
+	// By profile: profiles of one controller type (the Touch models) read their own hands
+	std::map<const InteractionProfile*, LegacyEvaluator> legacyEvaluators;
 	void UpdateEvaluators(const VRActiveActionSet_t* sets, uint32_t count);
 	/** Writes a device's pose with a render model component's offset (none for a null or unknown name) into out */
 	void ApplyPoseComponent(const vr::TrackedDevicePose_t& rawPose, ITrackedDevice::TrackedDeviceType hand, const char* componentName, vr::TrackedDevicePose_t& out);
@@ -992,6 +1031,8 @@ private:
 	 */
 	EVRInputError getEstimatedSkeletalSummary(ITrackedDevice::TrackedDeviceType hand, VRSkeletalSummaryData_t* pSkeletalSummaryData);
 	EVRInputError getEstimatedBoneData(ITrackedDevice::TrackedDeviceType hand, EVRSkeletalTransformSpace transformSpace, EVRSkeletalMotionRange eMotionRange, std::span<VRBoneTransform_t, eBone_Count> boneData);
+	/** Each hand's touches for the estimated skeleton (left, right) */
+	std::array<HandTouchEase, 2> handTouches;
 
 	/**
 	 * Some games (i.e. newer Unity games) won't explicitly call SetActionManifestPath, but instead will set the path through

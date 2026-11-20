@@ -3,6 +3,7 @@
 
 #include "stdafx.h"
 
+#include "Misc/Fade.h"
 #include "Reimpl/BaseInput.h"
 
 #include <limits>
@@ -117,4 +118,55 @@ TEST_CASE("Input_source_paths")
 	CHECK(tracker.devicePath == "/user/vive_tracker_htcx");
 	CHECK(BaseInput::ClassifyInputSource("/user/nothing").type == S::INVALID);
 	CHECK(BaseInput::ClassifyInputSource("").type == S::INVALID);
+}
+
+TEST_CASE("Hand_touches_ease_on_their_own_hand")
+{
+	using namespace std::chrono_literals;
+	const HandTouchEase::Clock::time_point start{};
+	std::array<HandTouchEase, 2> hands;
+
+	// The first step only starts the clock
+	CHECK(hands[0].Step(true, true, start).thumb == 0.0f);
+	CHECK(hands[1].Step(false, false, start + 50ms).thumb == 0.0f);
+
+	// A tenth of a second touching moves the left thumb most of the way; the right hand, read in between, isn't moved
+	// by it and the left isn't moved by the right's time
+	HandTouchEase::Eased left = hands[0].Step(true, false, start + 100ms);
+	CHECK(left.thumb == doctest::Approx(0.8f));
+	CHECK(left.trigger == 0.0f);
+	HandTouchEase::Eased right = hands[1].Step(false, true, start + 100ms);
+	CHECK(right.thumb == 0.0f);
+	CHECK(right.trigger == doctest::Approx(0.4f));
+
+	// Held further it stops at touching, and lifting eases it back
+	CHECK(hands[0].Step(true, false, start + 1s).thumb == 1.0f);
+	CHECK(hands[0].Step(false, false, start + 1s + 50ms).thumb == doctest::Approx(0.6f));
+
+	// A clock that runs backwards doesn't move it
+	CHECK(hands[0].Step(true, false, start).thumb == doctest::Approx(0.6f));
+}
+
+TEST_CASE("Input_is_held_while_the_grid_is_fully_faded_in")
+{
+	CompositorFades& fades = CompositorFades::Get();
+	fades.Reset();
+	CHECK_FALSE(BaseInput::InputHeld());
+
+	// Fading in over a long time: not yet held part of the way in
+	fades.FadeGrid(CompositorClockSeconds(), 1000.0, true);
+	CHECK_FALSE(BaseInput::InputHeld());
+
+	// Fully in: held; fading out again lets it go at once
+	fades.FadeGrid(CompositorClockSeconds(), 0.0, true);
+	CHECK(BaseInput::InputHeld());
+	fades.FadeGrid(CompositorClockSeconds(), 1000.0, false);
+	CHECK_FALSE(BaseInput::InputHeld());
+
+	// The dashboard holds it on its own
+	fades.Reset();
+	BaseInput::SetHeldByDashboard(true);
+	CHECK(BaseInput::InputHeld());
+	BaseInput::SetHeldByDashboard(false);
+	CHECK_FALSE(BaseInput::InputHeld());
 }

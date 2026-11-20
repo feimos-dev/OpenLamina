@@ -39,6 +39,7 @@
 #include <set>
 #include <utility>
 
+#include "Misc/Fade.h"
 #include "Misc/JsonFile.h"
 #include "Misc/xrmoreutils.h"
 
@@ -432,6 +433,7 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 		rawComponents.clear();
 		evaluators.clear();
 		bindingFiles.clear();
+		aliasedBindingFiles.clear();
 		evaluatedThisSync.clear();
 		legacyEvaluators.clear();
 		{
@@ -971,7 +973,17 @@ void BaseInput::LoadBindingsSet(const InteractionProfile& profile, const std::st
 			// we're left with pose/raw.
 			std::string withoutPrefix = specPath;
 			info.hand = ParseAndRemoveHandPrefix(withoutPrefix);
+			HandAlias alias = HandAlias::NONE;
 			if (info.hand == ITrackedDevice::HAND_NONE) {
+				// A hand named by dominance follows the dominant hand when the pose is read
+				for (auto [prefix, named] : { std::pair<const char*, HandAlias>{ "/user/hand/primary/", HandAlias::PRIMARY }, { "/user/hand/secondary/", HandAlias::SECONDARY } }) {
+					if (withoutPrefix.starts_with(prefix)) {
+						withoutPrefix.erase(0, strlen(prefix));
+						alias = named;
+					}
+				}
+			}
+			if (info.hand == ITrackedDevice::HAND_NONE && alias == HandAlias::NONE) {
 				OOVR_LOGF("WARNING: Ignoring invalid pose binding '%s' for %s, bad hand prefix", specPath.c_str(), action->fullName.c_str());
 				continue;
 			}
@@ -998,7 +1010,9 @@ void BaseInput::LoadBindingsSet(const InteractionProfile& profile, const std::st
 
 			// We only accommodate one binding per hand, since having multiple doesn't make sense - either
 			// a hand is tracked or not, since we derive everything from the grip pose.
-			if (info.hand == ITrackedDevice::HAND_LEFT) {
+			if (alias != HandAlias::NONE) {
+				(alias == HandAlias::PRIMARY ? action->poseBindingsPrimary : action->poseBindingsSecondary)[&profile] = info;
+			} else if (info.hand == ITrackedDevice::HAND_LEFT) {
 				action->poseBindingsLeft[&profile] = info;
 			} else {
 				action->poseBindingsRight[&profile] = info;
@@ -1022,14 +1036,24 @@ void BaseInput::LoadBindingsSet(const InteractionProfile& profile, const std::st
 				continue;
 			}
 
-			if (!profile.IsInputPathValid(pathStr)) {
-				OOVR_LOGF("Warning: skipping haptic binding to invalid path %s for action %s", pathStr.c_str(), actionName.c_str());
-				continue;
+			// On a hand named by dominance it's suggested on both hands: the evaluator sends it to the dominant one
+			std::vector<std::string> paths = { pathStr };
+			for (const char* named : { "/user/hand/primary/", "/user/hand/secondary/" }) {
+				if (pathStr.starts_with(named)) {
+					std::string rest = pathStr.substr(strlen(named));
+					paths = { "/user/hand/left/" + rest, "/user/hand/right/" + rest };
+				}
 			}
+			for (const std::string& onHand : paths) {
+				if (!profile.IsInputPathValid(onHand)) {
+					OOVR_LOGF("Warning: skipping haptic binding to invalid path %s for action %s", onHand.c_str(), actionName.c_str());
+					continue;
+				}
 
-			XrPath path = XR_NULL_PATH;
-			OC_XR_LOG(xrStringToPath(xr_instance, pathStr.c_str(), &path));
-			AddSuggestedBinding(bindings, action->xr, path);
+				XrPath path = XR_NULL_PATH;
+				OC_XR_LOG(xrStringToPath(xr_instance, onHand.c_str(), &path));
+				AddSuggestedBinding(bindings, action->xr, path);
+			}
 		} catch (const std::exception& e) {
 			OOVR_SOFT_ABORTF("Skipping a haptic binding of bindings file '%s': %s", bindingsPath.c_str(), e.what());
 		}
@@ -1137,6 +1161,9 @@ void BaseInput::CreateLegacyActions()
 		create(&ctrl.trigger, "trigger", "Trigger", XR_ACTION_TYPE_FLOAT_INPUT);
 		create(&ctrl.triggerTouch, "trigger-touch", "Trigger (Touch)", XR_ACTION_TYPE_BOOLEAN_INPUT);
 		create(&ctrl.triggerClick, "trigger-click", "Trigger (Digital)", XR_ACTION_TYPE_BOOLEAN_INPUT);
+		create(&ctrl.triggerProximity, "trigger-proximity", "Trigger (Finger Near)", XR_ACTION_TYPE_BOOLEAN_INPUT);
+		create(&ctrl.thumbProximity, "thumb-proximity", "Thumb Buttons (Thumb Near)", XR_ACTION_TYPE_BOOLEAN_INPUT);
+		create(&ctrl.triggerCurl, "trigger-curl", "Trigger (Finger Curl)", XR_ACTION_TYPE_FLOAT_INPUT);
 
 		create(&ctrl.haptic, "haptic", "Vibration Haptics", XR_ACTION_TYPE_VIBRATION_OUTPUT);
 
@@ -1233,14 +1260,16 @@ void BaseInput::SuggestRawInputs(const InteractionProfile& profile, std::vector<
 
 bool BaseInput::SuggestRawBindings(const InteractionProfile& profile, const std::string& bindingsPath, std::vector<XrActionSuggestedBinding>& bindings)
 {
-	// The binding file chosen for this controller; turned into one for this controller if it's another's
-	BindingFile file = LoadBindingFile(PathFromUtf8(bindingsPath));
-	// The simple controller is the one profile with no OpenVR controller type of its own
-	const std::string type = profile.GetOpenVRName().value_or("khr_simple_controller");
-	if (!file.controllerType.empty() && lowerStr(file.controllerType) != type) {
-		OOVR_LOGF("Binding file: %s's bindings converted for %s", file.controllerType.c_str(), type.c_str());
-		file = ConvertBindingFile(file, type);
-	}
+	// The binding file chosen for this controller; turned into one for this controller if it's another's. Paths on
+	// the primary and secondary hand go to the dominant hand and the other one, again when it changes.
+	const BindingFile loaded = LoadBindingFile(PathFromUtf8(bindingsPath));
+	const std::string type = profile.BindingConversionType();
+	if (!loaded.controllerType.empty() && lowerStr(loaded.controllerType) != type)
+		OOVR_LOGF("Binding file: %s's bindings converted for %s", loaded.controllerType.c_str(), type.c_str());
+	BindingFile file = BindingFileForController(loaded, type, allSubactionPathNames[DominantHandIndex(HandAlias::PRIMARY)]);
+	std::optional<AliasedBindingFile> aliased;
+	if (HasHandAliases(loaded))
+		aliased = AliasedBindingFile{ loaded, type };
 
 	// Whether the file binds an input this controller has to an action of the manifest, or a haptic was suggested
 	auto bindsSomething = [&] {
@@ -1254,9 +1283,15 @@ bool BaseInput::SuggestRawBindings(const InteractionProfile& profile, const std:
 			return actionSets.LookupItem(setPath) && action && action->type != ActionType::EyeTracking;
 		});
 	};
-	if (!bindsSomething())
+	if (!bindsSomething()) {
+		aliasedBindingFiles.erase(&profile);
 		return false;
+	}
 	bindingFiles[&profile] = file;
+	if (aliased)
+		aliasedBindingFiles[&profile] = std::move(*aliased);
+	else
+		aliasedBindingFiles.erase(&profile);
 
 	if (rawInputsSet == XR_NULL_HANDLE)
 		return true;
@@ -1394,7 +1429,7 @@ const BindingEvaluator* BaseInput::LegacyEvaluatorFor(const InteractionProfile* 
 	if (!profile || !profile->CanHaveBindings() || rawInputsSet == XR_NULL_HANDLE)
 		return nullptr;
 	std::string type = profile->GetOpenVRName().value_or("generic");
-	LegacyEvaluator& legacy = legacyEvaluators[type];
+	LegacyEvaluator& legacy = legacyEvaluators[profile];
 	if (!legacy.evaluator) {
 		const BindingFile* file = LoadLegacyBindings(type);
 		if (!file)
@@ -1527,6 +1562,21 @@ void BaseInput::ResolveHandAliases()
 	}
 }
 
+void BaseInput::ResolveBindingFileHands()
+{
+	const std::string& primary = allSubactionPathNames[DominantHandIndex(HandAlias::PRIMARY)];
+	// The evaluators replaced here may be among the last sync's: none is read again until the next one
+	evaluatedThisSync.clear();
+	for (const auto& [profile, aliased] : aliasedBindingFiles) {
+		auto file = bindingFiles.find(profile);
+		if (file == bindingFiles.end())
+			continue;
+		file->second = BindingFileForController(aliased.file, aliased.controllerType, primary);
+		if (evaluators.count(profile))
+			evaluators[profile] = std::make_unique<BindingEvaluator>(file->second);
+	}
+}
+
 EVRInputError BaseInput::GetInputSourceHandle(const char* pchInputSourcePath, VRInputValueHandle_t* pHandle)
 {
 	// Get the existing InputValueHandle if it already exists, or make a new one otherwise. Applications can
@@ -1582,6 +1632,7 @@ EVRInputError BaseInput::UpdateActionState(VR_ARRAY_COUNT(unSetCount) VRActiveAc
 		if (dominantHand != requestedDominantHand.load()) {
 			dominantHand = requestedDominantHand.load();
 			ResolveHandAliases();
+			ResolveBindingFileHands();
 		}
 	}
 
@@ -1673,8 +1724,8 @@ EVRInputError BaseInput::GetDigitalActionData(VRActionHandle_t action, InputDigi
 	if (EVRInputError err = DigitalReadError(act->type); err != VRInputError_None)
 		return err;
 
-	// Held by the dashboard: inactive (zeroed above)
-	if (HeldByDashboard())
+	// Held by the dashboard or the grid: inactive (zeroed above)
+	if (InputHeld())
 		return VRInputError_None;
 
 	// The evaluators' output, inactive if no active binding writes it
@@ -1706,8 +1757,8 @@ EVRInputError BaseInput::GetAnalogActionData(VRActionHandle_t action, InputAnalo
 		OC_UNSUPPORTED(VRInputError_WrongType, "Invalid action type %d for action %s",
 		    static_cast<int>(act->type), act->fullName.c_str());
 
-	// Held by the dashboard: inactive (zeroed above)
-	if (HeldByDashboard())
+	// Held by the dashboard or the grid: inactive (zeroed above)
+	if (InputHeld())
 		return VRInputError_None;
 
 	// The evaluators' output, inactive if no active binding writes it
@@ -1816,11 +1867,21 @@ EVRInputError BaseInput::GetPoseActionData(VRActionHandle_t action, ETrackingUni
 		if (!profile)
 			continue;
 
-		const auto& bindings = handType == ITrackedDevice::HAND_LEFT ? act->poseBindingsLeft : act->poseBindingsRight;
-		const auto bindingIter = bindings.find(profile);
-		if (bindingIter == bindings.end())
+		const PoseBindingInfo* found = nullptr;
+		{
+			const auto& bindings = handType == ITrackedDevice::HAND_LEFT ? act->poseBindingsLeft : act->poseBindingsRight;
+			const auto& byDominance = DominantHandIndex(HandAlias::PRIMARY) == handNum ? act->poseBindingsPrimary : act->poseBindingsSecondary;
+			for (const auto* map : { &bindings, &byDominance }) {
+				auto it = map->find(profile);
+				if (it != map->end()) {
+					found = &it->second;
+					break;
+				}
+			}
+		}
+		if (!found)
 			continue;
-		const PoseBindingInfo& binding = bindingIter->second;
+		const PoseBindingInfo& binding = *found;
 
 		// TODO use predicted time
 
@@ -3012,6 +3073,13 @@ void BaseInput::SetHeldByDashboard(bool held)
 bool BaseInput::HeldByDashboard()
 {
 	return heldByDashboard;
+}
+
+bool BaseInput::InputHeld()
+{
+	// The grid fully in and not asked to fade out: once the game asks for that, its input is back as the fade starts
+	const CompositorFades& fades = CompositorFades::Get();
+	return HeldByDashboard() || (fades.GridWanted() && fades.GridAlphaAt(CompositorClockSeconds()) >= 1.0f);
 }
 
 bool BaseInput::GetDashboardButton(bool system, int hand)

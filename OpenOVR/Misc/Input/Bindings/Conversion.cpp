@@ -2,6 +2,8 @@
 
 #include "Conversion.h"
 
+#include <algorithm>
+#include <cctype>
 #include <map>
 #include <vector>
 
@@ -15,7 +17,7 @@ struct ControllerInputs {
 	std::map<Role, std::pair<std::string, std::string>> inputs;
 };
 
-// kConversions: every controller type of the fork's profiles (their GetOpenVRName()), and generic. Index's and
+// kConversions: every controller type of the fork's profiles (their BindingConversionType()), and generic. Index's and
 // Touch's face buttons pair by hand and position: Touch's left x and y and right a and b are Index's a and b on each
 // hand, the lower one primary. An estimate, not measured against SteamVR.
 const std::map<std::string, ControllerInputs>& kConversions()
@@ -53,6 +55,8 @@ const std::map<std::string, ControllerInputs>& kConversions()
 		    { { { Role::Trigger, { "trigger", "trigger" } }, { Role::Grip, { "grip", "grip" } },
 		        { Role::Menu, { "application_menu", "application_menu" } }, { Role::System, { "system", "system" } },
 		        { Role::Pad, { "trackpad", "trackpad" } }, { Role::Stick, { "joystick", "joystick" } } } } },
+		{ "hand_interaction",
+		    { { { Role::Trigger, { "trigger", "trigger" } }, { Role::Grip, { "grip", "grip" } } } } },
 		{ "khr_simple_controller",
 		    { { { Role::Trigger, { "trigger", "trigger" } }, { Role::Menu, { "application_menu", "application_menu" } } } } },
 		{ "generic",
@@ -194,4 +198,15 @@ BindingFile ConvertBindingFile(const BindingFile& from, const std::string& toCon
 		set.chords = std::move(chords);
 	}
 	return to;
+}
+
+BindingFile BindingFileForController(const BindingFile& file, const std::string& controllerType, const std::string& primaryHand)
+{
+	// The hands named by dominance first: the conversion pairs inputs by hand
+	BindingFile resolved = ResolveDominantHandPaths(file, primaryHand);
+	std::string from = resolved.controllerType;
+	std::transform(from.begin(), from.end(), from.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+	if (from.empty() || from == controllerType)
+		return resolved;
+	return ConvertBindingFile(resolved, controllerType);
 }

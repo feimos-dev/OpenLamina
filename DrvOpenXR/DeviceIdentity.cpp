@@ -119,7 +119,8 @@ DeviceIdentity TrackerIdentity(const std::string& xdevName, const std::string& s
 {
 	// The generic tracker answers (XrGenericTracker.cpp); the render model is the profile's OpenVR name, set by the tracker
 	DeviceIdentity id;
-	id.trackingSystem = "oculus";
+	// As the tracker profile names it: SteamVR's lighthouse driver drives Vive trackers
+	id.trackingSystem = "lighthouse";
 	id.manufacturer = "Oculus";
 	id.controllerType = "vive_tracker_handheld_object";
 	id.modelNumber = "Vive Tracker Handheld Object";

@@ -10,14 +10,15 @@ GEN_INTERFACE("RenderModels", "006")
 
 #include "generated/GVRRenderModels.gen.h"
 
+// IVRRenderModels_002's loads answer in one call, true once loaded
 bool CVRRenderModels_002::LoadRenderModel(const char* pchRenderModelName, vr::IVRRenderModels_002::RenderModel_t** ppRenderModel)
 {
-	return base->LoadRenderModel_Async(pchRenderModelName, (OOVR_RenderModel_t**)ppRenderModel);
+	return base->LoadRenderModelNow(pchRenderModelName, (OOVR_RenderModel_t**)ppRenderModel) == 0;
 }
 
 bool CVRRenderModels_002::LoadTexture(vr::IVRRenderModels_002::TextureID_t textureId, vr::IVRRenderModels_002::RenderModel_TextureMap_t** ppTexture)
 {
-	return base->LoadTexture_Async((OOVR_TextureID_t)textureId, (OOVR_RenderModel_TextureMap_t**)ppTexture);
+	return base->LoadTexture_Async((OOVR_TextureID_t)textureId, (OOVR_RenderModel_TextureMap_t**)ppTexture) == 0;
 }
 
 bool CVRRenderModels_002::GetComponentState(const char* pchRenderModelName, const char* pchComponentName, const vr::VRControllerState_t* pControllerState, vr::IVRRenderModels_002::RenderModel_ComponentState_t* pComponentState)

@@ -16,6 +16,14 @@ typedef vr::RenderModel_ComponentState_t OOVR_RenderModel_ComponentState_t;
 
 class BaseRenderModels {
 public: // INTERNAL FUNCTIONS
+	~BaseRenderModels();
+
+	/** Waits for every model LoadRenderModel_Async has started loading */
+	static void WaitForLoads();
+
+	/** LoadRenderModel_Async waited for: the model's answer, never Loading */
+	OOVR_EVRRenderModelError LoadRenderModelNow(const char* pchRenderModelName, OOVR_RenderModel_t** ppRenderModel);
+
 	/** Try to find a component, if possible. This is the core of GetComponentState, which itself handles the case where this fails. */
 	bool TryGetComponentState(ITrackedDevice::TrackedDeviceType hand, const std::string& componentName, OOVR_RenderModel_ComponentState_t* result);
 

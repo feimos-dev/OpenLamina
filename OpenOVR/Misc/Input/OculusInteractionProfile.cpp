@@ -14,7 +14,22 @@
 #endif
 #include <glm/gtc/matrix_inverse.hpp>
 
-OculusTouchInteractionProfile::OculusTouchInteractionProfile()
+namespace {
+// The Quest 2's as SteamVR names it; the newer controllers' are names of our own, in the same form
+std::string ModelNumber(OculusTouchInteractionProfile::Model model, bool left)
+{
+	const char* name = "Oculus Quest";
+	if (model == OculusTouchInteractionProfile::Model::TouchPro)
+		name = "Meta Quest Pro";
+	else if (model == OculusTouchInteractionProfile::Model::TouchPlus)
+		name = "Meta Quest 3";
+	return std::string(name) + (left ? " (Left Controller)" : " (Right Controller)");
+}
+} // namespace
+
+OculusTouchInteractionProfile::OculusTouchInteractionProfile(Model model, bool proximity)
+    : model(model)
+    , proximity(proximity || model != Model::Touch)
 {
 
 	const char* paths[] = {
@@ -50,7 +65,42 @@ OculusTouchInteractionProfile::OculusTouchInteractionProfile()
 		this->validInputPaths.insert(str);
 	}
 
+	// Each model's own inputs on both hands: the finger proximity, the trigger's curl and slide, forces and the
+	// Pro's stylus tip and extra haptics
+	std::vector<const char*> modelPaths;
+	switch (model) {
+	case Model::Touch:
+		if (proximity)
+			modelPaths = { "/input/trigger/proximity_fb", "/input/thumb_fb/proximity_fb" };
+		break;
+	case Model::TouchPro:
+		modelPaths = {
+			"/input/trigger/proximity_fb",
+			"/input/thumb_fb/proximity_fb",
+			"/input/trigger/curl_fb",
+			"/input/trigger/slide_fb",
+			"/input/thumbrest/force",
+			"/input/stylus_fb/force",
+			"/output/haptic_trigger_fb",
+			"/output/haptic_thumb_fb",
+		};
+		break;
+	case Model::TouchPlus:
+		modelPaths = {
+			"/input/trigger/proximity_meta",
+			"/input/thumb_meta/proximity_meta",
+			"/input/trigger/curl_meta",
+			"/input/trigger/slide_meta",
+			"/input/trigger/force",
+		};
+		break;
+	}
+
 	for (const char* str : perHandPaths) {
+		this->validInputPaths.insert("/user/hand/left" + std::string(str));
+		this->validInputPaths.insert("/user/hand/right" + std::string(str));
+	}
+	for (const char* str : modelPaths) {
 		this->validInputPaths.insert("/user/hand/left" + std::string(str));
 		this->validInputPaths.insert("/user/hand/right" + std::string(str));
 	}
@@ -71,7 +121,7 @@ OculusTouchInteractionProfile::OculusTouchInteractionProfile()
 
 	this->propertiesMap = {
 		{ vr::Prop_TrackingSystemName_String, { "oculus" } },
-		{ vr::Prop_ModelNumber_String, { "Oculus Quest (Left Controller)", "Oculus Quest (Right Controller)" } },
+		{ vr::Prop_ModelNumber_String, { ModelNumber(model, true), ModelNumber(model, false) } },
 		{ vr::Prop_ControllerType_String, { GetOpenVRName().value() } }
 	};
 
@@ -134,8 +184,10 @@ OculusTouchInteractionProfile::OculusTouchInteractionProfile()
 
 const std::string& OculusTouchInteractionProfile::GetPath() const
 {
-	static std::string path = "/interaction_profiles/oculus/touch_controller";
-	return path;
+	static const std::string touch = "/interaction_profiles/oculus/touch_controller";
+	static const std::string pro = "/interaction_profiles/facebook/touch_controller_pro";
+	static const std::string plus = "/interaction_profiles/meta/touch_controller_plus";
+	return model == Model::TouchPro ? pro : model == Model::TouchPlus ? plus : touch;
 }
 
 std::optional<const char*> OculusTouchInteractionProfile::GetLeftHandRenderModelName() const
@@ -160,9 +212,11 @@ std::optional<vr::EVRSkeletalTrackingLevel> OculusTouchInteractionProfile::GetOp
 
 const InteractionProfile::LegacyBindings* OculusTouchInteractionProfile::GetLegacyBindings(const std::string& handPath) const
 {
-	static LegacyBindings allBindings[2] = { {}, {} };
+	// For each model, and the Touch with and without proximity, by hand
+	static LegacyBindings allBindings[4][2] = {};
 	int hand = handPath == "/user/hand/left" ? vr::Eye_Left : vr::Eye_Right;
-	LegacyBindings& bindings = allBindings[hand];
+	int variant = model == Model::TouchPro ? 2 : model == Model::TouchPlus ? 3 : proximity ? 1 : 0;
+	LegacyBindings& bindings = allBindings[variant][hand];
 
 	// First-time initialisation
 	if (!bindings.menu) {
@@ -182,6 +236,18 @@ const InteractionProfile::LegacyBindings* OculusTouchInteractionProfile::GetLega
 
 		bindings.gripPoseAction = "input/grip/pose";
 		bindings.aimPoseAction = "input/aim/pose";
+
+		// The fingers near the controller, and the index finger's curl on the trigger, for the estimated skeleton
+		if (model == Model::TouchPlus) {
+			bindings.triggerProximity = "input/trigger/proximity_meta";
+			bindings.thumbProximity = "input/thumb_meta/proximity_meta";
+			bindings.triggerCurl = "input/trigger/curl_meta";
+		} else if (proximity) {
+			bindings.triggerProximity = "input/trigger/proximity_fb";
+			bindings.thumbProximity = "input/thumb_fb/proximity_fb";
+			if (model == Model::TouchPro)
+				bindings.triggerCurl = "input/trigger/curl_fb";
+		}
 
 		if (handPath == "/user/hand/left") {
 			// Left

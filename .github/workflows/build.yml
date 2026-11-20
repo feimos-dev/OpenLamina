@@ -153,6 +153,9 @@ jobs:
           # The binding evaluator evaluates a toggle_button, and reads a vector3
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases input-frames --script tests/conformance/scripts/input_toggle.json --manifest tests/unit/data/manifest_toggle.json --expect tests/conformance/expect/input_evaluator.json --out conformance/input-steamvr
           if ($LASTEXITCODE) { $failed++ }
+          # Bindings on the primary hand follow the dominant hand
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases input-primary-hand --script tests/conformance/scripts/right_trigger_held.json --manifest tests/unit/data/manifest_primary_hand.json --expect tests/conformance/expect/input_primary_hand.json --out conformance/input-primary-hand
+          if ($LASTEXITCODE) { $failed++ }
           # A bound source that isn't an input path: GetActionBindingInfo leaves it out
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases binding-info --script tests/conformance/scripts/bound_source_odd.json --manifest tests/unit/data/manifest_toggle.json --expect tests/conformance/expect/binding_info.json --out conformance/binding-info
           if ($LASTEXITCODE) { $failed++ }

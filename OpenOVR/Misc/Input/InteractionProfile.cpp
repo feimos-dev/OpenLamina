@@ -13,6 +13,7 @@
 #include "IndexControllerInteractionProfile.h"
 #include "InteractionProfile.h"
 #include "KhrSimpleInteractionProfile.h"
+#include "MsftHandInteractionProfile.h"
 #include "OculusInteractionProfile.h"
 #include "ReverbG2InteractionProfile.h"
 #include "ViveCosmosInteractionProfile.h"
@@ -115,6 +116,9 @@ void InteractionProfile::AddLegacyBindings(const LegacyControllerActions& ctrl, 
 	create(ctrl.trigger, paths->trigger);
 	create(ctrl.triggerTouch, paths->triggerTouch);
 	create(ctrl.triggerClick, paths->triggerClick);
+	create(ctrl.triggerProximity, paths->triggerProximity);
+	create(ctrl.thumbProximity, paths->thumbProximity);
+	create(ctrl.triggerCurl, paths->triggerCurl);
 	create(ctrl.grip, paths->grip);
 	create(ctrl.gripClick, paths->grip);
 	create(ctrl.haptic, paths->haptic);
@@ -129,9 +133,16 @@ InteractionProfile::ProfileList InteractionProfile::CreateProfiles(XrExt& ext)
 		profiles.emplace_back(std::make_unique<ReverbG2InteractionProfile>());
 
 	profiles.emplace_back(std::make_unique<HolographicInteractionProfile>());
+	if (ext.ExtensionEnabled(XR_EXT_SAMSUNG_ODYSSEY_CONTROLLER_EXTENSION_NAME))
+		profiles.emplace_back(std::make_unique<HolographicInteractionProfile>(HolographicInteractionProfile::Model::Odyssey));
 	profiles.emplace_back(std::make_unique<IndexControllerInteractionProfile>());
 	profiles.emplace_back(std::make_unique<ViveWandInteractionProfile>());
-	profiles.emplace_back(std::make_unique<OculusTouchInteractionProfile>());
+	using Touch = OculusTouchInteractionProfile;
+	profiles.emplace_back(std::make_unique<Touch>(Touch::Model::Touch, ext.ExtensionEnabled(OC_XR_FB_TOUCH_CONTROLLER_PROXIMITY_EXTENSION_NAME)));
+	if (ext.ExtensionEnabled(OC_XR_FB_TOUCH_CONTROLLER_PRO_EXTENSION_NAME))
+		profiles.emplace_back(std::make_unique<Touch>(Touch::Model::TouchPro));
+	if (ext.ExtensionEnabled(OC_XR_META_TOUCH_CONTROLLER_PLUS_EXTENSION_NAME))
+		profiles.emplace_back(std::make_unique<Touch>(Touch::Model::TouchPlus));
 	if (ext.ExtensionEnabled(OC_XR_HTC_VIVE_COSMOS_CONTROLLER_INTERACTION_EXTENSION_NAME))
 		profiles.emplace_back(std::make_unique<ViveCosmosInteractionProfile>());
 	if (ext.ExtensionEnabled(OC_XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME))
@@ -139,7 +150,10 @@ InteractionProfile::ProfileList InteractionProfile::CreateProfiles(XrExt& ext)
 	if (ext.ExtensionEnabled(OC_XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME)) {
 		profiles.emplace_back(std::make_unique<PicoInteractionProfile>(PicoInteractionProfile::Model::Neo3));
 		profiles.emplace_back(std::make_unique<PicoInteractionProfile>(PicoInteractionProfile::Model::Pico4));
+		profiles.emplace_back(std::make_unique<PicoInteractionProfile>(PicoInteractionProfile::Model::G3));
 	}
+	if (ext.ExtensionEnabled(XR_MSFT_HAND_INTERACTION_EXTENSION_NAME))
+		profiles.emplace_back(std::make_unique<MsftHandInteractionProfile>());
 	profiles.emplace_back(std::make_unique<KhrSimpleInteractionProfile>());
 	profiles.emplace_back(std::make_unique<ViveTrackerInteractionProfile>());
 	return profiles;
