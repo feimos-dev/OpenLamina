@@ -2504,8 +2504,6 @@ EVRInputError BaseInput::GetActionOrigins(VRActionSetHandle_t actionSetHandle, V
 	if (act->type == ActionType::EyeTracking)
 		return VRInputError_InvalidHandle;
 
-	if (!originsOut && originOutCount)
-		return VRInputError_InvalidParam;
 	if (originsOut)
 		ZeroMemory(originsOut, originOutCount * sizeof(*originsOut));
 
