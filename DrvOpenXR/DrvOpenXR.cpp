@@ -191,6 +191,8 @@ struct InstancePlan {
 
 // The running instance's plan, set once at start-up: an instance made again after a loss has the same
 static InstancePlan currentPlan;
+// A new instance after a loss whose headset isn't there yet (RemakeInstance keeps it); until FullShutdown
+static bool madeAgain = false;
 
 // The extensions OpenLamina enables, of those available, for a session of that kind
 InstancePlan PlanInstance(const std::set<std::string>& available, SessionKind kind)
@@ -667,7 +669,6 @@ XrResult DrvOpenXR::RemakeInstance()
 	dbgMessenger = NULL;
 #endif
 	// A new instance made at an earlier try is kept while the headset isn't there yet
-	static bool madeAgain = false;
 	if (!madeAgain) {
 		if (xr_instance) {
 			if (XR_FAILED(xrDestroyInstance(xr_instance)))
@@ -770,6 +771,7 @@ void DrvOpenXR::FullShutdown()
 	}
 
 	initialised = false;
+	madeAgain = false;
 	currentBackend = nullptr;
 	SetCurrentSessionKind(SessionKind::Scene);
 }

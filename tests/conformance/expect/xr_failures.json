@@ -130,7 +130,8 @@
   "rebuilt_actions": [
    "haptic",
    "legacy-right-trigger"
-  ]
+  ],
+  "action_attaches_min": 3
  },
  "exiting": {
   "cases": [

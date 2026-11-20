@@ -523,6 +523,7 @@ private:
 	// lock
 	std::string manifestToRebuild;
 	bool rebuildPending = false;
+	bool rebuildLegacy = false; // legacy input's actions are made again (there's no manifest to)
 	bool pathsStale = false; // the cached paths are the lost instance's
 
 public:

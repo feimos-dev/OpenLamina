@@ -411,6 +411,13 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 	// no other thread reads input. Taken before evaluatorLock (see its declaration).
 	auto sessionLock = xr_session.lock();
 
+	// While a lost instance is made again: this manifest is the one loaded on the new instance
+	if (rebuildPending) {
+		manifestToRebuild = pchActionManifestPath;
+		rebuildLegacy = false;
+		return vr::VRInputError_None;
+	}
+
 	bool reloading = hasLoadedActions;
 	if (hasLoadedActions) {
 		// It stands to reason that nothing would happen if we try to load the same manifest again
@@ -790,6 +797,12 @@ void BaseInput::_ForgetInstance()
 	auto sessionLock = xr_session.lock();
 	// Paths are the instance's own too: looked up again on the new one
 	pathsStale = true;
+	// Until the new instance has a session, the game's input calls only say what to load on it
+	if (rebuildPending)
+		return; // forgotten at an earlier try
+	rebuildPending = true;
+	rebuildLegacy = false;
+	manifestToRebuild.clear();
 	if (!hasLoadedActions)
 		return;
 	{
@@ -797,7 +810,7 @@ void BaseInput::_ForgetInstance()
 		manifestToRebuild = loadedActionsPath;
 		loadedActionsPath.clear();
 	}
-	rebuildPending = true;
+	rebuildLegacy = manifestToRebuild.empty();
 	// Their handles went with the old instance: forgotten, not destroyed
 	DropActions(false);
 	for (XrHandTrackerEXT& handTracker : handTrackers)
@@ -826,6 +839,8 @@ void BaseInput::_RebuildForNewInstance()
 	if (!rebuildPending)
 		return;
 	rebuildPending = false;
+	if (manifestToRebuild.empty() && !rebuildLegacy)
+		return; // the game had no actions
 	OOVR_LOG("Making the game's actions again on the new OpenXR instance");
 	if (!manifestToRebuild.empty()) {
 		if (EVRInputError err = SetActionManifestPath(manifestToRebuild.c_str()); err == vr::VRInputError_None)
@@ -845,9 +860,12 @@ void BaseInput::LoadEmptyManifestIfRequired()
 	if (!XrBackend::InputsMayAttach())
 		return;
 
-	// As in SetActionManifestPath, exclusive to the end; another thread may have loaded the actions while this waited
+	// As in SetActionManifestPath, exclusive to the end; another thread may have loaded the actions while this waited.
+	// Nor while a lost instance is made again: the actions are made on the new one.
 	auto sessionLock = xr_session.lock();
-	if (hasLoadedActions)
+	if (rebuildPending && manifestToRebuild.empty())
+		rebuildLegacy = true;
+	if (hasLoadedActions || rebuildPending)
 		return;
 
 	restartingSession = true;

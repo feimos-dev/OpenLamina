@@ -307,7 +307,7 @@ XrResult XRAPI_CALL CreateInstance(const XrInstanceCreateInfo* info, XrInstance*
 		std::lock_guard<std::mutex> dg(d.lock);
 		// The counts of losses and sessions go on across instances
 		Json::Value kept(Json::objectValue);
-		for (const char* key : { "sessions_created", "sessions_lost", "instances_lost", "instances_created" })
+		for (const char* key : { "sessions_created", "sessions_lost", "instances_lost", "instances_created", "action_attaches" })
 			if (d.root.isMember(key))
 				kept[key] = d.root[key];
 		d.root = kept;
