@@ -358,6 +358,28 @@ TEST_CASE("Launch_unknown_key_errors")
 	CHECK(apps.PerformApplicationPrelaunchCheck("oc.test.overlay") == VRApplicationError_None);
 }
 
+#ifndef _WIN32
+// A Windows program can't be started on Linux: refused before it's tried, though the file is there and would run
+TEST_CASE("Windows_binary_refused_on_Linux")
+{
+	TempDir dir;
+	SharedStore store(dir.path / "store");
+	BaseApplications apps(store);
+	fs::path exe = dir.path / "Game.EXE";
+	fs::path marker = dir.path / "started";
+	std::ofstream(exe) << "#!/bin/sh\ntouch \"$1\"\n";
+	fs::permissions(exe, fs::perms::owner_all);
+	std::ofstream(dir.path / "game.vrmanifest") << "{ \"applications\" : [ { \"app_key\" : \"oc.test.windows\", "
+	                                                  "\"binary_path\" : \"Game.EXE\", \"arguments\" : \""
+	                                               << PathToUtf8(marker) << "\" } ] }";
+	REQUIRE(apps.AddApplicationManifest(PathToUtf8(dir.path / "game.vrmanifest").c_str(), true) == VRApplicationError_None);
+	CHECK(apps.LaunchApplication("oc.test.windows") == VRApplicationError_LaunchFailed);
+	std::this_thread::sleep_for(std::chrono::milliseconds(200));
+	CHECK_FALSE(fs::exists(marker));
+	CHECK(apps.GetApplicationProcessId("oc.test.windows") == 0);
+}
+#endif
+
 TEST_CASE("Command_line_split_as_CommandLineToArgvW")
 {
 	using V = std::vector<std::string>;
