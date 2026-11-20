@@ -393,15 +393,15 @@ jobs:
         run: |
           $version = if ($env:GITHUB_REF_TYPE -eq 'tag') { $env:GITHUB_REF_NAME -replace '^v', '' } else { "dev-$($env:GITHUB_SHA.Substring(0, 12))" }
           scripts/ci/build-installer.ps1 -Artifacts artifacts -Version $version -Out build/installer-again -Repository $env:GITHUB_REPOSITORY | Out-Null
-          $a = (Get-FileHash build/installer/OpenLamina-Setup.exe).Hash
-          $b = (Get-FileHash build/installer-again/OpenLamina-Setup.exe).Hash
-          if ($a -eq $b) { "::notice::OpenLamina-Setup.exe is the same bytes when built again ($a)." }
-          else { "::error::OpenLamina-Setup.exe differs when built again ($a, $b)."; exit 1 }
+          $a = (Get-FileHash build/installer/OpenLamina-Windows-Installer.exe).Hash
+          $b = (Get-FileHash build/installer-again/OpenLamina-Windows-Installer.exe).Hash
+          if ($a -eq $b) { "::notice::OpenLamina-Windows-Installer.exe is the same bytes when built again ($a)." }
+          else { "::error::OpenLamina-Windows-Installer.exe differs when built again ($a, $b)."; exit 1 }
 
       - uses: actions/upload-artifact@v7
         with:
           name: installer
-          path: build/installer/OpenLamina-Setup.exe
+          path: build/installer/OpenLamina-Windows-Installer.exe
           if-no-files-found: error
 
   package:
@@ -428,12 +428,12 @@ jobs:
         run: |
           if [ "$GITHUB_REF_TYPE" = tag ]; then version=${GITHUB_REF_NAME#v}; else version=dev-${GITHUB_SHA:0:12}; fi
           python3 scripts/ci/package.py --version "$version" --artifacts artifacts --out dist --repository "$GITHUB_REPOSITORY" \
-            --installer installer-build/OpenLamina-Setup.exe
+            --installer installer-build/OpenLamina-Windows-Installer.exe
 
       - name: Try install.sh
         run: |
           shellcheck -s sh installer/install.sh scripts/ci/test-install.sh
-          sh scripts/ci/test-install.sh dist/OpenLamina-linux.tar.gz
+          sh scripts/ci/test-install.sh dist/OpenLamina-Linux.tar.gz
 
       - uses: actions/upload-artifact@v7
         with:
@@ -460,8 +460,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          set -- dist/OpenLamina-Setup.exe dist/OpenLamina-windows.zip dist/OpenLamina-linux.tar.gz \
-            dist/OpenLamina-source.tar.gz dist/SHA256SUMS.txt
+          set -- dist/OpenLamina-Windows-Installer.exe dist/OpenLamina-Windows-Portable.zip dist/OpenLamina-Linux.tar.gz \
+            dist/OpenLamina-Source.tar.gz dist/SHA256SUMS.txt
           if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
             # Made on GitHub's release page: add the files, and keep its title and notes.
             gh release upload "$GITHUB_REF_NAME" "$@" --clobber

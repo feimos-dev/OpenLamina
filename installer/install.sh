@@ -1,11 +1,11 @@
 #!/bin/sh
-# OpenLamina's Linux installer, in the OpenLamina folder of OpenLamina-linux.tar.gz and in the installed copy.
+# OpenLamina's Linux installer, in the OpenLamina folder of OpenLamina-Linux.tar.gz and in the installed copy.
 # It installs for the current user only: no root. ./install.sh --help says what it does.
 set -eu
 
 REPOSITORY=feimos-dev/OpenLamina
 FLATPAK_STEAM=com.valvesoftware.Steam
-ARCHIVE=OpenLamina-linux.tar.gz
+ARCHIVE=OpenLamina-Linux.tar.gz
 
 usage() {
 	cat <<'EOF'

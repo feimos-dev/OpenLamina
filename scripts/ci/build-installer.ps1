@@ -1,16 +1,16 @@
 #Requires -Version 7.2
 <#
 .SYNOPSIS
-    Builds OpenLamina-Setup.exe, the Windows installer (installer\OpenLamina.iss), the way the release workflow
+    Builds OpenLamina-Windows-Installer.exe, the Windows installer (installer\OpenLamina.iss), the way the release workflow
     (.github/workflows/build.yml) does.
 .DESCRIPTION
     From the Windows builds' DLLs: -Artifacts is a folder with windows-x64\vrclient_x64.dll and windows-x86\vrclient.dll,
     as the workflow's artifacts are, or as build-windows.ps1 leaves them when copied there.
 
-    1. scripts\ci\package.py lays out the OpenLamina folder as OpenLamina-windows.zip has it (bin\, the licences,
+    1. scripts\ci\package.py lays out the OpenLamina folder as OpenLamina-Windows-Portable.zip has it (bin\, the licences,
        SOURCE.txt with -Version).
     2. RuntimeSwitcher\Tests runs, then RuntimeSwitcher builds OpenLamina.exe; warnings are errors.
-    3. Inno Setup compiles installer\OpenLamina.iss to <Out>\OpenLamina-Setup.exe.
+    3. Inno Setup compiles installer\OpenLamina.iss to <Out>\OpenLamina-Windows-Installer.exe.
 
     Needs the .NET SDK 8 or later, Python, and Inno Setup 6 (winget install JRSoftware.InnoSetup).
 .EXAMPLE
@@ -63,7 +63,7 @@ if (-not $iscc) {
 $folder = Join-Path $Out 'OpenLamina'
 $switcher = Join-Path $Out 'switcher'
 # Only what this script makes in $Out is deleted; anything else there is left alone.
-foreach ($path in $folder, $switcher, (Join-Path $Out 'OpenLamina-Setup.exe')) {
+foreach ($path in $folder, $switcher, (Join-Path $Out 'OpenLamina-Windows-Installer.exe')) {
     if (Test-Path -LiteralPath $path) {
         Remove-Item -LiteralPath $path -Recurse -Force
     }
@@ -103,6 +103,6 @@ Invoke-Checked {
         (Join-Path $root 'installer\OpenLamina.iss')
 } 'Compiling the installer'
 
-$setup = Join-Path $Out 'OpenLamina-Setup.exe'
+$setup = Join-Path $Out 'OpenLamina-Windows-Installer.exe'
 Write-Host "OpenLamina $Version ($numeric), Newtonsoft.Json $jsonVersion"
 Write-Host "  $setup ($([math]::Round((Get-Item -LiteralPath $setup).Length / 1KB)) KB)"
