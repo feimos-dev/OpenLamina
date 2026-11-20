@@ -9,6 +9,7 @@
 #include "BaseSystem.h"
 #include "Misc/Process.h"
 #include "Misc/ProgramEvents.h"
+#include "Misc/ChaperoneData.h"
 #include "Misc/SharedStore.h"
 #include "Drivers/Backend.h"
 #include "Misc/Config.h"
@@ -1003,30 +1004,118 @@ void BaseSystem::PerformanceTestReportFidelityLevelChange(int nFidelityLevel)
 }
 
 // Tracking origin stuff
-void BaseSystem::ResetSeatedZeroPose()
+namespace {
+// The Offsets document's generation the seated zero pose was last read at
+std::mutex storedSeatedLock;
+bool storedSeatedRead = false;
+uint64_t storedSeatedGeneration = 0;
+
+XrPosef PoseOfMatrix(const vr::HmdMatrix34_t& m)
 {
+	const glm::mat4 g = S2G_m34(m);
+	const glm::quat rotation = glm::normalize(glm::quat_cast(glm::mat3(g)));
+	return { G2X_quat(rotation), G2X_v3f(glm::vec3(g[3])) };
+}
+
+bool SamePose(const XrPosef& a, const XrPosef& b)
+{
+	// To what a pose loses on its way through the store
+	const glm::vec3 d = X2G_v3f(a.position) - X2G_v3f(b.position);
+	const float dot = std::fabs(glm::dot(X2G_quat(a.orientation), X2G_quat(b.orientation)));
+	return glm::length(d) < 1e-4f && dot > 1.0f - 1e-6f;
+}
+
+// The store's seated zero pose, when its Offsets document changed since it was last read (and has one)
+bool StoredSeatedZeroChanged(XrPosef& zero)
+{
+	std::lock_guard<std::mutex> guard(storedSeatedLock);
+	SharedStore& store = SharedStore::Get();
+	const uint64_t generation = store.Generation(StoreDoc::Offsets);
+	if (storedSeatedRead && generation == storedSeatedGeneration)
+		return false;
+	storedSeatedRead = true;
+	storedSeatedGeneration = generation;
+	std::optional<vr::HmdMatrix34_t> stored = BaseSystem::_SeatedZeroOf(store.Read(StoreDoc::Offsets));
+	if (!stored)
+		return false;
+	zero = PoseOfMatrix(*stored);
+	return true;
+}
+} // namespace
+
+std::optional<vr::HmdMatrix34_t> BaseSystem::_SeatedZeroOf(const Json::Value& offsets)
+{
+	if (!offsets.isObject() || !offsets["seated"].isObject() || !offsets["seated"].isMember("zero"))
+		return std::nullopt;
+	return ChaperoneData::MatrixFromJson(offsets["seated"]["zero"]);
+}
+
+void BaseSystem::_RecordSeatedZero(Json::Value& offsets, const vr::HmdMatrix34_t& zero)
+{
+	if (!offsets.isObject())
+		offsets = Json::Value(Json::objectValue);
+	Json::Value seated(Json::objectValue);
+	seated["zero"] = ChaperoneData::MatrixToJson(zero);
+	offsets["seated"] = seated;
+}
+
+XrPosef BaseSystem::_SeatedZeroAtHead(const XrPosef& headInStanding)
+{
+	return xr_utils::SeatedOriginAtHead({ { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } }, headInStanding);
+}
+
+void BaseSystem::_LoadStoredSeatedZero()
+{
+	// Only a stage outlasts the session: the other standing spaces start where the head was
+	XrPosef zero;
+	if (StoredSeatedZeroChanged(zero) && xr_gbl && xr_gbl->floorSpaceType == XR_REFERENCE_SPACE_TYPE_STAGE && xr_gbl->SetSeatedZero(zero))
+		xr_seated_zero = zero;
+}
+
+void BaseSystem::_ApplyStoredSeatedZero()
+{
+	XrPosef zero;
+	if (!StoredSeatedZeroChanged(zero))
+		return;
 	// Exclusive: the seated space is replaced, and other threads locate against it
 	auto sessionLock = xr_session.lock();
-	if (BackendManager::Instance().IsGraphicsConfigured() && xr_gbl) {
-		XrSpaceVelocity velocity{ XR_TYPE_SPACE_VELOCITY };
-		XrSpaceLocation location{ XR_TYPE_SPACE_LOCATION, &velocity, 0, {} };
+	if (!xr_gbl || xr_gbl->floorSpaceType != XR_REFERENCE_SPACE_TYPE_STAGE)
+		return; // a pose in another session's standing space
+	if (xr_seated_zero && SamePose(*xr_seated_zero, zero))
+		return; // this program's own, or no change
+	if (!xr_gbl->SetSeatedZero(zero))
+		return;
+	xr_seated_zero = zero;
+	OcPostEvent(VREvent_SeatedZeroPoseReset, k_unTrackedDeviceIndex_Hmd, VREvent_Data_t{}, false);
+}
 
-		OOVR_FAILED_XR_SOFT_ABORT(xrLocateSpace(xr_gbl->viewSpace, xr_gbl->seatedSpace, xr_gbl->GetBestTime(), &location));
+void BaseSystem::ResetSeatedZeroPose()
+{
+	std::optional<XrPosef> stored;
+	{
+		// Exclusive: the seated space is replaced, and other threads locate against it
+		auto sessionLock = xr_session.lock();
+		if (BackendManager::Instance().IsGraphicsConfigured() && xr_gbl) {
+			XrSpaceVelocity velocity{ XR_TYPE_SPACE_VELOCITY };
+			XrSpaceLocation location{ XR_TYPE_SPACE_LOCATION, &velocity, 0, {} };
 
-		if ((location.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) && (location.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)) {
-			// The origin goes to the head's place now, with only the heading kept
-			XrReferenceSpaceCreateInfo spaceInfo{ XR_TYPE_REFERENCE_SPACE_CREATE_INFO, nullptr, XR_REFERENCE_SPACE_TYPE_LOCAL,
-				xr_utils::SeatedOriginAtHead(xr_gbl->seatedPose, location.pose) };
+			OOVR_FAILED_XR_SOFT_ABORT(xrLocateSpace(xr_gbl->viewSpace, xr_gbl->floorSpace, xr_gbl->GetBestTime(), &location));
 
-			// On failure the old seated space stays
-			XrSpace newSpace = XR_NULL_HANDLE;
-			OC_XR_SOFT_VOID(xrCreateReferenceSpace(xr_session.get(), &spaceInfo, &newSpace));
-			xrDestroySpace(xr_gbl->seatedSpace);
-			xr_gbl->seatedSpace = newSpace;
-			xr_gbl->seatedPose = spaceInfo.poseInReferenceSpace;
-			xr_seated_origin = xr_gbl->seatedPose;
+			if ((location.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) && (location.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT)) {
+				// The origin goes to the head's place now, with only the heading kept; on failure the old one stays.
+				// On a stage it's kept in the store, for the next run and for the other programs.
+				const XrPosef zero = _SeatedZeroAtHead(location.pose);
+				if (xr_gbl->SetSeatedZero(zero)) {
+					xr_seated_zero = zero;
+					if (xr_gbl->floorSpaceType == XR_REFERENCE_SPACE_TYPE_STAGE)
+						stored = zero;
+				}
+			}
 		}
 	}
+	// Without the session held: the store's lock may be waited for
+	if (stored)
+		SharedStore::Get().Update(StoreDoc::Offsets, [&](Json::Value& offsets) { _RecordSeatedZero(offsets, G2S_m34(X2G_om34_pose(*stored))); });
 
 	// As SteamVR, whether or not the pose could be found
 	_PostEvent(VREvent_SeatedZeroPoseReset, k_unTrackedDeviceIndex_Hmd, VREvent_Data_t{}, false);

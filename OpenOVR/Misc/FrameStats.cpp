@@ -41,7 +41,29 @@ void FrameStats::OnAppPresent()
 {
 	std::lock_guard<std::mutex> g(lock);
 	presents++;
-	appPresents++;
+}
+
+void FrameStats::OnAppFrameEnd(const FrameEnd& frame)
+{
+	std::lock_guard<std::mutex> g(lock);
+	if (frame.submitted) {
+		appSubmits++;
+		// The sums the cumulative stats divide by the submitted frames: no GPU times without GPU timers
+		sumCompositorCpuMs += frame.presentMs;
+		sumTargetMs += frame.targetMs;
+		sumAppCpuMs += frame.cpuMs;
+		if (frame.withDepth)
+			framesWithDepth++;
+	}
+	for (OOVR_Compositor_FrameTiming& t : history) {
+		if (t.m_nFrameIndex != frame.frameIndex)
+			continue;
+		t.m_flSubmitFrameMs = frame.submitMs;
+		t.m_flPresentCallCpuMs = frame.presentMs;
+		t.m_flNewFrameReadyMs = frame.newFrameReadyMs;
+		t.m_nNumFramePresents = frame.presented ? 1 : 0;
+		return;
+	}
 }
 
 void FrameStats::OnOwnFrame()
@@ -60,7 +82,11 @@ void FrameStats::Cumulative(uint32_t pid, OOVR_Compositor_CumulativeStats* out, 
 		std::lock_guard<std::mutex> g(lock);
 		stats.m_nNumFramePresents = presents;
 		stats.m_nNumDroppedFrames = dropped;
-		stats.m_nNumFrameSubmits = appPresents;
+		stats.m_nNumFrameSubmits = appSubmits;
+		stats.m_flSumCompositorCPUTimeMS = sumCompositorCpuMs;
+		stats.m_flSumTargetFrameTimes = sumTargetMs;
+		stats.m_flSumApplicationCPUTimeMS = sumAppCpuMs;
+		stats.m_nNumFramesWithDepth = framesWithDepth;
 	}
 	memset(out, 0, size);
 	memcpy(out, &stats, std::min<size_t>(size, sizeof(stats)));

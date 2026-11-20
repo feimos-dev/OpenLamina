@@ -4,6 +4,7 @@
 
 #include "XrTrackedDevice.h"
 
+#include "../OpenOVR/Misc/xrmoreutils.h"
 #include "../OpenOVR/convert.h"
 
 // A device type that doesn't track itself: not connected, no pose
@@ -20,6 +21,15 @@ static void NoPose(vr::TrackedDevicePose_t* pose)
 void XrTrackedDevice::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDevicePose_t* pose, ETrackingStateType trackingState, int64_t xrTime)
 {
 	NoPose(pose);
+}
+
+int64_t XrTrackedDevice::PoseTime(ETrackingStateType trackingState, int64_t xrTime)
+{
+	if (xrTime > 0)
+		return xrTime;
+	// The latest tracking data is located at the time now; a frame's poses (and predictions from it) at its display time
+	const bool latest = trackingState == ETrackingStateType::TrackingStateType_Now;
+	return xr_utils::PoseTimeForState(latest, 0, latest ? xr_time_now() : 0, xr_gbl ? xr_gbl->nextPredictedFrameTime : 0);
 }
 
 // Properties

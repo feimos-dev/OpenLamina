@@ -24,6 +24,20 @@ public:
 	void OnAppFrame(const OOVR_Compositor_FrameTiming& timing, uint32_t droppedSlots, Clock::time_point waitReturned, double periodMs);
 	// The game's frame was shown: xrEndFrame took it with the game's eye textures
 	void OnAppPresent();
+	// One of the game's frames ended
+	struct FrameEnd {
+		uint32_t frameIndex = 0;
+		float submitMs = 0; // time spent in Submit
+		float presentMs = 0; // time spent ending the frame (xrEndFrame)
+		float newFrameReadyMs = 0; // when the last eye was submitted, from the start of the frame
+		float cpuMs = 0; // from xrWaitFrame's return to the frame's end
+		float targetMs = 0; // the display period it was meant for
+		bool submitted = false; // it had eye textures
+		bool presented = false; // they were shown
+		bool withDepth = false; // with depth
+	};
+	// Filled into the frame's recorded timing; a submitted frame counts towards the cumulative stats' sums
+	void OnAppFrameEnd(const FrameEnd& frame);
 	// One of OpenLamina's own frames was shown
 	void OnOwnFrame();
 
@@ -44,7 +58,8 @@ private:
 	mutable std::mutex lock;
 	std::condition_variable frameStarted;
 	uint64_t framesStarted = 0;
-	uint32_t presents = 0, dropped = 0, appPresents = 0;
+	uint32_t presents = 0, dropped = 0, appSubmits = 0, framesWithDepth = 0;
+	double sumCompositorCpuMs = 0, sumTargetMs = 0, sumAppCpuMs = 0;
 	std::deque<OOVR_Compositor_FrameTiming> history; // newest first
 	Clock::time_point lastWaitReturned{};
 	double periodMs = 0;

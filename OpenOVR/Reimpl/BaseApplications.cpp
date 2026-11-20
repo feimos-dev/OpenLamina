@@ -10,6 +10,7 @@
 #include "Misc/Process.h"
 #include "Misc/SharedStore.h"
 
+#include <atomic>
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
@@ -227,6 +228,13 @@ struct Transition {
 	bool launch = false;
 };
 
+// A transition ended without its new application: the scene application state is what it was before
+void AnnounceTransitionAborted()
+{
+	OcPostEvent(kTransitionAborted, vr::k_unTrackedDeviceIndexInvalid, vr::VREvent_Data_t{}, true);
+	OcPostEvent(vr::VREvent_SceneApplicationStateChanged, vr::k_unTrackedDeviceIndexInvalid, vr::VREvent_Data_t{}, true);
+}
+
 Transition LiveTransition(const Json::Value& scene)
 {
 	Transition t;
@@ -273,6 +281,11 @@ std::optional<AppManifestEntry> BaseApplications::Find(const char* pchAppKey)
 	return std::nullopt;
 }
 
+namespace {
+// Whether this process has drawn since it became the scene application, and whether the store has that
+std::atomic<bool> sceneDrawn{ false }, sceneDrawnStored{ false };
+} // namespace
+
 void BaseApplications::SetSceneProcess(bool running)
 {
 	SetSceneProcess(SharedStore::Get(), running);
@@ -305,6 +318,9 @@ void BaseApplications::SetSceneProcess(SharedStore& store, bool running)
 			scene["dashboard"] = hasDashboard;
 			scene["app_key"] = key;
 			scene["since_ms"] = (Json::UInt64)NowMs();
+			// A new session of the same program: what it has drawn still counts
+			if (!changed && sceneDrawn)
+				scene["drawn"] = true;
 			if (t.state != VRApplicationTransition_None && t.appKey == key)
 				arrived = true;
 			else if (!transition.isNull())
@@ -330,6 +346,9 @@ void BaseApplications::SetSceneProcess(SharedStore& store, bool running)
 			}
 		}
 	});
+
+	if (changed)
+		sceneDrawn = sceneDrawnStored = false;
 
 	// For this program and every other one
 	if (changed) {
@@ -388,7 +407,7 @@ void BaseApplications::LaunchForTransition(SharedStore& store, const std::string
 		if (scene.isObject() && StringOr(scene["transition"]["app_key"]) == appKey)
 			scene.removeMember("transition");
 	});
-	OcPostEvent(kTransitionAborted, vr::k_unTrackedDeviceIndexInvalid, vr::VREvent_Data_t{}, true);
+	AnnounceTransitionAborted();
 }
 
 void BaseApplications::TakeOverPendingLaunch(SharedStore& store)
@@ -423,7 +442,7 @@ void BaseApplications::TakeOverPendingLaunch(SharedStore& store)
 		tr["since_ms"] = (Json::UInt64)NowMs();
 	});
 	if (dropped)
-		OcPostEvent(kTransitionAborted, vr::k_unTrackedDeviceIndexInvalid, vr::VREvent_Data_t{}, true);
+		AnnounceTransitionAborted();
 	if (!key.empty())
 		LaunchForTransition(store, key, oldPid);
 }
@@ -462,7 +481,7 @@ void BaseApplications::AbortTransition()
 		}
 	});
 	if (aborted)
-		OcPostEvent(kTransitionAborted, vr::k_unTrackedDeviceIndexInvalid, vr::VREvent_Data_t{}, true);
+		AnnounceTransitionAborted();
 }
 
 EVRApplicationError BaseApplications::AskSceneApplicationToQuit(const std::string& appKey, bool launchAfter)
@@ -530,8 +549,36 @@ EVRApplicationError BaseApplications::AskSceneApplicationToQuit(const std::strin
 		data.process.oldPid = scenePid;
 		data.process.pid = 0;
 		OcPostEvent(kTransitionStarted, vr::k_unTrackedDeviceIndexInvalid, data, true);
+		// The scene application is quitting
+		OcPostEvent(vr::VREvent_SceneApplicationStateChanged, vr::k_unTrackedDeviceIndexInvalid, vr::VREvent_Data_t{}, true);
 	}
 	return result;
+}
+
+void BaseApplications::SetSceneDrawn()
+{
+	SetSceneDrawn(SharedStore::Get());
+}
+
+void BaseApplications::SetSceneDrawn(SharedStore& store)
+{
+	const uint32_t pid = oc_current_pid();
+	vr::VREvent_Data_t data{};
+	data.process.pid = pid;
+	if (!sceneDrawn.exchange(true))
+		OcPostEvent(vr::VREvent_SceneApplicationStateChanged, vr::k_unTrackedDeviceIndexInvalid, data, false);
+	// Recorded and told to the other programs, if this one is still the scene application. Called in the game's frame:
+	// the store isn't waited for, and what doesn't get its lock is tried again at the next call.
+	if (sceneDrawnStored)
+		return;
+	const bool written = store.Update(
+	    StoreDoc::Scene, [&](Json::Value& scene) {
+		    if (scene.isObject() && PidOf(scene["pid"]) == pid)
+			    scene["drawn"] = true;
+	    },
+	    SharedStore::Wait::Never);
+	if (written && store.PostEvent(vr::VREvent_SceneApplicationStateChanged, OcPackEvent(vr::k_unTrackedDeviceIndexInvalid, data), SharedStore::Wait::Never))
+		sceneDrawnStored = true;
 }
 
 // Used by Viveport
@@ -1055,8 +1102,21 @@ BaseApplications::EVRApplicationTransitionState BaseApplications::GetTransitionS
 }
 BaseApplications::EVRSceneApplicationState BaseApplications::GetSceneApplicationState()
 {
-	// A scene application with a session, in this program or another
-	return GetCurrentSceneProcessId() != 0 ? EVRSceneApplicationState_Running : EVRSceneApplicationState_None;
+	// A scene application, in this program or another: Quitting once asked to quit for a transition, else Running once
+	// it has drawn and Waiting until then. Without one, Starting while a transition launches the next.
+	Json::Value scene = Store().Read(StoreDoc::Scene);
+	const Transition t = LiveTransition(scene);
+	const uint32_t pid = GetCurrentSceneProcessId();
+	if (pid == 0)
+		return t.state == VRApplicationTransition_NewAppLaunched ? EVRSceneApplicationState_Starting : EVRSceneApplicationState_None;
+	if (t.state == VRApplicationTransition_OldAppQuitSent && t.oldPid == pid)
+		return EVRSceneApplicationState_Quitting;
+	bool drawn = sceneDrawn;
+	if (pid != oc_current_pid()) {
+		const Json::Value& stored = scene["drawn"];
+		drawn = PidOf(scene["pid"]) == pid && stored.isBool() && stored.asBool();
+	}
+	return drawn ? EVRSceneApplicationState_Running : EVRSceneApplicationState_Waiting;
 }
 EVRApplicationError BaseApplications::PerformApplicationPrelaunchCheck(const char* pchAppKey)
 {

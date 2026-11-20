@@ -26,6 +26,30 @@ XrTime xr_utils::PoseTimeForPrediction(float secondsFromNow, XrTime now, XrTime 
 	return target;
 }
 
+XrTime xr_utils::PoseTimeForState(bool latest, XrTime requested, XrTime now, XrTime frameTime)
+{
+	if (requested > 0)
+		return requested;
+	const XrTime first = latest ? now : frameTime;
+	const XrTime second = latest ? frameTime : now;
+	if (first > 1)
+		return first;
+	if (second > 1)
+		return second;
+	return 0;
+}
+
+void xr_utils::WidenEyes(XrPosef& left, XrPosef& right, float offset)
+{
+	glm::vec3 l = X2G_v3f(left.position), r = X2G_v3f(right.position);
+	glm::vec3 apart = r - l;
+	if (offset == 0.0f || !(glm::length(apart) > 1e-6f))
+		return;
+	glm::vec3 half = glm::normalize(apart) * (offset / 2);
+	left.position = G2X_v3f(l - half);
+	right.position = G2X_v3f(r + half);
+}
+
 XrQuaternionf xr_utils::YawOnly(const XrQuaternionf& orientation)
 {
 	glm::vec3 forward = X2G_quat(orientation) * glm::vec3(0.0f, 0.0f, -1.0f);

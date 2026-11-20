@@ -10,6 +10,8 @@ enum OOVR_EVRScreenshotError {
 	VRScreenshotError_ScreenshotAlreadyInProgress = 108,
 };
 
+struct Image;
+
 class BaseScreenshots {
 public:
 	typedef OOVR_EVRScreenshotError EVRScreenshotError;
@@ -94,4 +96,14 @@ public:
 	 *  was a new shot taking by the app to be saved and not
 	 *  initiated by a user (achievement earned or something) */
 	EVRScreenshotError SubmitScreenshot(vr::ScreenshotHandle_t screenshotHandle, vr::EVRScreenshotType type, const char* pchSourcePreviewFilename, const char* pchSourceVRFilename);
+
+	// The compositor's own screenshots (TakeStereoScreenshot, and requests a game that hooked none of their type
+	// leaves to it): the game's next submitted eye images, written as PNG. The left eye is the preview, and a stereo
+	// shot's VR image has both side by side. VREvent_ScreenshotTaken (or Failed) follows.
+	/** Whether a screenshot waits for the game's eye images (cheap: asked at each Submit) */
+	static bool _WantsEyeImages();
+	/** One of the game's submitted eye images, read back */
+	static void _OfferEyeImage(vr::EVREye eye, Image image);
+	/** The game's eye image couldn't be read back: the screenshot waiting for it fails */
+	static void _FailEyeImages();
 };

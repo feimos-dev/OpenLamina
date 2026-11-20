@@ -18,6 +18,15 @@ namespace xr_utils {
 // can't say what time it is, and the caller keeps its default.
 XrTime PoseTimeForPrediction(float secondsFromNow, XrTime now, XrTime frameTime);
 
+// The time to locate a device at: `requested` where the caller names one; otherwise, for the latest tracking data
+// (latest), the time now, and for a frame's poses the display time of the next frame (frameTime). Either falls back on
+// the other where it's unknown (zero or one); zero if neither is known, and the caller keeps its default.
+XrTime PoseTimeForState(bool latest, XrTime requested, XrTime now, XrTime frameTime);
+
+// Moves two eyes apart by offset (closer together for a negative one), each by half of it along the line between them;
+// eyes at the same place stay
+void WidenEyes(XrPosef& left, XrPosef& right, float offset);
+
 // The heading of a pose's forward direction as a rotation about the vertical axis, ignoring pitch and roll
 XrQuaternionf YawOnly(const XrQuaternionf& orientation);
 

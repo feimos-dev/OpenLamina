@@ -2,7 +2,6 @@
 // clang-format off
 
 // Settings for OpenComposite
-#define LODEPNG_NO_COMPILE_ENCODER
 #define LODEPNG_NO_COMPILE_DISK
 
 /*

@@ -38,6 +38,7 @@
 #include "../OpenOVR/Reimpl/BaseClientCore.h"
 #include "../OpenOVR/Reimpl/BaseInput.h"
 #include "../OpenOVR/Reimpl/BaseOverlay.h"
+#include "../OpenOVR/Reimpl/BaseScreenshots.h"
 #include "../OpenOVR/Reimpl/BaseSystem.h"
 #include "../OpenOVR/Compositor/DepthRange.h"
 #include "../OpenOVR/Misc/Equirect.h"
@@ -46,6 +47,7 @@
 #include "../OpenOVR/Misc/FrameStats.h"
 #include "../OpenOVR/Misc/MirrorWindow.h"
 #include "../OpenOVR/Misc/Process.h"
+#include "../OpenOVR/Misc/ScopeGuard.h"
 #include "../OpenOVR/Misc/xrmoreutils.h"
 #include "../OpenOVR/Misc/ProgramEvents.h"
 #include "../OpenOVR/Misc/SharedStore.h"
@@ -845,6 +847,22 @@ void XrBackend::WaitForTrackingData()
 		frameShouldRender = state.shouldRender != XR_FALSE;
 		frameAwaitingBegin = true;
 
+		// The frame's index counts display periods, as SteamVR's does; a count of frames where the runtime gives no period
+		const uint64_t slot = NextDisplaySlot(displaySlot, displaySlotTime, state.predictedDisplayTime, state.predictedDisplayPeriod);
+		if (slot) {
+			displaySlot = slot;
+			displaySlotTime = state.predictedDisplayTime;
+		}
+		nFrameIndex = slot ? (uint32_t)slot : nFrameIndex + 1;
+		frameDisplayTime = state.predictedDisplayTime;
+		frameDisplayPeriod = state.predictedDisplayPeriod;
+		frameSlot = slot ? (uint32_t)slot : 0;
+		vsyncsToFirstView = VsyncsToDisplay(state.predictedDisplayTime, state.predictedDisplayPeriod, xr_time_now());
+		frameStart = waitCall;
+		frameWaitReturned = waitReturned;
+		frameSubmitMs = 0.0f;
+		frameNewFrameReadyMs = 0.0f;
+
 		FrameStats::Get().OnFrameStart();
 		OOVR_Compositor_FrameTiming timing{};
 		timing.m_nSize = sizeof(timing);
@@ -894,6 +912,9 @@ void XrBackend::WaitForTrackingData()
 		// No depth until this frame's texture brings some
 		projectionViews[eye].next = nullptr;
 	}
+	// The eyes the game renders from (GetEyeToHeadTransform) are moved apart by the user's IPD offset: the layer says so
+	if (viewState.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT)
+		xr_utils::WidenEyes(projectionViews[0].pose, projectionViews[1].pose, XrHMD::IpdOffset());
 
 	// If we're not on the game's graphics API yet, don't actually mark us as having started the frame.
 	// Instead, set a different flag so we'll call this method again when it's available.
@@ -924,6 +945,15 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 	if (eye != vr::Eye_Left && eye != vr::Eye_Right)
 		return kCompositorInvalidTexture;
 
+	// The time spent in Submit, for the frame's timing; the last eye's is when the frame was ready
+	auto submitCall = std::chrono::steady_clock::now();
+	ScopeGuard timeSubmit([&] {
+		const auto now = std::chrono::steady_clock::now();
+		frameSubmitMs += std::chrono::duration<float, std::milli>(now - submitCall).count();
+		if (frameStart != std::chrono::steady_clock::time_point{} && eyeSubmitted[vr::Eye_Left] && eyeSubmitted[vr::Eye_Right])
+			frameNewFrameReadyMs = std::chrono::duration<float, std::milli>(now - frameStart).count();
+	});
+
 	if (!CheckOrInitCompositors(texture)) {
 		// A texture OpenComposite can't use (logged): this eye is left out of the frame
 		projectionViews[eye].subImage.swapchain = XR_NULL_HANDLE;
@@ -935,6 +965,7 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 	if (sessionActive && !renderingFrame) {
 		deferredRenderingStart = false;
 		WaitForTrackingData();
+		submitCall = std::chrono::steady_clock::now(); // the wait for the frame isn't time in Submit
 	}
 
 	if (submitFlags & vr::Submit_LensDistortionAlreadyApplied)
@@ -1013,6 +1044,14 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 			Image mirror;
 			if (eye == vr::Eye_Left && MirrorWindow::Get().WantsFrame() && comp.ReadbackToCpu(texture, bounds, mirror))
 				MirrorWindow::Get().Offer(std::move(mirror));
+			// A screenshot the compositor takes: this eye's image, read back
+			if (BaseScreenshots::_WantsEyeImages()) {
+				Image shot;
+				if (comp.ReadbackToCpu(texture, bounds, shot))
+					BaseScreenshots::_OfferEyeImage(eye, std::move(shot));
+				else
+					BaseScreenshots::_FailEyeImages();
+			}
 		}
 	}
 
@@ -1045,7 +1084,10 @@ void XrBackend::UseSubmittedPose(vr::EVREye eye, const vr::Texture_t* texture, v
 	const XrViewStateFlags valid = XR_VIEW_STATE_ORIENTATION_VALID_BIT | XR_VIEW_STATE_POSITION_VALID_BIT;
 	if ((inHead.viewState.viewStateFlags & valid) != valid)
 		return;
-	const XrPosef& eyePose = inHead.views[eye].pose;
+	// Moved apart by the user's IPD offset, as GetEyeToHeadTransform gives them
+	XrPosef eyes[XruEyeCount] = { inHead.views[0].pose, inHead.views[1].pose };
+	xr_utils::WidenEyes(eyes[0], eyes[1], XrHMD::IpdOffset());
+	const XrPosef& eyePose = eyes[eye];
 	XrPosef& pose = projectionViews[eye].pose;
 	pose.orientation = G2X_quat(glm::normalize(q * X2G_quat(eyePose.orientation)));
 	pose.position = G2X_v3f(position + q * X2G_v3f(eyePose.position));
@@ -1126,6 +1168,8 @@ void XrBackend::SubmitFrames(bool showSkybox)
 	// renderingFrame will still be false so this won't be a problem in that case.
 	if (!sessionActive)
 		return;
+	const bool hadEyeTextures = submittedEyeTextures;
+	const bool withDepth = submittedEyeTextures && (projectionViews[0].next || projectionViews[1].next);
 
 	XrFrameEndInfo info{ XR_TYPE_FRAME_END_INFO };
 	info.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
@@ -1195,6 +1239,8 @@ void XrBackend::SubmitFrames(bool showSkybox)
 	} else if (plan.scene) {
 		frameLayers.push_back(app_layer);
 	}
+	if (XrCompositionLayerBaseHeader* sceneOverlayQuad = BuildSceneOverlayLayer())
+		frameLayers.push_back(sceneOverlayQuad);
 	if (!frameLayers.empty()) {
 		if (XrCompositionLayerBaseHeader* fade = BuildFadeLayer())
 			frameLayers.push_back(fade);
@@ -1224,6 +1270,7 @@ void XrBackend::SubmitFrames(bool showSkybox)
 	info.layers = headers;
 	info.layerCount = layer_count;
 
+	const auto endCall = std::chrono::steady_clock::now();
 	XrResult endResult = xrEndFrame(xr_session.get(), &info);
 	if (XR_FAILED(endResult) && sceneShown && layer_count > 1) {
 		// A layer of the overlays' was refused. The game's frame isn't dropped for it: ended without each of those
@@ -1254,10 +1301,32 @@ void XrBackend::SubmitFrames(bool showSkybox)
 		    without > 0 ? "one of the overlays' layers" : "all the overlays' layers", without, (int)quad->type,
 		    quad->subImage.imageRect.extent.width, quad->subImage.imageRect.extent.height);
 	}
+	const float presentMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - endCall).count();
 	OOVR_FAILED_XR_SOFT_ABORT(endResult);
 	// A present: the game's eye textures shown
-	if (XR_SUCCEEDED(endResult) && app_layer && frameShouldRender)
+	const bool presented = XR_SUCCEEDED(endResult) && app_layer && sceneShown && frameShouldRender;
+	if (presented) {
 		FrameStats::Get().OnAppPresent();
+		BaseApplications::SetSceneDrawn();
+	}
+	FrameStats::FrameEnd ended;
+	ended.frameIndex = nFrameIndex;
+	ended.submitMs = frameSubmitMs;
+	ended.presentMs = presentMs;
+	ended.newFrameReadyMs = frameNewFrameReadyMs;
+	ended.cpuMs = frameWaitReturned != std::chrono::steady_clock::time_point{}
+	    ? std::chrono::duration<float, std::milli>(endCall - frameWaitReturned).count()
+	    : 0.0f;
+	ended.targetMs = displayPeriodMs;
+	ended.submitted = hadEyeTextures;
+	ended.presented = presented;
+	ended.withDepth = withDepth;
+	FrameStats::Get().OnAppFrameEnd(ended);
+	lastSubmitMs = frameSubmitMs;
+	lastPresentMs = presentMs;
+	lastNewFrameReadyMs = frameNewFrameReadyMs;
+	frameSubmitMs = 0.0f;
+	frameNewFrameReadyMs = 0.0f;
 	frameBegun = false;
 	if (overlayLock.owns_lock())
 		overlayLock.unlock();
@@ -1271,6 +1340,7 @@ void XrBackend::SubmitFrames(bool showSkybox)
 		WithStoreDocuments([&] { overlay->_RecentreIfAsked(); });
 	}
 	NoticeRenderScale();
+	ApplyPreferredRefreshRate();
 
 	BaseSystem* sys = GetUnsafeBaseSystem();
 	if (sys) {
@@ -1279,8 +1349,43 @@ void XrBackend::SubmitFrames(bool showSkybox)
 
 	auto now = std::chrono::system_clock::now().time_since_epoch();
 	frameSubmitTimeUs = (double)std::chrono::duration_cast<std::chrono::microseconds>(now).count() / 1000000.0;
+}
 
-	nFrameIndex++;
+void XrBackend::SetSceneOverlay(std::shared_ptr<const SceneOverlayImage> overlay)
+{
+	std::lock_guard<std::mutex> lock(sceneOverlayLock);
+	sceneOverlay = std::move(overlay);
+}
+
+XrCompositionLayerBaseHeader* XrBackend::BuildSceneOverlayLayer()
+{
+	std::shared_ptr<const SceneOverlayImage> overlay;
+	{
+		std::lock_guard<std::mutex> lock(sceneOverlayLock);
+		overlay = sceneOverlay;
+	}
+	if (!overlay || !xr_gbl || overlay->image.Empty())
+		return nullptr;
+	// Uploaded when it changed, or when the swapchain went with a session
+	if (!sceneOverlaySwapchain)
+		sceneOverlaySwapchain = CpuSwapchain::Create(overlay->image.width, overlay->image.height);
+	if (!sceneOverlaySwapchain)
+		return nullptr;
+	if (overlay != sceneOverlayShown || !sceneOverlaySwapchain->Live()) {
+		if (!sceneOverlaySwapchain->Upload(overlay->image) || !sceneOverlaySwapchain->Live())
+			return nullptr;
+		sceneOverlayShown = overlay;
+	}
+
+	const glm::mat4 inHead = S2G_m34(overlay->inHead);
+	sceneOverlayLayer = { XR_TYPE_COMPOSITION_LAYER_QUAD };
+	sceneOverlayLayer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT | XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
+	sceneOverlayLayer.space = xr_gbl->viewSpace;
+	sceneOverlayLayer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+	sceneOverlayLayer.subImage = sceneOverlaySwapchain->SubImage();
+	sceneOverlayLayer.pose = { G2X_quat(glm::normalize(glm::quat_cast(glm::mat3(inHead)))), G2X_v3f(glm::vec3(inHead[3])) };
+	sceneOverlayLayer.size = { overlay->width, overlay->width * (float)overlay->image.height / (float)overlay->image.width };
+	return (XrCompositionLayerBaseHeader*)&sceneOverlayLayer;
 }
 
 XrCompositionLayerBaseHeader* XrBackend::BuildFadeLayer()
@@ -1416,13 +1521,18 @@ IBackend::openvr_enum_t XrBackend::SetSkyboxOverride(const vr::Texture_t* pTextu
 		// the game's frames begin
 		std::lock_guard<std::mutex> pending(pendingSkyboxLock);
 		pendingSkybox.Set(pTextures, unTextureCount);
+		BaseApplications::SetSceneDrawn();
 		return 0;
 	}
 	{
 		std::lock_guard<std::mutex> pending(pendingSkyboxLock);
 		pendingSkybox.Clear();
 	}
-	return ShowSkybox(pTextures, unTextureCount);
+	const openvr_enum_t shown = ShowSkybox(pTextures, unTextureCount);
+	// A skybox set is the scene application drawing (its scene application state is Running)
+	if (shown == 0)
+		BaseApplications::SetSceneDrawn();
+	return shown;
 }
 
 void XrBackend::ShowPendingSkybox()
@@ -1599,6 +1709,51 @@ void XrBackend::RecordFrameTiming(std::chrono::steady_clock::time_point callTime
 	lastPredictedDisplayTime = predictedDisplayTime;
 }
 
+uint64_t XrBackend::NextDisplaySlot(uint64_t previous, XrTime previousTime, XrTime displayTime, XrDuration period)
+{
+	if (displayTime <= 1 || period <= 0)
+		return 0;
+	if (previous == 0 || previousTime <= 1)
+		return DisplaySlot(displayTime, period);
+	const XrDuration periods = displayTime > previousTime ? (displayTime - previousTime + period / 2) / period : 0;
+	return previous + (uint64_t)(std::max<XrDuration>)(1, periods);
+}
+
+uint64_t XrBackend::DisplaySlot(XrTime displayTime, XrDuration period)
+{
+	if (displayTime <= 1 || period <= 0)
+		return 0;
+	// As GetTimeSinceLastVsync counts the vsync at a frame's display time (XrHMD::VsyncPhase)
+	return (uint64_t)(displayTime / period);
+}
+
+double XrBackend::SecondsToSlot(uint32_t slot, uint32_t frameSlot, XrTime frameDisplayTime, XrDuration period, XrTime now)
+{
+	if (frameSlot == 0 || frameDisplayTime <= 1 || period <= 0 || now <= 0)
+		return NAN;
+	const int32_t ahead = (int32_t)(slot - frameSlot);
+	return ((double)(frameDisplayTime - now) + (double)ahead * (double)period) / 1e9;
+}
+
+uint32_t XrBackend::VsyncsToDisplay(XrTime displayTime, XrDuration period, XrTime now)
+{
+	if (displayTime <= 1 || period <= 0 || now <= 0)
+		return 0;
+	if (displayTime <= now)
+		return 1;
+	return (uint32_t)std::max<XrDuration>(1, (displayTime - now + period - 1) / period);
+}
+
+uint32_t XrBackend::CurrentFrameId()
+{
+	return frameSlot;
+}
+
+float XrBackend::SecondsToFrame(uint32_t frameId)
+{
+	return (float)SecondsToSlot(frameId, frameSlot, frameDisplayTime, frameDisplayPeriod, xr_time_now());
+}
+
 /**
  * Get frame timing information to be passed to the application
  *
@@ -1661,20 +1816,25 @@ bool XrBackend::GetFrameTiming(OOVR_Compositor_FrameTiming* pTiming, uint32_t un
 
 		/** Miscellaneous measured intervals. */
 		pTiming->m_flClientFrameIntervalMs = measuredIntervalMs > 0.0f ? measuredIntervalMs : 11.1f; // time between calls to WaitGetPoses
-		pTiming->m_flPresentCallCpuMs = 0.0f; // time blocked on call to present (usually 0.0, but can go long)
+		// Measured on the CPU for the last frame that ended (a frame's own are filled into its record when it ends)
+		pTiming->m_flPresentCallCpuMs = lastPresentMs; // time in xrEndFrame
 		pTiming->m_flWaitForPresentCpuMs = 0.0f; // time spent spin-waiting for frame index to change (not near-zero indicates wait object failure)
-		pTiming->m_flSubmitFrameMs = 0.0f; // time spent in IVRCompositor::Submit (not near-zero indicates driver issue)
+		pTiming->m_flSubmitFrameMs = lastSubmitMs; // time spent in IVRCompositor::Submit
 
 		/** The following are all relative to this frame's SystemTimeInSeconds */
 		pTiming->m_flWaitGetPosesCalledMs = 0.0f;
 		pTiming->m_flNewPosesReadyMs = measuredWaitMs; // when xrWaitFrame returned
-		pTiming->m_flNewFrameReadyMs = 0.0f; // second call to IVRCompositor::Submit
+		pTiming->m_flNewFrameReadyMs = lastNewFrameReadyMs; // the last eye's Submit, from WaitGetPoses
 		pTiming->m_flCompositorUpdateStartMs = 0.0f;
 		pTiming->m_flCompositorUpdateEndMs = 0.0f;
 		pTiming->m_flCompositorRenderStartMs = 0.0f;
 
 		const auto space = BaseSystem::currentSpace == XR_REFERENCE_SPACE_TYPE_LOCAL ? vr::TrackingUniverseSeated : vr::TrackingUniverseStanding;
 		GetPrimaryHMD()->GetPose(space, &pTiming->m_HmdPose, ETrackingStateType::TrackingStateType_Rendering);
+
+		// Newer SDKs' fields: the display periods from the poses to the frame's display
+		if (size >= offsetof(OOVR_Compositor_FrameTiming, m_nNumVSyncsToFirstView) + sizeof(uint32_t))
+			pTiming->m_nNumVSyncsToFirstView = vsyncsToFirstView;
 
 		return true;
 	}
@@ -1813,9 +1973,6 @@ static void PostPresenceChange(bool present)
 	    VREvent_Data_t{}, false);
 }
 
-// XR_EXT_local_floor's reference space type, which the bundled headers predate
-static const XrReferenceSpaceType kReferenceSpaceLocalFloor = (XrReferenceSpaceType)1000426000;
-
 // A device's role (which controller is the left hand, say) changed: no device in particular
 static void PostRoleChange()
 {
@@ -1887,7 +2044,7 @@ void XrBackend::PumpEvents()
 				continue;
 			switch ((int)change->referenceSpaceType) {
 			case (int)XR_REFERENCE_SPACE_TYPE_STAGE:
-			case (int)kReferenceSpaceLocalFloor:
+			case (int)OC_XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR:
 				OcPostEvent(VREvent_StandingZeroPoseReset, k_unTrackedDeviceIndex_Hmd, VREvent_Data_t{}, false);
 				OcPostEvent(VREvent_ChaperoneUniverseHasChanged, k_unTrackedDeviceIndexInvalid, VREvent_Data_t{}, false);
 				break;
@@ -2151,6 +2308,9 @@ void XrBackend::OnSessionCreated()
 	toldIpd = NAN; // the new session's first IPD is the one the game has
 	// The gap from the old session's last frame isn't dropped frames
 	RestartFrameTiming();
+	// The preferred display rate is asked of the new session
+	refreshRateChecked = false;
+	requestedRefreshRate = 0;
 
 	sessionState = XR_SESSION_STATE_UNKNOWN;
 	inputFocusHad = false;
@@ -2426,6 +2586,30 @@ void XrBackend::NoticeRenderScale()
 	OcPostEvent(vr::VREvent_SteamVRSectionSettingChanged, vr::k_unTrackedDeviceIndexInvalid, vr::VREvent_Data_t{}, false);
 }
 
+void XrBackend::ApplyPreferredRefreshRate()
+{
+	if (!xr_ext || !xr_ext->RequestDisplayRefreshRateFB_Available())
+		return;
+	SharedStore& store = SharedStore::Get();
+	const uint64_t generation = store.Generation(StoreDoc::Settings);
+	if (refreshRateChecked && generation == refreshRateGeneration)
+		return;
+	refreshRateChecked = true;
+	refreshRateGeneration = generation;
+	const float rate = XrHMD::NearestRate(XrHMD::RefreshRates(), BaseSettings::PreferredRefreshRate(store));
+	if (rate <= 0.0f || rate == requestedRefreshRate)
+		return;
+	auto lock = xr_session.lock_shared();
+	if (!xr_session.get())
+		return;
+	if (XrResult res = xr_ext->xrRequestDisplayRefreshRateFB(xr_session.get(), rate); XR_FAILED(res)) {
+		OOVR_LOGF("The runtime refused the display rate of %.2f Hz: %d", rate, (int)res);
+		return;
+	}
+	requestedRefreshRate = rate;
+	OOVR_LOGF("Asked the runtime for the preferred display rate, %.2f Hz", rate);
+}
+
 void XrBackend::KeepOverlaysInstance()
 {
 	if (BaseClientCore::appType != vr::VRApplication_Scene || IsHelperSession())
@@ -2596,6 +2780,8 @@ void XrBackend::UpdateInteractionProfile()
 	};
 
 	bool hmdProfileSet = false;
+	// The headset's properties (from the controllers' profile) changed: the game is told once
+	bool hmdUpdated = false;
 	for (hand_info& info : hands) {
 		XrInteractionProfileState state{ XR_TYPE_INTERACTION_PROFILE_STATE };
 		XrPath path = XR_NULL_PATH;
@@ -2613,7 +2799,7 @@ void XrBackend::UpdateInteractionProfile()
 				if (profile->GetPath() == path_name) {
 					// The first hand with a known profile decides the headset's identity
 					if (!hmdProfileSet) {
-						hmd->SetInteractionProfile(profile.get());
+						hmdUpdated |= hmd->SetInteractionProfile(profile.get());
 						hmdProfileSet = true;
 					}
 					std::shared_ptr<XrController> current = Hand(info.hand);
@@ -2640,11 +2826,7 @@ void XrBackend::UpdateInteractionProfile()
 							.trackedDeviceIndex = (TrackedDeviceIndex_t)info.hand + 1
 						};
 						system->_EnqueueEvent(event);
-						event = {
-							.eventType = VREvent_TrackedDeviceUpdated,
-							.trackedDeviceIndex = 0
-						};
-						system->_EnqueueEvent(event);
+						hmdUpdated = true;
 					}
 					if (handAppeared)
 						PostRoleChange();
@@ -2673,6 +2855,16 @@ void XrBackend::UpdateInteractionProfile()
 				}
 				PostRoleChange();
 			}
+		}
+	}
+
+	if (hmdUpdated) {
+		if (BaseSystem* system = GetUnsafeBaseSystem()) {
+			VREvent_t event = {
+				.eventType = VREvent_TrackedDeviceUpdated,
+				.trackedDeviceIndex = k_unTrackedDeviceIndex_Hmd
+			};
+			system->_EnqueueEvent(event);
 		}
 	}
 

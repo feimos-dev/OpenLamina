@@ -216,6 +216,7 @@ vr::HmdMatrix34_t XrHMD::GetEyeToHeadTransform(vr::EVREye eEye)
 		eEye = vr::Eye_Left;
 
 	std::lock_guard<std::mutex> viewsLock(viewsMutex);
+	const float offset = IpdOffset();
 	if (time != xr_gbl->GetBestTime()) {
 		const XruCachedViews& cachedViews = xr_gbl->GetCachedViews(xr_gbl->viewSpace);
 		const XrViewState& viewState = cachedViews.viewState;
@@ -228,7 +229,28 @@ vr::HmdMatrix34_t XrHMD::GetEyeToHeadTransform(vr::EVREye eEye)
 		}
 	}
 
-	return G2S_m34(X2G_om34_pose(views[eEye].pose));
+	// The eyes moved apart by the user's IPD offset
+	XrPosef eyes[XruEyeCount] = { views[0].pose, views[1].pose };
+	xr_utils::WidenEyes(eyes[0], eyes[1], offset);
+	return G2S_m34(X2G_om34_pose(eyes[eEye]));
+}
+
+float XrHMD::IpdOffset()
+{
+	// Read again only when the settings changed
+	static std::mutex lock;
+	static bool read = false;
+	static uint64_t generation = 0;
+	static float offset = 0.0f;
+	SharedStore& store = SharedStore::Get();
+	const uint64_t now = store.Generation(StoreDoc::Settings);
+	std::lock_guard<std::mutex> g(lock);
+	if (!read || now != generation) {
+		read = true;
+		generation = now;
+		offset = BaseSettings::IpdOffset(store);
+	}
+	return offset;
 }
 
 bool XrHMD::VsyncPhase(XrTime now, XrTime anchor, XrDuration period, float* secondsSinceVsync, uint64_t* vsyncCount)
@@ -367,8 +389,6 @@ vr::HiddenAreaMesh_t XrHMD::GetHiddenAreaMesh(vr::EVREye eEye, vr::EHiddenAreaMe
 
 void XrHMD::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDevicePose_t* pose, ETrackingStateType trackingState, int64_t xrTime)
 {
-	// TODO use ETrackingStateType
-
 	// Held to the end: a session restart on another thread replaces xr_gbl and its spaces, and waits for this to end
 	auto lock = xr_session.lock_shared();
 	if (!xr_gbl) {
@@ -386,7 +406,7 @@ void XrHMD::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDevicePose_t*
 	*pose = {};
 	pose->bDeviceIsConnected = true;
 	pose->eTrackingResult = vr::TrackingResult_Running_OutOfRange;
-	xr_utils::PoseFromSpace(pose, xr_gbl->viewSpace, origin, {}, xrTime);
+	xr_utils::PoseFromSpace(pose, xr_gbl->viewSpace, origin, {}, PoseTime(trackingState, xrTime));
 }
 
 std::optional<float> XrHMD::ViewsIpd()
@@ -398,7 +418,8 @@ std::optional<float> XrHMD::ViewsIpd()
 	const XrViewState& state = cachedViews.viewState;
 	if (cachedViews.viewCount != XruEyeCount || !(state.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT) || !(state.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT))
 		return {};
-	return cachedViews.views[vr::Eye_Right].pose.position.x - cachedViews.views[vr::Eye_Left].pose.position.x;
+	// With the user's IPD offset
+	return cachedViews.views[vr::Eye_Right].pose.position.x - cachedViews.views[vr::Eye_Left].pose.position.x + IpdOffset();
 }
 
 // The average adult IPD, 64 mm, until the runtime's views say otherwise
@@ -407,7 +428,7 @@ static const float kDefaultIpd = 0.064f;
 float XrHMD::GetIPD()
 {
 	if (!xr_gbl)
-		return kDefaultIpd;
+		return kDefaultIpd + IpdOffset();
 
 	static float ipd = kDefaultIpd;
 
@@ -460,6 +481,11 @@ bool XrHMD::GetBoolTrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::ET
 	TRY_PROFILE_PROP(bool);
 
 	switch (prop) {
+	case vr::Prop_DisplaySupportsMultipleFramerates_Bool:
+		return RefreshRates().size() > 1;
+	case vr::Prop_DisplaySupportsRuntimeFramerateChange_Bool:
+		// The preferred rate (steamvr.preferredRefreshRate) is asked for while the game runs
+		return xr_ext && xr_ext->RequestDisplayRefreshRateFB_Available() && RefreshRates().size() > 1;
 	case vr::Prop_DeviceProvidesBatteryStatus_Bool: {
 		// From libmonado when Monado offers it
 		std::optional<LibMonado::Battery> battery = LibMonado::Get().BatteryForRole("head");
@@ -516,6 +542,60 @@ bool XrHMD::GetBoolTrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::ET
 	}
 
 	return XrTrackedDevice::GetBoolTrackedDeviceProperty(prop, pErrorL);
+}
+
+std::vector<float> XrHMD::RefreshRates()
+{
+	std::vector<float> rates;
+	if (!xr_ext)
+		return rates;
+	auto lock = xr_session.lock_shared(); // held while asking: a session restart waits for it
+	if (!xr_session.get())
+		return rates;
+	uint32_t count = 0;
+	if (XR_FAILED(xr_ext->xrEnumerateDisplayRefreshRatesFB(xr_session.get(), 0, &count, nullptr)) || count == 0)
+		return rates;
+	rates.resize(count);
+	if (XR_FAILED(xr_ext->xrEnumerateDisplayRefreshRatesFB(xr_session.get(), count, &count, rates.data())))
+		return {};
+	rates.resize(count);
+	return rates;
+}
+
+float XrHMD::NearestRate(const std::vector<float>& rates, float wanted)
+{
+	if (!(wanted > 0.0f))
+		return 0.0f;
+	float best = 0.0f;
+	for (float rate : rates) {
+		if (!(rate > 0.0f))
+			continue;
+		if (best == 0.0f || std::fabs(rate - wanted) < std::fabs(best - wanted))
+			best = rate;
+	}
+	return best;
+}
+
+uint32_t XrHMD::GetArrayTrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::PropertyTypeTag_t propType, void* pBuffer,
+    uint32_t unBufferSize, vr::ETrackedPropertyError* pError)
+{
+	if (prop != vr::Prop_DisplayAvailableFrameRates_Float_Array)
+		return XrTrackedDevice::GetArrayTrackedDeviceProperty(prop, propType, pBuffer, unBufferSize, pError);
+	if (propType != vr::k_unFloatPropertyTag) {
+		if (pError)
+			*pError = vr::TrackedProp_WrongDataType;
+		return 0;
+	}
+	// The display's rates as the runtime lists them; the size they need where the buffer is too small
+	const std::vector<float> rates = RefreshRates();
+	if (rates.empty())
+		return XrTrackedDevice::GetArrayTrackedDeviceProperty(prop, propType, pBuffer, unBufferSize, pError);
+	const uint32_t needed = (uint32_t)(rates.size() * sizeof(float));
+	if (pError)
+		*pError = needed > unBufferSize ? vr::TrackedProp_BufferTooSmall : vr::TrackedProp_Success;
+	if (pBuffer && needed && needed <= unBufferSize)
+		std::memcpy(pBuffer, rates.data(), needed);
+	return needed;
 }
 
 // The runtime's refresh rate where it says (XR_FB_display_refresh_rate), else the measured display period's, else 90
@@ -647,8 +727,10 @@ uint64_t XrHMD::GetUint64TrackedDeviceProperty(vr::ETrackedDeviceProperty prop, 
 	return XrTrackedDevice::GetUint64TrackedDeviceProperty(prop, pErrorL);
 }
 
-void XrHMD::SetInteractionProfile(const InteractionProfile* profile)
+bool XrHMD::SetInteractionProfile(const InteractionProfile* profile)
 {
 	std::unique_lock lock(profile_mutex);
+	const bool changed = this->profile != profile;
 	this->profile = profile;
+	return changed;
 }

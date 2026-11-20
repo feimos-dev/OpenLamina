@@ -36,7 +36,7 @@
  {"interface": "init-matrix", "method": "Init\\((0|2|3|5)\\)", "field": "init_error", "reason": "app types SteamVR starts and OpenLamina refuses on Windows"},
  {"interface": "IVRApplications_\\d+", "method": "GetTransitionState", "field": "ret", "reason": "SteamVR answered a transition (10, 20) in some children, left over from vrserver starting the one before; OpenLamina has one only while a scene application it asked to quit runs"},
  {"interface": "IVRApplications_\\d+", "method": "GetApplicationLaunchArguments", "field": "ret", "reason": "SteamVR answers an empty string's size (1) for some handles it never gave out and 0 for others; OpenLamina answers 0 for any handle it didn't give this program"},
- {"interface": "IVRApplications_\\d+", "method": "GetSceneApplicationState", "field": "ret", "reason": "SteamVR answers Waiting (4) for a scene app that hasn't drawn yet; OpenLamina answers Running for one with a session"},
+ {"interface": "IVRApplications_\\d+", "method": "GetSceneApplicationState", "field": "ret", "apptype": "4", "reason": "with no scene application running, SteamVR answered a utility application the state the previous child's scene application left (Waiting in 007, Quitting in 008); OpenLamina answers None"},
  {"interface": "IVRChaperone_\\d+", "method": "GetPlayAreaSize", "field": "ret", "reason": "chaperone setup, answered without a runtime"},
  {"interface": "IVRChaperone_\\d+", "method": "GetPlayAreaRect", "field": "ret", "reason": "chaperone setup, answered without a runtime"},
  {"interface": "IVRChaperoneSetup_\\d+", "method": "GetWorkingPlayAreaSize", "field": "ret", "reason": "the room setup is the PC's own (SteamVR's was the recording PC's room, the stand-in's is its stage); the chaperone cases check OpenLamina's"},

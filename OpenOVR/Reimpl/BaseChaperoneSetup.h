@@ -147,6 +147,8 @@ private:
 	std::mutex lock;
 	std::optional<ChaperoneData> working;
 	bool workingKept = false;
+	// The working copy's seated zero pose was set: committing it moves every program's seated origin
+	bool seatedZeroSet = false;
 	// The preview, read on the frames' thread: a flag, and the play area last read under lock, kept for when lock is
 	// held elsewhere (a commit waiting on the store)
 	std::atomic<bool> previewShown{ false };

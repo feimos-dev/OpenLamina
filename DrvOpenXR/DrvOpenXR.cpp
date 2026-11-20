@@ -10,6 +10,7 @@
 #include "../OpenOVR/Misc/android_api.h"
 #include "../OpenOVR/Misc/xr_ext.h"
 #include "../OpenOVR/Reimpl/BaseInput.h"
+#include "../OpenOVR/Reimpl/BaseSystem.h"
 #include "../RuntimeExtensions/XR_MNDX_xdev_space.h"
 #include "HelperSession.h"
 #include "XrBackend.h"
@@ -19,6 +20,7 @@
 
 #include <chrono>
 #include <memory>
+#include <mutex>
 #include <set>
 #include <string>
 #include <thread>
@@ -160,6 +162,301 @@ static void handleStartupInfo(const char* startupInfo)
 	BaseInput::setStartupManifest(manifest);
 }
 
+namespace {
+
+// The runtime's instance extensions
+XrResult AvailableInstanceExtensions(std::set<std::string>& available)
+{
+	uint32_t count = 0;
+	if (XrResult res = xrEnumerateInstanceExtensionProperties(nullptr, 0, &count, nullptr); XR_FAILED(res)) {
+		OOVR_LOGF("Failed to enumerate XR extensions: %d", res);
+		return res;
+	}
+	std::vector<XrExtensionProperties> properties(count, { XR_TYPE_EXTENSION_PROPERTIES });
+	if (XrResult res = xrEnumerateInstanceExtensionProperties(nullptr, (uint32_t)properties.size(), &count, properties.data()); XR_FAILED(res)) {
+		OOVR_LOGF("Failed to enumerate XR extensions: %d", res);
+		return res;
+	}
+	properties.resize(count);
+	for (const XrExtensionProperties& ext : properties)
+		available.insert(ext.extensionName);
+	return XR_SUCCESS;
+}
+
+// What an instance is made with
+struct InstancePlan {
+	std::vector<const char*> extensions;
+	XrGraphicsApiSupportedFlags apiFlags = 0;
+};
+
+// The extensions OpenLamina enables, of those available, for a session of that kind
+InstancePlan PlanInstance(const std::set<std::string>& available, SessionKind kind)
+{
+	InstancePlan plan;
+
+#if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+	if (available.count("XR_KHR_D3D11_enable")) {
+		plan.extensions.push_back("XR_KHR_D3D11_enable");
+		plan.apiFlags |= XR_SUPPORTED_GRAPHICS_API_D3D11;
+	}
+#endif
+#if defined(SUPPORT_DX) && defined(SUPPORT_DX12)
+	if (available.count("XR_KHR_D3D12_enable")) {
+		plan.extensions.push_back("XR_KHR_D3D12_enable");
+		plan.apiFlags |= XR_SUPPORTED_GRAPHICS_API_D3D12;
+	}
+#endif
+#if defined(SUPPORT_VK)
+	if (available.count(XR_KHR_VULKAN_ENABLE_EXTENSION_NAME)) {
+		plan.extensions.push_back(XR_KHR_VULKAN_ENABLE_EXTENSION_NAME);
+		plan.apiFlags |= XR_SUPPORTED_GRAPHICS_API_VK;
+	}
+#endif
+#if defined(SUPPORT_GL)
+	if (available.count(XR_KHR_OPENGL_ENABLE_EXTENSION_NAME)) {
+		plan.extensions.push_back(XR_KHR_OPENGL_ENABLE_EXTENSION_NAME);
+		plan.apiFlags |= XR_SUPPORTED_GRAPHICS_API_GL;
+	}
+#endif
+#if defined(SUPPORT_GLES)
+	if (available.count(XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME)) {
+		plan.extensions.push_back(XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME);
+		plan.apiFlags |= XR_SUPPORTED_GRAPHICS_API_GLES;
+	}
+#endif
+#if defined(ANDROID)
+	if (available.count(XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME))
+		plan.extensions.push_back(XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME);
+#endif
+	if (available.count(XR_EXT_DEBUG_UTILS_EXTENSION_NAME))
+		plan.extensions.push_back(XR_EXT_DEBUG_UTILS_EXTENSION_NAME);
+
+	// If the visibility mask is available use it, otherwise no big deal
+	if (available.count(XR_KHR_VISIBILITY_MASK_EXTENSION_NAME))
+		plan.extensions.push_back(XR_KHR_VISIBILITY_MASK_EXTENSION_NAME);
+
+	if (available.count(XR_EXT_HAND_TRACKING_EXTENSION_NAME))
+		plan.extensions.push_back(XR_EXT_HAND_TRACKING_EXTENSION_NAME);
+
+	if (available.count(XR_MNDX_XDEV_SPACE_EXTENSION_NAME))
+		plan.extensions.push_back(XR_MNDX_XDEV_SPACE_EXTENSION_NAME);
+
+	if (available.contains(XR_EXT_HP_MIXED_REALITY_CONTROLLER_EXTENSION_NAME))
+		plan.extensions.push_back(XR_EXT_HP_MIXED_REALITY_CONTROLLER_EXTENSION_NAME);
+
+	if (available.contains(OC_XR_HTC_VIVE_COSMOS_CONTROLLER_INTERACTION_EXTENSION_NAME))
+		plan.extensions.push_back(OC_XR_HTC_VIVE_COSMOS_CONTROLLER_INTERACTION_EXTENSION_NAME);
+
+	if (available.contains(OC_XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME))
+		plan.extensions.push_back(OC_XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME);
+
+	if (available.contains(OC_XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME))
+		plan.extensions.push_back(OC_XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME);
+
+	// More controllers' profiles: the Quest Pro's and Quest 3's, the Touch's finger proximity, Samsung's Odyssey, and
+	// the hands as controllers
+	for (const char* profileExtension : { OC_XR_FB_TOUCH_CONTROLLER_PRO_EXTENSION_NAME, OC_XR_META_TOUCH_CONTROLLER_PLUS_EXTENSION_NAME,
+	         OC_XR_FB_TOUCH_CONTROLLER_PROXIMITY_EXTENSION_NAME, XR_EXT_SAMSUNG_ODYSSEY_CONTROLLER_EXTENSION_NAME, XR_MSFT_HAND_INTERACTION_EXTENSION_NAME })
+		if (available.contains(profileExtension))
+			plan.extensions.push_back(profileExtension);
+
+	if (available.contains(XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME))
+		plan.extensions.push_back(XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME);
+
+	// The gaze for eye-tracked foveation; a runtime may start its eye tracker for it, so only when the user wants it
+	if (oovr_global_configuration.EyeTracking() && available.contains(XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME))
+		plan.extensions.push_back(XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME);
+	// Depth with the projection layer (submitDepth), equirect layers for skyboxes, and overlays' colour and alpha, where
+	// the runtime has them
+	for (const char* layerExtension : { XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME, XR_KHR_COMPOSITION_LAYER_EQUIRECT2_EXTENSION_NAME, XR_KHR_COMPOSITION_LAYER_COLOR_SCALE_BIAS_EXTENSION_NAME })
+		if (available.contains(layerExtension))
+			plan.extensions.push_back(layerExtension);
+	// The display's refresh rate (Prop_DisplayFrequency_Float) and its changes
+	if (available.contains(OC_XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME))
+		plan.extensions.push_back(OC_XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME);
+	// Notices that the runtime's CPU or GPU load is high (ShouldApplicationReduceRenderingWork)
+	if (available.contains(XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME))
+		plan.extensions.push_back(XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME);
+	// A helper program's session
+	if (kind == SessionKind::Overlay) {
+		plan.extensions.push_back(XR_EXTX_OVERLAY_EXTENSION_NAME);
+	} else if (kind == SessionKind::Headless) {
+		plan.extensions.push_back(XR_MND_HEADLESS_EXTENSION_NAME);
+	}
+	// The time now, which the runtime converts from the system's clock: the latest tracking data, poses predicted from
+	// now, the time since the last vsync, and a headless session's poses (it runs no frames)
+#ifdef _WIN32
+	const char* clock = "XR_KHR_win32_convert_performance_counter_time";
+#else
+	const char* clock = "XR_KHR_convert_timespec_time";
+#endif
+	if (available.contains(clock))
+		plan.extensions.push_back(clock);
+	else if (kind == SessionKind::Headless)
+		OOVR_LOGF("The OpenXR runtime has no %s: a background application's poses are located at its session's last state change", clock);
+	// The local space at the floor's height, for standing poses where the runtime has no stage
+	if (available.contains(OC_XR_EXT_LOCAL_FLOOR_EXTENSION_NAME))
+		plan.extensions.push_back(OC_XR_EXT_LOCAL_FLOOR_EXTENSION_NAME);
+	// The headset's proximity sensor
+	if (available.contains(OC_XR_EXT_USER_PRESENCE_EXTENSION_NAME))
+		plan.extensions.push_back(OC_XR_EXT_USER_PRESENCE_EXTENSION_NAME);
+
+	return plan;
+}
+
+// Makes the instance for a plan, at the newest OpenXR version the loader and runtime take
+XrResult MakeInstance(const InstancePlan& plan, XrInstance* instance, XrVersion* version)
+{
+	XrApplicationInfo appInfo{};
+	DrvOpenXR::GetXRAppName(appInfo.applicationName);
+	appInfo.applicationVersion = 1;
+	// Runtimes pick per-engine behaviour by the engine's name
+	strcpy_s(appInfo.engineName, XR_MAX_ENGINE_NAME_SIZE, "OpenLamina");
+	appInfo.engineVersion = 1;
+
+	const char* const layers[] = {
+#ifdef XR_VALIDATION_LAYER_PATH
+		"XR_APILAYER_LUNARG_core_validation",
+#endif
+		nullptr // Dummy value since MSVC gets upset if there's nothing in this array
+	};
+
+	// The validation layer, where it's built in (TODO make these work on Linux)
+#ifdef XR_VALIDATION_LAYER_PATH
+	SetEnvironmentVariableA("XR_CORE_VALIDATION_EXPORT_TYPE", "text");
+	SetEnvironmentVariableA("XR_API_LAYER_PATH", XR_VALIDATION_LAYER_PATH);
+	OOVR_LOGF("Set OpenXR Layer path: %s", XR_VALIDATION_LAYER_PATH);
+#endif
+#ifdef XR_VALIDATION_FILE_NAME
+	SetEnvironmentVariableA("XR_CORE_VALIDATION_FILE_NAME", XR_VALIDATION_FILE_NAME);
+	OOVR_LOGF("Set OpenXR validation file path: %s", XR_VALIDATION_FILE_NAME);
+#endif
+
+	XrInstanceCreateInfo createInfo{};
+	createInfo.type = XR_TYPE_INSTANCE_CREATE_INFO;
+	createInfo.applicationInfo = appInfo;
+	createInfo.enabledExtensionNames = plan.extensions.data();
+	createInfo.enabledExtensionCount = (uint32_t)plan.extensions.size();
+	createInfo.enabledApiLayerNames = layers;
+	createInfo.enabledApiLayerCount = (sizeof(layers) / sizeof(const char*)) - 1; // Subtract the dummy value
+
+#if ANDROID
+	if (!OpenComposite_Android_Create_Info) {
+		OOVR_LOG("Cannot create OpenXR instance - OpenComposite_Android_Create_Info not set");
+		return XR_ERROR_INITIALIZATION_FAILED;
+	}
+	XrInstanceCreateInfoAndroidKHR androidInfo = *OpenComposite_Android_Create_Info;
+	androidInfo.next = nullptr;
+	createInfo.next = &androidInfo;
+#endif
+
+	XrResult res = DrvOpenXR::CreateInstanceNewestVersion(createInfo, instance, version, xrCreateInstance);
+	if (XR_SUCCEEDED(res))
+		OOVR_LOGF("Created the OpenXR instance for OpenXR %d.%d", (int)XR_VERSION_MAJOR(*version), (int)XR_VERSION_MINOR(*version));
+	return res;
+}
+
+// The instance VR_IsHmdPresent made, with the extensions it was made with, for the scene application's session
+std::mutex probeLock;
+XrInstance probedInstance = XR_NULL_HANDLE;
+XrVersion probedVersion = 0;
+std::vector<std::string> probedExtensions;
+
+std::vector<std::string> ExtensionNames(const InstancePlan& plan)
+{
+	return std::vector<std::string>(plan.extensions.begin(), plan.extensions.end());
+}
+
+// The probe's instance where it was made with the plan's extensions; otherwise none, and the probe's is destroyed
+XrInstance TakeProbedInstance(const InstancePlan& plan, XrVersion* version)
+{
+	std::lock_guard<std::mutex> lock(probeLock);
+	XrInstance taken = probedInstance;
+	*version = probedVersion;
+	probedInstance = XR_NULL_HANDLE;
+	if (taken && probedExtensions != ExtensionNames(plan)) {
+		OOVR_LOG("The OpenXR instance VR_IsHmdPresent made has other extensions: making another");
+		xrDestroyInstance(taken);
+		taken = XR_NULL_HANDLE;
+	} else if (taken) {
+		OOVR_LOG("Using the OpenXR instance VR_IsHmdPresent made");
+	}
+	probedExtensions.clear();
+	return taken;
+}
+
+} // namespace
+
+XrResult DrvOpenXR::CreateInstanceNewestVersion(XrInstanceCreateInfo createInfo, XrInstance* instance, XrVersion* version,
+    XrResult(XRAPI_PTR* create)(const XrInstanceCreateInfo*, XrInstance*))
+{
+	// OpenXR 1.1 where the loader and runtime have it (its core has what OpenLamina otherwise takes from extensions),
+	// else 1.0. A loader or runtime that predates a version answers XR_ERROR_API_VERSION_UNSUPPORTED for it. The
+	// headers OpenLamina is built with may be older than either: nothing of 1.1 is used that 1.0's extensions lack.
+	static constexpr XrVersion versions[] = { XR_MAKE_VERSION(1, 1, 0), XR_MAKE_VERSION(1, 0, 0) };
+	XrResult res = XR_ERROR_API_VERSION_UNSUPPORTED;
+	for (XrVersion v : versions) {
+		createInfo.applicationInfo.apiVersion = v;
+		res = create(&createInfo, instance);
+		if (res != XR_ERROR_API_VERSION_UNSUPPORTED) {
+			if (XR_SUCCEEDED(res) && version)
+				*version = v;
+			return res;
+		}
+		OOVR_LOGF("The OpenXR loader or runtime doesn't support OpenXR %d.%d", (int)XR_VERSION_MAJOR(v), (int)XR_VERSION_MINOR(v));
+	}
+	return res;
+}
+
+bool DrvOpenXR::ProbeForHmd()
+{
+	std::lock_guard<std::mutex> lock(probeLock);
+	XrSystemGetInfo systemInfo{ XR_TYPE_SYSTEM_GET_INFO };
+	systemInfo.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
+	XrSystemId id = XR_NULL_SYSTEM_ID;
+	// An earlier probe's instance, asked again: the headset may have gone since
+	if (probedInstance) {
+		if (xrGetSystem(probedInstance, &systemInfo, &id) == XR_SUCCESS)
+			return true;
+		xrDestroyInstance(probedInstance);
+		probedInstance = XR_NULL_HANDLE;
+		probedExtensions.clear();
+	}
+
+	std::set<std::string> available;
+	if (XR_FAILED(AvailableInstanceExtensions(available)))
+		return false;
+	// As a scene application's: the session that follows takes this instance rather than making a second one
+	const InstancePlan plan = PlanInstance(available, SessionKind::Scene);
+	XrInstance instance = XR_NULL_HANDLE;
+	XrVersion version = 0;
+	if (XR_FAILED(MakeInstance(plan, &instance, &version)))
+		return false;
+
+	XrResult res = xrGetSystem(instance, &systemInfo, &id);
+	if (res == XR_SUCCESS) {
+		probedInstance = instance;
+		probedVersion = version;
+		probedExtensions = ExtensionNames(plan);
+		return true;
+	}
+	xrDestroyInstance(instance);
+
+	// FORM_FACTOR_UNAVAILABLE (no headset plugged in) and anything else: no headset to start (upstream #467)
+	if (res != XR_ERROR_FORM_FACTOR_UNAVAILABLE && res != XR_ERROR_FORM_FACTOR_UNSUPPORTED)
+		OOVR_LOGF("Failed to probe for OpenXR systems: return status %d", res);
+	return false;
+}
+
+void DrvOpenXR::ReleaseProbedInstance()
+{
+	std::lock_guard<std::mutex> lock(probeLock);
+	if (probedInstance)
+		xrDestroyInstance(probedInstance);
+	probedInstance = XR_NULL_HANDLE;
+	probedExtensions.clear();
+}
+
 IBackend* DrvOpenXR::CreateOpenXRBackend(const char* startupInfo, vr::EVRInitError* error, vr::EVRApplicationType appType)
 {
 	if (error)
@@ -174,34 +471,12 @@ IBackend* DrvOpenXR::CreateOpenXRBackend(const char* startupInfo, vr::EVRInitErr
 	}
 	initialised = true;
 
-	// TODO make these work on Linux
-#ifdef XR_VALIDATION_LAYER_PATH
-	SetEnvironmentVariableA("XR_CORE_VALIDATION_EXPORT_TYPE", "text");
-	SetEnvironmentVariableA("XR_API_LAYER_PATH", XR_VALIDATION_LAYER_PATH);
-	OOVR_LOGF("Set OpenXR Layer path: %s", XR_VALIDATION_LAYER_PATH);
-#endif
-#ifdef XR_VALIDATION_FILE_NAME
-	SetEnvironmentVariableA("XR_CORE_VALIDATION_FILE_NAME", XR_VALIDATION_FILE_NAME);
-	OOVR_LOGF("Set OpenXR validation file path: %s", XR_VALIDATION_FILE_NAME);
-#endif
-
-	// Enumerate the available extensions
-	uint32_t availableExtensionsCount = 0;
-	if (XrResult res = xrEnumerateInstanceExtensionProperties(nullptr, 0, &availableExtensionsCount, nullptr); XR_FAILED(res)) {
-		OOVR_LOGF("Failed to enumerate XR extensions: %d", res);
-		return StartupFailed(error, RefusalWithoutSession(appType, oovr_global_configuration.HelperApps(), InitErrorFor(res)));
-	}
-	std::vector<XrExtensionProperties> extensionProperties;
-	extensionProperties.resize(availableExtensionsCount, { XR_TYPE_EXTENSION_PROPERTIES });
-	if (XrResult res = xrEnumerateInstanceExtensionProperties(nullptr, extensionProperties.size(), &availableExtensionsCount, extensionProperties.data()); XR_FAILED(res)) {
-		OOVR_LOGF("Failed to enumerate XR extensions: %d", res);
-		return StartupFailed(error, RefusalWithoutSession(appType, oovr_global_configuration.HelperApps(), InitErrorFor(res)));
-	}
+	// The runtime's extensions
 	std::set<std::string> availableExtensions;
-	for (const XrExtensionProperties& ext : extensionProperties) {
-		availableExtensions.insert(ext.extensionName);
-		OOVR_LOGF("Extension: %s", ext.extensionName);
-	}
+	if (XrResult res = AvailableInstanceExtensions(availableExtensions); XR_FAILED(res))
+		return StartupFailed(error, RefusalWithoutSession(appType, oovr_global_configuration.HelperApps(), InitErrorFor(res)));
+	for (const std::string& ext : availableExtensions)
+		OOVR_LOGF("Extension: %s", ext.c_str());
 
 	// Overlay and background applications: a session of their kind, or a refusal. A background application joins only
 	// while another OpenLamina program runs: making the instance can start the runtime (Monado's service on Windows).
@@ -243,161 +518,21 @@ IBackend* DrvOpenXR::CreateOpenXRBackend(const char* startupInfo, vr::EVRInitErr
 		OOVR_LOGF("Layer: %s", layer.layerName);
 	}
 
-	// Create the OpenXR instance - this is the overall handle that connects us to the runtime
-	// https://www.khronos.org/registry/OpenXR/specs/1.0/refguide/openxr-10-reference-guide.pdf
-	XrApplicationInfo appInfo{};
-	GetXRAppName(appInfo.applicationName);
-	appInfo.applicationVersion = 1;
-	// Runtimes pick per-engine behaviour by the engine's name
-	strcpy_s(appInfo.engineName, XR_MAX_ENGINE_NAME_SIZE, "OpenLamina");
-	appInfo.engineVersion = 1;
-
-	// Hard-code in the API version, because on Linux you might want to compile OC against
-	// the system-installed copy of the OXR loader. Distros are likely to update the loader
-	// as soon as a new version is released, before any OpenXR runtimes add support for the
-	// new OpenXR version. Though OC doesn't use any of those new features, we'd still require
-	// it if we used the XR_CURRENT_API_VERSION macro.
-	// When building against the vendored OpenXR loader, this is never a problem.
-	appInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
-
-	std::vector<const char*> extensions;
-	XrGraphicsApiSupportedFlags apiFlags = 0;
-
-#if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
-	if (availableExtensions.count("XR_KHR_D3D11_enable")) {
-		extensions.push_back("XR_KHR_D3D11_enable");
-		apiFlags |= XR_SUPPORTED_GRAPHICS_API_D3D11;
-	}
-#endif
-#if defined(SUPPORT_DX) && defined(SUPPORT_DX12)
-	if (availableExtensions.count("XR_KHR_D3D12_enable")) {
-		extensions.push_back("XR_KHR_D3D12_enable");
-		apiFlags |= XR_SUPPORTED_GRAPHICS_API_D3D12;
-	}
-#endif
-#if defined(SUPPORT_VK)
-	if (availableExtensions.count(XR_KHR_VULKAN_ENABLE_EXTENSION_NAME)) {
-		extensions.push_back(XR_KHR_VULKAN_ENABLE_EXTENSION_NAME);
-		apiFlags |= XR_SUPPORTED_GRAPHICS_API_VK;
-	}
-#endif
-#if defined(SUPPORT_GL)
-	if (availableExtensions.count(XR_KHR_OPENGL_ENABLE_EXTENSION_NAME)) {
-		extensions.push_back(XR_KHR_OPENGL_ENABLE_EXTENSION_NAME);
-		apiFlags |= XR_SUPPORTED_GRAPHICS_API_GL;
-	}
-#endif
-#if defined(SUPPORT_GLES)
-	if (availableExtensions.count(XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME)) {
-		extensions.push_back(XR_KHR_OPENGL_ES_ENABLE_EXTENSION_NAME);
-		apiFlags |= XR_SUPPORTED_GRAPHICS_API_GLES;
-	}
-#endif
-#if defined(ANDROID)
-	if (availableExtensions.count(XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME))
-		extensions.push_back(XR_KHR_ANDROID_CREATE_INSTANCE_EXTENSION_NAME);
-#endif
-	if (availableExtensions.count(XR_EXT_DEBUG_UTILS_EXTENSION_NAME))
-		extensions.push_back(XR_EXT_DEBUG_UTILS_EXTENSION_NAME);
-
-	// If the visibility mask is available use it, otherwise no big deal
-	if (availableExtensions.count(XR_KHR_VISIBILITY_MASK_EXTENSION_NAME))
-		extensions.push_back(XR_KHR_VISIBILITY_MASK_EXTENSION_NAME);
-
-	if (availableExtensions.count(XR_EXT_HAND_TRACKING_EXTENSION_NAME))
-		extensions.push_back(XR_EXT_HAND_TRACKING_EXTENSION_NAME);
-
-	if (availableExtensions.count(XR_MNDX_XDEV_SPACE_EXTENSION_NAME))
-		extensions.push_back(XR_MNDX_XDEV_SPACE_EXTENSION_NAME);
-
-	if (availableExtensions.contains(XR_EXT_HP_MIXED_REALITY_CONTROLLER_EXTENSION_NAME))
-		extensions.push_back(XR_EXT_HP_MIXED_REALITY_CONTROLLER_EXTENSION_NAME);
-
-	if (availableExtensions.contains(OC_XR_HTC_VIVE_COSMOS_CONTROLLER_INTERACTION_EXTENSION_NAME))
-		extensions.push_back(OC_XR_HTC_VIVE_COSMOS_CONTROLLER_INTERACTION_EXTENSION_NAME);
-
-	if (availableExtensions.contains(OC_XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME))
-		extensions.push_back(OC_XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME);
-
-	if (availableExtensions.contains(OC_XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME))
-		extensions.push_back(OC_XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME);
-
-	// More controllers' profiles: the Quest Pro's and Quest 3's, the Touch's finger proximity, Samsung's Odyssey, and
-	// the hands as controllers
-	for (const char* profileExtension : { OC_XR_FB_TOUCH_CONTROLLER_PRO_EXTENSION_NAME, OC_XR_META_TOUCH_CONTROLLER_PLUS_EXTENSION_NAME,
-	         OC_XR_FB_TOUCH_CONTROLLER_PROXIMITY_EXTENSION_NAME, XR_EXT_SAMSUNG_ODYSSEY_CONTROLLER_EXTENSION_NAME, XR_MSFT_HAND_INTERACTION_EXTENSION_NAME })
-		if (availableExtensions.contains(profileExtension))
-			extensions.push_back(profileExtension);
-
-	if (availableExtensions.contains(XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME))
-		extensions.push_back(XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME);
-
-	// The gaze for eye-tracked foveation; a runtime may start its eye tracker for it, so only when the user wants it
-	if (oovr_global_configuration.EyeTracking() && availableExtensions.contains(XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME))
-		extensions.push_back(XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME);
-	// Depth with the projection layer (submitDepth), equirect layers for skyboxes, and overlays' colour and alpha, where
-	// the runtime has them
-	for (const char* layerExtension : { XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME, XR_KHR_COMPOSITION_LAYER_EQUIRECT2_EXTENSION_NAME, XR_KHR_COMPOSITION_LAYER_COLOR_SCALE_BIAS_EXTENSION_NAME })
-		if (availableExtensions.contains(layerExtension))
-			extensions.push_back(layerExtension);
-	// The display's refresh rate (Prop_DisplayFrequency_Float) and its changes
-	if (availableExtensions.contains(OC_XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME))
-		extensions.push_back(OC_XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME);
-	// Notices that the runtime's CPU or GPU load is high (ShouldApplicationReduceRenderingWork)
-	if (availableExtensions.contains(XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME))
-		extensions.push_back(XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME);
-	// A helper program's session. A headless one runs no frames, so its poses are located at the time now, which the
-	// runtime converts from the system's clock where it can.
-	if (choice.kind == SessionKind::Overlay) {
-		extensions.push_back(XR_EXTX_OVERLAY_EXTENSION_NAME);
-	} else if (choice.kind == SessionKind::Headless) {
-		extensions.push_back(XR_MND_HEADLESS_EXTENSION_NAME);
-#ifdef _WIN32
-		const char* clock = "XR_KHR_win32_convert_performance_counter_time";
-#else
-		const char* clock = "XR_KHR_convert_timespec_time";
-#endif
-		if (availableExtensions.contains(clock))
-			extensions.push_back(clock);
-		else
-			OOVR_LOGF("The OpenXR runtime has no %s: a background application's poses are located at its session's last state change", clock);
-	}
-	// The headset's proximity sensor
-	if (availableExtensions.contains(OC_XR_EXT_USER_PRESENCE_EXTENSION_NAME))
-		extensions.push_back(OC_XR_EXT_USER_PRESENCE_EXTENSION_NAME);
-
-	const char* const layers[] = {
-#ifdef XR_VALIDATION_LAYER_PATH
-		"XR_APILAYER_LUNARG_core_validation",
-#endif
-		nullptr // Dummy value since MSVC gets upset if there's nothing in this array
-	};
-
-	XrInstanceCreateInfo createInfo{};
-	createInfo.type = XR_TYPE_INSTANCE_CREATE_INFO;
-	createInfo.applicationInfo = appInfo;
-	createInfo.enabledExtensionNames = extensions.data();
-	createInfo.enabledExtensionCount = extensions.size();
-	createInfo.enabledApiLayerNames = layers;
-	createInfo.enabledApiLayerCount = (sizeof(layers) / sizeof(const char*)) - 1; // Subtract the dummy value
-
-#if ANDROID
-	if (!OpenComposite_Android_Create_Info) {
-		OOVR_LOG("Cannot create OpenXR instance - OpenComposite_Android_Create_Info not set");
-		return failed(vr::VRInitError_Init_Internal);
-	}
-	XrInstanceCreateInfoAndroidKHR androidInfo = *OpenComposite_Android_Create_Info;
-	androidInfo.next = nullptr;
-	createInfo.next = &androidInfo;
-#endif
-
-	if (XrResult res = xrCreateInstance(&createInfo, &xr_instance); res != XR_SUCCESS) {
-		OOVR_LOGF("WARNING: Instance creation failed: XrResult %d", res);
-		if (res == XR_ERROR_RUNTIME_FAILURE) {
-			OOVR_LOGF("Is your OpenXR runtime running?");
+	// Create the OpenXR instance - this is the overall handle that connects us to the runtime, or take the one
+	// VR_IsHmdPresent made for a scene application
+	const InstancePlan plan = PlanInstance(availableExtensions, choice.kind);
+	const std::vector<const char*>& extensions = plan.extensions;
+	const XrGraphicsApiSupportedFlags apiFlags = plan.apiFlags;
+	xr_instance = TakeProbedInstance(plan, &xr_instance_version);
+	if (!xr_instance) {
+		if (XrResult res = MakeInstance(plan, &xr_instance, &xr_instance_version); XR_FAILED(res)) {
+			OOVR_LOGF("WARNING: Instance creation failed: XrResult %d", res);
+			if (res == XR_ERROR_RUNTIME_FAILURE) {
+				OOVR_LOGF("Is your OpenXR runtime running?");
+			}
+			xr_instance = XR_NULL_HANDLE;
+			return failed(InitErrorFor(res));
 		}
-		xr_instance = XR_NULL_HANDLE;
-		return failed(InitErrorFor(res));
 	}
 
 #ifdef _DEBUG
@@ -498,8 +633,10 @@ XrResult DrvOpenXR::SetupSession()
 		return res;
 	}
 
-	// Setup the OpenXR globals, which uses the current session so we have to do this last
+	// Setup the OpenXR globals, which uses the current session so we have to do this last. Its seated origin is the
+	// seated zero pose kept in the store, where one is.
 	xr_gbl = new XrSessionGlobals();
+	BaseSystem::_LoadStoredSeatedZero();
 
 	// Print the current version for diagnostic purposes
 	OOVR_LOGF("Started OpenXR session on runtime '%s', hand tracking supported: %d",

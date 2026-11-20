@@ -563,6 +563,38 @@ TEST_CASE("Scene_process_changes_are_announced")
 	CHECK(changed.data.process.oldPid == oc_current_pid());
 }
 
+TEST_CASE("Scene_application_waits_until_it_has_drawn")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	EventRecorder recorder;
+	BaseApplications apps(store);
+
+	BaseApplications::SetSceneProcess(store, true);
+	CHECK(apps.GetSceneApplicationState() == EVRSceneApplicationState_Waiting);
+	size_t before = CountEvents(vr::VREvent_SceneApplicationStateChanged);
+
+	// Its first frame: running, and announced once
+	BaseApplications::SetSceneDrawn(store);
+	CHECK(apps.GetSceneApplicationState() == EVRSceneApplicationState_Running);
+	CHECK(store.Read(StoreDoc::Scene)["drawn"].asBool());
+	CHECK(CountEvents(vr::VREvent_SceneApplicationStateChanged) == before + 1);
+	BaseApplications::SetSceneDrawn(store);
+	CHECK(CountEvents(vr::VREvent_SceneApplicationStateChanged) == before + 1);
+
+	// A new session of the same program keeps it
+	BaseApplications::SetSceneProcess(store, true);
+	CHECK(store.Read(StoreDoc::Scene)["drawn"].asBool());
+	CHECK(apps.GetSceneApplicationState() == EVRSceneApplicationState_Running);
+
+	// No longer the scene application, then the scene application again: waiting for its next frame
+	BaseApplications::SetSceneProcess(store, false);
+	BaseApplications::SetSceneProcess(store, true);
+	CHECK(apps.GetSceneApplicationState() == EVRSceneApplicationState_Waiting);
+	CHECK_FALSE(store.Read(StoreDoc::Scene)["drawn"].asBool());
+	BaseApplications::SetSceneProcess(store, false);
+}
+
 TEST_CASE("Capsule_image_and_hidden_flag_are_properties")
 {
 	TempDir dir;
@@ -1058,6 +1090,49 @@ TEST_CASE("Asking_about_a_transition_whose_old_application_runs_writes_nothing")
 	const uint64_t generation = store.Generation(StoreDoc::Scene);
 	CHECK(apps.GetTransitionState() == VRApplicationTransition_OldAppQuitSent);
 	CHECK(store.Generation(StoreDoc::Scene) == generation);
+}
+
+TEST_CASE("Scene_application_state_follows_a_transition")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	BaseApplications apps(store);
+	AppType type(vr::VRApplication_Utility);
+#ifdef _WIN32
+	uint32_t scene = 4; // System, always there
+#else
+	uint32_t scene = (uint32_t)getppid();
+#endif
+	// Another program is the scene application, has drawn, and is asked to quit for the next
+	store.Update(StoreDoc::Scene, [&](Json::Value& doc) {
+		doc["pid"] = scene;
+		doc["start"] = (Json::UInt64)SharedStore::ProcessStartTime(scene);
+		doc["drawn"] = true;
+	});
+	CHECK(apps.GetSceneApplicationState() == EVRSceneApplicationState_Running);
+	store.Update(StoreDoc::Scene, [&](Json::Value& doc) {
+		doc["transition"]["state"] = VRApplicationTransition_OldAppQuitSent;
+		doc["transition"]["app_key"] = "oc.test.next";
+		doc["transition"]["old_pid"] = scene;
+		doc["transition"]["old_start"] = (Json::UInt64)SharedStore::ProcessStartTime(scene);
+		doc["transition"]["since_ms"] = NowMs();
+	});
+	CHECK(apps.GetSceneApplicationState() == EVRSceneApplicationState_Quitting);
+
+	// It has gone and the next is launched: starting, until its session starts
+	store.Update(StoreDoc::Scene, [&](Json::Value& doc) {
+		doc = Json::Value(Json::objectValue);
+		doc["transition"]["state"] = VRApplicationTransition_NewAppLaunched;
+		doc["transition"]["app_key"] = "oc.test.next";
+		doc["transition"]["since_ms"] = NowMs();
+	});
+	CHECK(apps.GetSceneApplicationState() == EVRSceneApplicationState_Starting);
+
+	// Aborted: no scene application, and the state change is announced
+	EventRecorder recorder;
+	apps.AbortTransition();
+	CHECK(apps.GetSceneApplicationState() == EVRSceneApplicationState_None);
+	CHECK(CountEvents(vr::VREvent_SceneApplicationStateChanged) == 1);
 }
 
 TEST_CASE("A_launch_asked_for_long_ago_is_dropped_not_taken_over")

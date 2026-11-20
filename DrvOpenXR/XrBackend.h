@@ -31,6 +31,22 @@ class XrBackend : public IBackend {
 public:
 	DECLARE_BACKEND_FUNCS(virtual, override)
 
+	uint32_t CurrentFrameId() override;
+	float SecondsToFrame(uint32_t frameId) override;
+	void SetSceneOverlay(std::shared_ptr<const SceneOverlayImage> overlay) override;
+
+	/** The display slot (count of display periods) a display time falls in; 0 where the period is unknown */
+	static uint64_t DisplaySlot(XrTime displayTime, XrDuration period);
+	/** The display slot of a frame after one at previous (shown at previousTime; 0 for none): the display periods
+	 * between them on, at least one, so that a change of the display's rate doesn't move the count back or far on.
+	 * The first is DisplaySlot's; 0 where the period is unknown. */
+	static uint64_t NextDisplaySlot(uint64_t previous, XrTime previousTime, XrTime displayTime, XrDuration period);
+	/** Seconds from now to the display of the frame `slot`, from the frame in flight's slot and display time; NaN where
+	 * unknown. Slots are compared as 32-bit frame ids. */
+	static double SecondsToSlot(uint32_t slot, uint32_t frameSlot, XrTime frameDisplayTime, XrDuration period, XrTime now);
+	/** The display periods from now to a frame's display, at least one; 0 where unknown */
+	static uint32_t VsyncsToDisplay(XrTime displayTime, XrDuration period, XrTime now);
+
 	XrBackend(bool useVulkanTmpGfx, bool useD3D11TmpGfx);
 	~XrBackend() override;
 
@@ -241,6 +257,15 @@ private:
 	XrCompositionLayerQuad fadeLayer{ XR_TYPE_COMPOSITION_LAYER_QUAD };
 	// The fade layer for the fade as it is now, or nullptr while nothing is faded (or it can't be drawn)
 	XrCompositionLayerBaseHeader* BuildFadeLayer();
+	// The old compositor calls' scene overlay (SetSceneOverlay): set from any thread under sceneOverlayLock, drawn
+	// under frameOwner from a swapchain filled from its image
+	std::mutex sceneOverlayLock;
+	std::shared_ptr<const SceneOverlayImage> sceneOverlay;
+	std::shared_ptr<const SceneOverlayImage> sceneOverlayShown; // the one in the swapchain
+	std::unique_ptr<CpuSwapchain> sceneOverlaySwapchain;
+	XrCompositionLayerQuad sceneOverlayLayer{ XR_TYPE_COMPOSITION_LAYER_QUAD };
+	// The scene overlay's layer, or nullptr while there's none (or it can't be drawn)
+	XrCompositionLayerBaseHeader* BuildSceneOverlayLayer();
 	// A skybox asked for while the session wasn't running, shown at the next frame's start; under pendingSkyboxLock
 	std::mutex pendingSkyboxLock;
 	SkyboxRequest pendingSkybox;
@@ -301,6 +326,13 @@ private:
 	// Between the game's frames: a render scale another program set reaches the game, as SteamVR tells it, with
 	// VREvent_SteamVRSectionSettingChanged; its next textures at the new recommended size get swapchains of that size
 	void NoticeRenderScale();
+	// Between the game's frames, at the session's start and when the settings change: the display rate nearest the
+	// user's preferred one (steamvr.preferredRefreshRate) asked of the runtime, where it takes requests. Without a
+	// preference the runtime's own choice stays.
+	void ApplyPreferredRefreshRate();
+	bool refreshRateChecked = false;
+	uint64_t refreshRateGeneration = 0;
+	float requestedRefreshRate = 0;
 
 	// The views for the two main eye layers
 	XrCompositionLayerProjectionView projectionViews[XruEyeCount];
@@ -351,8 +383,21 @@ private:
 	std::atomic<bool> sceneCleared{ false };
 	std::atomic<bool> renderingSuspended{ false };
 
-	// Number of frames rendered for use in frame timing data
+	// The game's frame in flight: its index (display slot where the runtime gives a display period, else a count of
+	// frames), the slot's display time and the display period
 	uint32_t nFrameIndex = 0;
+	std::atomic<uint32_t> frameSlot{ 0 };
+	uint64_t displaySlot = 0; // the last frame's, counted on by NextDisplaySlot
+	XrTime displaySlotTime = 0;
+	std::atomic<XrTime> frameDisplayTime{ 0 };
+	std::atomic<XrDuration> frameDisplayPeriod{ 0 };
+	// The display periods from xrWaitFrame's return to the frame's display
+	uint32_t vsyncsToFirstView = 0;
+	// The frame's xrWaitFrame call, the time it has spent in Submit and when its last eye came (from its start)
+	std::chrono::steady_clock::time_point frameStart{}, frameWaitReturned{};
+	float frameSubmitMs = 0.0f, frameNewFrameReadyMs = 0.0f;
+	// The last ended frame's, for GetFrameTiming
+	float lastSubmitMs = 0.0f, lastPresentMs = 0.0f, lastNewFrameReadyMs = 0.0f;
 
 	double frameSubmitTimeUs = 0.0;
 

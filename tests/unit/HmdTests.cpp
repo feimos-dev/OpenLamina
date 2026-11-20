@@ -2,6 +2,7 @@
 
 #include "stdafx.h"
 
+#include "XrBackend.h"
 #include "XrHMD.h"
 #include "Reimpl/BaseSystem.h"
 #include "logging.h"
@@ -236,6 +237,44 @@ TEST_CASE("A time's place on the vsync grid")
 	CHECK(XrHMD::VsyncPhase(1000000000, 1000000000, period, nullptr, nullptr));
 }
 
+TEST_CASE("Frame ids count display periods, and frames to come are located ahead by whole periods")
+{
+	const XrDuration period = 10000000; // 10 ms
+	const XrTime display = 1000000000 + 3000000;
+	// The same count GetTimeSinceLastVsync gives at the frame's display
+	uint64_t count = 0;
+	CHECK(XrHMD::VsyncPhase(display, display, period, nullptr, &count));
+	CHECK(XrBackend::DisplaySlot(display, period) == count);
+	CHECK(XrBackend::DisplaySlot(display + period, period) == count + 1);
+	CHECK(XrBackend::DisplaySlot(display, 0) == 0);
+	CHECK(XrBackend::DisplaySlot(1, period) == 0);
+
+	// The frame in flight shows 12 ms from now; the two after it, a period later each
+	const uint32_t slot = (uint32_t)count;
+	const XrTime now = display - 12000000;
+	CHECK(XrBackend::SecondsToSlot(slot, slot, display, period, now) == doctest::Approx(0.012));
+	CHECK(XrBackend::SecondsToSlot(slot + 2, slot, display, period, now) == doctest::Approx(0.032));
+	// Counted across the 32-bit wrap
+	CHECK(XrBackend::SecondsToSlot(1u, 0xffffffffu, display, period, now) == doctest::Approx(0.032));
+	CHECK(std::isnan(XrBackend::SecondsToSlot(slot, 0, display, period, now)));
+	CHECK(std::isnan(XrBackend::SecondsToSlot(slot, slot, display, 0, now)));
+	CHECK(std::isnan(XrBackend::SecondsToSlot(slot, slot, display, period, 0)));
+
+	// Counted on from the frame before: the periods between them, at least one, also across a change of rate
+	CHECK(XrBackend::NextDisplaySlot(0, 0, display, period) == count);
+	CHECK(XrBackend::NextDisplaySlot(count, display, display + 2 * period, period) == count + 2);
+	const XrDuration slower = 13888889; // 72 Hz
+	CHECK(XrBackend::NextDisplaySlot(count, display, display + slower, slower) == count + 1);
+	CHECK(XrBackend::NextDisplaySlot(count, display, display, period) == count + 1);
+	CHECK(XrBackend::NextDisplaySlot(count, display, display + period, 0) == 0);
+
+	// The periods from the poses to the display: whole ones, at least one
+	CHECK(XrBackend::VsyncsToDisplay(display, period, now) == 2);
+	CHECK(XrBackend::VsyncsToDisplay(display, period, display - period) == 1);
+	CHECK(XrBackend::VsyncsToDisplay(display, period, display + 1) == 1);
+	CHECK(XrBackend::VsyncsToDisplay(display, 0, now) == 0);
+}
+
 TEST_CASE("Without a session the vsync time is unknown and still written")
 {
 	XrHMD hmd;
@@ -360,4 +399,105 @@ TEST_CASE("The zero poses are identity when nothing better is known")
 			for (int c = 0; c < 4; c++)
 				CHECK(m.m[r][c] == (r == c ? 1.0f : 0.0f));
 	}
+}
+
+#include "DrvOpenXR.h"
+
+namespace {
+// A loader and runtime that take OpenXR up to maxMinor (of 1.x), and record the versions asked for
+uint32_t maxMinor = 0;
+std::vector<XrVersion> asked;
+XrResult XRAPI_CALL FakeCreateInstance(const XrInstanceCreateInfo* info, XrInstance* instance)
+{
+	asked.push_back(info->applicationInfo.apiVersion);
+	if (XR_VERSION_MINOR(info->applicationInfo.apiVersion) > maxMinor)
+		return XR_ERROR_API_VERSION_UNSUPPORTED;
+	*instance = (XrInstance)(uintptr_t)1;
+	return XR_SUCCESS;
+}
+XrResult XRAPI_CALL FailingCreateInstance(const XrInstanceCreateInfo* info, XrInstance* instance)
+{
+	asked.push_back(info->applicationInfo.apiVersion);
+	return XR_ERROR_RUNTIME_FAILURE;
+}
+} // namespace
+
+TEST_CASE("The OpenXR instance asks for the newest version the loader and runtime take")
+{
+	XrInstanceCreateInfo info{ XR_TYPE_INSTANCE_CREATE_INFO };
+	XrInstance instance = XR_NULL_HANDLE;
+	XrVersion version = 0;
+
+	// OpenXR 1.1 is taken at once
+	maxMinor = 1;
+	asked.clear();
+	CHECK(DrvOpenXR::CreateInstanceNewestVersion(info, &instance, &version, FakeCreateInstance) == XR_SUCCESS);
+	CHECK(version == XR_MAKE_VERSION(1, 1, 0));
+	CHECK(asked.size() == 1);
+
+	// A 1.0 runtime: refused 1.1, then 1.0
+	maxMinor = 0;
+	asked.clear();
+	CHECK(DrvOpenXR::CreateInstanceNewestVersion(info, &instance, &version, FakeCreateInstance) == XR_SUCCESS);
+	CHECK(version == XR_MAKE_VERSION(1, 0, 0));
+	REQUIRE(asked.size() == 2);
+	CHECK(asked[1] == XR_MAKE_VERSION(1, 0, 0));
+
+	// Any other failure isn't tried again at an older version
+	asked.clear();
+	version = 0;
+	CHECK(DrvOpenXR::CreateInstanceNewestVersion(info, &instance, &version, FailingCreateInstance) == XR_ERROR_RUNTIME_FAILURE);
+	CHECK(asked.size() == 1);
+	CHECK(version == 0);
+}
+
+TEST_CASE("The preferred refresh rate asks for the display's nearest one")
+{
+	const std::vector<float> rates = { 72.0f, 90.0f, 120.0f };
+	CHECK(XrHMD::NearestRate(rates, 90.0f) == 90.0f);
+	CHECK(XrHMD::NearestRate(rates, 100.0f) == 90.0f);
+	CHECK(XrHMD::NearestRate(rates, 144.0f) == 120.0f);
+	CHECK(XrHMD::NearestRate(rates, 60.0f) == 72.0f);
+	// No preference, or no rates: nothing to ask for
+	CHECK(XrHMD::NearestRate(rates, 0.0f) == 0.0f);
+	CHECK(XrHMD::NearestRate(rates, NAN) == 0.0f);
+	CHECK(XrHMD::NearestRate({}, 90.0f) == 0.0f);
+	CHECK(XrHMD::NearestRate({ 0.0f, 80.0f }, 10.0f) == 80.0f);
+}
+
+TEST_CASE("Without a runtime the display's rates are unknown")
+{
+	XrHMD hmd;
+	CHECK(XrHMD::RefreshRates().empty());
+	vr::ETrackedPropertyError err = vr::TrackedProp_Success;
+	float rates[4] = {};
+	CHECK(hmd.GetArrayTrackedDeviceProperty(vr::Prop_DisplayAvailableFrameRates_Float_Array, vr::k_unFloatPropertyTag, rates, sizeof(rates), &err) == 0);
+	CHECK(err == vr::TrackedProp_UnknownProperty);
+	CHECK_FALSE(hmd.GetBoolTrackedDeviceProperty(vr::Prop_DisplaySupportsMultipleFramerates_Bool, &err));
+	CHECK(err == vr::TrackedProp_Success);
+}
+
+TEST_CASE("Standing poses use the stage, else the local floor where the runtime has it, else the local space")
+{
+	const std::vector<XrReferenceSpaceType> withFloor = XrSessionGlobals::StandingSpaceTypes(true);
+	REQUIRE(withFloor.size() == 3);
+	CHECK(withFloor[0] == XR_REFERENCE_SPACE_TYPE_STAGE);
+	CHECK(withFloor[1] == OC_XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR);
+	CHECK(withFloor[2] == XR_REFERENCE_SPACE_TYPE_LOCAL);
+	const std::vector<XrReferenceSpaceType> without = XrSessionGlobals::StandingSpaceTypes(false);
+	REQUIRE(without.size() == 2);
+	CHECK(without[0] == XR_REFERENCE_SPACE_TYPE_STAGE);
+	CHECK(without[1] == XR_REFERENCE_SPACE_TYPE_LOCAL);
+}
+
+#include "Misc/Input/KhrSimpleInteractionProfile.h"
+
+TEST_CASE("The headset tells whether its controllers' profile changed")
+{
+	XrHMD hmd;
+	KhrSimpleInteractionProfile first, second;
+	CHECK(hmd.SetInteractionProfile(&first));
+	CHECK_FALSE(hmd.SetInteractionProfile(&first));
+	CHECK(hmd.SetInteractionProfile(&second));
+	CHECK(hmd.SetInteractionProfile(nullptr));
 }

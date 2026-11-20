@@ -1179,7 +1179,8 @@ void DeviceIdentityCase(CaseContext& c)
 // What a program that only watches the VR system (the Steam client) does to the OpenXR runtime. Run as steam.exe and
 // as oc_conformance.exe (expect/observer_steam.json, expect/observer_game.json) against the stand-in runtime, which
 // writes its dump (OC_TEST_RUNTIME_DUMP) when an instance is destroyed: the dump existing is the runtime having been
-// started.
+// started. The headset check's instance is kept for a session that may follow, until the shutdown, so the dump is
+// looked for after it.
 void ObserverCase(CaseContext& c)
 {
 	Json::Value program;
@@ -1198,13 +1199,13 @@ void ObserverCase(CaseContext& c)
 	present["ret"] = c.core->BIsHmdPresent();
 	c.Record("BIsHmdPresent", present);
 
+	c.core->Cleanup();
+
 	Json::Value started;
 	const char* dump = getenv("OC_TEST_RUNTIME_DUMP");
 	std::error_code ec;
 	started["runtime_started"] = dump && std::filesystem::exists(dump, ec);
 	c.Record("OpenXR runtime", started);
-	if (init["init_error"].asInt() == vr::VRInitError_None)
-		c.core->Cleanup();
 }
 
 // This program's folder, where oc_echo_app is built

@@ -5,6 +5,7 @@
 #include "generated/interfaces/vrtypes.h"
 #include <array>
 #include <mutex>
+#include <optional>
 #include <openxr/openxr.h>
 #include <shared_mutex>
 #include <unordered_map>
@@ -54,10 +55,17 @@ public:
 	XrSessionGlobals();
 
 	XrSpace floorSpace = XR_NULL_HANDLE;
+	// The seated origin: the seated zero pose in the standing space (xr_seated_zero) where one is set, else the
+	// runtime's local space
 	XrSpace seatedSpace = XR_NULL_HANDLE;
-	// seatedSpace's pose in LOCAL: identity until ResetSeatedZeroPose moves it
-	XrPosef seatedPose = { { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
 	XrSpace viewSpace = XR_NULL_HANDLE;
+	// The reference space floorSpace was made from (StandingSpaceTypes); XR_REFERENCE_SPACE_TYPE_MAX_ENUM if none
+	XrReferenceSpaceType floorSpaceType = XR_REFERENCE_SPACE_TYPE_MAX_ENUM;
+	/** Moves the seated origin to zero, a pose in the standing space; false (the old origin stays) if the runtime
+	 * won't make the space. The caller holds the session lock exclusively. */
+	bool SetSeatedZero(const XrPosef& zero);
+	// The reference spaces the standing space is made from, in the order they're tried
+	static std::vector<XrReferenceSpaceType> StandingSpaceTypes(bool localFloor);
 
 	XrSystemProperties systemProperties = { XR_TYPE_SYSTEM_PROPERTIES };
 	XrSystemHandTrackingPropertiesEXT handTrackingProperties = { XR_TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT };
@@ -186,8 +194,7 @@ public:
 };
 
 // The runtime's time now, through XR_KHR_win32_convert_performance_counter_time (Windows) or
-// XR_KHR_convert_timespec_time (elsewhere) where the instance has it enabled (a headless session's, which runs no
-// frames to take a time from); 0 without
+// XR_KHR_convert_timespec_time (elsewhere) where the runtime has it (it's enabled for every session); 0 without
 XrTime xr_time_now();
 
 XrSpace xr_space_from_tracking_origin(vr::ETrackingUniverseOrigin origin);
@@ -205,8 +212,9 @@ extern SessionWrapper& xr_session;
 extern XrSystemId xr_system;
 XrViewConfigurationView& xr_main_view(XruEye view_id);
 extern XrSessionGlobals* xr_gbl;
-// The seated origin's pose in the local space, kept for sessions made later
-extern XrPosef xr_seated_origin;
+// The seated zero pose in the standing space, once one is set (ResetSeatedZeroPose, a room setup or the store's): each
+// session's seated origin. Written with the session lock held exclusively.
+extern std::optional<XrPosef> xr_seated_zero;
 
 class XrExt;
 extern XrExt* xr_ext;

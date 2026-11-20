@@ -1,6 +1,8 @@
 #pragma once
 #include "../OpenOVR/custom_types.h" // TODO move this into the OpenVR tree
+#include "../OpenOVR/Misc/Image.h"
 #include "generated/interfaces/vrtypes.h"
+#include <cmath>
 #include <memory>
 
 // for OOVR_Compositor_FrameTiming
@@ -8,6 +10,14 @@
 
 // Avoid including InteractionProfile for a single use
 class InteractionProfile;
+
+// The scene overlay of the old compositor calls (IVRCompositor SetOverlay and the like): an image on a flat quad fixed
+// to the head, drawn over the scene
+struct SceneOverlayImage {
+	Image image; // straight alpha, scaled by the overlay's
+	vr::HmdMatrix34_t inHead{}; // the quad's centre and orientation in the head (facing it along -Z)
+	float width = 1.0f; // meters; the height follows the image's aspect
+};
 
 enum ETrackingStateType {
 	/**
@@ -250,6 +260,13 @@ public:
 	typedef int openvr_enum_t;
 
 	DECLARE_BACKEND_FUNCS(virtual, = 0)
+
+	/** The game's frame in flight, as a count of display periods (its frame index); 0 where unknown */
+	virtual uint32_t CurrentFrameId() { return 0; }
+	/** Seconds from now to the display of frame frameId (CurrentFrameId or a later one); NaN where unknown */
+	virtual float SecondsToFrame(uint32_t frameId) { return NAN; }
+	/** The scene overlay drawn over the game's frames from now on; nullptr for none */
+	virtual void SetSceneOverlay(std::shared_ptr<const SceneOverlayImage> overlay) {}
 
 	// Virtual Destructor
 	virtual ~IBackend();

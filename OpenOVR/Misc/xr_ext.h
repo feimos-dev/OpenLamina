@@ -64,6 +64,14 @@ struct OcXrEventDataDisplayRefreshRateChangedFB {
 	float toDisplayRefreshRate;
 };
 typedef XrResult(XRAPI_PTR* OcPFN_xrGetDisplayRefreshRateFB)(XrSession session, float* displayRefreshRate);
+typedef XrResult(XRAPI_PTR* OcPFN_xrEnumerateDisplayRefreshRatesFB)(XrSession session, uint32_t capacity, uint32_t* count, float* rates);
+typedef XrResult(XRAPI_PTR* OcPFN_xrRequestDisplayRefreshRateFB)(XrSession session, float displayRefreshRate);
+// The OpenXR version xr_instance was made for
+extern XrVersion xr_instance_version;
+
+// XR_EXT_local_floor, newer than the bundled OpenXR headers (and core in OpenXR 1.1)
+#define OC_XR_EXT_LOCAL_FLOOR_EXTENSION_NAME "XR_EXT_local_floor"
+static const XrReferenceSpaceType OC_XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR = (XrReferenceSpaceType)1000426000;
 // XR_EXT_user_presence, newer than the bundled OpenXR headers: whether the user wears the headset
 #define OC_XR_EXT_USER_PRESENCE_EXTENSION_NAME "XR_EXT_user_presence"
 static const XrStructureType OC_XR_TYPE_EVENT_DATA_USER_PRESENCE_CHANGED_EXT = (XrStructureType)1000470000;
@@ -110,6 +118,8 @@ public:
 	bool Equirect2KHR_Available() { return supportsEquirect2KHR; }
 	bool ColorScaleBiasKHR_Available() { return supportsColorScaleBiasKHR; }
 	bool UserPresence_Available() { return supportsUserPresence; }
+	// LOCAL_FLOOR reference spaces: XR_EXT_local_floor, or OpenXR 1.1's core
+	bool LocalFloor_Available() { return supportsLocalFloor || xr_instance_version >= XR_MAKE_VERSION(1, 1, 0); }
 	bool xrGetVisibilityMaskKHR_Available() { return pfnXrGetVisibilityMaskKHR != nullptr; }
 	bool xrMndxXdevSpace_Available()
 	{
@@ -135,6 +145,20 @@ public:
 		if (!pfnXrGetDisplayRefreshRateFB)
 			return XR_ERROR_FUNCTION_UNSUPPORTED; // the runtime lacks the extension; callers check the result
 		return pfnXrGetDisplayRefreshRateFB(session, displayRefreshRate);
+	}
+
+	XrResult xrEnumerateDisplayRefreshRatesFB(XrSession session, uint32_t capacity, uint32_t* count, float* rates)
+	{
+		if (!pfnXrEnumerateDisplayRefreshRatesFB)
+			return XR_ERROR_FUNCTION_UNSUPPORTED;
+		return pfnXrEnumerateDisplayRefreshRatesFB(session, capacity, count, rates);
+	}
+	bool RequestDisplayRefreshRateFB_Available() { return pfnXrRequestDisplayRefreshRateFB != nullptr; }
+	XrResult xrRequestDisplayRefreshRateFB(XrSession session, float displayRefreshRate)
+	{
+		if (!pfnXrRequestDisplayRefreshRateFB)
+			return XR_ERROR_FUNCTION_UNSUPPORTED;
+		return pfnXrRequestDisplayRefreshRateFB(session, displayRefreshRate);
 	}
 
 	bool handTrackingExtensionAvailable() { return pfnXrCreateHandTrackerExt != nullptr; }
@@ -295,6 +319,8 @@ private:
 	PFN_xrCreateXDevSpaceMNDX pfnxrCreateXDevSpaceMNDX = nullptr;
 
 	OcPFN_xrGetDisplayRefreshRateFB pfnXrGetDisplayRefreshRateFB = nullptr;
+	OcPFN_xrEnumerateDisplayRefreshRatesFB pfnXrEnumerateDisplayRefreshRatesFB = nullptr;
+	OcPFN_xrRequestDisplayRefreshRateFB pfnXrRequestDisplayRefreshRateFB = nullptr;
 
 	std::set<std::string> enabledExtensions;
 	bool supportsG2Controller = false;
@@ -304,6 +330,7 @@ private:
 	bool supportsEquirect2KHR = false;
 	bool supportsColorScaleBiasKHR = false;
 	bool supportsUserPresence = false;
+	bool supportsLocalFloor = false;
 
 #if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
 	PFN_xrGetD3D11GraphicsRequirementsKHR pfnXrGetD3D11GraphicsRequirementsKHR = nullptr;

@@ -100,6 +100,10 @@ public:
 	/** The Scene document: this process becomes the scene application (at session start), or stops being it */
 	static void SetSceneProcess(bool running);
 	static void SetSceneProcess(SharedStore& store, bool running);
+	/** This process, the scene application, has drawn: a frame of its own shown, or a skybox set. Its scene application
+	 * state is Waiting until then, and Running from then on (until it stops being the scene application). */
+	static void SetSceneDrawn();
+	static void SetSceneDrawn(SharedStore& store);
 
 	/** Lists this process in the Applications document with its application key, so other programs know it (at init).
 	 * An entry IdentifyApplication made stays. */

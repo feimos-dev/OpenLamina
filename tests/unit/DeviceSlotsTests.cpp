@@ -3,6 +3,7 @@
 #include "stdafx.h"
 
 #include "Drivers/Backend.h"
+#include "Reimpl/BaseCompositor.h"
 #include "Reimpl/BaseSystem.h"
 
 #include <map>
@@ -35,6 +36,10 @@ public:
 	std::map<vr::TrackedDeviceIndex_t, std::shared_ptr<FakeDevice>> devices;
 	bool lost = false;
 	bool strained = false;
+	uint32_t frameId = 0;
+	float predictedSeconds = -1.0f;
+	uint32_t CurrentFrameId() override { return frameId; }
+	float SecondsToFrame(uint32_t id) override { return frameId ? (float)(int32_t)(id - frameId) * 0.01f : NAN; }
 
 	std::shared_ptr<IHMD> GetPrimaryHMD() override { return nullptr; }
 	std::shared_ptr<ITrackedDevice> GetDevice(vr::TrackedDeviceIndex_t index) override
@@ -43,7 +48,12 @@ public:
 		return it == devices.end() ? nullptr : it->second;
 	}
 	std::shared_ptr<ITrackedDevice> GetDeviceByHand(ITrackedDevice::TrackedDeviceType) override { return nullptr; }
-	void GetDeviceToAbsoluteTrackingPose(vr::ETrackingUniverseOrigin, float, vr::TrackedDevicePose_t*, uint32_t) override {}
+	void GetDeviceToAbsoluteTrackingPose(vr::ETrackingUniverseOrigin, float seconds, vr::TrackedDevicePose_t* poses, uint32_t count) override
+	{
+		predictedSeconds = seconds;
+		for (uint32_t i = 0; i < count; i++)
+			poses[i].bPoseIsValid = true;
+	}
 	void WaitForTrackingData() override {}
 	IBackend::openvr_enum_t StoreEyeTexture(vr::EVREye, const vr::Texture_t*, const vr::VRTextureBounds_t*, vr::EVRSubmitFlags, bool) override { return 0; }
 	void SubmitFrames(bool) override {}
@@ -196,6 +206,21 @@ TEST_CASE("Poses are located as far ahead as asked")
 	CHECK(std::llabs(xr_utils::PoseTimeForPrediction(std::nanf(""), now, 0) - (now - 100000000)) < 10);
 }
 
+TEST_CASE("The latest tracking data is located now, a frame's poses at its display time")
+{
+	const XrTime now = 1000000000, frame = 1016000000, asked = 1020000000;
+	CHECK(xr_utils::PoseTimeForState(true, 0, now, frame) == now);
+	CHECK(xr_utils::PoseTimeForState(false, 0, now, frame) == frame);
+	// A time the caller names
+	CHECK(xr_utils::PoseTimeForState(true, asked, now, frame) == asked);
+	CHECK(xr_utils::PoseTimeForState(false, asked, now, frame) == asked);
+	// Without one of them, the other; without either, none (one is the frame time before the first frame)
+	CHECK(xr_utils::PoseTimeForState(true, 0, 0, frame) == frame);
+	CHECK(xr_utils::PoseTimeForState(false, 0, now, 1) == now);
+	CHECK(xr_utils::PoseTimeForState(true, 0, 0, 1) == 0);
+	CHECK(xr_utils::PoseTimeForState(false, 0, 0, 0) == 0);
+}
+
 namespace {
 std::vector<vr::VREvent_t> Drain(BaseSystem& system)
 {
@@ -283,4 +308,51 @@ TEST_CASE("The application is told to reduce its rendering when the runtime is s
 	slots.backend->strained = true;
 	CHECK(system.ShouldApplicationReduceRenderingWork());
 	CHECK_FALSE(system.ShouldApplicationPause());
+}
+
+TEST_CASE("Pose prediction ids are the frames' indices, and a frame to come gets poses predicted for it")
+{
+	WithSlots slots;
+	BaseCompositor compositor;
+	vr::TrackedDevicePose_t poses[2] = {};
+
+	// Without a frame index from the runtime the ids count frames
+	compositor.WaitGetPoses(poses, 2, nullptr, 0);
+	uint32_t render = 0, game = 0;
+	compositor.GetLastPosePredictionIDs(&render, &game);
+	CHECK(render == 1);
+
+	slots.backend->frameId = 5000;
+	compositor.WaitGetPoses(poses, 2, nullptr, 0);
+	compositor.GetLastPosePredictionIDs(&render, &game);
+	CHECK(render == 5000);
+	CHECK(compositor.GetPosesForFrame(5000, poses, 2) == 0);
+
+	// Two frames ahead: predicted for its display
+	vr::TrackedDevicePose_t ahead[2] = {};
+	CHECK(compositor.GetPosesForFrame(5002, ahead, 2) == 0);
+	CHECK(slots.backend->predictedSeconds == doctest::Approx(0.02f));
+	CHECK(ahead[1].bPoseIsValid);
+	// Too far ahead, or long gone
+	CHECK(compositor.GetPosesForFrame(5100, ahead, 2) == 107 /* IndexOutOfRange */);
+	CHECK(compositor.GetPosesForFrame(4000, ahead, 2) == 107 /* IndexOutOfRange */);
+}
+
+TEST_CASE("An IPD offset moves the eyes apart along the line between them")
+{
+	XrPosef left{ { 0, 0, 0, 1 }, { -0.032f, 1.6f, 0 } }, right{ { 0, 0, 0, 1 }, { 0.032f, 1.6f, 0 } };
+	xr_utils::WidenEyes(left, right, 0.004f);
+	CHECK(left.position.x == doctest::Approx(-0.034f));
+	CHECK(right.position.x == doctest::Approx(0.034f));
+	CHECK(left.position.y == doctest::Approx(1.6f));
+	// Narrower, along a turned head's line
+	XrPosef l2{ { 0, 0, 0, 1 }, { 0, 0, -0.03f } }, r2{ { 0, 0, 0, 1 }, { 0, 0, 0.03f } };
+	xr_utils::WidenEyes(l2, r2, -0.01f);
+	CHECK(l2.position.z == doctest::Approx(-0.025f));
+	CHECK(r2.position.z == doctest::Approx(0.025f));
+	CHECK(l2.position.x == doctest::Approx(0.0f));
+	// Eyes at one place stay
+	XrPosef same{ { 0, 0, 0, 1 }, { 1, 1, 1 } }, same2 = same;
+	xr_utils::WidenEyes(same, same2, 0.01f);
+	CHECK(same.position.x == 1.0f);
 }

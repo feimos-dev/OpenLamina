@@ -143,8 +143,12 @@ enum OOVR_Compositor_DeviceType {
 	OOVR_Compositor_DeviceType_OpenGL,
 };
 
+struct Image;
+struct SceneOverlayImage;
+
 class BaseCompositor {
 private:
+	std::shared_ptr<Compositor> overlayReader; // reads SetOverlay's textures back
 	std::atomic<bool> leftEyeSubmitted{ false }, rightEyeSubmitted{ false };
 
 	// The old compositor window calls (IVRCompositor_005-008) and SetGraphicsDevice (005, 006)
@@ -501,7 +505,14 @@ public:
 	ovr_enum_t SetSkyboxOverrideWithConvention(EGraphicsAPIConvention eTextureType, void* pFront, void* pBack,
 	    void* pLeft, void* pRight, void* pTop, void* pBottom);
 
-	/** IVRCompositor_005's scene overlay: a quad drawn over the scene. OpenComposite draws none (OC_UNSUPPORTED). */
+	/** IVRCompositor_005's scene overlay, a quad fixed to the head drawn over the scene by the backend, as an image and
+	 * its settings make it: the part of the image the UV offset and scale pick, its alpha scaled by the settings', on a
+	 * quad scale meters wide, distance meters ahead of the head as the settings' transform turns and moves it. False
+	 * for an empty image or part. */
+	static bool SceneOverlayFrom(const Image& source, const vr::Compositor_OverlaySettings& settings, SceneOverlayImage& out);
+	// Hands a scene overlay of that image and settings to the backend (none for an empty image)
+	void ShowSceneOverlay(const Image& image, const vr::Compositor_OverlaySettings* pSettings);
+
 	void GetOverlayDefaults(vr::Compositor_OverlaySettings* pSettings);
 	void SetOverlay(void* pTexture, vr::Compositor_OverlaySettings* pSettings);
 	void SetOverlayRaw(void* buffer, uint32_t width, uint32_t height, uint32_t depth, vr::Compositor_OverlaySettings* pSettings);
