@@ -1,0 +1,27 @@
+# Once a week: the OpenVR interface versions in every tag of Valve's SDK (github.com/ValveSoftware/openvr) against
+# tests/conformance/interfaces.txt. Fails on anything new (a version not listed, or a newer tag still shipping one); the
+# log says what, and how to update the list (scripts/openvr_inventory.py --write).
+name: OpenVR inventory
+
+on:
+  schedule:
+    - cron: '17 4 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  inventory:
+    name: Valve's SDK tags
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v7
+
+      # Blobless: the headers each tag needs are fetched as they're read
+      - name: Valve's SDK
+        run: git clone -q --filter=blob:none --no-checkout https://github.com/ValveSoftware/openvr.git "$RUNNER_TEMP/openvr"
+
+      - name: Compare
+        run: python3 scripts/openvr_inventory.py --valve-repo "$RUNNER_TEMP/openvr" --compare tests/conformance/interfaces.txt

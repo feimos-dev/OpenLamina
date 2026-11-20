@@ -2,6 +2,7 @@
 """Inventory of the OpenVR interface versions Valve has shipped, against the ones OpenLamina offers.
 
   openvr_inventory.py --valve-repo <clone of github.com/ValveSoftware/openvr> --write tests/conformance/interfaces.txt
+  openvr_inventory.py --valve-repo <clone> --compare tests/conformance/interfaces.txt  # fails on anything new
   openvr_inventory.py --check        # every listed version is offered (a GEN_INTERFACE line) or in not_implemented.txt
   openvr_inventory.py --self-test
 
@@ -80,6 +81,32 @@ def write(repo, out):
     return inv
 
 
+def compare(repo, path):
+    """What Valve's tags have that the listed file doesn't: a version it lacks, or one whose kind or tags changed (a
+    newer tag still shipping it). 1 if anything is new."""
+    inv, commit, date = inventory(repo)
+    listed = {}
+    for line in Path(path).read_text(encoding="utf-8").splitlines():
+        parts = line.split()
+        if parts and not line.startswith("#"):
+            listed[parts[0]] = parts[1:]
+    new = 0
+    for v, (kind, first, last) in sorted(inv.items(), key=lambda i: version_key(i[0])):
+        if v not in listed:
+            print(f"new version: {v} {kind} {first} {last}")
+            new += 1
+        elif listed[v] != [kind, first, last]:
+            print(f"changed: {v} {' '.join(listed[v])} -> {kind} {first} {last}")
+            new += 1
+    for v in sorted(set(listed) - set(inv), key=version_key):
+        print(f"listed but not in Valve's tags: {v}")
+    print(f"{len(inv)} versions in Valve's tags at {commit} ({date}), {len(listed)} listed; {new} new or changed")
+    if new:
+        print(f"Update the list: openvr_inventory.py --valve-repo <clone> --write {path}, then offer each new version "
+              "or set it aside in not_implemented.txt")
+    return 1 if new else 0
+
+
 def read_listed(path):
     listed = {}
     for line in Path(path).read_text(encoding="utf-8").splitlines():
@@ -149,6 +176,7 @@ def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--valve-repo")
     ap.add_argument("--write")
+    ap.add_argument("--compare", help="the list to compare Valve's tags with (interfaces.txt): fails on anything new")
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args()
@@ -160,6 +188,10 @@ def main():
         inv = write(args.valve_repo, args.write)
         kinds = [k for k, _, _ in inv.values()]
         print(f"wrote {args.write}: {kinds.count('app')} app, {kinds.count('capi')} capi")
+    if args.compare:
+        if not args.valve_repo:
+            ap.error("--compare needs --valve-repo")
+        return compare(args.valve_repo, args.compare)
     if args.check:
         return check(ROOT)
     if not (args.write or args.check):
