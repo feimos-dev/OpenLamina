@@ -135,9 +135,8 @@ public:
 	/**
 	 * Whether the game's actions (its manifest's, or legacy input's) and the info set may be attached now: once the
 	 * session is on the game's device (or will stay where it is: a helper program's, or a game whose device can't be
-	 * used), or the game has had input focus without submitting a frame. Before that the session restart for its first
-	 * Submit would follow, and one more for a manifest it loads by then. A game that hasn't submitted within
-	 * kInputsWithoutSubmit of first being asked about gets them all the same.
+	 * used). Before that the session restart for its first Submit would follow, and one more for a manifest it loads by
+	 * then. A game that hasn't submitted within kInputsWithoutSubmit of first being asked about gets them all the same.
 	 */
 	static bool InputsMayAttach();
 	static constexpr std::chrono::seconds kInputsWithoutSubmit{ 2 };

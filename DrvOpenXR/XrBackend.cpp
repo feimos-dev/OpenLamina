@@ -2064,7 +2064,7 @@ bool XrBackend::InputsMayAttach()
 	if (IsHelperSession() || BaseClientCore::appType != vr::VRApplication_Scene)
 		return true;
 	XrBackend* backend = CurrentBackend();
-	if (!backend || backend->usingApplicationGraphicsAPI || backend->appGraphicsUnusable || backend->inputFocusHad)
+	if (!backend || backend->usingApplicationGraphicsAPI || backend->appGraphicsUnusable)
 		return true;
 	// No Submit yet: a game that never submits (or takes a long time to) gets its inputs after a while
 	using clock = std::chrono::steady_clock;
