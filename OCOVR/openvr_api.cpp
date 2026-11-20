@@ -16,6 +16,7 @@
 #include "Misc/backtrace.h"
 #include "logging.h"
 #include "steamvr_abi.h"
+#include <cstdlib>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -277,6 +278,21 @@ VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal(EVRInitError* peError, EVRAppl
 	return VR_InitInternal2(peError, eApplicationType, NULL);
 }
 
+// A game that exits without VR_Shutdown: OpenLamina shuts down from an exit handler, made again for each session once
+// its OpenXR instance is there, so it runs before the static destructors of the OpenXR loader built into this library
+// (they unload the runtime, which the session's teardown still calls into) and before the runtime's own, which come
+// anew each time the loader loads it again. The backend's own static destructor would run after all of them.
+static void ShutdownAtExit()
+{
+	std::lock_guard<std::recursive_mutex> lock(state_mutex);
+	if (!running)
+		return;
+	OOVR_LOG("The program is exiting without VR_Shutdown: shutting OpenLamina down");
+	scene_init_count = 1;
+	refused_init_count = 0;
+	VR_ShutdownInternal();
+}
+
 VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(EVRInitError* peError, EVRApplicationType eApplicationType, const char* pStartupInfo)
 {
 	OOVR_LOG_ONCEF("Initializing OpenLamina, a fork of OpenComposite (github.com/feimos-dev/OpenLamina) - revision %s", OC_VERSION);
@@ -367,6 +383,7 @@ VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(EVRInitError* peError, EVRApp
 		return RefuseInit(peError, backendError != VRInitError_None ? backendError : VRInitError_Init_Internal);
 	}
 	BackendManager::Create(backend);
+	atexit(ShutdownAtExit);
 	DrvOpenXR::KeepOverlaysInstance();
 	// An earlier Utility Init not yet shut down is matched by a Shutdown too
 	scene_init_count = utility_init ? 2 : 1;
