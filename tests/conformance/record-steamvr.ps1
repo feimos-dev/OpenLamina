@@ -9,7 +9,8 @@
     3. Copies, with their SHA-256s, the paths file (%LOCALAPPDATA%\openvr\openvrpaths.vrpath) and, from Steam's config
        folder, steamvr.vrsettings, chaperone_info.vrchap, appconfig.json and vrappconfig\.
     4. Turns on the null driver in steamvr.vrsettings (driver_null.enable, steamvr.forcedDriver = null,
-       steamvr.activateMultipleDrivers = false, other keys kept) and puts SteamVR first in the paths file.
+       steamvr.activateMultipleDrivers = false, or true with -Controllers, other keys kept) and puts SteamVR first in
+       the paths file.
     5. Runs run.py against SteamVR's vrclient_x64.dll (--real-runtime: unsafe_methods.txt isn't called).
     6. Always, at the end: stops SteamVR's processes, puts every backed-up file back (and removes any of them that
        didn't exist before), and fails unless every SHA-256 matches its backup.
@@ -24,7 +25,10 @@ param(
     # Only the init-matrix case, and no expected file: to check SteamVR starts with the null driver
     [switch]$Probe,
     # One at a time: a test program that ends SteamVR would otherwise take the others running beside it down too
-    [int]$Jobs = 1
+    [int]$Jobs = 1,
+    # The null headset with SteamVR's other drivers too (Lighthouse: real controllers switched on), for the cases whose
+    # answers need controllers
+    [switch]$Controllers
 )
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
@@ -70,7 +74,7 @@ $appconfigBefore = if (Test-Path $appconfigDir) { @(Get-ChildItem -LiteralPath $
 
 if ($WhatIf) {
     $manifest | Format-Table Exists, Hash, Path -AutoSize | Out-String -Width 220 | Write-Host
-    Write-Host "Would set driver_null.enable, steamvr.forcedDriver = null, steamvr.activateMultipleDrivers = false in $(Join-Path $config 'steamvr.vrsettings')"
+    Write-Host "Would set driver_null.enable, steamvr.forcedDriver = null, steamvr.activateMultipleDrivers = $([bool]$Controllers) in $(Join-Path $config 'steamvr.vrsettings')"
     Write-Host "Would run run.py against $(Join-Path $steamvr 'bin\vrclient_x64.dll'), then put everything back"
     return
 }
@@ -88,7 +92,7 @@ try {
     if (-not $settings.ContainsKey('steamvr')) { $settings['steamvr'] = @{} }
     $settings['driver_null']['enable'] = $true
     $settings['steamvr']['forcedDriver'] = 'null'
-    $settings['steamvr']['activateMultipleDrivers'] = $false
+    $settings['steamvr']['activateMultipleDrivers'] = [bool]$Controllers
     $settings | ConvertTo-Json -Depth 32 | Set-Content -LiteralPath $settingsPath -Encoding utf8
 
     # SteamVR first in the paths file, as SteamVR puts itself when started from Steam: its own processes (vrmonitor

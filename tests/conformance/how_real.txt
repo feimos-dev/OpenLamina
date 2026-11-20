@@ -13,20 +13,20 @@ DriverManager 5 0 0 0 100
 ExtendedDisplay 3 0 0 0 100
 HeadsetView 9 0 0 0 100
 IOBuffer 6 0 0 0 100
-Input 96 2 3 0 97
+Input 99 2 3 0 97
 Mailbox 4 0 0 1 75
 Notifications 7 0 0 0 100
-Overlay 132 0 15 0 100
-OverlayView 4 3 0 0 25
+Overlay 136 0 16 0 100
+OverlayView 4 2 0 0 50
 Paths 2 0 0 0 100
 RenderModels 24 0 3 0 100
 Resources 2 0 0 0 100
 Screenshots 7 0 0 0 100
 Settings 19 0 0 0 100
 SpatialAnchors 5 0 0 0 100
-System 77 2 4 1 96
+System 78 2 4 1 96
 TrackedCamera 11 0 0 0 100
-all 619 10 31 3 97
+all 627 9 32 3 98
 
 # Interface versions of OpenLamina's own (OpenVRHeaders/custom_interfaces), and why each is there
 IVRClientCore_002 IVRClientCore's old versions, which openvr_api.dll asks vrclient for: Valve never published them
