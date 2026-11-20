@@ -384,7 +384,8 @@ private:
 
 	// Whether we've restarted the session to use the application's rendering API yet
 	std::atomic<bool> usingApplicationGraphicsAPI{ false };
-
+	// When InputsMayAttach was first asked before a Submit (steady_clock ticks; 0 before)
+	std::atomic<std::chrono::steady_clock::rep> inputsFirstAsked{ 0 };
 	// An overlay application's textures, copied onto its session's device
 	std::unique_ptr<class OverlayTextureCopy> overlayCopy;
 

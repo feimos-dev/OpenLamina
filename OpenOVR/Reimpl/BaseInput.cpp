@@ -908,6 +908,9 @@ void BaseInput::BindInputsForSession()
 	// If we didn't request the restart but we also haven't even loaded actions yet, there's nothing to bind yet.
 	if (restartingSession || !hasLoadedActions)
 		return;
+	// No session to bind to (it was lost): the one made again binds them
+	if (XrBackend::CurrentSessionGone())
+		return;
 
 	// Since the session has changed, any actionspaces we previously created are now invalid
 	for (const std::unique_ptr<Action>& action : actions.GetItems()) {

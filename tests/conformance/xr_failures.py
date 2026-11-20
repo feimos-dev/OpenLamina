@@ -94,7 +94,7 @@ def check(name, want, out):
         for key, value in want_r.items():
             if key.endswith("_min") and (r.get(key.removesuffix("_min")) or 0) < value:
                 misses.append(f"overlay-app-loss: {key.removesuffix('_min')} {r.get(key.removesuffix('_min'))}, expected at least {value}")
-            elif key in ("sessions_lost", "instances_lost") and r.get(key) != value:
+            elif key in ("sessions_lost", "instances_lost", "manifest") and r.get(key) != value:
                 misses.append(f"overlay-app-loss: {key} {r.get(key)}, expected {value}")
     if "rebuilt_actions" in want:
         # Case input-frames through an instance loss: the last instance has the game's manifest's actions and their

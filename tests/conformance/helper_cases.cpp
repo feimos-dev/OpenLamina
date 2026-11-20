@@ -730,8 +730,9 @@ void OverlayAppCase(CaseContext& c)
 }
 
 // An overlay application whose session (or instance) the runtime loses (xr_failures.py's lost_overlay scripts): its
-// overlay from memory is shown for 2.5 s while it polls its events every 11 ms. The device events and quits it got, in
-// order, and what the stand-in saw: the sessions made and lost, and the last session's frames.
+// overlay from memory is shown for 2.5 s while it polls its events every 11 ms, and loads the manifest (--manifest)
+// 0.5 s in, while its session is lost. The device events and quits it got, in order, the manifest's answer, and what
+// the stand-in saw: the sessions made and lost, and the last session's frames.
 void OverlayAppLossCase(CaseContext& c)
 {
 	using namespace vr::IVROverlay_028;
@@ -752,8 +753,15 @@ void OverlayAppLossCase(CaseContext& c)
 		vr::HmdMatrix34_t m = At(0, 1.5f, -2);
 		ov->SetOverlayTransformAbsolute(h, vr::TrackingUniverseStanding, &m);
 		ov->ShowOverlay(h);
-		const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(2500);
+		const auto start = std::chrono::steady_clock::now();
+		const auto end = start + std::chrono::milliseconds(2500);
+		bool manifestLoaded = false;
 		while (std::chrono::steady_clock::now() < end) {
+			if (!manifestLoaded && !c.manifest.empty() && std::chrono::steady_clock::now() >= start + std::chrono::milliseconds(500)) {
+				manifestLoaded = true;
+				auto* in = Interface<vr::IVRInput_011::IVRInput>(c, "IVRInput_011");
+				r["manifest"] = in ? (int)in->SetActionManifestPath(c.manifest.c_str()) : -1;
+			}
 			vr::VREvent_t ev{};
 			while (sys->PollNextEvent(&ev, sizeof(ev))) {
 				if (ev.eventType == vr::VREvent_TrackedDeviceActivated || ev.eventType == vr::VREvent_TrackedDeviceDeactivated
