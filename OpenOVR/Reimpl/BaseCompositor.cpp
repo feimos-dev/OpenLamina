@@ -823,7 +823,7 @@ void BaseCompositor::_OfferDumpImage(vr::EVREye eye, const Image& image)
 		return;
 	const std::string folder = oovr_log_folder();
 	const std::filesystem::path path = folder.empty() ? std::filesystem::path(DumpImageName(oc_current_pid(), eye))
-	                                                         : std::filesystem::path(folder) / DumpImageName(oc_current_pid(), eye);
+	                                                  : std::filesystem::path(folder) / DumpImageName(oc_current_pid(), eye);
 	std::string why;
 	if (WritePngFile(image, path, &why))
 		OOVR_LOGF("CompositorDumpImages: wrote %s", path.string().c_str());
