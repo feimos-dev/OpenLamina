@@ -852,8 +852,8 @@ private:
 	// Necessary for BindInputsForSession (see comments there)
 	bool restartingSession = false;
 
-	vr::ETrackedControllerRole dominantHand = vr::TrackedControllerRole_RightHand;
-	vr::ETrackedControllerRole requestedDominantHand = vr::TrackedControllerRole_RightHand; // taken up at the next UpdateActionState
+	std::atomic<vr::ETrackedControllerRole> dominantHand = vr::TrackedControllerRole_RightHand;
+	std::atomic<vr::ETrackedControllerRole> requestedDominantHand = vr::TrackedControllerRole_RightHand; // taken up at the next UpdateActionState
 
 	// TODO convert to Registry
 	std::unordered_map<std::string, std::unique_ptr<InputValueHandle>> inputHandleRegistry;

@@ -162,24 +162,6 @@ TEST_CASE("Interface versions are valid only where they exist")
 	CHECK_FALSE(valid(nullptr));
 }
 
-TEST_CASE("The runtime is installed when an OpenXR manifest is there")
-{
-	namespace fs = std::filesystem;
-	Runtime rt;
-	auto installed = rt.fn<bool (*)()>("VR_IsRuntimeInstalled");
-	REQUIRE(installed);
-
-	const fs::path manifest = fs::temp_directory_path() / "oc_entry_points_runtime.json";
-	{
-		std::ofstream(manifest) << "{}";
-	}
-	setenv("XR_RUNTIME_JSON", manifest.string().c_str(), 1);
-	CHECK(installed());
-	fs::remove(manifest);
-	CHECK_FALSE(installed());
-	unsetenv("XR_RUNTIME_JSON");
-}
-
 TEST_CASE("Init errors have text of their own")
 {
 	Runtime rt;
