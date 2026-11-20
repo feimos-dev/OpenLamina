@@ -14,14 +14,15 @@ Usage: install.sh [command] [--flatpak | --native]
 Commands (one; with none, install):
   (none)            Copy OpenLamina to ~/.local/share/OpenLamina and make OpenVR games use it: it goes first in
                     the "runtime" list of ~/.config/openvr/openvrpaths.vrpath, other entries kept after it. The file
-                    is backed up to openvrpaths.vrpath.bak first. Files you put in bin/ (openlamina.ini,
-                    apps-config.json) are kept.
+                    is backed up first, to openvrpaths.vrpath.<date and time>.bak. Files you put in bin/
+                    (openlamina.ini, apps-config.json) are kept.
   --no-switch       Install or update the copy, but leave openvrpaths.vrpath as it is.
   --openlamina      Make OpenVR games use the installed copy (--opencomposite, its name before, does the same).
                     Files you put in bin/ named openlamina.ini or, from before, opencomposite.ini both work.
   --steamvr         Make OpenVR games use SteamVR again: the copy is taken out of the list and SteamVR's folder put
                     first. Starting SteamVR from Steam does that too.
-  --uninstall       --steamvr, then delete the installed copy.
+  --uninstall       --steamvr, then delete the installed copy. Files you put in its bin/ are moved aside first, to
+                    OpenLamina-kept-<date and time> next to it.
   --status          Say what OpenVR games use, what is installed, and the OpenXR runtime.
   --update [--pre]  Download the newest release from github.com/feimos-dev/OpenLamina (--pre: pre-releases too),
                     check its SHA-256, and install it if it is newer. The switch is left as it is.
@@ -107,7 +108,7 @@ command -v python3 >/dev/null 2>&1 || die "python3 is needed (to edit $paths_fil
 # "runtime" is written back as it was read, in its order.
 PY=$(
 	cat <<'EOF'
-import json, os, re, shutil, sys
+import json, os, re, shlex, shutil, sys, time
 
 def steamvr(path):
     return os.path.basename(path.rstrip("/")) == "SteamVR"
@@ -130,8 +131,9 @@ def load(file):
         sys.exit(f"install.sh: {file} isn't an OpenVR paths file (\"runtime\" isn't a list of folders).")
     return data
 
-# Written next to the real file (a symlink stays a symlink), with its permissions. A file that can't be written, as when
-# made read-only to keep SteamVR from changing it, is refused and left as it is.
+# Written next to the real file (a symlink stays a symlink), with its permissions, after a backup named by the date and
+# time (an earlier backup is never overwritten). A file that can't be written, as when made read-only to keep SteamVR
+# from changing it, is refused and left as it is.
 def save(file, data, old):
     file = os.path.realpath(file)
     folder = os.path.dirname(file)
@@ -141,7 +143,13 @@ def save(file, data, old):
         if (old is not None and not os.access(file, os.W_OK)) or not os.access(folder, os.W_OK):
             raise PermissionError(None, None, file)
         if old is not None:
-            shutil.copyfile(file, file + ".bak")
+            stamp = time.strftime("%Y-%m-%d-%H%M%S")
+            backup, n = f"{file}.{stamp}.bak", 1
+            while os.path.exists(backup):
+                n += 1
+                backup = f"{file}.{stamp}-{n}.bak"
+            shutil.copyfile(file, backup)
+            print(f"Backed up {file} to {backup}")
         with open(temp, "w", encoding="utf-8") as f:
             json.dump(data, f, indent="\t", ensure_ascii=False)
             f.write("\n")
@@ -152,7 +160,10 @@ def save(file, data, old):
         if os.path.exists(temp):
             os.remove(temp)
         name = e.filename or file
-        sys.exit(f"install.sh: {name} can't be written (it or its folder is read-only), so {'it' if name == file else file} was left as it is.")
+        what = "file" if name == file else "folder"
+        sys.exit(f"install.sh: {name} can't be written (it or its folder is read-only), so {'it' if name == file else file} was left as it is.\n"
+                 f"To let install.sh change it, make the {what} writable (chmod u+w {shlex.quote(name)}) and run this again; "
+                 f"SteamVR can then change it too. Or leave it, and choose the runtime per game with VR_OVERRIDE (README, \"Linux notes\").")
 
 def version_key(v):
     m = re.fullmatch(r"(\d+(?:\.\d+)*)(?:-([0-9A-Za-z.-]+))?", v or "")
@@ -224,14 +235,6 @@ def main(command, *args):
                         best = (key, version, asset["browser_download_url"], digest[7:].lower())
         if best:
             print("\t".join(best[1:]))
-    elif command == "runtime-library":
-        # The library_path of an OpenXR runtime manifest.
-        (file,) = args
-        try:
-            with open(file, encoding="utf-8") as f:
-                print(json.load(f)["runtime"]["library_path"])
-        except (OSError, ValueError, KeyError, TypeError):
-            print("")
 
 main(*sys.argv[1:])
 EOF
@@ -279,6 +282,7 @@ use_openlamina() {
 	py use "$paths_file" "$copy"
 	say "OpenVR games now use OpenLamina ($copy)."
 	say "Starting SteamVR from Steam switches them back to SteamVR; $copy/install.sh --openlamina switches again."
+	manager_hints
 }
 
 # steamvr: the copy out of the list and SteamVR first. remove (the uninstall): the copy out of the list, and SteamVR
@@ -343,67 +347,64 @@ openxr_runtime() {
 	IFS=$old_ifs
 }
 
-# A launch option's value, in double quotes: Steam runs the launch options with sh, which would split it at a space.
-quote() {
-	printf '"%s"' "$(printf '%s' "$1" | sed 's/[\\"$`]/\\&/g')"
-}
-
+# What a game in the Steam Runtime (most Proton games) needs to reach the OpenXR runtime: pressure-vessel imports the
+# host's active runtime, its manifest and library, when asked to.
 launch_options() {
 	manifest=$(openxr_runtime)
 	if [ -z "$manifest" ]; then
 		say "No active OpenXR runtime found: set your headset's runtime as the active one (its own app or docs say how)."
 		return
 	fi
-	if [ $target = flatpak ]; then
-		say "Flatpak Steam: your OpenXR runtime ($manifest) has to be visible inside the Flatpak; see the README's"
-		say "\"Linux-specific info\". install.sh doesn't work out launch options for it."
-		return
-	fi
-	resolved=$(readlink -f "$manifest")
-	options=
-	# Inside the Steam Runtime, the home folder is as it is, the host's /usr and /etc are under /run/host, and other
-	# folders aren't there unless named.
-	case $manifest in
-	"$home"/*) in_home=1 ;;
-	*) in_home=0 ;;
-	esac
-	library=$(py runtime-library "$resolved")
-	case $resolved in
-	"$home"/*) [ $in_home = 1 ] || options="XR_RUNTIME_JSON=$(quote "$resolved")" ;;
-	/usr/* | /etc/*) options="XR_RUNTIME_JSON=$(quote "/run/host$resolved")" ;;
-	*)
-		# The manifest's folder, and its library's if that is elsewhere (a library_path with a / is relative to the
-		# manifest), separated by ":".
-		folders=$(dirname "$resolved")
-		case $library in
-		*/*) library_file=$(cd "$folders" && readlink -f "$library") || library_file= ;;
-		*) library_file= ;;
-		esac
-		case ${library_file%/*} in
-		"" | "$folders" | "$folders"/* | "$home"/* | /usr/* | /etc/*) ;;
-		*) folders=$folders:${library_file%/*} ;;
-		esac
-		options="XR_RUNTIME_JSON=$(quote "$resolved") PRESSURE_VESSEL_FILESYSTEMS_RO=$(quote "$folders")"
-		;;
-	esac
-	case $library in
-	/usr/*) say "Note: $resolved names its library by an absolute path ($library), which games in the Steam Runtime may not find (there, /usr is the runtime's own)." ;;
-	esac
-	case "$resolved $library" in
-	*wivrn* | *WiVRn*) options="${options:+$options }PRESSURE_VESSEL_FILESYSTEMS_RW=\$XDG_RUNTIME_DIR/wivrn/comp_ipc" ;;
-	*monado* | *Monado*) options="${options:+$options }PRESSURE_VESSEL_FILESYSTEMS_RW=\$XDG_RUNTIME_DIR/monado_comp_ipc" ;;
-	esac
+	resolved=$(readlink -f "$manifest" || printf '%s' "$manifest")
 	say "OpenXR runtime: $manifest$([ "$resolved" != "$manifest" ] && printf ' -> %s' "$resolved")"
-	if [ -n "$options" ]; then
-		say "Games in the Steam Runtime (most Proton games) need these launch options (Steam: the game's Properties,"
-		say "General, Launch options) to reach it:"
+	say "Games in the Steam Runtime (most Proton games) need this launch option (Steam: the game's Properties,"
+	say "General, Launch options) to reach it:"
+	say ""
+	say "    PRESSURE_VESSEL_IMPORT_OPENXR_1_RUNTIMES=1 %command%"
+	if [ $target = flatpak ]; then
 		say ""
-		say "    $options %command%"
-	else
-		say "Games in the Steam Runtime should find it without launch options."
+		say "Flatpak Steam: the runtime has to be visible inside the Flatpak as well (one installed for Flatpak Steam,"
+		say "or the Flatpak given access to its files)."
 	fi
 	say ""
-	say "This is worked out from the runtime's files and may not cover yours; the README's \"Linux-specific info\" explains."
+	say "The README's \"Linux notes\" explain more."
+}
+
+# A VR server that writes openvrpaths.vrpath itself when it starts puts its own OpenVR runtime first again: say how to
+# make it choose OpenLamina.
+manager_hints() {
+	config=${XDG_CONFIG_HOME:-$home/.config}
+	listed=$(cat "$paths_file" 2>/dev/null || true)
+	case $listed in
+	*[Ww]i[Vv][Rr]n*) wivrn=1 ;;
+	*) wivrn=0 ;;
+	esac
+	if [ $wivrn = 1 ] || [ -d "$config/wivrn" ] || [ -d "$home/.var/app/io.github.wivrn.wivrn" ]; then
+		say "WiVRn writes $paths_file when it starts, with its own OpenVR runtime first. To make it choose OpenLamina,"
+		say "set \"openvr-compat-path\": \"$copy\" in its config.json ($config/wivrn/config.json, or in the"
+		say "Flatpak's ~/.var/app/io.github.wivrn.wivrn/config/wivrn/)."
+	fi
+	case $listed in
+	*[Ee]nvision*) envision=1 ;;
+	*) envision=0 ;;
+	esac
+	if [ $envision = 1 ] || [ -d "$config/envision" ] || [ -d "${XDG_DATA_HOME:-$home/.local/share}/envision" ]; then
+		say "Envision writes $paths_file when it starts a profile, with the profile's OpenVR runtime first. To make it"
+		say "choose OpenLamina, set that profile's OpenVR runtime path to $copy."
+	fi
+}
+
+# Files the owner put in the copy's bin/ (openlamina.ini, say), moved to OpenLamina-kept-<date> next to the copy before
+# the copy is deleted. Prints where, or nothing when there were none.
+keep_own_files() {
+	[ -d "$copy/bin" ] || return 0
+	rm -f "$copy/bin/linux64/vrclient.so" "$copy/bin/vrclient.so" "$copy/bin/version.txt"
+	find "$copy/bin" -depth -type d -empty -delete
+	[ -d "$copy/bin" ] || return 0
+	aside=$copy-kept-$(date +%Y-%m-%d-%H%M%S)
+	mkdir -p "$aside"
+	mv "$copy/bin" "$aside/bin"
+	say "Kept the files you put in $copy/bin: they are in $aside/bin."
 }
 
 fetch() {
@@ -456,6 +457,7 @@ steamvr) use_steamvr steamvr ;;
 uninstall)
 	use_steamvr remove
 	if [ -d "$copy" ]; then
+		keep_own_files
 		rm -rf "$copy"
 		say "Deleted $copy."
 	fi
@@ -463,6 +465,7 @@ uninstall)
 status)
 	status
 	other_steam
+	manager_hints
 	;;
 update) update ;;
 launch) launch_options ;;
