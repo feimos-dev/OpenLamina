@@ -473,10 +473,7 @@ jobs:
       # Nothing may end, crash or hang on Monado (no baseline: its answers are its own). On lavapipe no session starts:
       # Monado asks for VK_KHR_external_semaphore_fd and VK_KHR_external_fence_fd, which lavapipe lacks, so OpenLamina's
       # own Vulkan device can't be made and every Init answers as without a headset. The notice says how many started.
-      # There's no way round it on a runner without a GPU: lavapipe is the only software Vulkan driver in Mesa, and the
-      # Mesa of Ubuntu 24.04's updates (25.2) offers VK_KHR_external_semaphore and VK_KHR_external_fence but neither
-      # of the _fd ones (checked with vulkaninfo); Monado's compositor needs them to share its swapchain
-      # images and their fences with the client, so relaxing that in Monado isn't a correct change.
+      # Lavapipe is Mesa's only software Vulkan driver, and Ubuntu 24.04's (Mesa 25.2) lacks both: nothing to switch to.
       - name: Conformance
         run: |
           export XDG_RUNTIME_DIR="$RUNNER_TEMP/xdg"

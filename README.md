@@ -141,8 +141,8 @@ runtime's folder in its launch options:
 VR_OVERRIDE=$HOME/.local/share/OpenLamina PRESSURE_VESSEL_IMPORT_OPENXR_1_RUNTIMES=1 %command%
 ```
 
-Proton needs an `openvrpaths.vrpath` to exist (`~/.config/openvr/`) even then: without one it starts the game without
-VR. Running `install.sh` once, or SteamVR once, makes it.
+Proton needs an `openvrpaths.vrpath` to exist (`~/.config/openvr/`) even then. Running `install.sh` once, or SteamVR
+once, makes it.
 
 WiVRn and Envision write `openvrpaths.vrpath` themselves when they start, with their own OpenVR runtime first. Point
 them at OpenLamina instead: WiVRn's `openvr-compat-path` in its `config.json`, Envision's profile setting for the

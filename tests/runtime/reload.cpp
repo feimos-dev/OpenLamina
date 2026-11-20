@@ -1,8 +1,5 @@
-// What Proton does with vrclient.so: load it, start OpenVR and use it, shut it down, unload it (dlclose), and then do
-// it all again in the same process, a few times over; then load it once more and exit without shutting down, as a
-// game may. Run with the library's path as the argument and XR_RUNTIME_JSON
-// set to the stand-in runtime's manifest (tests/runtime/CMakeLists.txt does both). Exits 0 when every round worked;
-// says whether the library left memory on dlclose, since the second load is only a fresh one if it did.
+// What Proton does with vrclient.so: load, use, shut down and dlclose it, several times in one process; then load it
+// once more and exit without shutting down, as a game may. Arguments and environment: tests/runtime/CMakeLists.txt.
 #include <dlfcn.h>
 
 #include <cstdint>
@@ -75,8 +72,7 @@ bool Round(const char* path, int round, int appType, bool shutdown = true)
 		}
 	}
 	if (!shutdown) {
-		// The game exits without shutting OpenVR down: OpenLamina's static destructors end the session, and they run
-		// with the bundled OpenXR loader's
+		// The game exits without shutting OpenVR down
 		printf("round %d: exiting without Cleanup\n", round);
 		return ok;
 	}

@@ -11,6 +11,7 @@
 #include "Misc/SharedStore.h"
 
 #include <atomic>
+#include <cctype>
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>

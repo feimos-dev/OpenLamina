@@ -140,8 +140,10 @@ def save(file, data, old):
     temp = file + ".install-tmp"
     try:
         os.makedirs(folder, exist_ok=True)
-        if (old is not None and not os.access(file, os.W_OK)) or not os.access(folder, os.W_OK):
+        if old is not None and not os.access(file, os.W_OK):
             raise PermissionError(None, None, file)
+        if not os.access(folder, os.W_OK):
+            raise PermissionError(None, None, folder)
         if old is not None:
             stamp = time.strftime("%Y-%m-%d-%H%M%S")
             backup, n = f"{file}.{stamp}.bak", 1
@@ -159,7 +161,8 @@ def save(file, data, old):
     except PermissionError as e:
         if os.path.exists(temp):
             os.remove(temp)
-        name = e.filename or file
+        # A read-only file, else its folder (temporary and backup files go there too)
+        name = file if e.filename == file else folder
         what = "file" if name == file else "folder"
         sys.exit(f"install.sh: {name} can't be written (it or its folder is read-only), so {'it' if name == file else file} was left as it is.\n"
                  f"To let install.sh change it, make the {what} writable (chmod u+w {shlex.quote(name)}) and run this again; "

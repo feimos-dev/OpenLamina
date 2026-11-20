@@ -90,15 +90,24 @@ expect "$steamvr
 set -- "$paths".*.bak
 [ $# = 2 ] || fail "--steamvr didn't make a second backup (or overwrote the first): $*"
 
-# A read-only paths file is refused, and left as it is
-chmod a-w "$paths"
-cp "$paths" "$work/read-only"
-if sh "$copy/install.sh" --openlamina >"$work/log" 2>&1; then
-	fail "--openlamina changed a read-only paths file."
+# A read-only paths file is refused, and left as it is (root can write to it all the same)
+if [ "$(id -u)" != 0 ]; then
+	chmod a-w "$paths"
+	cp "$paths" "$work/read-only"
+	if sh "$copy/install.sh" --openlamina >"$work/log" 2>&1; then
+		fail "--openlamina changed a read-only paths file."
+	fi
+	grep -q "chmod u+w" "$work/log" || fail "the refusal doesn't say how to make the file writable: $(cat "$work/log")"
+	cmp -s "$paths" "$work/read-only" || fail "the read-only paths file changed."
+	chmod u+w "$paths"
+	# A read-only folder too: the message names the folder
+	chmod a-w "$(dirname "$paths")"
+	if sh "$copy/install.sh" --openlamina >"$work/log" 2>&1; then
+		fail "--openlamina changed the paths file in a read-only folder."
+	fi
+	grep -qF "make the folder writable" "$work/log" || fail "the refusal doesn't name the folder: $(cat "$work/log")"
+	chmod u+w "$(dirname "$paths")"
 fi
-grep -q "chmod u+w" "$work/log" || fail "the refusal doesn't say how to make the file writable: $(cat "$work/log")"
-cmp -s "$paths" "$work/read-only" || fail "the read-only paths file changed."
-chmod u+w "$paths"
 
 sh "$copy/install.sh" --openlamina >/dev/null
 expect "$copy
