@@ -1,8 +1,8 @@
 {
- "#": "SteamVR's render models read from its install, on the stand-in (run.py --cases render-models --expect expect/render_models.json; run.py makes tests/unit/data/steamvr, our own fixture, SteamVR's install for this case). The fixture's models are listed with the built-in ones it doesn't have. test_controller has no OBJ of its own, so it is its two components together (a four-cornered plate and a triangle: 7 vertices, 3 triangles) with its 2x2 PNG, also as a D3D11 texture. Each component's render model is <model>/<component>; the trigger (controller_axis 1, so Axis1's button bit) turns -20 degrees about X through its pivot when pulled, its local frame with it; the body is static at its component_local. The thumbnail is the JSON's, as a file URL; the original path is the model's OBJ. vive_tracker's JSON isn't JSON: the built-in tracker (10659 vertices, no texture) is answered.",
+ "#": "SteamVR's render models read from its install, on the stand-in (run.py --cases render-models --expect expect/render_models.json; run.py makes tests/unit/data/steamvr, our own fixture, SteamVR's install for this case). The fixture's models are listed with the built-in ones it doesn't have, then OpenLamina's own controller models (bin/rendermodels, both hands of twelve controllers). test_controller has no OBJ of its own, so it is its two components together (a four-cornered plate and a triangle: 7 vertices, 3 triangles) with its 2x2 PNG, also as a D3D11 texture. Each component's render model is <model>/<component>; the trigger (controller_axis 1, so Axis1's button bit) turns -20 degrees about X through its pivot when pulled, its local frame with it; the body is static at its component_local. The thumbnail is the JSON's, as a file URL; the original path is the model's OBJ. vive_tracker's JSON isn't JSON: the built-in tracker (10659 vertices, no texture) is answered. htc-vive-left, one of OpenLamina's own controller models (not in the fixture), loads with its 2048x2048 texture; its components are those the Vive's WebXR model moves (no tip, base or handgrip, which GetComponentState still answers); the trigger is Axis1's; its trackpad's touch dot is hidden until Axis0 is touched, then follows the touch; its original path is its name.",
  "render-models/models/-/-": {
-  "count": 8,
-  "names": ["test_controller", "vive_tracker", "renderLeftHand", "renderRightHand", "oculus_quest2_controller_left", "oculus_quest2_controller_right", "{indexcontroller}valve_controller_knu_1_0_left", "{indexcontroller}valve_controller_knu_1_0_right"]
+  "count": 32,
+  "names": ["test_controller", "vive_tracker", "renderLeftHand", "renderRightHand", "oculus_quest2_controller_left", "oculus_quest2_controller_right", "{indexcontroller}valve_controller_knu_1_0_left", "{indexcontroller}valve_controller_knu_1_0_right", "generic-trigger-squeeze-thumbstick-left", "generic-trigger-squeeze-thumbstick-right", "hp-mixed-reality-left", "hp-mixed-reality-right", "htc-vive-cosmos-left", "htc-vive-cosmos-right", "htc-vive-focus-3-left", "htc-vive-focus-3-right", "htc-vive-left", "htc-vive-right", "meta-quest-touch-plus-left", "meta-quest-touch-plus-right", "meta-quest-touch-pro-left", "meta-quest-touch-pro-right", "microsoft-mixed-reality-left", "microsoft-mixed-reality-right", "oculus-touch-v3-left", "oculus-touch-v3-right", "pico-4-left", "pico-4-right", "pico-neo3-left", "pico-neo3-right", "valve-index-left", "valve-index-right"]
  },
  "render-models/load test_controller/-/-": {
   "ret": 0,
@@ -79,5 +79,22 @@
   "hand_texture": "1x1",
   "path_ret": 0,
   "path_has_vertices": true
+ },
+ "render-models/own controller/-/-": {
+  "components": ["body", "grip", "trackpad", "trackpad_touch", "trigger"],
+  "has_tip": false,
+  "has_vertices": true,
+  "indices_in_range": true,
+  "original": "htc-vive-left",
+  "original_error": 0,
+  "ret": 0,
+  "texture": "2048x2048",
+  "texture_ret": 0,
+  "tip_ret": true,
+  "touch_dot_at_rest": 0,
+  "touch_dot_moves_right": true,
+  "touch_dot_touched": 6,
+  "trigger_buttons": 8589934592,
+  "trigger_ret": 0
  }
 }

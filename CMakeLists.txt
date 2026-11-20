@@ -298,6 +298,7 @@ endif ()
 set(OVR_PCH_EXCLUDED
 	OpenOVR/Misc/ini.c
 	OpenOVR/Misc/lodepng.cpp
+	OpenOVR/Misc/stb_image.cpp
 )
 
 # Generate version string from git revision, or supplied OC_VERSION setting
@@ -487,6 +488,7 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/Input/PicoInteractionProfile.h
 	OpenOVR/Misc/Input/MsftHandInteractionProfile.h
 	OpenOVR/Misc/lodepng.h
+	OpenOVR/Misc/StbJpeg.h
 	OpenOVR/Misc/ScopeGuard.h
 	OpenOVR/Reimpl/BaseApplications.h
 	OpenOVR/Reimpl/BaseChaperone.h

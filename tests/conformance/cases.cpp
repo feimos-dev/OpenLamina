@@ -3328,6 +3328,57 @@ void RenderModelsCase(CaseContext& c)
 	}
 	c.Record("answers", r);
 
+	// OpenLamina's own controller models (bin/rendermodels): what SteamVR doesn't have is answered from them
+	r = Json::Value();
+	const char* vive = "htc-vive-left";
+	model = nullptr;
+	r["ret"] = load(vive, &model);
+	if (model) {
+		r["has_vertices"] = model->unVertexCount > 1000;
+		bool inRange = true;
+		for (uint32_t i = 0; i < model->unTriangleCount * 3; i++)
+			inRange = inRange && model->rIndexData[i] < model->unVertexCount;
+		r["indices_in_range"] = inRange;
+		RenderModel_TextureMap_t* tex = nullptr;
+		TextureID_t id = model->diffuseTextureId;
+		r["texture_ret"] = (int)untilLoaded([&] { return rm->LoadTexture_Async(id, &tex); });
+		if (tex) {
+			r["texture"] = std::to_string(tex->unWidth) + "x" + std::to_string(tex->unHeight);
+			rm->FreeTexture(tex);
+		}
+		rm->FreeRenderModel(model);
+	}
+	Json::Value parts(Json::arrayValue);
+	for (uint32_t i = 0; i < rm->GetComponentCount(vive) && i < 16; i++) {
+		char part[64] = {};
+		rm->GetComponentName(vive, i, part, sizeof(part));
+		parts.append(part);
+	}
+	r["components"] = parts;
+	r["has_tip"] = rm->RenderModelHasComponent(vive, "tip");
+	r["trigger_buttons"] = (Json::UInt64)rm->GetComponentButtonMask(vive, "trigger");
+	model = nullptr;
+	r["trigger_ret"] = load("htc-vive-left/trigger", &model);
+	if (model)
+		rm->FreeRenderModel(model);
+	vr::VRControllerState_t touch{};
+	vr::RenderModel_ComponentState_t touchState{};
+	rm->GetComponentState(vive, "trackpad_touch", &touch, &mode, &touchState);
+	r["touch_dot_at_rest"] = touchState.uProperties;
+	touch.ulButtonTouched = vr::ButtonMaskFromId(vr::k_EButton_Axis0);
+	touch.rAxis[0].x = 1.0f;
+	rm->GetComponentState(vive, "trackpad_touch", &touch, &mode, &touchState);
+	r["touch_dot_touched"] = touchState.uProperties;
+	r["touch_dot_moves_right"] = touchState.mTrackingToComponentRenderModel.m[0][3] > 0.015f;
+	vr::RenderModel_ComponentState_t tipState{};
+	r["tip_ret"] = rm->GetComponentState(vive, "tip", nullptr, nullptr, &tipState);
+	char ownOriginal[64] = {};
+	pe = VRRenderModelError_Loading;
+	rm->GetRenderModelOriginalPath(vive, ownOriginal, sizeof(ownOriginal), &pe);
+	r["original"] = ownOriginal;
+	r["original_error"] = (int)pe;
+	c.Record("own controller", r);
+
 	c.core->Cleanup();
 }
 

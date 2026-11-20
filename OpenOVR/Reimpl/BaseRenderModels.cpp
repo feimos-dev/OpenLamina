@@ -133,6 +133,128 @@ static bool IsKnownRenderModel(const char* name)
 	return strcmp(name, "oculusHmdRenderModel") == 0 || IsOwnRenderModel(name);
 }
 
+// OpenLamina's own controller model of each interaction profile: the WebXR Input Profile it's made from
+static const struct {
+	const char* path;
+	const char* model;
+} kOwnControllerModels[] = {
+	{ "/interaction_profiles/oculus/touch_controller", "oculus-touch-v3" },
+	{ "/interaction_profiles/meta/touch_controller_plus", "meta-quest-touch-plus" },
+	{ "/interaction_profiles/facebook/touch_controller_pro", "meta-quest-touch-pro" },
+	{ "/interaction_profiles/valve/index_controller", "valve-index" },
+	{ "/interaction_profiles/htc/vive_controller", "htc-vive" },
+	{ "/interaction_profiles/microsoft/motion_controller", "microsoft-mixed-reality" },
+	{ "/interaction_profiles/samsung/odyssey_controller", "microsoft-mixed-reality" },
+	{ "/interaction_profiles/hp/mixed_reality_controller", "hp-mixed-reality" },
+	{ "/interaction_profiles/htc/vive_cosmos_controller", "htc-vive-cosmos" },
+	{ "/interaction_profiles/htc/vive_focus3_controller", "htc-vive-focus-3" },
+	{ "/interaction_profiles/bytedance/pico_neo3_controller", "pico-neo3" },
+	{ "/interaction_profiles/bytedance/pico4_controller", "pico-4" },
+	{ "/interaction_profiles/bytedance/pico_g3_controller", "generic-trigger-squeeze-thumbstick" },
+	{ "/interaction_profiles/khr/simple_controller", "generic-trigger-squeeze-thumbstick" },
+};
+
+static bool EndsWith(const string& s, const char* end)
+{
+	size_t n = strlen(end);
+	return s.size() >= n && s.compare(s.size() - n, n, end) == 0;
+}
+
+static bool IsOwnControllerModel(const string& name)
+{
+	const std::vector<string>& names = OwnRenderModelNames();
+	return std::binary_search(names.begin(), names.end(), name);
+}
+
+// The own controller model of the profile the hand's controller has now; empty without one
+static string OwnModelOfHand(ITrackedDevice::TrackedDeviceType hand)
+{
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
+	BackendManager* backend = BackendManager::InstancePtr();
+	std::shared_ptr<ITrackedDevice> dev = backend ? backend->GetDeviceByHand(hand) : nullptr;
+	const InteractionProfile* profile = dev ? dev->GetInteractionProfile() : nullptr;
+	if (!profile)
+		return {};
+	for (const auto& own : kOwnControllerModels)
+		if (profile->GetPath() == own.path)
+			return string(own.model) + (hand == ITrackedDevice::HAND_LEFT ? "-left" : "-right");
+	return {};
+}
+
+// The own controller model a name is drawn with: one of their names; a hand's model (renderLeftHand, renderRightHand)
+// as the controller in that hand; the Touch's and Index's names as those controllers (the Touch's as the one in that
+// hand where it's a Touch Plus or Pro). Empty for any other name, or if the models aren't installed.
+static string OwnModelName(const string& name)
+{
+	if (OwnRenderModelNames().empty())
+		return {};
+	if (IsOwnControllerModel(name))
+		return name;
+	bool left = name == "renderLeftHand" || name == "oculus_quest2_controller_left" || name == "{indexcontroller}valve_controller_knu_1_0_left";
+	bool right = name == "renderRightHand" || name == "oculus_quest2_controller_right" || name == "{indexcontroller}valve_controller_knu_1_0_right";
+	if (!left && !right)
+		return {};
+	string own = OwnModelOfHand(left ? ITrackedDevice::HAND_LEFT : ITrackedDevice::HAND_RIGHT);
+	const char* hand = left ? "-left" : "-right";
+	if (name.starts_with("oculus_quest2_controller_")) {
+		if (own.empty() || !(own.starts_with("oculus-touch") || own.starts_with("meta-quest-touch")))
+			own = string("oculus-touch-v3") + hand;
+	} else if (name.starts_with("{indexcontroller}")) {
+		own = string("valve-index") + hand;
+	}
+	return IsOwnControllerModel(own) ? own : string();
+}
+
+// Where an own model's files (in grip space) are in its device's space: the grip, as its profile places it. The
+// profiles are made with the OpenXR instance: before there is one, the grip is taken as the device's pose.
+static XrPosef OwnModelSpace(const string& own)
+{
+	XrPosef pose = { { 0, 0, 0, 1 }, { 0, 0, 0 } };
+	if (!xr_ext)
+		return pose;
+	bool left = EndsWith(own, "-left");
+	string model = own.substr(0, own.size() - (left ? 5 : 6));
+	for (const auto& entry : kOwnControllerModels) {
+		if (model != entry.model)
+			continue;
+		const InteractionProfile* profile = InteractionProfile::GetProfileByPath(entry.path);
+		if (!profile)
+			break;
+		glm::mat4 gripInDevice = glm::affineInverse(profile->GetGripToSteamVRTransform(left ? ITrackedDevice::HAND_LEFT : ITrackedDevice::HAND_RIGHT));
+		glm::quat rot = glm::normalize(glm::quat_cast(glm::mat3(gripInDevice)));
+		pose.orientation = { rot.x, rot.y, rot.z, rot.w };
+		pose.position = { gripInDevice[3].x, gripInDevice[3].y, gripInDevice[3].z };
+		break;
+	}
+	return pose;
+}
+
+// A model by name: SteamVR's of that name where SteamVR has one, else OpenLamina's own controller model it's drawn with
+static std::shared_ptr<const RmModel> FindModel(const string& name)
+{
+	if (std::shared_ptr<const RmModel> model = FindSteamVRRenderModel(name))
+		return model;
+	string own = OwnModelName(name);
+	return own.empty() ? nullptr : FindOwnRenderModel(own, OwnModelSpace(own));
+}
+
+// The name a load is kept under: an own model's name (and component) for a name drawn with one, else the name
+static string LoadName(const string& name)
+{
+	if (FindSteamVRRenderModel(name))
+		return name;
+	string own = OwnModelName(name);
+	if (!own.empty())
+		return own;
+	size_t slash = name.rfind('/');
+	if (slash != string::npos && slash > 0 && !FindSteamVRRenderModel(name.substr(0, slash))) {
+		own = OwnModelName(name.substr(0, slash));
+		if (!own.empty())
+			return own + name.substr(slash);
+	}
+	return name;
+}
+
 // Copies value into an app's buffer, cut short and terminated if it doesn't fit; returns the size needed with the
 // terminator, as SteamVR does, and BufferTooSmall in *error (when given) if the buffer can't hold both
 static uint32_t CopyOutModelString(const string& value, char* buffer, uint32_t size, EVRRenderModelError* error = nullptr)
@@ -332,7 +454,7 @@ static const RmComponent* FindComponent(const RmModel& model, const char* name)
 	return nullptr;
 }
 
-// The OpenVR names of every model: SteamVR's, then OpenLamina's own that SteamVR doesn't have
+// The OpenVR names of every model: SteamVR's, then OpenLamina's own that SteamVR doesn't have, then its controllers'
 static const std::vector<string>& AllModelNames()
 {
 	static const std::vector<string>& names = *[] {
@@ -340,6 +462,8 @@ static const std::vector<string>& AllModelNames()
 		for (const char* own : kOwnModelNames)
 			if (std::find(all->begin(), all->end(), own) == all->end())
 				all->push_back(own);
+		for (const string& own : OwnRenderModelNames())
+			all->push_back(own);
 		return all;
 	}();
 	return names;
@@ -424,14 +548,14 @@ ModelLoads& Loads()
 }
 } // namespace
 
-static std::shared_ptr<const LoadedModel> LoadModel(const string& name);
+static std::shared_ptr<const LoadedModel> LoadModel(const string& name, std::shared_ptr<const RmModel> own);
 
 EVRRenderModelError BaseRenderModels::LoadRenderModel_Async(const char* pchRenderModelName, RenderModel_t** renderModel)
 {
 	if (!pchRenderModelName || !renderModel)
 		return VRRenderModelError_InvalidArg;
 	*renderModel = nullptr;
-	string name = pchRenderModelName;
+	string name = LoadName(pchRenderModelName);
 
 	// Started on the first call for a name, answered once it's done, at once from then on
 	std::shared_future<std::shared_ptr<const LoadedModel>> load;
@@ -443,9 +567,13 @@ EVRRenderModelError BaseRenderModels::LoadRenderModel_Async(const char* pchRende
 			if (loads.byName.size() >= ModelLoads::kMaxNames)
 				OC_UNSUPPORTED(VRRenderModelError_NotSupported, "LoadRenderModel_Async: too many model names, '%s' isn't loaded", pchRenderModelName);
 			OOVR_LOGF("LoadRenderModel_Async %s", pchRenderModelName);
+			// An own controller model is found here, where the profiles are; its load's thread only reads it
+			std::shared_ptr<const RmModel> own;
+			if (string base = name.substr(0, name.find('/')); IsOwnControllerModel(base) && !FindSteamVRRenderModel(base))
+				own = FindModel(base);
 			std::shared_future<std::shared_ptr<const LoadedModel>> started;
 			try {
-				started = std::async(std::launch::async, LoadModel, name).share();
+				started = std::async(std::launch::async, LoadModel, name, own).share();
 			} catch (const std::exception& e) {
 				OC_UNSUPPORTED(VRRenderModelError_NotSupported, "LoadRenderModel_Async: can't start loading '%s': %s", pchRenderModelName, e.what());
 			}
@@ -497,15 +625,17 @@ BaseRenderModels::~BaseRenderModels()
 	WaitForLoads();
 }
 
-// The model of a name, on a load's thread: SteamVR's of that name, as SteamVR answers it; else (no SteamVR, or a
-// model it can't load) OpenLamina's own
-static std::shared_ptr<const LoadedModel> BuildModel(const string& name)
+// The model of a name, on a load's thread: own's where it's given (name being its name or "<name>/<component>"), else
+// SteamVR's of that name as SteamVR answers it, else (no SteamVR, or a model it can't load) OpenLamina's built-in one
+static std::shared_ptr<const LoadedModel> BuildModel(const string& name, const std::shared_ptr<const RmModel>& own)
 {
 	auto loaded = std::make_shared<LoadedModel>();
-	if (std::optional<RmMesh> mesh = SteamVRMesh(name)) {
-		loaded->vertices = std::move(mesh->vertices);
-		loaded->indices = std::move(mesh->indices);
-		loaded->texture = SteamVRTextureId(mesh->textures);
+	size_t slash = name.find('/');
+	string component = slash == string::npos ? "" : name.substr(slash + 1);
+	if (std::optional<RmMesh> found = own ? LoadRenderModelMesh(*own, component) : SteamVRMesh(name)) {
+		loaded->vertices = std::move(found->vertices);
+		loaded->indices = std::move(found->indices);
+		loaded->texture = SteamVRTextureId(found->textures);
 		return loaded;
 	}
 
@@ -556,10 +686,10 @@ static std::shared_ptr<const LoadedModel> BuildModel(const string& name)
 }
 
 // BuildModel, with a model it can't build (out of memory) as one it doesn't support
-static std::shared_ptr<const LoadedModel> LoadModel(const string& name)
+static std::shared_ptr<const LoadedModel> LoadModel(const string& name, std::shared_ptr<const RmModel> own)
 {
 	try {
-		return BuildModel(name);
+		return BuildModel(name, own);
 	} catch (const std::exception& e) {
 		OOVR_LOGF("Render model %s can't be loaded: %s", name.c_str(), e.what());
 		auto failed = std::make_shared<LoadedModel>();
@@ -821,7 +951,7 @@ uint32_t BaseRenderModels::GetRenderModelCount()
 uint32_t BaseRenderModels::GetComponentCount(const char* pchRenderModelName)
 {
 	if (pchRenderModelName) {
-		if (std::shared_ptr<const RmModel> model = FindSteamVRRenderModel(pchRenderModelName))
+		if (std::shared_ptr<const RmModel> model = FindModel(pchRenderModelName))
 			return (uint32_t)model->components.size();
 	}
 
@@ -833,7 +963,7 @@ uint32_t BaseRenderModels::GetComponentName(const char* pchRenderModelName, uint
     char* pchComponentName, uint32_t unComponentNameLen)
 {
 	if (pchRenderModelName) {
-		if (std::shared_ptr<const RmModel> model = FindSteamVRRenderModel(pchRenderModelName)) {
+		if (std::shared_ptr<const RmModel> model = FindModel(pchRenderModelName)) {
 			if (unComponentIndex >= model->components.size()) {
 				if (pchComponentName && unComponentNameLen)
 					pchComponentName[0] = 0;
@@ -863,7 +993,7 @@ uint32_t BaseRenderModels::GetComponentName(const char* pchRenderModelName, uint
 uint64_t BaseRenderModels::GetComponentButtonMask(const char* pchRenderModelName, const char* pchComponentName)
 {
 	// A SteamVR model's component: the button and the axis its motion follows
-	std::shared_ptr<const RmModel> model = pchRenderModelName ? FindSteamVRRenderModel(pchRenderModelName) : nullptr;
+	std::shared_ptr<const RmModel> model = pchRenderModelName ? FindModel(pchRenderModelName) : nullptr;
 	const RmComponent* c = model ? FindComponent(*model, pchComponentName) : nullptr;
 	if (!c || !c->motion.isObject())
 		return 0;
@@ -882,7 +1012,7 @@ uint32_t BaseRenderModels::GetComponentRenderModelName(const char* pchRenderMode
 {
 	// A SteamVR model's component with something to draw: "<model>/<component>", which LoadRenderModel_Async loads
 	if (pchRenderModelName) {
-		if (std::shared_ptr<const RmModel> model = FindSteamVRRenderModel(pchRenderModelName)) {
+		if (std::shared_ptr<const RmModel> model = FindModel(pchRenderModelName)) {
 			const RmComponent* c = FindComponent(*model, pchComponentName);
 			if (!c || c->objFile.empty()) {
 				if (componentModelName && componentModelNameLen)
@@ -940,8 +1070,11 @@ bool BaseRenderModels::GetComponentState(const char* pchRenderModelName, const c
 
 	std::string componentName = pchComponentName;
 
-	// A SteamVR model's component: where its motion puts it for the controller state (at rest without one)
+	// A SteamVR or own controller model's component: where its motion puts it for the controller state (at rest without one)
+	const string own = pchRenderModelName ? OwnModelName(pchRenderModelName) : string();
 	std::shared_ptr<const RmModel> steamvr = pchRenderModelName ? FindSteamVRRenderModel(pchRenderModelName) : nullptr;
+	if (!steamvr && !own.empty())
+		steamvr = FindOwnRenderModel(own, OwnModelSpace(own));
 	if (const RmComponent* c = steamvr ? FindComponent(*steamvr, pchComponentName) : nullptr) {
 		float value = 0;
 		vr::HmdVector2_t axis = { { 0, 0 } };
@@ -971,9 +1104,9 @@ bool BaseRenderModels::GetComponentState(const char* pchRenderModelName, const c
 			if (c->motionType == "trackpad" || c->motionType == "joystick")
 				value = pressed ? 1.0f : 0.0f;
 		}
-		glm::mat4 motion = X2G_om34_pose(ComponentPose(*c, value, axis));
+		glm::mat4 motion = X2G_om34_pose(ModelComponentPose(*steamvr, *c, value, axis));
 		pComponentState->mTrackingToComponentRenderModel = G2S_m34(motion);
-		pComponentState->mTrackingToComponentLocal = G2S_m34(motion * X2G_om34_pose(c->local));
+		pComponentState->mTrackingToComponentLocal = G2S_m34(motion * X2G_om34_pose(ModelComponentLocal(*steamvr, *c)));
 		uint32_t properties = 0;
 		if (c->motionType.empty())
 			properties |= VRComponentProperty_IsStatic;
@@ -1009,6 +1142,9 @@ bool BaseRenderModels::GetComponentState(const char* pchRenderModelName, const c
 			hand = ITrackedDevice::HAND_LEFT;
 		} else if (IsOwnRenderModel(renderModelName.c_str()) && renderModelName.ends_with("_right")) {
 			hand = ITrackedDevice::HAND_RIGHT;
+		} else if (!own.empty()) {
+			// An own controller model's tip, base and handgrip: the profile's, as for the hand's own model
+			hand = EndsWith(own, "-left") ? ITrackedDevice::HAND_LEFT : ITrackedDevice::HAND_RIGHT;
 		}
 	}
 
@@ -1018,7 +1154,8 @@ bool BaseRenderModels::GetComponentState(const char* pchRenderModelName, const c
 		return true;
 
 	// A built-in model's tip and handgrip always exist: where the model is, until its device can tell more
-	if (pchRenderModelName && IsOwnRenderModel(pchRenderModelName) && (componentName == "tip" || componentName == "handgrip")) {
+	if (pchRenderModelName && (IsOwnRenderModel(pchRenderModelName) || !own.empty())
+	    && (componentName == "tip" || componentName == "handgrip")) {
 		const glm::mat4 identity = glm::identity<glm::mat4>();
 		pComponentState->mTrackingToComponentRenderModel = G2S_m34(identity);
 		pComponentState->mTrackingToComponentLocal = G2S_m34(identity);
@@ -1034,7 +1171,7 @@ bool BaseRenderModels::GetComponentState(const char* pchRenderModelName, const c
 bool BaseRenderModels::TryGetComponentState(ITrackedDevice::TrackedDeviceType hand, const std::string& componentName, OOVR_RenderModel_ComponentState_t* result)
 {
 	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
-	if (hand == ITrackedDevice::HAND_NONE)
+	if (hand == ITrackedDevice::HAND_NONE || !BackendManager::InstancePtr())
 		return false;
 
 	std::shared_ptr<ITrackedDevice> dev = BackendManager::Instance().GetDeviceByHand(hand);
@@ -1103,7 +1240,7 @@ bool BaseRenderModels::TryGetComponentState(ITrackedDevice::TrackedDeviceType ha
 bool BaseRenderModels::RenderModelHasComponent(const char* pchRenderModelName, const char* pchComponentName)
 {
 	if (pchRenderModelName) {
-		if (std::shared_ptr<const RmModel> model = FindSteamVRRenderModel(pchRenderModelName))
+		if (std::shared_ptr<const RmModel> model = FindModel(pchRenderModelName))
 			return FindComponent(*model, pchComponentName) != nullptr;
 	}
 	// The models' one component is named after the model (GetComponentName)
@@ -1114,7 +1251,7 @@ bool BaseRenderModels::RenderModelHasComponent(const char* pchRenderModelName, c
 uint32_t BaseRenderModels::GetRenderModelThumbnailURL(const char* pchRenderModelName, VR_OUT_STRING() char* pchThumbnailURL, uint32_t unThumbnailURLLen, EVRRenderModelError* peError)
 {
 	// A SteamVR model: its thumbnail file as a file URL ("" if it names none)
-	if (std::shared_ptr<const RmModel> model = pchRenderModelName ? FindSteamVRRenderModel(pchRenderModelName) : nullptr) {
+	if (std::shared_ptr<const RmModel> model = pchRenderModelName ? FindModel(pchRenderModelName) : nullptr) {
 		if (peError)
 			*peError = VRRenderModelError_None;
 		string url;
@@ -1134,9 +1271,12 @@ uint32_t BaseRenderModels::GetRenderModelThumbnailURL(const char* pchRenderModel
 uint32_t BaseRenderModels::GetRenderModelOriginalPath(const char* pchRenderModelName, VR_OUT_STRING() char* pchOriginalPath, uint32_t unOriginalPathLen, EVRRenderModelError* peError)
 {
 	// A SteamVR model: its OBJ in its folder, as SteamVR answers (LoadRenderModel_Async takes it)
-	if (std::shared_ptr<const RmModel> model = pchRenderModelName ? FindSteamVRRenderModel(pchRenderModelName) : nullptr) {
+	if (std::shared_ptr<const RmModel> model = pchRenderModelName ? FindModel(pchRenderModelName) : nullptr) {
 		if (peError)
 			*peError = VRRenderModelError_None;
+		// An own controller model has no OBJ of the whole: its name is what loads it
+		if (IsOwnControllerModel(model->name) && !FindSteamVRRenderModel(pchRenderModelName))
+			return CopyOutModelString(model->name, pchOriginalPath, unOriginalPathLen, peError);
 		string stem = model->name;
 		if (!stem.empty() && stem[0] == '{')
 			stem = stem.substr(stem.find('}') + 1);

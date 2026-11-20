@@ -6,7 +6,10 @@
 // A model's folder holds <name>.obj (the whole model) and, optionally, <name>.json, whose "components" name the parts
 // that move or that games attach things to: each with its own OBJ ("filename", in the model's coordinates), its local
 // frame ("component_local": "origin" and "rotate_xyz" in degrees) and how it moves ("motion"). An OBJ's material
-// library names each material's texture (map_Kd); textures are read as PNG or TGA.
+// library names each material's texture (map_Kd); textures are read as PNG, JPEG or TGA.
+//
+// OpenLamina's own controller models (made from the WebXR Input Profiles by scripts/rendermodels.py) are in the same
+// layout, in a folder installed beside the library: rendermodels/<profile>/<profile>-<hand>.json, in grip space.
 
 #include "Misc/Image.h"
 #include "generated/interfaces/deleted_types.h"
@@ -39,6 +42,9 @@ struct RmModel {
 	std::vector<RmComponent> components;
 	std::filesystem::path folder;
 	std::string thumbnail; // the "thumbnail" file, relative to the folder; empty for none
+	// Where the model's files are in the space games get the model in: identity for SteamVR's; for OpenLamina's own,
+	// the grip in the device's space. The meshes are moved by it as they're loaded, and the components' motion with them.
+	XrPosef space = { { 0, 0, 0, 1 }, { 0, 0, 0 } };
 };
 
 // A model's (or one component's) triangles, ready for RenderModel_t
@@ -70,6 +76,10 @@ std::filesystem::path SteamVRRenderModelFolder(const std::filesystem::path& stea
  * Never throws. */
 std::optional<RmModel> LoadSteamVRRenderModel(const std::filesystem::path& steamvr, const std::string& name);
 
+/** A model of that name from its folder: <folder>/<stem>.json and the files it names, the stem being the name without a
+ * driver's "{<driver>}". As LoadSteamVRRenderModel otherwise. */
+std::optional<RmModel> LoadRenderModelFolder(const std::filesystem::path& folder, const std::string& name);
+
 /** Reads an OBJ's triangles from its text (faces of more than three corners as fans; negative indices count back), one
  * vertex for each distinct position/UV/normal corner of a material. v is turned into 1 - v: OBJ's v starts at the
  * texture's bottom row, a RenderModel_TextureMap_t's first row is its top. Positions and normals are as the text has
@@ -86,12 +96,12 @@ bool LoadObj(const std::filesystem::path& obj, std::vector<RmVertex>& verts, std
 std::optional<RmMesh> LoadObjMesh(const std::filesystem::path& obj);
 
 /** The triangles of a model: its component's OBJ, or with an empty component name <name>.obj, else (if there is
- * none) every component with an OBJ that's visible by default, together, with every material's texture.
- * nullopt if there's nothing to draw. */
+ * none) every component with an OBJ that's visible by default, together, with every material's texture; moved by the
+ * model's space. nullopt if there's nothing to draw. */
 std::optional<RmMesh> LoadRenderModelMesh(const RmModel& model, const std::string& component);
 
-/** A texture file as RGBA8: a TGA file (true-colour or greyscale, plain or run-length encoded) by its extension,
- * anything else through LoadImageFile. nullopt (logged) for a file it refuses. */
+/** A texture file as RGBA8: a TGA file (true-colour or greyscale, plain or run-length encoded) by its extension, a
+ * JPEG by its first bytes, anything else through LoadImageFile. nullopt (logged) for a file it refuses. */
 std::optional<Image> LoadRenderModelTexture(const std::filesystem::path& file);
 
 /** A mesh's textures (RmMesh::textures) as one image: the texture itself for one; for several their atlas, each
@@ -116,6 +126,10 @@ std::vector<Image> BuildMipChain(const Image& base, uint32_t levels);
  * Other types (and none) are static. */
 XrPosef ComponentPose(const RmComponent& c, float value, vr::HmdVector2_t axis);
 
+/** ComponentPose, and the component's local frame, in the space games get the model in (moved by its space) */
+XrPosef ModelComponentPose(const RmModel& model, const RmComponent& c, float value, vr::HmdVector2_t axis);
+XrPosef ModelComponentLocal(const RmModel& model, const RmComponent& c);
+
 /** Whether a component is drawn: "visibility"'s "default" (true without one), else its "touch" or "press" entry
  * while touched or pressed */
 bool ComponentVisible(const RmComponent& c, bool touched, bool pressed);
@@ -126,3 +140,16 @@ std::shared_ptr<const RmModel> FindSteamVRRenderModel(const std::string& name);
 
 /** The SteamVR install's model names (ListSteamVRRenderModels), read once. Empty without SteamVR. */
 const std::vector<std::string>& SteamVRRenderModelNames();
+
+/** The folder of OpenLamina's own controller models: rendermodels beside the library, else beside the folder it's in
+ * (one copy serves bin/ and bin/linux64/); OC_TEST_RENDERMODELS_DIR instead where it's set. Empty if there is none. */
+std::filesystem::path OwnRenderModelsFolder();
+
+/** One of OpenLamina's own models by name ("<profile>-left" or "<profile>-right"), its files in grip space put at
+ * space (RmModel::space), cached by name and space for the process (a failure too). Null for a name that isn't one,
+ * or without the folder. Thread-safe. */
+std::shared_ptr<const RmModel> FindOwnRenderModel(const std::string& name, const XrPosef& space);
+
+/** The names of OpenLamina's own models (each <profile>-<hand>.json of the folder), sorted; read once for each folder.
+ * Thread-safe. */
+const std::vector<std::string>& OwnRenderModelNames();
