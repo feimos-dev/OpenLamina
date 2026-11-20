@@ -87,6 +87,21 @@
   "instances_created_min": 2,
   "sessions_created_min": 3
  },
+ "instance_lost_overlay": {
+  "cases": [
+   "overlay-app-loss"
+  ],
+  "loss_record": {
+   "device_events": [
+    101,
+    100
+   ],
+   "instances_lost": 1,
+   "instances_created_min": 2,
+   "sessions_created_min": 2,
+   "frames_ended_min": 20
+  }
+ },
  "exiting": {
   "cases": [
    "frame-loop"
