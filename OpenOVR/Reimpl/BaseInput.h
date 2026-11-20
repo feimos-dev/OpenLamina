@@ -508,6 +508,9 @@ public: // INTERNAL FUNCTIONS
 	void GetHandSpace(ITrackedDevice::TrackedDeviceType hand, XrSpace& space, bool aimPose);
 
 	bool AreActionsLoaded();
+	// The game asked for legacy input before it could be attached: it's loaded at its next call, with no info set
+	// before it (which would cost a session restart)
+	bool LegacyInputAsked() const { return legacyInputAsked; }
 
 	/** One hand's laser for pointing at overlays (LaserMouse) */
 	struct HandPointer {
@@ -871,6 +874,7 @@ private:
 
 	// Set under the exclusive session lock; read without it on the way in to LoadEmptyManifestIfRequired
 	std::atomic<bool> hasLoadedActions = false;
+	std::atomic<bool> legacyInputAsked = false;
 	std::string loadedActionsPath;
 	std::mutex loadedActionsPathLock; // read before the session lock, to answer a repeated manifest at once
 	bool usingLegacyInput = false;

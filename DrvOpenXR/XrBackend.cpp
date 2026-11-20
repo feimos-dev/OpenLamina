@@ -2040,10 +2040,11 @@ const char* XrBackend::RebuildReasonName(RebuildReason reason)
 	return "?";
 }
 
+// The running backend, if it's OpenXR's (the unit tests run others)
 static XrBackend* CurrentBackend()
 {
 	BackendManager* manager = BackendManager::InstancePtr();
-	return manager ? (XrBackend*)manager->GetBackendInstance() : nullptr;
+	return manager ? dynamic_cast<XrBackend*>(manager->GetBackendInstance()) : nullptr;
 }
 
 bool XrBackend::CurrentSessionGone()
@@ -2353,8 +2354,8 @@ void XrBackend::PumpEvents()
 	// Not while a session is being ended (ShutdownSession pumps events while it waits, maybe under the input restart)
 	BaseInput* input = GetUnsafeBaseInput();
 	// Not before the game's device is known (InputsMayAttach): another session restart for it would follow
-	if (input && !exitExpected && !input->AreActionsLoaded() && sessionState == XR_SESSION_STATE_FOCUSED && !Hand(XrController::XCT_LEFT)
-	    && !Hand(XrController::XCT_RIGHT) && InputsMayAttach()) {
+	if (input && !exitExpected && !input->AreActionsLoaded() && !input->LegacyInputAsked() && sessionState == XR_SESSION_STATE_FOCUSED
+	    && !Hand(XrController::XCT_LEFT) && !Hand(XrController::XCT_RIGHT) && InputsMayAttach()) {
 		QueryForInteractionProfile();
 	}
 }
