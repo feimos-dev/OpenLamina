@@ -2384,13 +2384,13 @@ bool BaseOverlay::SendRemoteCommand(VROverlayHandle_t handle, OcOverlayCommand c
 		sent = VROverlayError_InvalidHandle;
 		return true;
 	}
-	// A value already in effect isn't sent again: programs set some every frame, and the ring is every program's. Not
-	// a Hide: an overlay not shown under a hidden parent is still shown on its own.
+	// A value already in effect (as published, rounded) isn't sent again: programs set some every frame, and the ring
+	// is every program's. Not a Hide: an overlay not shown under a hidden parent is still shown on its own.
 	const uint64_t flags = entry["flags"].asUInt64();
 	const bool unchanged = (command.kind == OcOverlayCommand::Show && entry["shown"].asBool())
-	    || (command.kind == OcOverlayCommand::Alpha && entry["alpha"].isNumeric() && entry["alpha"].asFloat() == command.number)
-	    || (command.kind == OcOverlayCommand::Width && entry["width"].isNumeric() && entry["width"].asFloat() == command.number)
-	    || (command.kind == OcOverlayCommand::SortOrder && entry["sort_order"].isNumeric() && entry["sort_order"].asUInt() == command.sortOrder)
+	    || (command.kind == OcOverlayCommand::Alpha && entry["alpha"].isNumeric() && std::fabs(entry["alpha"].asFloat() - command.number) < 0.0005f)
+	    || (command.kind == OcOverlayCommand::Width && entry["width"].isNumeric() && std::fabs(entry["width"].asFloat() - command.number) < 0.0005f)
+	    || (command.kind == OcOverlayCommand::SortOrder && entry["sort_order"].isNumeric() && entry["sort_order"].asUInt() == std::min<uint32_t>(command.sortOrder, INT_MAX - 1))
 	    || (command.kind == OcOverlayCommand::Flag && ((flags >> command.flag) & 1) == (command.enabled ? 1u : 0u));
 	if (unchanged) {
 		sent = VROverlayError_None;
@@ -2423,7 +2423,7 @@ bool BaseOverlay::SendRemoteCommand(VROverlayHandle_t handle, OcOverlayCommand c
 		p.flags[command.flag] = command.enabled;
 		break;
 	case OcOverlayCommand::SortOrder:
-		p.sortOrder = command.sortOrder;
+		p.sortOrder = std::min<uint32_t>(command.sortOrder, INT_MAX - 1); // as it's published
 		break;
 	case OcOverlayCommand::Event:
 		return true;
