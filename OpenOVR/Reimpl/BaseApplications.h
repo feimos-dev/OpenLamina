@@ -28,11 +28,14 @@ enum OOVR_EVRApplicationError {
 	VRApplicationError_TransitionAborted = 113,
 	VRApplicationError_IsTemplate = 114, // error when you try to call LaunchApplication() on a template type app (use LaunchTemplateApplication)
 	VRApplicationError_SteamVRIsExiting = 115,
+	VRApplicationError_WaitingForChaperone = 116,	// Caller should retry while PerformApplicationPrelaunchCheck is returning this
 
 	VRApplicationError_BufferTooSmall = 200,		// The provided buffer was too small to fit the requested data
 	VRApplicationError_PropertyNotSet = 201,		// The requested property was not set
 	VRApplicationError_UnknownProperty = 202,
 	VRApplicationError_InvalidParameter = 203,
+
+	VRApplicationError_NotImplemented = 300,		// Function is not implemented in the current interface
 	// clang-format on
 };
 
@@ -51,12 +54,14 @@ enum OOVR_EVRApplicationProperty {
 	VRApplicationProperty_ImagePath_String = 52,
 	VRApplicationProperty_Source_String = 53,
 	VRApplicationProperty_ActionManifestURL_String = 54,
+	VRApplicationProperty_ImagePathCapsule_String = 55,
 
 	VRApplicationProperty_IsDashboardOverlay_Bool = 60,
 	VRApplicationProperty_IsTemplate_Bool = 61,
 	VRApplicationProperty_IsInstanced_Bool = 62,
 	VRApplicationProperty_IsInternal_Bool = 63,
 	VRApplicationProperty_WantsCompositorPauseInStandby_Bool = 64,
+	VRApplicationProperty_IsHidden_Bool = 65,
 
 	VRApplicationProperty_LastLaunchTime_Uint64 = 70,
 };
@@ -239,7 +244,7 @@ public:
 private:
 	SharedStore& Store();
 	std::optional<AppManifestEntry> Find(const char* pchAppKey);
-	EVRApplicationError Launch(const AppManifestEntry& app, const std::string& extraArguments);
+	EVRApplicationError Launch(const AppManifestEntry& app, const std::string& extraArguments, uint32_t* startedPid = nullptr);
 
 	SharedStore* store = nullptr;
 };

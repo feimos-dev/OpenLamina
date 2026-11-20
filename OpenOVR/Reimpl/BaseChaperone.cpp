@@ -17,6 +17,8 @@ using namespace vr;
 
 BaseChaperone::BaseChaperoneCalibrationState BaseChaperone::GetCalibrationState()
 {
+	// OK whether or not the runtime gives stage bounds: runtimes without them (Monado among them) have nothing for the
+	// player to set up, and games read an error here as a room setup to do first
 	return ChaperoneCalibrationState_OK;
 }
 bool BaseChaperone::GetPlayAreaSize(float* pSizeX, float* pSizeZ)
@@ -34,7 +36,6 @@ bool BaseChaperone::GetPlayAreaSize(float* pSizeX, float* pSizeZ)
 	*pSizeX = maxPoint.v[0] - minPoint.v[0];
 	*pSizeZ = maxPoint.v[2] - minPoint.v[2];
 
-	// TODO verify return value
 	return true;
 }
 void BaseChaperone::GetBoundsColor(HmdColor_t* pOutputColorArray, int nNumOutputColors)
@@ -74,16 +75,17 @@ bool BaseChaperone::GetPlayAreaRect(HmdQuad_t* rect)
 	if (!success)
 		return false;
 
+	// Counter-clockwise from the front right (the front being -Z)
 	rect->vCorners[0].v[0] = maxPoint.v[0];
-	rect->vCorners[0].v[2] = maxPoint.v[2];
+	rect->vCorners[0].v[2] = minPoint.v[2];
 
-	rect->vCorners[1].v[0] = maxPoint.v[0];
+	rect->vCorners[1].v[0] = minPoint.v[0];
 	rect->vCorners[1].v[2] = minPoint.v[2];
 
 	rect->vCorners[2].v[0] = minPoint.v[0];
-	rect->vCorners[2].v[2] = minPoint.v[2];
+	rect->vCorners[2].v[2] = maxPoint.v[2];
 
-	rect->vCorners[3].v[0] = minPoint.v[0];
+	rect->vCorners[3].v[0] = maxPoint.v[0];
 	rect->vCorners[3].v[2] = maxPoint.v[2];
 
 	return true;
@@ -98,8 +100,9 @@ void BaseChaperone::SetSceneColor(HmdColor_t color)
 }
 void BaseChaperone::GetBoundsColor(HmdColor_t* pOutputColorArray, int nNumOutputColors, float flCollisionBoundsFadeDistance, HmdColor_t* pOutputCameraColor)
 {
-	// The colours of the committed room setup (IVRChaperoneSetup); none (zero) before one is committed
-	HmdColor_t bounds{}, camera{};
+	// The colours of the committed room setup (IVRChaperoneSetup); before one is committed, clear bounds and a clear
+	// white camera
+	HmdColor_t bounds = ChaperoneData{}.colors[0], camera = ChaperoneData{}.colors[1];
 	if (auto committed = ChaperoneData::FromJson(SharedStore::Get().Read(StoreDoc::Chaperone))) {
 		bounds = committed->colors[0];
 		camera = committed->colors[1];
@@ -151,10 +154,17 @@ bool BaseChaperone::GetMinMaxPoints(vr::HmdVector3_t& minPoint, vr::HmdVector3_t
 
 void BaseChaperone::ResetZeroPose(vr::ETrackingUniverseOrigin eTrackingUniverseOrigin)
 {
-	if (eTrackingUniverseOrigin != TrackingUniverseSeated) {
-		OOVR_LOG_ONCE("No implementation");
+	// The standing origin is the runtime's stage: moved under the head where the runtime allows it (Monado through
+	// libmonado), which every program follows
+	if (eTrackingUniverseOrigin == TrackingUniverseStanding) {
+		TrackedDevicePose_t head{};
+		if (std::shared_ptr<ITrackedDevice> hmd = BackendManager::Instance().GetDevice(vr::k_unTrackedDeviceIndex_Hmd))
+			hmd->GetPose(vr::TrackingUniverseStanding, &head, ETrackingStateType::TrackingStateType_Rendering);
+		if (head.bPoseIsValid && BaseChaperoneSetup::RecentreStage(head.mDeviceToAbsoluteTracking))
+			return;
 	}
 
-	// TODO do we have to do anything about the tracking origin?
-	GetUnsafeBaseSystem()->ResetSeatedZeroPose();
+	// Elsewhere the seated origin is all there is to reset
+	if (BaseSystem* system = GetUnsafeBaseSystem())
+		system->ResetSeatedZeroPose();
 }

@@ -108,6 +108,7 @@ Json::Value AppManifestEntry::ToJson() const
 	v["working_directory"] = workingDirectory;
 	v["url"] = url;
 	v["image_path"] = imagePath;
+	v["image_path_capsule"] = imagePathCapsule;
 	v["action_manifest_path"] = actionManifestPath;
 	v["name"] = nameEnUs;
 	v["description"] = descriptionEnUs;
@@ -139,6 +140,7 @@ AppManifestEntry AppManifestEntry::FromJson(const Json::Value& v)
 	e.workingDirectory = StringMember(v, "working_directory");
 	e.url = StringMember(v, "url");
 	e.imagePath = StringMember(v, "image_path");
+	e.imagePathCapsule = StringMember(v, "image_path_capsule");
 	e.actionManifestPath = StringMember(v, "action_manifest_path");
 	e.nameEnUs = StringMember(v, "name");
 	e.descriptionEnUs = StringMember(v, "description");
@@ -201,6 +203,7 @@ std::vector<AppManifestEntry> ParseAppManifest(const fs::path& path, std::vector
 		e.workingDirectory = StringMember(app, "working_directory");
 		e.url = StringMember(app, "url");
 		e.imagePath = StringMember(app, "image_path");
+		e.imagePathCapsule = StringMember(app, "image_path_capsule");
 		e.actionManifestPath = StringMember(app, "action_manifest_path");
 		e.newsUrl = StringMember(app, "news_url");
 		e.source = source;
@@ -288,7 +291,11 @@ std::string CurrentProcessAppKey(SharedStore& store)
 	Json::Value doc = store.Read(StoreDoc::Applications);
 	const Json::Value& pids = doc["pids"];
 	std::string pidKey = std::to_string(pid);
-	if (pids.isObject() && pids[pidKey].isString() && !pids[pidKey].asString().empty())
+	const Json::Value& starts = doc["pid_starts"];
+	uint64_t listedStart = starts.isObject() && starts[pidKey].isUInt64() ? starts[pidKey].asUInt64() : 0;
+	// Not an earlier process's entry, if this one took over its id
+	bool ours = !listedStart || listedStart == SharedStore::OwnStartTime();
+	if (ours && pids.isObject() && pids[pidKey].isString() && !pids[pidKey].asString().empty())
 		return pids[pidKey].asString();
 
 	// 2. Steam's
@@ -466,14 +473,34 @@ std::optional<pid_t> Spawn(const std::string& file, const std::vector<std::strin
 } // namespace
 #endif
 
+#ifdef _WIN32
+namespace {
+// UTF-8 text as UTF-16; empty if it isn't UTF-8
+std::wstring WideFromUtf8(const std::string& text)
+{
+	if (text.empty())
+		return {};
+	int n = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), (int)text.size(), nullptr, 0);
+	if (n <= 0)
+		return {};
+	std::wstring out((size_t)n, L'\0');
+	MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, text.data(), (int)text.size(), out.data(), n);
+	return out;
+}
+} // namespace
+#endif
+
 std::optional<uint32_t> LaunchProcess(const fs::path& binary, const std::string& arguments, const fs::path& workingDirectory)
 {
 	if (binary.empty())
 		return std::nullopt;
 #ifdef _WIN32
+	std::wstring wideArguments = WideFromUtf8(arguments);
+	if (!arguments.empty() && wideArguments.empty())
+		return std::nullopt; // not UTF-8: not started with arguments it didn't ask for
 	std::wstring commandLine = L"\"" + binary.wstring() + L"\"";
-	if (!arguments.empty())
-		commandLine += L" " + PathFromUtf8(arguments).wstring();
+	if (!wideArguments.empty())
+		commandLine += L" " + wideArguments;
 	STARTUPINFOW si{};
 	si.cb = sizeof(si);
 	PROCESS_INFORMATION pi{};
@@ -481,6 +508,24 @@ std::optional<uint32_t> LaunchProcess(const fs::path& binary, const std::string&
 	if (!CreateProcessW(binary.c_str(), commandLine.data(), nullptr, nullptr, FALSE, 0, nullptr,
 	        dir.empty() ? nullptr : dir.c_str(), &si, &pi)) {
 		DWORD error = GetLastError();
+		if (error == ERROR_ELEVATION_REQUIRED) {
+			// A program that asks to run as administrator: the shell asks the user
+			SHELLEXECUTEINFOW info{};
+			info.cbSize = sizeof(info);
+			info.fMask = SEE_MASK_NOCLOSEPROCESS;
+			info.lpVerb = L"open";
+			info.lpFile = binary.c_str();
+			info.lpParameters = wideArguments.empty() ? nullptr : wideArguments.c_str();
+			info.lpDirectory = dir.empty() ? nullptr : dir.c_str();
+			info.nShow = SW_SHOWNORMAL;
+			if (ShellExecuteExW(&info) && info.hProcess) {
+				DWORD id = GetProcessId(info.hProcess);
+				CloseHandle(info.hProcess);
+				if (id)
+					return (uint32_t)id;
+			}
+			error = GetLastError();
+		}
 		OOVR_LOGF("Couldn't start %s: error %lu", PathToUtf8(binary).c_str(), error);
 		return std::nullopt;
 	}
@@ -508,7 +553,7 @@ bool OpenUrl(const std::string& url)
 	if (url.empty())
 		return false;
 #ifdef _WIN32
-	HINSTANCE result = ShellExecuteW(nullptr, L"open", PathFromUtf8(url).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
+	HINSTANCE result = ShellExecuteW(nullptr, L"open", WideFromUtf8(url).c_str(), nullptr, nullptr, SW_SHOWNORMAL);
 	return (INT_PTR)result > 32;
 #else
 	return Spawn("xdg-open", { "xdg-open", url }, {}, true).has_value();

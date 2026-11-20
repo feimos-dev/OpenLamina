@@ -31,7 +31,10 @@ class SharedStore {
 public:
 	/** The process's store: OC_STORE_DIR if set, else %LOCALAPPDATA%\OpenLamina\store (Linux: $XDG_STATE_HOME or
 	 * ~/.local/state, then OpenLamina/store). If that folder doesn't exist yet, the OpenComposite one it replaced (the
-	 * same place under OpenComposite) is copied into it first, if there is one. */
+	 * same place under OpenComposite) is copied into it first, if there is one. A Windows build in a Wine or Proton
+	 * prefix gets that prefix's own %LOCALAPPDATA%, so it shares nothing with programs outside the prefix: setting
+	 * OC_STORE_DIR to the same folder (a Z: path to a host folder) in each of them shares the store. Process ids
+	 * don't mean the same across that boundary, so the liveness checks of programs on different sides are unreliable. */
 	static SharedStore& Get();
 
 	/** Copies the documents (not state.bin or the lock) of the store in legacy to a new folder dir, all at once. False,

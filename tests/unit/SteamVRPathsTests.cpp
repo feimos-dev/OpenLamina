@@ -125,3 +125,54 @@ TEST_CASE("SteamVRPaths_bad_utf8_library")
 	REQUIRE(found.has_value());
 	CHECK(fs::equivalent(*found, steam / "steamapps" / "common" / "SteamVR"));
 }
+
+TEST_CASE("SteamVRPaths_config_from_paths_file")
+{
+	// The paths file's config entry wins over Steam's own config folder; a first entry that isn't a folder is passed over
+	TempDir tmp;
+	fs::path steam = tmp.path / "Steam";
+	fs::create_directories(steam / "config");
+	fs::path config = tmp.path / "elsewhere" / "config";
+	fs::create_directories(config);
+	fs::path pathsFile = tmp.path / "openvrpaths.vrpath";
+	std::ofstream(pathsFile) << "{ \"config\": [ \"" << JsonString(tmp.path / "missing") << "\", \"" << JsonString(config) << "\" ] }";
+
+	auto found = FindSteamConfigDir(&pathsFile, &steam);
+	REQUIRE(found.has_value());
+	CHECK(fs::equivalent(*found, config));
+
+	// Without a config entry, Steam's
+	fs::path missing = tmp.path / "missing.vrpath";
+	found = FindSteamConfigDir(&missing, &steam);
+	REQUIRE(found.has_value());
+	CHECK(fs::equivalent(*found, steam / "config"));
+
+	fs::path noSteam = tmp.path / "no steam";
+	CHECK_FALSE(FindSteamConfigDir(&missing, &noSteam).has_value());
+}
+
+#ifndef _WIN32
+TEST_CASE("SteamVRPaths_flatpak_steam")
+{
+	TempDir tmp;
+	fs::path steam = tmp.path / ".var/app/com.valvesoftware.Steam/.local/share/Steam";
+	fs::create_directories(steam / "config");
+	fs::create_directories(steam / "steamapps/common/SteamVR/bin");
+	fs::path missing = tmp.path / "missing.vrpath";
+
+	const char* oldHome = getenv("HOME");
+	std::string saved = oldHome ? oldHome : "";
+	setenv("HOME", tmp.path.c_str(), 1);
+	auto install = FindSteamVRInstall(&missing);
+	auto config = FindSteamConfigDir(&missing);
+	if (oldHome)
+		setenv("HOME", saved.c_str(), 1);
+	else
+		unsetenv("HOME");
+
+	REQUIRE(install.has_value());
+	CHECK(fs::equivalent(*install, steam / "steamapps/common/SteamVR"));
+	REQUIRE(config.has_value());
+	CHECK(fs::equivalent(*config, steam / "config"));
+}
+#endif

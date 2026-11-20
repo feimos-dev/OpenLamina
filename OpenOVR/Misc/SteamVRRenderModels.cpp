@@ -570,6 +570,51 @@ std::optional<Image> LoadRenderModelTexture(const fs::path& file)
 	return image;
 }
 
+Image ResampleImage(const Image& image, uint32_t width, uint32_t height)
+{
+	Image out;
+	if (image.Empty() || image.rgba.size() < (size_t)image.width * image.height * 4 || !width || !height)
+		return out;
+	out.width = width;
+	out.height = height;
+	out.rgba.resize((size_t)width * height * 4);
+	for (uint32_t y = 0; y < height; y++) {
+		uint32_t sy = (uint32_t)(((uint64_t)y * 2 + 1) * image.height / ((uint64_t)height * 2));
+		for (uint32_t x = 0; x < width; x++) {
+			uint32_t sx = (uint32_t)(((uint64_t)x * 2 + 1) * image.width / ((uint64_t)width * 2));
+			memcpy(&out.rgba[((size_t)y * width + x) * 4], &image.rgba[((size_t)sy * image.width + sx) * 4], 4);
+		}
+	}
+	return out;
+}
+
+std::vector<Image> BuildMipChain(const Image& base, uint32_t levels)
+{
+	std::vector<Image> chain{ base };
+	if (base.Empty() || base.rgba.size() < (size_t)base.width * base.height * 4)
+		return chain;
+	while ((levels == 0 || chain.size() < levels) && (chain.back().width > 1 || chain.back().height > 1)) {
+		const Image& up = chain.back();
+		Image down;
+		down.width = (std::max)(up.width / 2, 1u);
+		down.height = (std::max)(up.height / 2, 1u);
+		down.rgba.resize((size_t)down.width * down.height * 4);
+		for (uint32_t y = 0; y < down.height; y++) {
+			for (uint32_t x = 0; x < down.width; x++) {
+				uint32_t x0 = (std::min)(x * 2, up.width - 1), x1 = (std::min)(x * 2 + 1, up.width - 1);
+				uint32_t y0 = (std::min)(y * 2, up.height - 1), y1 = (std::min)(y * 2 + 1, up.height - 1);
+				for (int c = 0; c < 4; c++) {
+					uint32_t sum = up.rgba[((size_t)y0 * up.width + x0) * 4 + c] + up.rgba[((size_t)y0 * up.width + x1) * 4 + c]
+					    + up.rgba[((size_t)y1 * up.width + x0) * 4 + c] + up.rgba[((size_t)y1 * up.width + x1) * 4 + c];
+					down.rgba[((size_t)y * down.width + x) * 4 + c] = (uint8_t)((sum + 2) / 4);
+				}
+			}
+		}
+		chain.push_back(std::move(down));
+	}
+	return chain;
+}
+
 XrPosef ComponentPose(const RmComponent& c, float value, vr::HmdVector2_t axis)
 {
 	float v = std::isfinite(value) ? std::clamp(value, 0.0f, 1.0f) : 0.0f;

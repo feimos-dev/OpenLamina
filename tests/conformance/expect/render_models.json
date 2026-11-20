@@ -1,8 +1,8 @@
 {
  "#": "SteamVR's render models read from its install, on the stand-in (run.py --cases render-models --expect expect/render_models.json; run.py makes tests/unit/data/steamvr, our own fixture, SteamVR's install for this case). The fixture's models are listed with the built-in ones it doesn't have. test_controller has no OBJ of its own, so it is its two components together (a four-cornered plate and a triangle: 7 vertices, 3 triangles) with its 2x2 PNG, also as a D3D11 texture. Each component's render model is <model>/<component>; the trigger (controller_axis 1, so Axis1's button bit) turns -20 degrees about X through its pivot when pulled, its local frame with it; the body is static at its component_local. The thumbnail is the JSON's, as a file URL; the original path is the model's OBJ. vive_tracker's JSON isn't JSON: the built-in tracker (10659 vertices, no texture) is answered.",
  "render-models/models/-/-": {
-  "count": 4,
-  "names": ["test_controller", "vive_tracker", "renderLeftHand", "renderRightHand"]
+  "count": 8,
+  "names": ["test_controller", "vive_tracker", "renderLeftHand", "renderRightHand", "oculus_quest2_controller_left", "oculus_quest2_controller_right", "{indexcontroller}valve_controller_knu_1_0_left", "{indexcontroller}valve_controller_knu_1_0_right"]
  },
  "render-models/load test_controller/-/-": {
   "ret": 0,
@@ -12,6 +12,8 @@
   "textured": true,
   "texture_ret": 0,
   "texture": "2x2",
+  "texture_format": 0,
+  "texture_mips": 1,
   "first_pixel": "ff0000ff",
   "d3d11_ret": 0,
   "d3d11_texture": "2x2"
@@ -49,12 +51,33 @@
  "render-models/fallback/-/-": {
   "broken_ret": 0,
   "broken_vertices": 10659,
-  "broken_textured": false,
+  "broken_textured": true,
   "hand_ret": 0,
   "hand_has_vertices": true,
-  "unknown_ret": 200,
+  "unknown_ret": 301,
   "unknown_null": true,
-  "outside_ret": 200,
+  "outside_ret": 301,
   "outside_null": true
+ },
+ "render-models/answers/-/-": {
+  "name_size_matches": true,
+  "name_out_of_range": 0,
+  "unknown_components": 0,
+  "unknown_has_component": false,
+  "hand_components": 1,
+  "unknown_state": false,
+  "unknown_thumbnail": 0,
+  "unknown_thumbnail_error": 301,
+  "unknown_original": 0,
+  "unknown_original_error": 301,
+  "short_buffer_error": 306,
+  "short_buffer_needs_more": true,
+  "unknown_texture": 300,
+  "unknown_texture_null": true,
+  "hand_textured": true,
+  "hand_texture_ret": 0,
+  "hand_texture": "1x1",
+  "path_ret": 0,
+  "path_has_vertices": true
  }
 }

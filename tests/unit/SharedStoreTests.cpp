@@ -292,3 +292,35 @@ TEST_CASE("Store_migration_leaves_nothing_behind_when_it_fails")
 	CHECK_FALSE(SharedStore::MigrateLegacyDir(legacy, t.root / "OpenLamina" / "store"));
 	CHECK(fs::exists(legacy / "settings.json"));
 }
+
+TEST_CASE("Store_restores_the_last_good_copy_of_a_cut_short_document")
+{
+	TempDir dir;
+	{
+		SharedStore store(dir.path);
+		REQUIRE(store.Update(StoreDoc::Settings, [](Json::Value& data) { data["a"] = 1; }));
+		REQUIRE(store.Update(StoreDoc::Settings, [](Json::Value& data) { data["b"] = 2; }));
+	}
+	// A write that was cut short
+	std::string whole = Contents(dir.path / "settings.json");
+	std::ofstream(dir.path / "settings.json", std::ios::binary | std::ios::trunc) << whole.substr(0, whole.size() / 2);
+
+	SharedStore store(dir.path);
+	CHECK(store.Read(StoreDoc::Settings)["a"].asInt() == 1);
+	CHECK(store.Update(StoreDoc::Settings, [](Json::Value& data) { data["c"] = 3; }));
+	Json::Value data = store.Read(StoreDoc::Settings);
+	CHECK(data["a"].asInt() == 1);
+	CHECK(data["c"].asInt() == 3);
+	CHECK(fs::exists(dir.path / "settings.json.bad"));
+}
+
+TEST_CASE("Store_leaves_no_temporary_file_and_refuses_a_runaway_document")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	CHECK(store.Update(StoreDoc::Settings, [](Json::Value& data) { data["ok"] = true; }));
+	CHECK_FALSE(store.Update(StoreDoc::Settings, [](Json::Value& data) { data["big"] = std::string(17 * 1024 * 1024, 'x'); }));
+	CHECK(store.Read(StoreDoc::Settings)["ok"].asBool());
+	CHECK_FALSE(store.Read(StoreDoc::Settings).isMember("big"));
+	CHECK_FALSE(fs::exists(dir.path / "settings.json.tmp"));
+}

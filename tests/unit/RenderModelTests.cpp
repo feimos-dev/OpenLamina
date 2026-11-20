@@ -366,3 +366,70 @@ TEST_CASE("Render_model_non_ascii_folder")
 	REQUIRE(tex.has_value());
 	CHECK(tex->width == 2);
 }
+
+namespace {
+Image MakeImage(uint32_t w, uint32_t h, std::initializer_list<uint8_t> firstPixels = {})
+{
+	Image image;
+	image.width = w;
+	image.height = h;
+	image.rgba.assign((size_t)w * h * 4, 0);
+	size_t i = 0;
+	for (uint8_t v : firstPixels)
+		image.rgba[i++] = v;
+	return image;
+}
+} // namespace
+
+TEST_CASE("Textures_resample_to_the_target_size")
+{
+	// A 2x2 of four colours, one per quadrant, grown to 4x4: each quadrant is 2x2 pixels of its colour
+	Image src = MakeImage(2, 2, { 1, 1, 1, 255, 2, 2, 2, 255, 3, 3, 3, 255, 4, 4, 4, 255 });
+	Image big = ResampleImage(src, 4, 4);
+	REQUIRE(big.width == 4);
+	REQUIRE(big.height == 4);
+	CHECK(big.rgba.size() == 64);
+	CHECK(big.At(0, 0) == src.At(0, 0));
+	CHECK(big.At(1, 1) == src.At(0, 0));
+	CHECK(big.At(2, 1) == src.At(1, 0));
+	CHECK(big.At(1, 3) == src.At(0, 1));
+	CHECK(big.At(3, 3) == src.At(1, 1));
+
+	// The same size is a copy; a size of 0 or an empty image gives nothing
+	CHECK(ResampleImage(src, 2, 2).rgba == src.rgba);
+	CHECK(ResampleImage(src, 0, 4).Empty());
+	CHECK(ResampleImage(Image{}, 4, 4).Empty());
+
+	// Smaller than the original, down to 1x1
+	Image one = ResampleImage(big, 1, 1);
+	REQUIRE(one.width == 1);
+	CHECK(one.rgba.size() == 4);
+}
+
+TEST_CASE("Texture_mip_chain_halves_down_to_one_pixel")
+{
+	Image src = MakeImage(4, 2);
+	for (size_t i = 0; i < src.rgba.size(); i++)
+		src.rgba[i] = (uint8_t)(i % 4 == 3 ? 255 : 100);
+
+	std::vector<Image> all = BuildMipChain(src, 0);
+	REQUIRE(all.size() == 3);
+	CHECK(all[0].width == 4);
+	CHECK(all[1].width == 2);
+	CHECK(all[1].height == 1);
+	CHECK(all[2].width == 1);
+	CHECK(all[2].height == 1);
+	// Pixels of one colour stay that colour
+	CHECK(all[2].At(0, 0) == 0x646464ffu);
+
+	// A fixed number of levels, never more than there are
+	CHECK(BuildMipChain(src, 2).size() == 2);
+	CHECK(BuildMipChain(src, 20).size() == 3);
+	CHECK(BuildMipChain(src, 1).size() == 1);
+
+	// The average of four
+	Image four = MakeImage(2, 2, { 0, 0, 0, 255, 100, 0, 0, 255, 200, 0, 0, 255, 255, 0, 0, 255 });
+	CHECK(BuildMipChain(four, 0).back().rgba[0] == 139);
+	// An empty image is still one level
+	CHECK(BuildMipChain(Image{}, 0).size() == 1);
+}

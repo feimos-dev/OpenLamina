@@ -75,6 +75,14 @@ std::optional<RmMesh> LoadRenderModelMesh(const RmModel& model, const std::strin
 /** A PNG file as RGBA8, through LoadImageFile. nullopt (logged) for a file it refuses. */
 std::optional<Image> LoadRenderModelTexture(const std::filesystem::path& file);
 
+/** The image at another size, each pixel the nearest of the original's. An empty image if either size is 0 or the
+ * original is empty. */
+Image ResampleImage(const Image& image, uint32_t width, uint32_t height);
+
+/** The image and the levels below it, each half the size of the one before (at least 1 pixel, each pixel the average of
+ * the four above it). levels is how many to make, 0 for all the way down to 1x1; never more than that, never fewer than 1. */
+std::vector<Image> BuildMipChain(const Image& base, uint32_t levels);
+
 /** Where a component's geometry is moved to for the current input, in the model's space (identity at rest):
  * "rotate" turns it about "axis" through "pivot" by value_mapping's degrees at value (0 to 1), "translate" moves it
  * along "axis" by value_mapping's metres; "trackpad" tilts about its "center" by press_rotation_x/y (as far as value

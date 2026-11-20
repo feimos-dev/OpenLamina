@@ -74,6 +74,28 @@ void RecordStage(Json::Value& offsets, const vr::HmdMatrix34_t& zero, const vr::
 	offsets["stage"] = stage;
 }
 
+// The width and depth of the OpenXR runtime's play area; false if it has none (or no session yet)
+bool RuntimeStageSize(float& width, float& depth)
+{
+	BackendManager* backends = BackendManager::InstancePtr();
+	int count = 0;
+	if (!backends || !backends->GetPlayAreaPoints(nullptr, &count) || count < 2)
+		return false;
+	std::vector<HmdVector3_t> points(count);
+	if (!backends->GetPlayAreaPoints(points.data(), nullptr))
+		return false;
+	float minX = points[0].v[0], maxX = minX, minZ = points[0].v[2], maxZ = minZ;
+	for (const HmdVector3_t& p : points) {
+		minX = std::min(minX, p.v[0]);
+		maxX = std::max(maxX, p.v[0]);
+		minZ = std::min(minZ, p.v[2]);
+		maxZ = std::max(maxZ, p.v[2]);
+	}
+	width = maxX - minX;
+	depth = maxZ - minZ;
+	return true;
+}
+
 } // namespace
 
 std::optional<vr::HmdMatrix34_t> BaseChaperoneSetup::ApplyZeroPoses(Json::Value& offsets, const ChaperoneData& committed, LibMonado& monado)
@@ -169,20 +191,9 @@ ChaperoneData BaseChaperoneSetup::LiveData(bool* found)
 		return *committed;
 
 	// The runtime's stage
-	BackendManager* backends = BackendManager::InstancePtr();
-	int count = 0;
-	if (backends && backends->GetPlayAreaPoints(nullptr, &count) && count >= 2) {
-		std::vector<HmdVector3_t> points(count);
-		backends->GetPlayAreaPoints(points.data(), nullptr);
-		float minX = points[0].v[0], maxX = minX, minZ = points[0].v[2], maxZ = minZ;
-		for (const HmdVector3_t& p : points) {
-			minX = std::min(minX, p.v[0]);
-			maxX = std::max(maxX, p.v[0]);
-			minZ = std::min(minZ, p.v[2]);
-			maxZ = std::max(maxZ, p.v[2]);
-		}
-		return ChaperoneData::FromStage(maxX - minX, maxZ - minZ);
-	}
+	float width, depth;
+	if (RuntimeStageSize(width, depth))
+		return ChaperoneData::FromStage(width, depth);
 	if (found)
 		*found = false;
 	return ChaperoneData{};
@@ -250,24 +261,14 @@ bool BaseChaperoneSetup::GetWorkingCollisionBoundsInfo(VR_OUT_ARRAY_COUNT(punQua
 }
 bool BaseChaperoneSetup::GetLiveCollisionBoundsInfo(VR_OUT_ARRAY_COUNT(punQuadsCount) HmdQuad_t* pQuadsBuffer, uint32_t* punQuadsCount)
 {
-	// The runtime's boundary, as a quad on the floor around the play area
-	XrExtent2Df bounds;
-	XrResult result = xrGetReferenceSpaceBoundsRect(xr_session.get(), XR_REFERENCE_SPACE_TYPE_STAGE, &bounds);
-
-	if (result == XR_SPACE_BOUNDS_UNAVAILABLE) {
+	// The runtime's boundary, as a wall on each edge of the play area; none if it has no play area
+	float width, depth;
+	if (!RuntimeStageSize(width, depth)) {
 		if (punQuadsCount)
 			*punQuadsCount = 0;
-		return false; // TODO verify SteamVR returns this if Guardian isn't set up
+		return false;
 	}
-
-	if (XR_FAILED(result)) {
-		if (punQuadsCount)
-			*punQuadsCount = 0;
-		OC_UNSUPPORTED(false, "GetLiveCollisionBoundsInfo: xrGetReferenceSpaceBoundsRect failed (%d)", (int)result);
-	}
-
-	std::vector<HmdQuad_t> quads = { ChaperoneData::FloorQuad(bounds.width, bounds.height) };
-	return CopyArray(quads, pQuadsBuffer, punQuadsCount);
+	return CopyArray(ChaperoneData::WallQuads(width, depth, ChaperoneData::kWallHeight), pQuadsBuffer, punQuadsCount);
 }
 bool BaseChaperoneSetup::GetWorkingSeatedZeroPoseToRawTrackingPose(HmdMatrix34_t* pmatSeatedZeroPoseToRawTrackingPose)
 {

@@ -15,6 +15,7 @@ enum OOVR_EVRSettingsError {
 	VRSettingsError_ReadFailed = 3,
 	VRSettingsError_JsonParseFailed = 4,
 	VRSettingsError_UnsetSettingHasNoDefault = 5, // This will be returned if the setting does not appear in the appropriate default file and has not been set
+	VRSettingsError_AccessDenied = 6,
 };
 
 class BaseSettings {
@@ -53,8 +54,10 @@ public:
 	/** RenderScale without the app's own resolutionScale */
 	static float GlobalRenderScale(SharedStore& store, float iniRatio);
 
-	/** A setting's value as Get* look it up: the store, OpenComposite's live answers, SteamVR's files, then the
-	 * answers OpenComposite always gave; nothing if none has it */
+	/** A setting's value as Get* look it up: the store, OpenComposite's live answers, SteamVR's files, then
+	 * OpenComposite's own table of defaults; nothing if none has it. Only the render scale keys
+	 * (steamvr.supersampleScale, steamvr.renderTargetMultiplier, steam.app.<id>.resolutionScale) change what
+	 * OpenComposite does; every other setting is kept and read back as written. */
 	std::optional<Json::Value> Lookup(const std::string& section, const std::string& key);
 
 private:

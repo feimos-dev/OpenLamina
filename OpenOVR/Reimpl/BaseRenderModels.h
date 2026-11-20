@@ -15,9 +15,6 @@ struct OOVR_RenderModel_ControllerMode_State_t;
 typedef vr::RenderModel_ComponentState_t OOVR_RenderModel_ComponentState_t;
 
 class BaseRenderModels {
-private:
-	std::set<std::string> warnedAboutComponents;
-
 public: // INTERNAL FUNCTIONS
 	/** Try to find a component, if possible. This is the core of GetComponentState, which itself handles the case where this fails. */
 	bool TryGetComponentState(ITrackedDevice::TrackedDeviceType hand, const std::string& componentName, OOVR_RenderModel_ComponentState_t* result);

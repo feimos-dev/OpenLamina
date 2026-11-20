@@ -1357,12 +1357,13 @@ void ChaperoneCase(CaseContext& c)
 	Json::Value live;
 	live["count_ret"] = setup->GetLiveCollisionBoundsInfo(nullptr, &count);
 	live["count"] = count;
-	vr::HmdQuad_t quad{};
-	count = 1;
-	live["ret"] = setup->GetLiveCollisionBoundsInfo(&quad, &count);
+	vr::HmdQuad_t quads[4] = {};
+	count = 4;
+	live["ret"] = setup->GetLiveCollisionBoundsInfo(quads, &count);
+	// Each wall starts at a corner of the floor
 	std::string corners;
-	for (const vr::HmdVector3_t& v : quad.vCorners)
-		corners += (corners.empty() ? "" : " ") + std::to_string(v.v[0]) + "," + std::to_string(v.v[2]);
+	for (const vr::HmdQuad_t& q : quads)
+		corners += (corners.empty() ? "" : " ") + std::to_string(q.vCorners[0].v[0]) + "," + std::to_string(q.vCorners[0].v[2]);
 	live["corners"] = corners;
 	c.Record("GetLiveCollisionBoundsInfo", live);
 
@@ -3106,6 +3107,8 @@ void RenderModelsCase(CaseContext& c)
 		r["texture_ret"] = (int)untilLoaded([&] { return rm->LoadTexture_Async(id, &tex); });
 		if (tex) {
 			r["texture"] = std::to_string(tex->unWidth) + "x" + std::to_string(tex->unHeight);
+			r["texture_format"] = (int)tex->format;
+			r["texture_mips"] = tex->unMipLevels;
 			char px[16];
 			std::snprintf(px, sizeof(px), "%02x%02x%02x%02x", tex->rubTextureMapData[0], tex->rubTextureMapData[1],
 			    tex->rubTextureMapData[2], tex->rubTextureMapData[3]);
@@ -3216,6 +3219,50 @@ void RenderModelsCase(CaseContext& c)
 	r["outside_ret"] = load("../../bin", &model);
 	r["outside_null"] = model == nullptr;
 	c.Record("fallback", r);
+
+	r = Json::Value();
+	// Names and components, with the buffer sized from the previous answer as games do
+	char name[64] = {};
+	uint32_t nameSize = rm->GetRenderModelName(0, nullptr, 0);
+	r["name_size_matches"] = nameSize == rm->GetRenderModelName(0, name, sizeof(name)) && nameSize == strlen(name) + 1;
+	r["name_out_of_range"] = rm->GetRenderModelName(1000, name, sizeof(name));
+	r["unknown_components"] = rm->GetComponentCount("no_such_model");
+	r["unknown_has_component"] = rm->RenderModelHasComponent("no_such_model", "no_such_model");
+	r["hand_components"] = rm->GetComponentCount("renderLeftHand");
+	vr::RenderModel_ComponentState_t unknownState{};
+	r["unknown_state"] = rm->GetComponentState("test_controller", "no_such_component", nullptr, nullptr, &unknownState);
+	char text[4] = {};
+	pe = VRRenderModelError_None;
+	r["unknown_thumbnail"] = rm->GetRenderModelThumbnailURL("no_such_model", text, sizeof(text), &pe);
+	r["unknown_thumbnail_error"] = (int)pe;
+	r["unknown_original"] = rm->GetRenderModelOriginalPath("no_such_model", text, sizeof(text), &pe);
+	r["unknown_original_error"] = (int)pe;
+	uint32_t needed = rm->GetRenderModelOriginalPath("test_controller", text, sizeof(text), &pe);
+	r["short_buffer_error"] = (int)pe;
+	r["short_buffer_needs_more"] = needed > sizeof(text);
+	RenderModel_TextureMap_t* missing = nullptr;
+	r["unknown_texture"] = (int)rm->LoadTexture_Async(-5, &missing);
+	r["unknown_texture_null"] = missing == nullptr;
+	RenderModel_t* hand = nullptr;
+	if (load("renderLeftHand", &hand) == VRRenderModelError_None && hand) {
+		RenderModel_TextureMap_t* handTexture = nullptr;
+		r["hand_textured"] = hand->diffuseTextureId >= 0;
+		r["hand_texture_ret"] = (int)rm->LoadTexture_Async(hand->diffuseTextureId, &handTexture);
+		if (handTexture) {
+			r["hand_texture"] = std::to_string(handTexture->unWidth) + "x" + std::to_string(handTexture->unHeight);
+			rm->FreeTexture(handTexture);
+		}
+		rm->FreeRenderModel(hand);
+	}
+	// An OBJ file by its absolute path
+	std::string objPath = (std::filesystem::path(OC_TEST_DATA_DIR) / "steamvr" / "resources" / "rendermodels" / "test_controller" / "body.obj").string();
+	RenderModel_t* byPath = nullptr;
+	r["path_ret"] = load(objPath.c_str(), &byPath);
+	if (byPath) {
+		r["path_has_vertices"] = byPath->unVertexCount > 0;
+		rm->FreeRenderModel(byPath);
+	}
+	c.Record("answers", r);
 
 	c.core->Cleanup();
 }
