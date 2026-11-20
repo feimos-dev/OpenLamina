@@ -531,10 +531,9 @@ ID3D11Texture2D* OverlayTextureCopy::CopyIn(const vr::Texture_t* tex, const vr::
 		}
 		// An overlay's texture: its first layer, as Submit_Default names it
 		const GfxInterop::Copied copied = impl->vk->CopyIn(tex, vr::Submit_Default, 0);
-		// A copy left in OpenGL's row order (a multisampled texture) isn't turned round here: not used
-		if (copied.texture && !copied.upsideDown)
+		if (copied.texture)
 			return copied.texture;
-		*why = copied.upsideDown ? "the Vulkan texture is multisampled, which can't be copied upright" : "the Vulkan texture couldn't be copied";
+		*why = "the Vulkan texture couldn't be copied";
 		return nullptr;
 	}
 #endif

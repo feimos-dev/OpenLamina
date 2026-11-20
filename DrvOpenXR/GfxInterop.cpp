@@ -266,6 +266,10 @@ public:
 			GLint previous = 0;
 			glGetIntegerv(kRenderbufferBinding, &previous);
 			bindRenderbuffer(kRenderbuffer, src);
+			GLint bound = 0;
+			glGetIntegerv(kRenderbufferBinding, &bound);
+			if ((GLuint)bound != src)
+				return;
 			getRenderbufferParameteriv(kRenderbuffer, kRenderbufferWidth, &source.width);
 			getRenderbufferParameteriv(kRenderbuffer, kRenderbufferHeight, &source.height);
 			getRenderbufferParameteriv(kRenderbuffer, kRenderbufferInternalFormat, &source.format);
@@ -283,6 +287,11 @@ public:
 		GLint previous = 0;
 		glGetIntegerv(binding, &previous);
 		glBindTexture(target, src);
+		// A texture of another target isn't bound, and the one bound before mustn't be read
+		GLint bound = 0;
+		glGetIntegerv(binding, &bound);
+		if ((GLuint)bound != src)
+			return;
 		glGetTexLevelParameteriv(target, 0, GL_TEXTURE_WIDTH, &source.width);
 		glGetTexLevelParameteriv(target, 0, GL_TEXTURE_HEIGHT, &source.height);
 		glGetTexLevelParameteriv(target, 0, GL_TEXTURE_INTERNAL_FORMAT, &source.format);
@@ -353,6 +362,12 @@ public:
 		DXGI_FORMAT dxgi = DxgiOfGl(source.format);
 		if (dxgi == DXGI_FORMAT_UNKNOWN) {
 			OOVR_LOG_ONCEF("Graphics interop: an OpenGL image of internal format 0x%x (%dx%d) can't be copied", source.format, source.width, source.height);
+			return nullptr;
+		}
+		// A blit that resolves samples needs the same format on both sides
+		const bool resolves = source.kind == Kind::Renderbuffer || source.kind == Kind::Multisampled;
+		if (resolves && !SameTexelsIn(GfxApiKind::OpenGL, source.format, GfxApiKind::D3D11)) {
+			OOVR_LOG_ONCEF("Graphics interop: a multisampled OpenGL image or renderbuffer of internal format 0x%x has no D3D11 format of its own: frame left out", source.format);
 			return nullptr;
 		}
 		Copy copy;
@@ -515,10 +530,8 @@ public:
 	VkQueue queue = VK_NULL_HANDLE;
 	uint32_t family = 0;
 	VkCommandPool pool = VK_NULL_HANDLE;
-	// The copies' command buffers and fences, used in turn: a frame's two eyes, two frames running. A copy waits only
-	// for its slot's copy before, not for the other eye's of the same frame, which still waits behind the game's work
-	// when the GPU wait is used. pending: submitted, and its fence not seen signalled yet (its command buffer, and the
-	// images it copies, are in use until it is).
+	// The copies' command buffers and fences, used in turn (two eyes, two frames), so a copy doesn't wait for the other
+	// eye's. pending: submitted, and its fence not seen signalled yet.
 	struct Slot {
 		VkCommandBuffer commands = VK_NULL_HANDLE;
 		VkFence fence = VK_NULL_HANDLE;
@@ -643,8 +656,12 @@ public:
 		ComPtr<ID3D11Device5> device5;
 		ComPtr<ID3D11DeviceContext> context;
 		device->GetImmediateContext(&context);
-		if (!importSemaphore || FAILED(device->QueryInterface(IID_PPV_ARGS(&device5))) || !context || FAILED(context.As(&context4)))
+		ComPtr<ID3D11Multithread> multithread;
+		if (!importSemaphore || FAILED(device->QueryInterface(IID_PPV_ARGS(&device5))) || !context || FAILED(context.As(&context4))
+		    || FAILED(context.As(&multithread)))
 			return false;
+		// Its context is used from the game's and the overlays' threads
+		multithread->SetMultithreadProtected(TRUE);
 		bool ok = true;
 		for (int i = 0; ok && i < 2; i++) {
 			HANDLE handle = nullptr;
@@ -809,8 +826,14 @@ public:
 		uint32_t layer = 0;
 		if (std::optional<uint32_t> slice = SubmitArraySlice::Current())
 			layer = *slice;
-		else if (submitFlags & vr::Submit_VulkanTextureWithArrayData)
-			layer = ((const vr::VRVulkanTextureArrayData_t*)data)->m_unArrayIndex;
+		else if (submitFlags & vr::Submit_VulkanTextureWithArrayData) {
+			const auto* array = (const vr::VRVulkanTextureArrayData_t*)data;
+			if (array->m_unArrayIndex >= array->m_unArraySize) {
+				OOVR_LOG_ONCEF("Graphics interop: Vulkan array layer %u of %u: frame left out", array->m_unArrayIndex, array->m_unArraySize);
+				return {};
+			}
+			layer = array->m_unArrayIndex;
+		}
 		// The slot's command buffer is reused: its copy before (two frames ago) must be over
 		Slot& slot = slots[nextSlot];
 		if (WaitForSlot(slot, kCopyTimeoutNs) == VK_TIMEOUT) {
