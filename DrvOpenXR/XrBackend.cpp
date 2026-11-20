@@ -2507,12 +2507,13 @@ void XrBackend::RecoverLostSession(std::mutex* passLock)
 		if (XR_FAILED(DrvOpenXR::RemakeInstance()))
 			return; // no runtime or headset yet: the next try in a second
 		instanceLost = false;
-		AskGraphicsRequirements(GetCurrentGraphicsBinding());
 	} else if (XrResult res = DrvOpenXR::FindSystem(); XR_FAILED(res)) {
 		if (res == XR_ERROR_INSTANCE_LOST)
 			instanceLost = true; // the instance went too while the session was lost: made again at the next try
 		return; // no headset yet: the next try in a second
 	}
+	// Asked of the system found (on a new instance, or a new system id), as xrCreateSession wants
+	AskGraphicsRequirements(GetCurrentGraphicsBinding());
 	if (XR_FAILED(RebuildSession(RebuildReason::Loss)) || sessionLost)
 		return;
 	// After a new instance: the game's actions and bindings, from its manifest, on it and its session
