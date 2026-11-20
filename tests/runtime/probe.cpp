@@ -5,6 +5,7 @@
 #include <cstdio>
 #include <cstring>
 
+#ifdef _WIN32
 PixelLayout LayoutOfDxgi(int64_t format)
 {
 	switch (format) {
@@ -32,6 +33,7 @@ PixelLayout LayoutOfDxgi(int64_t format)
 		return PixelLayout::Unknown;
 	}
 }
+#endif
 
 uint32_t RtBytesOf(PixelLayout layout)
 {

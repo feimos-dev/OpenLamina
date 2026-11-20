@@ -1,13 +1,35 @@
-// The stand-in runtime's OpenGL sessions (XR_KHR_opengl_enable, WGL): swapchain textures made in the app's context,
-// their stored texels read back through a framebuffer and glReadPixels in it. The context is made current for that
-// when it isn't.
+// The stand-in runtime's OpenGL sessions (XR_KHR_opengl_enable, WGL on Windows, GLX elsewhere): swapchain textures
+// made in the app's context, their stored texels read back through a framebuffer and glReadPixels in it. The context
+// is made current for that when it isn't.
 
 #include "runtime_internal.h"
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 
 namespace {
+
+#ifdef _WIN32
+void* GetProc(const char* name)
+{
+	return (void*)wglGetProcAddress(name);
+}
+#else
+void* GetProc(const char* name)
+{
+	return (void*)glXGetProcAddressARB((const GLubyte*)name);
+}
+#endif
+
+bool HasContext(const RtSession* s)
+{
+#ifdef _WIN32
+	return s->glRC != nullptr;
+#else
+	return s->glContext != nullptr;
+#endif
+}
 
 // GL 1.2 to 4.3 names and functions the 1.1 headers lack
 constexpr GLenum kTexture2DArray = 0x8C1A, kTextureBinding2DArray = 0x8C1D, kTexture2DMultisample = 0x9100,
@@ -44,16 +66,27 @@ struct GlFns {
 	PFNCopyImageSubData CopyImageSubData = nullptr; // GL 4.3
 	bool Load()
 	{
-		TexImage3D = (PFNTexImage3D)wglGetProcAddress("glTexImage3D");
-		TexImage2DMultisample = (PFNTexImage2DMultisample)wglGetProcAddress("glTexImage2DMultisample");
-		GenFramebuffers = (PFNGenFramebuffers)wglGetProcAddress("glGenFramebuffers");
-		DeleteFramebuffers = (PFNDeleteFramebuffers)wglGetProcAddress("glDeleteFramebuffers");
-		BindFramebuffer = (PFNBindFramebuffer)wglGetProcAddress("glBindFramebuffer");
-		FramebufferTexture2D = (PFNFramebufferTexture2D)wglGetProcAddress("glFramebufferTexture2D");
-		FramebufferTextureLayer = (PFNFramebufferTextureLayer)wglGetProcAddress("glFramebufferTextureLayer");
-		CheckFramebufferStatus = (PFNCheckFramebufferStatus)wglGetProcAddress("glCheckFramebufferStatus");
-		BindBuffer = (PFNBindBuffer)wglGetProcAddress("glBindBuffer");
-		CopyImageSubData = (PFNCopyImageSubData)wglGetProcAddress("glCopyImageSubData");
+		TexImage3D = (PFNTexImage3D)GetProc("glTexImage3D");
+		TexImage2DMultisample = (PFNTexImage2DMultisample)GetProc("glTexImage2DMultisample");
+		GenFramebuffers = (PFNGenFramebuffers)GetProc("glGenFramebuffers");
+		DeleteFramebuffers = (PFNDeleteFramebuffers)GetProc("glDeleteFramebuffers");
+		BindFramebuffer = (PFNBindFramebuffer)GetProc("glBindFramebuffer");
+		FramebufferTexture2D = (PFNFramebufferTexture2D)GetProc("glFramebufferTexture2D");
+		FramebufferTextureLayer = (PFNFramebufferTextureLayer)GetProc("glFramebufferTextureLayer");
+		CheckFramebufferStatus = (PFNCheckFramebufferStatus)GetProc("glCheckFramebufferStatus");
+		BindBuffer = (PFNBindBuffer)GetProc("glBindBuffer");
+		CopyImageSubData = (PFNCopyImageSubData)GetProc("glCopyImageSubData");
+#ifndef _WIN32
+		// GLX hands out a pointer for any name, so the context's version says which functions it has
+		int major = 0, minor = 0;
+		const char* version = (const char*)glGetString(GL_VERSION);
+		if (!version || std::sscanf(version, "%d.%d", &major, &minor) != 2 || major < 3)
+			return false;
+		if (major == 3 && minor < 2)
+			TexImage2DMultisample = nullptr;
+		if (major < 4 || (major == 4 && minor < 3))
+			CopyImageSubData = nullptr;
+#endif
 		return GenFramebuffers && DeleteFramebuffers && BindFramebuffer && FramebufferTexture2D && CheckFramebufferStatus && BindBuffer;
 	}
 };
@@ -64,6 +97,7 @@ class Current {
 public:
 	explicit Current(RtSession* s)
 	{
+#ifdef _WIN32
 		prevDC = wglGetCurrentDC();
 		prevRC = wglGetCurrentContext();
 		if (prevRC == s->glRC) {
@@ -71,18 +105,41 @@ public:
 			return;
 		}
 		ok = wglMakeCurrent(s->glDC, s->glRC) != FALSE;
+#else
+		prevDisplay = glXGetCurrentDisplay();
+		prevDrawable = glXGetCurrentDrawable();
+		prevContext = glXGetCurrentContext();
+		if (prevContext == s->glContext) {
+			ok = true;
+			return;
+		}
+		ok = glXMakeCurrent(s->glDisplay, s->glDrawable, s->glContext) != False;
+		display = s->glDisplay;
+#endif
 		switched = ok;
 	}
 	~Current()
 	{
-		if (switched)
-			wglMakeCurrent(prevDC, prevRC);
+		if (!switched)
+			return;
+#ifdef _WIN32
+		wglMakeCurrent(prevDC, prevRC);
+#else
+		glXMakeCurrent(prevDisplay ? prevDisplay : display, prevDrawable, prevContext);
+#endif
 	}
 	bool ok = false;
 
 private:
+#ifdef _WIN32
 	HDC prevDC = nullptr;
 	HGLRC prevRC = nullptr;
+#else
+	Display* prevDisplay = nullptr;
+	Display* display = nullptr;
+	GLXDrawable prevDrawable = 0;
+	GLXContext prevContext = nullptr;
+#endif
 	bool switched = false;
 };
 
@@ -100,6 +157,7 @@ XrResult XRAPI_CALL GetOpenGLGraphicsRequirements(XrInstance, XrSystemId, XrGrap
 	return XR_SUCCESS;
 }
 
+#ifdef _WIN32
 XrResult Bind(const XrBaseInStructure* binding, RtSession* s)
 {
 	auto* b = (const XrGraphicsBindingOpenGLWin32KHR*)binding;
@@ -120,6 +178,29 @@ void Unbind(RtSession* s)
 	s->glDC = nullptr;
 	s->glRC = nullptr;
 }
+#else
+void Unbind(RtSession* s)
+{
+	s->glDisplay = nullptr;
+	s->glDrawable = 0;
+	s->glContext = nullptr;
+}
+
+XrResult Bind(const XrBaseInStructure* binding, RtSession* s)
+{
+	auto* b = (const XrGraphicsBindingOpenGLXlibKHR*)binding;
+	if (!b->xDisplay || !b->glxContext)
+		return XR_ERROR_GRAPHICS_DEVICE_INVALID;
+	s->glDisplay = b->xDisplay;
+	s->glDrawable = b->glxDrawable;
+	s->glContext = b->glxContext;
+	Current current(s);
+	if (current.ok && g_gl.Load())
+		return XR_SUCCESS;
+	Unbind(s);
+	return XR_ERROR_GRAPHICS_DEVICE_INVALID;
+}
+#endif
 
 const std::vector<int64_t>& Formats()
 {
@@ -181,7 +262,7 @@ GLenum BindingOf(GLenum target)
 
 void Destroy(RtSession* s, RtSwapchain* sc)
 {
-	if (s && s->glRC && !sc->images.empty()) {
+	if (s && HasContext(s) && !sc->images.empty()) {
 		Current current(s);
 		if (current.ok) {
 			for (uint64_t name : sc->images) {
@@ -195,7 +276,7 @@ void Destroy(RtSession* s, RtSwapchain* sc)
 
 XrResult Create(RtSession* s, const XrSwapchainCreateInfo* info, RtSwapchain* sc)
 {
-	if (!s->glRC)
+	if (!HasContext(s))
 		return XR_ERROR_VALIDATION_FAILURE;
 	if (std::find(Formats().begin(), Formats().end(), info->format) == Formats().end())
 		return XR_ERROR_SWAPCHAIN_FORMAT_UNSUPPORTED;
@@ -289,7 +370,7 @@ bool Read(RtSession* s, RtSwapchain* sc, uint32_t index, uint32_t arrayIndex, co
     uint32_t bytes, std::vector<uint8_t>& out, std::string* why)
 {
 	*why = "the OpenGL readback failed";
-	if (!s->glRC || index >= sc->images.size() || points.empty())
+	if (!HasContext(s) || index >= sc->images.size() || points.empty())
 		return false;
 	GLenum target = TargetOf(sc->info);
 	if (target == kTexture2DMultisample)
@@ -360,7 +441,13 @@ bool Read(RtSession* s, RtSwapchain* sc, uint32_t index, uint32_t arrayIndex, co
 const RtGfx& RtOpenGLGfx()
 {
 	static const RtGfx gfx = {
-		RtApi::OpenGL, "opengl", "XR_KHR_opengl_enable", nullptr, XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR, XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_KHR,
+		RtApi::OpenGL, "opengl", "XR_KHR_opengl_enable", nullptr,
+#ifdef _WIN32
+		XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR,
+#else
+		XR_TYPE_GRAPHICS_BINDING_OPENGL_XLIB_KHR,
+#endif
+		XR_TYPE_SWAPCHAIN_IMAGE_OPENGL_KHR,
 		Bind, Unbind, Formats, DefaultFormats, Create, Destroy, Enumerate, Layout, true, Read,
 	};
 	return gfx;
