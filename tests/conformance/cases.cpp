@@ -1761,8 +1761,9 @@ void InputThreadsCase(CaseContext& c)
 }
 
 // GetActionBindingInfo (expect/binding_info.json), on the stand-in with scripts/bound_source_odd.json and --manifest
-// manifest_toggle.json: an input action is told as the binding file binds it; a vibration from the runtime's bound
-// sources, which here include one that isn't an input path, and that one is left out
+// manifest_toggle.json: each action is told as the binding file binds it, a pose too, and a vibration with no device
+// or input path (as SteamVR answers); the runtime's bound sources, which here include one that isn't an input path,
+// aren't told. GetActionOrigins with no set answers no origins and no error.
 void BindingInfoCase(CaseContext& c)
 {
 	using namespace vr::IVRInput_010;
@@ -1794,20 +1795,26 @@ void BindingInfoCase(CaseContext& c)
 	InputBindingInfo_t info[4]{};
 	uint32_t returned = 99;
 	Json::Value r;
-	// The vibration is answered from the runtime's bound sources: the real bindings come first, the odd source is
-	// the last one the stand-in lists
+	// The vibration: one binding in the file, told with every field empty
 	vr::VRActionHandle_t haptic = 0;
 	in->GetActionHandle("/actions/main/out/haptic", &haptic);
 	r["err"] = (int)in->GetActionBindingInfo(haptic, info, sizeof(info[0]), 4, &returned);
-	r["returned_at_least_one"] = returned >= 1 && returned <= 4;
-	bool oddShown = false;
+	r["haptic_bindings"] = returned;
+	bool allEmpty = true;
 	for (uint32_t i = 0; i < returned && i < 4; i++)
-		oddShown = oddShown || std::string(info[i].rchDevicePathName).find("mnd") != std::string::npos || std::string(info[i].rchModeName).find("1419") != std::string::npos;
-	r["odd_source_left_out"] = !oddShown;
-	bool noBlank = true; // every entry counted is filled in
-	for (uint32_t i = 0; i < returned && i < 4; i++)
-		noBlank = noBlank && info[i].rchDevicePathName[0] != 0;
-	r["no_blank_entries"] = noBlank;
+		allEmpty = allEmpty && !info[i].rchDevicePathName[0] && !info[i].rchInputPathName[0] && !info[i].rchModeName[0];
+	r["haptic_paths_empty"] = allEmpty;
+	// The pose: the right hand's raw pose
+	vr::VRActionHandle_t pose = 0;
+	in->GetActionHandle("/actions/main/in/pose", &pose);
+	memset(info, 0, sizeof(info));
+	returned = 99;
+	r["pose_err"] = (int)in->GetActionBindingInfo(pose, info, sizeof(info[0]), 4, &returned);
+	r["pose_bindings"] = returned;
+	if (returned >= 1) {
+		r["pose_device"] = info[0].rchDevicePathName;
+		r["pose_input"] = info[0].rchInputPathName;
+	}
 	// The toggle is answered from the binding file: a toggle_button on the right trigger
 	memset(info, 0, sizeof(info));
 	returned = 99;
@@ -1825,6 +1832,9 @@ void BindingInfoCase(CaseContext& c)
 	vr::VRInputValueHandle_t right = 0;
 	in->GetInputSourceHandle("/user/hand/right/input/trigger", &right);
 	r["origin_is_the_right_trigger"] = origins[0] == right && origins[1] == vr::k_ulInvalidInputValueHandle;
+	origins[0] = 1;
+	r["no_set_origins_err"] = (int)in->GetActionOrigins(vr::k_ulInvalidActionSetHandle, toggle, origins, 4);
+	r["no_set_origins_empty"] = origins[0] == vr::k_ulInvalidInputValueHandle;
 	c.Record("odd source", r);
 	c.core->Cleanup();
 }

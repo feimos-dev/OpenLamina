@@ -151,3 +151,37 @@ TEST_CASE("A_pose_is_bound_on_the_hands_the_file_names")
 	CHECK(skeleton[0] == "/user/hand/left");
 	CHECK(PoseDevicesForAction(file, "/actions/main/in/none").empty());
 }
+
+TEST_CASE("A_force_sensor_bound_by_its_click_binds_nothing")
+{
+	BindingFile index = ParseBindingFile(R"({ "controller_type": "knuckles", "bindings": { "/actions/main": { "sources": [
+		{ "path": "/user/hand/left/input/grip", "mode": "force_sensor", "inputs": { "click": { "output": "/actions/main/in/grab" } } },
+		{ "path": "/user/hand/right/input/grip", "mode": "force_sensor", "inputs": { "force": { "output": "/actions/main/in/squeeze" } } } ] } } })");
+	CHECK(BindingsForAction(index, "/actions/main/in/grab").empty());
+	REQUIRE(BindingsForAction(index, "/actions/main/in/squeeze").size() == 1);
+	CHECK(BindingsForAction(index, "/actions/main/in/squeeze")[0].slot == "force");
+}
+
+TEST_CASE("Poses_skeletons_and_vibrations_are_told")
+{
+	BindingFile index = ParseBindingFile(R"({ "controller_type": "knuckles", "bindings": { "/actions/main": {
+		"poses": [ { "output": "/actions/main/in/pose", "path": "/user/hand/left/pose/raw" },
+			{ "output": "/actions/main/in/pose", "path": "/user/hand/right/pose/raw" } ],
+		"skeleton": [ { "output": "/actions/main/in/skeleton_left", "path": "/user/hand/left/input/skeleton/left" } ],
+		"haptics": [ { "output": "/actions/main/out/haptic", "path": "/user/hand/right/output/haptic" } ] } } })");
+	std::vector<ActionBinding> pose = BindingsForAction(index, "/actions/main/in/pose");
+	REQUIRE(pose.size() == 2);
+	CHECK(pose[0].device == "/user/hand/left");
+	CHECK(pose[0].input == "/pose/raw");
+	CHECK(pose[0].mode.empty());
+	CHECK(BindingsForAction(index, "/actions/main/in/pose", "/user/hand/right").size() == 1);
+	std::vector<ActionBinding> skeleton = BindingsForAction(index, "/actions/main/in/skeleton_left");
+	REQUIRE(skeleton.size() == 1);
+	CHECK(skeleton[0].input == "/input/skeleton/left");
+	// A vibration has no device or input path
+	std::vector<ActionBinding> haptic = BindingsForAction(index, "/actions/main/out/haptic");
+	REQUIRE(haptic.size() == 1);
+	CHECK(haptic[0].device.empty());
+	CHECK(haptic[0].input.empty());
+	CHECK(BindingsForAction(index, "/actions/main/out/haptic", "/user/hand/left").empty());
+}

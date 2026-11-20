@@ -197,16 +197,6 @@ static std::string escapePathString(const std::string& str)
 	return std::string(out.data(), out.size());
 }
 
-static std::string pathFromParts(const std::initializer_list<std::string>& parts)
-{
-	std::string str;
-	for (const std::string& part : parts) {
-		str += "/";
-		str += part;
-	}
-	return str;
-}
-
 // Must be defined non-inline to avoid it ending up in stubs.gen.cpp
 BaseInput::Action::~Action() = default;
 // The input value handles GetInputSourceHandle has handed out (they're pointers): cast_IVH answers null for any
@@ -1303,10 +1293,10 @@ bool BaseInput::SuggestRawBindings(const InteractionProfile& profile, const std:
 	return true;
 }
 
-std::optional<std::vector<ActionBinding>> BaseInput::BindingsFromFiles(const Action& action)
+std::optional<std::vector<ActionBinding>> BaseInput::BindingsFromFiles(const Action& action, bool allTypes)
 {
-	// The files bind inputs; a pose, a skeleton and a vibration keep OpenXR's bound sources
-	if (action.type == ActionType::Pose || action.type == ActionType::Skeleton || action.type == ActionType::Vibration)
+	// The files bind inputs, so a pose, a skeleton and a vibration are answered only when allTypes
+	if (!allTypes && (action.type == ActionType::Pose || action.type == ActionType::Skeleton || action.type == ActionType::Vibration))
 		return std::nullopt;
 	std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
 	std::optional<std::vector<ActionBinding>> found;
@@ -2494,10 +2484,17 @@ EVRInputError BaseInput::GetActionOrigins(VRActionSetHandle_t actionSetHandle, V
     VR_ARRAY_COUNT(originOutCount) VRInputValueHandle_t* originsOut, uint32_t originOutCount)
 {
 	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
-	GET_ACTION_SET_FROM_HANDLE(set, actionSetHandle);
 	GET_ACTION_FROM_HANDLE(act, digitalActionHandle);
+	if (!originsOut && originOutCount)
+		return VRInputError_InvalidParam;
+	// No set: no origins, and no error, as SteamVR answers
+	if (actionSetHandle == vr::k_ulInvalidActionSetHandle) {
+		if (originsOut)
+			ZeroMemory(originsOut, originOutCount * sizeof(*originsOut));
+		return VRInputError_None;
+	}
+	GET_ACTION_SET_FROM_HANDLE(set, actionSetHandle);
 
-	// TODO find something that passes in non-matching values and see what results it wants, or try it with SteamVR
 	if (act->set != set) {
 		// The action isn't in that set: no origins for it there
 		OOVR_LOGF("GetActionOrigins: set mismatch %s vs %s", set->name.c_str(), act->fullName.c_str());
@@ -2507,8 +2504,6 @@ EVRInputError BaseInput::GetActionOrigins(VRActionSetHandle_t actionSetHandle, V
 	if (act->type == ActionType::EyeTracking)
 		return VRInputError_InvalidHandle;
 
-	if (!originsOut && originOutCount)
-		return VRInputError_InvalidParam;
 	if (originsOut)
 		ZeroMemory(originsOut, originOutCount * sizeof(*originsOut));
 
@@ -2680,8 +2675,8 @@ EVRInputError BaseInput::GetActionBindingInfo(VRActionHandle_t actionHandle, OOV
 		return VRInputError_None;
 
 	// From the controllers' binding files, as SteamVR answers: OpenXR's bound sources have no mode or slot, and
-	// nothing for a d-pad
-	if (std::optional<std::vector<ActionBinding>> fromFiles = BindingsFromFiles(*action)) {
+	// nothing for a d-pad. A pose and a skeleton are listed too, and a vibration with no device or input path.
+	if (std::optional<std::vector<ActionBinding>> fromFiles = BindingsFromFiles(*action, true)) {
 		uint32_t written = 0;
 		for (const ActionBinding& b : *fromFiles) {
 			if (written >= unBindingInfoCount)
@@ -2711,57 +2706,17 @@ EVRInputError BaseInput::GetActionBindingInfo(VRActionHandle_t actionHandle, OOV
 
 	// TODO should we return an error if there are no sources bound?
 
-	// The bindings written, in order, without the sources left out
+	// A vibration's binding is told with every field empty, as SteamVR answers: one per bound output (a source that
+	// isn't one is left out)
 	uint32_t written = 0;
 	for (size_t i = 0; i < boundActionPaths.size() && written < unBindingInfoCount; i++) {
-		OOVR_InputBindingInfo_t& info = bindingInfo[written];
-		XrPath path = boundActionPaths[i];
-
-		uint32_t pathLen = 0;
-		OC_XR_LOG(xrPathToString(xr_instance, path, 0, &pathLen, nullptr));
-		if (pathLen == 0)
-			continue; // the path couldn't be read: this binding is left out
-		std::vector<char> chars(pathLen);
-		OC_XR_LOG(xrPathToString(xr_instance, path, chars.size(), &pathLen, chars.data()));
-		std::string pathStr(chars.data(), chars.size());
-
-		std::vector<std::string> parts;
-		stringSplit(pathStr, parts);
-		if (parts.size() < 5) {
-			// Not a /user/<a>/<b>/input/<c> path: this binding is left out
-			OOVR_LOG_ONCEF("A bound source path with fewer than five parts, left out: %s", pathStr.c_str());
+		char chars[XR_MAX_PATH_LENGTH] = {};
+		uint32_t len = 0;
+		if (XR_FAILED(xrPathToString(xr_instance, boundActionPaths[i], sizeof(chars), &len, chars)))
 			continue;
-		}
-
-		// The last part of the string - which is something like '/user/hand/right/input/a/click' - is the mode
-		strcpy_arr(info.rchModeName, parts.back().c_str());
-
-		// Hardcode the first three parts of the string as being the device path, and the 4th and 5th ones as
-		// being the input path.
-		std::string devicePath = pathFromParts({ parts.at(0), parts.at(1), parts.at(2) });
-		std::string inputPath = pathFromParts({ parts.at(3), parts.at(4) });
-		strcpy_arr(info.rchDevicePathName, devicePath.c_str());
-		strcpy_arr(info.rchInputPathName, inputPath.c_str());
-
-		// FIXME replace this initial hacky thing
-		switch (action->type) {
-		case ActionType::Boolean:
-			strcpy_arr(info.rchModeName, "button");
-			strcpy_arr(info.rchInputSourceType, "button");
-			break;
-		case ActionType::Vector1:
-			strcpy_arr(info.rchModeName, "trigger");
-			strcpy_arr(info.rchInputSourceType, "trigger");
-			break;
-		case ActionType::Vector2:
-			strcpy_arr(info.rchModeName, "joystick");
-			strcpy_arr(info.rchInputSourceType, "joystick");
-			break;
-		default:
-			OOVR_LOGF("Unimplemented action type %d for %s: no mode name", static_cast<int>(action->type), pathStr.c_str());
-			break;
-		}
-		written++;
+		const std::string path(chars, strnlen(chars, sizeof(chars)));
+		if (path.starts_with("/user/") && path.find("/output/") != std::string::npos)
+			written++;
 	}
 	if (punReturnedBindingInfoCount)
 		*punReturnedBindingInfoCount = written;

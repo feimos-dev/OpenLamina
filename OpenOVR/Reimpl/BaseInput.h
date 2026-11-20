@@ -932,8 +932,8 @@ private:
 	 * controller has to one of the manifest's actions or bindings holds a haptic; false (nothing done) if not */
 	bool SuggestRawBindings(const InteractionProfile& profile, const std::string& bindingsPath, std::vector<XrActionSuggestedBinding>& bindings);
 	/** An input action's bindings on the controllers in use, from their binding files; nothing if no controller in
-	 * use has one, or for a pose, a skeleton or a vibration. Takes evaluatorLock. */
-	std::optional<std::vector<ActionBinding>> BindingsFromFiles(const Action& action);
+	 * use has one, or for a pose, a skeleton or a vibration unless allTypes. Takes evaluatorLock. */
+	std::optional<std::vector<ActionBinding>> BindingsFromFiles(const Action& action, bool allTypes = false);
 	/** One hand's raw inputs (index into allSubactionPaths) on a profile, by SteamVR path, into state */
 	void ReadRawInputs(size_t hand, const InteractionProfile& profile, RawInputState& state);
 	/** The old input's evaluator for a controller's profile, evaluated once per sync; null if it has none.
@@ -1053,9 +1053,11 @@ std::string HandBoneName(vr::BoneIndex_t bone, bool rightHand);
 /** The inverse of BaseInput::ParentSpaceSkeletonToModelSpace */
 void ModelSpaceSkeletonToParentSpace(vr::VRBoneTransform_t* joints);
 
-/** Compressed bone data, OpenComposite's own format: little-endian { char magic[4] = "OCSK"; uint16_t version = 1;
- * uint8_t space; uint8_t range; uint32_t count = 31; } then the 31 transforms */
-constexpr uint32_t kCompressedBonesSize = 12 + 31 * sizeof(vr::VRBoneTransform_t);
+/** Compressed bone data, OpenComposite's own format: a 2-byte header { uint8_t tag = 0xB1; uint8_t space | range << 4; }
+ * then the 31 transforms, little-endian (sizeof(VRBoneTransform_t) * boneCount + 2, the OpenVR header's limit). The
+ * older layout, { char magic[4] = "OCSK"; uint16_t version = 1;
+ * uint8_t space; uint8_t range; uint32_t count = 31; } then the transforms (1004 bytes), is still read. */
+constexpr uint32_t kCompressedBonesSize = 2 + 31 * sizeof(vr::VRBoneTransform_t);
 /** Writes the bones into out if outSize is big enough; the size needed (kCompressedBonesSize) */
 uint32_t CompressBones(OOVR_EVRSkeletalTransformSpace space, vr::EVRSkeletalMotionRange range, const vr::VRBoneTransform_t* bones31, void* out, uint32_t outSize);
 /** Reads bones back into out31, converted to the space wanted. *storedSpace (if given) is the space they were in. */
