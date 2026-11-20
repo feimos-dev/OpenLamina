@@ -951,10 +951,10 @@ uint32_t BaseApplications::GetApplicationLaunchArguments(uint32_t unHandle, VR_O
 {
 	Clear(pchArgs, unArgs);
 	// The arguments of a VREvent_ApplicationMimeTypeLoad this program got
-	// A handle it never got: an empty string, as SteamVR answers
 	Json::Value entry = Store().ReadAt(StoreDoc::Applications, { "launch_args", std::to_string(unHandle) });
-	const bool ours = entry.isObject() && PidOf(entry["pid"]) == oc_current_pid() && entry["args"].isString();
-	const std::string args = ours ? entry["args"].asString() : std::string();
+	if (!entry.isObject() || PidOf(entry["pid"]) != oc_current_pid() || !entry["args"].isString())
+		return 0;
+	const std::string args = entry["args"].asString();
 	CopyOut(args, pchArgs, unArgs);
 	return (uint32_t)args.size() + 1;
 }

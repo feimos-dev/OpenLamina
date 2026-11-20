@@ -893,7 +893,7 @@ TEST_CASE("Mime_launch_of_a_running_application_hands_it_the_arguments")
 	char args[64];
 	CHECK(apps.GetApplicationLaunchArguments(load.data.applicationLaunch.unArgsHandle, args, sizeof(args)) == strlen("file.oc --open") + 1);
 	CHECK(std::string(args) == "file.oc --open");
-	CHECK(apps.GetApplicationLaunchArguments(load.data.applicationLaunch.unArgsHandle + 1, args, sizeof(args)) == 1);
+	CHECK(apps.GetApplicationLaunchArguments(load.data.applicationLaunch.unArgsHandle + 1, args, sizeof(args)) == 0);
 	CHECK(std::string(args).empty());
 
 	// Another program's: to it alone, by the store, and only it reads the arguments
@@ -912,7 +912,7 @@ TEST_CASE("Mime_launch_of_a_running_application_hands_it_the_arguments")
 	CHECK(got[0].eventType == vr::VREvent_ApplicationMimeTypeLoad);
 	CHECK(got[0].data.applicationLaunch.pid == running);
 	CHECK(got[0].data.applicationLaunch.unArgsHandle != load.data.applicationLaunch.unArgsHandle);
-	CHECK(apps.GetApplicationLaunchArguments(got[0].data.applicationLaunch.unArgsHandle, args, sizeof(args)) == 1);
+	CHECK(apps.GetApplicationLaunchArguments(got[0].data.applicationLaunch.unArgsHandle, args, sizeof(args)) == 0);
 	Json::Value entry = store.Read(StoreDoc::Applications)["launch_args"][std::to_string(got[0].data.applicationLaunch.unArgsHandle)];
 	CHECK(entry["args"].asString() == "second");
 }
