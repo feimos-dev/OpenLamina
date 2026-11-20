@@ -1,6 +1,6 @@
 // oc_test_runtime: a stand-in OpenXR runtime for OpenComposite's tests. One instance, one session at a time, a
-// simulated HMD standing still at (0, 1.7, 0), D3D11, D3D12, Vulkan and OpenGL swapchains (each API offered when the
-// script's extensions name it), scripted failures and events (script.h).
+// simulated HMD standing still at (0, 1.7, 0), D3D11, D3D12, Vulkan and OpenGL swapchains (on Linux Vulkan and OpenGL;
+// each API offered when the script's extensions name it), scripted failures and events (script.h).
 //
 // OpenComposite calls (grep -rhoE "\bxr[A-Z][A-Za-z0-9]+\b" DrvOpenXR OpenOVR OCOVR):
 //   xrAcquireSwapchainImage xrApplyHapticFeedback xrAttachSessionActionSets xrBeginFrame xrBeginSession
@@ -87,10 +87,12 @@ bool RtExtensionEnabled(const char* name)
 const RtGfx* RtGfxOf(RtApi api)
 {
 	switch (api) {
+#ifdef _WIN32
 	case RtApi::D3D11:
 		return &RtD3D11Gfx();
 	case RtApi::D3D12:
 		return &RtD3D12Gfx();
+#endif
 	case RtApi::Vulkan:
 		return &RtVulkanGfx();
 	case RtApi::OpenGL:
@@ -102,7 +104,11 @@ const RtGfx* RtGfxOf(RtApi api)
 
 const RtGfx* RtGfxForBinding(XrStructureType type)
 {
+#ifdef _WIN32
 	for (RtApi api : { RtApi::D3D11, RtApi::D3D12, RtApi::Vulkan, RtApi::OpenGL })
+#else
+	for (RtApi api : { RtApi::Vulkan, RtApi::OpenGL })
+#endif
 		if (RtGfxOf(api)->bindingType == type)
 			return RtGfxOf(api);
 	return nullptr;
@@ -115,6 +121,7 @@ bool RtGfxEnabled(const RtGfx& gfx)
 
 PFN_xrVoidFunction RtGfxLookup(const char* name, const char** extension)
 {
+#ifdef _WIN32
 	if (PFN_xrVoidFunction fn = RtD3D11Lookup(name)) {
 		*extension = "XR_KHR_D3D11_enable";
 		return fn;
@@ -123,6 +130,7 @@ PFN_xrVoidFunction RtGfxLookup(const char* name, const char** extension)
 		*extension = "XR_KHR_D3D12_enable";
 		return fn;
 	}
+#endif
 	if (PFN_xrVoidFunction fn = RtOpenGLLookup(name)) {
 		*extension = "XR_KHR_opengl_enable";
 		return fn;
@@ -1331,7 +1339,14 @@ XrResult XRAPI_CALL GetInstanceProcAddr(XrInstance instance, const char* name, P
 
 } // namespace
 
-extern "C" XrResult XRAPI_CALL xrNegotiateLoaderRuntimeInterface(const XrNegotiateLoaderInfo* loaderInfo, XrNegotiateRuntimeRequest* request)
+// The loader's entry point (oc_test_runtime.def exports it on Windows; elsewhere the build hides other symbols)
+#ifdef _WIN32
+#define OC_RT_EXPORT
+#else
+#define OC_RT_EXPORT __attribute__((visibility("default")))
+#endif
+
+extern "C" OC_RT_EXPORT XrResult XRAPI_CALL xrNegotiateLoaderRuntimeInterface(const XrNegotiateLoaderInfo* loaderInfo, XrNegotiateRuntimeRequest* request)
 {
 	if (!loaderInfo || !request || loaderInfo->structType != XR_LOADER_INTERFACE_STRUCT_LOADER_INFO
 	    || request->structType != XR_LOADER_INTERFACE_STRUCT_RUNTIME_REQUEST)

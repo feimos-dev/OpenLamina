@@ -1,15 +1,23 @@
-// OpenGL for the frame cases: a hidden window's WGL context, current on the case's thread (OpenLamina takes the
-// game's context from the thread that submits). Textures are filled with glTexImage2D, rows bottom-up as OpenGL
-// has them. Windows' own OpenGL 1.1 isn't enough: a driver's OpenGL 3 or later is needed.
+// OpenGL for the frame cases: a hidden window's context (WGL on Windows, GLX on Linux: DISPLAY's X server), current
+// on the case's thread (OpenLamina takes the game's context from the thread that submits). Textures are filled with
+// glTexImage2D, rows bottom-up as OpenGL has them. Windows' own OpenGL 1.1 isn't enough: a driver's OpenGL 3 or later
+// is needed.
 
 #include "GfxApi.h"
 
+#ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
 
 #include <GL/gl.h>
+#else
+#include <GL/glx.h>
+#include <X11/Xlib.h>
+#endif
+
+#include <cstdio>
 
 namespace {
 
@@ -17,19 +25,40 @@ constexpr GLenum kTexture2DArray = 0x8C1A, kTextureBinding2DArray = 0x8C1D, kDep
 constexpr int64_t kSRGB8Alpha8 = 0x8C43, kRGBA8 = 0x8058, kRGBA16F = 0x881A, kRGB10A2 = 0x8059, kR11G11B10F = 0x8C3A, kRGB8 = 0x8051;
 using PFNTexImage3D = void(APIENTRY*)(GLenum, GLint, GLint, GLsizei, GLsizei, GLsizei, GLint, GLenum, GLenum, const void*);
 
+#ifdef _WIN32
+void* GetProc(const char* name)
+{
+	return (void*)wglGetProcAddress(name);
+}
+#else
+void* GetProc(const char* name)
+{
+	return (void*)glXGetProcAddressARB((const GLubyte*)name);
+}
+#endif
+
 class GLGfx : public GfxApi {
 public:
+#ifdef _WIN32
 	HWND window = nullptr;
 	HDC dc = nullptr;
 	HGLRC rc = nullptr;
+#else
+	Display* display = nullptr;
+	XVisualInfo* visual = nullptr;
+	Colormap colormap = 0;
+	Window window = 0;
+	GLXContext rc = nullptr;
+#endif
 	PFNTexImage3D texImage3D = nullptr;
 	std::vector<GLuint> made;
 
 	~GLGfx() override
 	{
+		if (rc && !made.empty())
+			glDeleteTextures((GLsizei)made.size(), made.data());
+#ifdef _WIN32
 		if (rc) {
-			if (!made.empty())
-				glDeleteTextures((GLsizei)made.size(), made.data());
 			wglMakeCurrent(nullptr, nullptr);
 			wglDeleteContext(rc);
 		}
@@ -37,9 +66,24 @@ public:
 			ReleaseDC(window, dc);
 		if (window)
 			DestroyWindow(window);
+#else
+		if (rc) {
+			glXMakeCurrent(display, 0, nullptr);
+			glXDestroyContext(display, rc);
+		}
+		if (window)
+			XDestroyWindow(display, window);
+		if (colormap)
+			XFreeColormap(display, colormap);
+		if (visual)
+			XFree(visual);
+		if (display)
+			XCloseDisplay(display);
+#endif
 	}
 
-	bool Init(std::string* whyNot)
+#ifdef _WIN32
+	bool MakeContext(std::string* whyNot)
 	{
 		WNDCLASSA wc{};
 		wc.lpfnWndProc = DefWindowProcA;
@@ -66,11 +110,71 @@ public:
 			*whyNot = "no OpenGL context";
 			return false;
 		}
-		if (!wglGetProcAddress("glGenFramebuffers")) {
+		return true;
+	}
+#else
+	bool MakeContext(std::string* whyNot)
+	{
+		display = XOpenDisplay(nullptr);
+		if (!display) {
+			*whyNot = "no X display for an OpenGL context";
+			return false;
+		}
+		// clang-format off
+		const int attribs[] = {
+			GLX_RENDER_TYPE, GLX_RGBA_BIT,
+			GLX_DRAWABLE_TYPE, GLX_WINDOW_BIT,
+			GLX_RED_SIZE, 8, GLX_GREEN_SIZE, 8, GLX_BLUE_SIZE, 8,
+			GLX_DOUBLEBUFFER, True,
+			0,
+		};
+		// clang-format on
+		int count = 0;
+		GLXFBConfig* configs = glXChooseFBConfig(display, DefaultScreen(display), attribs, &count);
+		if (!configs || count < 1) {
+			if (configs)
+				XFree(configs);
+			*whyNot = "no GLX framebuffer config";
+			return false;
+		}
+		GLXFBConfig config = configs[0];
+		XFree(configs);
+		visual = glXGetVisualFromFBConfig(display, config);
+		if (!visual) {
+			*whyNot = "no visual for the GLX framebuffer config";
+			return false;
+		}
+		Window root = RootWindow(display, visual->screen);
+		colormap = XCreateColormap(display, root, visual->visual, AllocNone);
+		XSetWindowAttributes swa{};
+		swa.colormap = colormap;
+		window = XCreateWindow(display, root, 0, 0, 16, 16, 0, visual->depth, InputOutput, visual->visual, CWColormap, &swa);
+		rc = glXCreateNewContext(display, config, GLX_RGBA_TYPE, nullptr, True);
+		if (!rc || !glXMakeCurrent(display, window, rc)) {
+			*whyNot = "no OpenGL context";
+			return false;
+		}
+		return true;
+	}
+#endif
+
+	bool Init(std::string* whyNot)
+	{
+		if (!MakeContext(whyNot))
+			return false;
+#ifdef _WIN32
+		const bool gl3 = GetProc("glGenFramebuffers") != nullptr;
+#else
+		// GLX hands out a pointer for any name, so the version says
+		int major = 0;
+		const char* version = (const char*)glGetString(GL_VERSION);
+		const bool gl3 = version && std::sscanf(version, "%d", &major) == 1 && major >= 3;
+#endif
+		if (!gl3) {
 			*whyNot = std::string("no OpenGL 3 driver (only ") + (const char*)glGetString(GL_RENDERER) + ")";
 			return false;
 		}
-		texImage3D = (PFNTexImage3D)wglGetProcAddress("glTexImage3D");
+		texImage3D = (PFNTexImage3D)GetProc("glTexImage3D");
 		return true;
 	}
 

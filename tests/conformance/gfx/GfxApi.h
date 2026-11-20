@@ -176,12 +176,12 @@ inline std::vector<uint8_t> PatternTexels(Texels t, uint32_t w, uint32_t h, int 
 
 } // namespace gfx
 
-#ifdef _WIN32
-// gfx/*Gfx.cpp
-std::unique_ptr<GfxApi> MakeD3D11Gfx(std::string* whyNot);
-std::unique_ptr<GfxApi> MakeD3D12Gfx(std::string* whyNot);
+// gfx/*Gfx.cpp: Vulkan and OpenGL everywhere, the D3D kinds on Windows
 std::unique_ptr<GfxApi> MakeVkGfx(std::string* whyNot);
 std::unique_ptr<GfxApi> MakeGLGfx(std::string* whyNot);
+#ifdef _WIN32
+std::unique_ptr<GfxApi> MakeD3D11Gfx(std::string* whyNot);
+std::unique_ptr<GfxApi> MakeD3D12Gfx(std::string* whyNot);
 std::unique_ptr<GfxApi> MakeD3D10Gfx(std::string* whyNot);
 gfx::Texels TexelsOfDxgi(int64_t format);
 #endif
