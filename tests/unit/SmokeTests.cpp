@@ -72,6 +72,18 @@ struct IniInDir {
 };
 } // namespace
 
+TEST_CASE("Config is read at the first question, not when it's made")
+{
+	// Made before the program is in the folder with its openlamina.ini, as the library's global is
+	Config c;
+	IniInDir ini("supersampleRatio=1.5\nlaserMouse=false\n");
+	CHECK(c.SupersampleRatio() == 1.5f);
+	CHECK_FALSE(c.LaserMouse());
+	// Read once: a file changed later isn't read again
+	std::ofstream(ini.dir / "openlamina.ini") << "supersampleRatio=2\n";
+	CHECK(c.SupersampleRatio() == 1.5f);
+}
+
 TEST_CASE("Config scales must be numbers above 0")
 {
 	oovr_log_set_test_sink(test_sink);

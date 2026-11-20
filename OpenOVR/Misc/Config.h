@@ -1,60 +1,68 @@
 #pragma once
 
+#include <mutex>
 #include <string>
 
+// openlamina.ini's options. The file is read at the first question, not when the library is loaded (the program's
+// logging and working directory are its own by then).
 class Config {
 public:
 	Config();
 	~Config();
 
-	bool RenderCustomHands() const { return renderCustomHands; }
-	vr::HmdColor_t HandColour() const { return handColour; }
-	float SupersampleRatio() const { return supersampleRatio; }
-	bool Haptics() const { return haptics; }
-	bool EyeTracking() const { return eyeTracking; }
-	bool AdmitUnknownProps() const { return admitUnknownProps; }
-	inline bool LogGetTrackedProperty() const { return logGetTrackedProperty; }
-	inline bool StopOnSoftAbort() const { return stopOnSoftAbort; }
-	inline bool EnableHiddenMeshFix() const { return enableHiddenMeshFix; }
-	inline bool InvertUsingShaders() const { return invertUsingShaders; }
-	inline bool InitUsingVulkan() const { return initUsingVulkan; }
+	bool RenderCustomHands() const { return Loaded().renderCustomHands; }
+	vr::HmdColor_t HandColour() const { return Loaded().handColour; }
+	float SupersampleRatio() const { return Loaded().supersampleRatio; }
+	bool Haptics() const { return Loaded().haptics; }
+	bool EyeTracking() const { return Loaded().eyeTracking; }
+	bool AdmitUnknownProps() const { return Loaded().admitUnknownProps; }
+	inline bool LogGetTrackedProperty() const { return Loaded().logGetTrackedProperty; }
+	inline bool StopOnSoftAbort() const { return Loaded().stopOnSoftAbort; }
+	inline bool EnableHiddenMeshFix() const { return Loaded().enableHiddenMeshFix; }
+	inline bool InvertUsingShaders() const { return Loaded().invertUsingShaders; }
+	inline bool InitUsingVulkan() const { return Loaded().initUsingVulkan; }
 	/** With Submit_TextureWithPose: each eye's view is the submitted head pose times that eye's pose in the head */
-	inline bool UseSubmittedPose() const { return useSubmittedPose; }
+	inline bool UseSubmittedPose() const { return Loaded().useSubmittedPose; }
 	/** With Submit_TextureWithDepth, where the runtime has XR_KHR_composition_layer_depth: each view gets the depth */
-	inline bool SubmitDepth() const { return submitDepth; }
+	inline bool SubmitDepth() const { return Loaded().submitDepth; }
 	/** Frames of OpenLamina's own while the game runs none: the game's last frame again, its overlays and its skybox */
-	inline bool OwnFrames() const { return ownFrames; }
+	inline bool OwnFrames() const { return Loaded().ownFrames; }
 	/** A desktop window with the game's left eye, when the game asks for one (IVRCompositor::ShowMirrorWindow) */
-	inline bool MirrorWindow() const { return mirrorWindow; }
+	inline bool MirrorWindow() const { return Loaded().mirrorWindow; }
 	/** The keyboard (IVROverlay::ShowKeyboard), pointed at with the controllers; without it, done at once */
-	inline bool Keyboard() const { return keyboard; }
+	inline bool Keyboard() const { return Loaded().keyboard; }
 	/** Overlays that take mouse input (VROverlayInputMethod_Mouse) are pointed at with the controllers as a mouse */
-	inline bool LaserMouse() const { return laserMouse; }
+	inline bool LaserMouse() const { return Loaded().laserMouse; }
 	/** SteamVR's render models from the user's install; without them, OpenLamina's built-in ones */
-	inline bool SteamVRRenderModels() const { return steamvrRenderModels; }
+	inline bool SteamVRRenderModels() const { return Loaded().steamvrRenderModels; }
 	/** Overlay and background applications get overlay and headless sessions, where the runtime has them */
-	inline bool HelperApps() const { return helperApps; }
+	inline bool HelperApps() const { return Loaded().helperApps; }
 	/** An overlay application's layers' place among other programs' (XrSessionCreateInfoOverlayEXTX) */
-	inline uint32_t OverlayLayersPlacement() const { return overlayLayersPlacement; }
+	inline uint32_t OverlayLayersPlacement() const { return Loaded().overlayLayersPlacement; }
 	/**
 	 * What opens OpenLamina's dashboard: "system" (either controller's system button, pressed), "system_long" (held
 	 * 0.6 s), "menu" (the left menu button, pressed), "menu_long" (held 0.6 s) or "off"
 	 */
-	const std::string& DashboardButton() const { return dashboardButton; }
+	const std::string& DashboardButton() const { return Loaded().dashboardButton; }
 	/** A grid wall on the play area's edge when the HMD or a controller comes near it */
-	inline bool DrawBounds() const { return drawBounds; }
+	inline bool DrawBounds() const { return Loaded().drawBounds; }
 	/** The events SteamVR sends when the game loses or regains input focus, and when the headset is put on or taken off */
-	inline bool SessionEvents() const { return sessionEvents; }
+	inline bool SessionEvents() const { return Loaded().sessionEvents; }
 	/** On Monado, through libmonado: the room setup's standing zero pose moves the runtime's stage */
-	inline bool ApplyZeroPoses() const { return applyZeroPoses; }
-	float HiddenMeshVerticalScale() const { return hiddenMeshVerticalScale; }
-	inline bool LogAllOpenVRCalls() const { return logAllOpenVRCalls; }
+	inline bool ApplyZeroPoses() const { return Loaded().applyZeroPoses; }
+	float HiddenMeshVerticalScale() const { return Loaded().hiddenMeshVerticalScale; }
+	inline bool LogAllOpenVRCalls() const { return Loaded().logAllOpenVRCalls; }
 	/** The program OpenBindingUI starts; empty for none */
-	const std::string& BindingEditor() const { return bindingEditor; }
+	const std::string& BindingEditor() const { return Loaded().bindingEditor; }
 	/** The keyboard's layout: "us", "uk", or empty to choose by the user's locale (UK for en-GB, else US) */
-	const std::string& KeyboardLayout() const { return keyboardLayout; }
+	const std::string& KeyboardLayout() const { return Loaded().keyboardLayout; }
 
 private:
+	// Reads the files, once, and answers this
+	const Config& Loaded() const;
+	void Read();
+	mutable std::once_flag loaded;
+
 	static int ini_handler(
 	    void* user, const char* section,
 	    const char* name, const char* value,

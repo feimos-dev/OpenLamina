@@ -6,17 +6,8 @@
 
 #include <algorithm>
 #include <cmath>
-#include <codecvt>
-#include <locale>
+#include <filesystem>
 #include <string>
-
-#ifdef WIN32
-#include <direct.h>
-#define GetCurrentDir _getcwd
-#else
-#include <unistd.h>
-#define GetCurrentDir getcwd
-#endif
 
 using vr::HmdColor_t;
 
@@ -235,39 +226,38 @@ int Config::ini_handler(void* user, const char* pSection,
 	return true;
 }
 
-static int wini_parse(const wchar_t* filename, ini_handler handler, void* user)
+static int wini_parse(const std::filesystem::path& filename, ini_handler handler, void* user)
 {
-	std::wstring_convert<std::codecvt_utf8<wchar_t>> CHAR_CONV;
-	std::string utf8filename = CHAR_CONV.to_bytes(filename);
-
-	FILE* file = fopen(utf8filename.c_str(), "r");
+	const std::u8string utf8 = filename.u8string();
+	const std::string name(utf8.begin(), utf8.end());
+#ifdef _WIN32
+	FILE* file = _wfopen(filename.c_str(), L"r");
+#else
+	FILE* file = fopen(filename.c_str(), "r");
+#endif
 	if (!file) {
-		OOVR_LOGF("No config file found at %s", utf8filename.c_str());
+		OOVR_LOGF("No config file found at %s", name.c_str());
 		return -1;
 	}
 
-	OOVR_LOGF("Reading config file at %s", utf8filename.c_str());
+	OOVR_LOGF("Reading config file at %s", name.c_str());
 
 	int error = ini_parse_file(file, handler, user);
 	fclose(file);
 	return error;
 }
 
-// The config file in a folder (prefix ends with a separator): openlamina.ini, else the opencomposite.ini of the
-// project OpenLamina was forked from, so a file a user already has keeps working. If both are there, only
-// openlamina.ini is read. file is the one that was tried last, for the caller's messages.
-static int wini_parse_in(const std::wstring& prefix, std::wstring& file, ini_handler handler, void* user)
+// The config file in a folder: openlamina.ini, else the opencomposite.ini of the project OpenLamina was forked from,
+// so a file a user already has keeps working. If both are there, only openlamina.ini is read.
+static int wini_parse_in(const std::filesystem::path& dir, ini_handler handler, void* user)
 {
-	file = prefix + L"openlamina.ini";
-	int err = wini_parse(file.c_str(), handler, user);
-	if (err == -1) {
-		file = prefix + L"opencomposite.ini";
-		err = wini_parse(file.c_str(), handler, user);
-	}
+	int err = wini_parse(dir / "openlamina.ini", handler, user);
+	if (err == -1)
+		err = wini_parse(dir / "opencomposite.ini", handler, user);
 	return err;
 }
 
-// The ctor is run before DLLMain, so use this hack for now
+// The DLL's own module handle, for the folder it's in
 #ifdef _WIN32
 EXTERN_C IMAGE_DOS_HEADER __ImageBase;
 #define HINST_THISCOMPONENT ((HINSTANCE) & __ImageBase)
@@ -279,29 +269,27 @@ Config::Config()
 #if !defined(SUPPORT_DX11)
 	initUsingVulkan = true;
 #endif
+}
 
+const Config& Config::Loaded() const
+{
+	// The options only change while the files are read, once
+	std::call_once(loaded, [this] { const_cast<Config*>(this)->Read(); });
+	return *this;
+}
+
+void Config::Read()
+{
 	// If we're on Windows, look for a config file next to the DLL
 	// If we're on Linux, skip that and just check the working directory.
+	int err = -1;
 #ifdef _WIN32
 	wchar_t buffer[MAX_PATH];
 	DWORD len = GetModuleFileNameW(HINST_THISCOMPONENT, buffer, MAX_PATH);
-
-	wstring dir;
 	if (len) {
-		wstring fname = wstring(buffer, len);
-		size_t slash_index = fname.rfind(L'\\');
-
-		if (slash_index != wstring::npos) {
-			dir = fname.substr(0, slash_index + 1);
-		}
+		OOVR_LOG("Checking for global config file...");
+		err = wini_parse_in(std::filesystem::path(std::wstring(buffer, len)).parent_path(), ini_handler, this);
 	}
-
-	OOVR_LOG("Checking for global config file...");
-	wstring file;
-	int err = wini_parse_in(dir, file, ini_handler, this);
-#else
-	int err = -1;
-	wstring file;
 #endif
 
 	if (err > 0) {
@@ -311,16 +299,11 @@ Config::Config()
 
 	{
 		// The working directory's file overrides, key by key, what the first one set
-		char buff[FILENAME_MAX];
-		if (GetCurrentDir(buff, FILENAME_MAX)) {
-			wstring workingDir(&buff[0], &buff[strlen(buff)]);
-#ifdef _WIN32
-			workingDir += L"\\";
-#else
-			workingDir += L"/";
-#endif
+		std::error_code ec;
+		std::filesystem::path workingDir = std::filesystem::current_path(ec);
+		if (!ec) {
 			OOVR_LOG("Checking for app specific config file...");
-			err = wini_parse_in(workingDir, file, ini_handler, this);
+			err = wini_parse_in(workingDir, ini_handler, this);
 		} else {
 			OOVR_LOG("Couldn't get the working directory, so there's no app specific config file");
 			err = -1;
