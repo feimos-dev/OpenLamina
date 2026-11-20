@@ -89,10 +89,11 @@ run --apptypes 2 --script tests/conformance/scripts/helper_apps.json --out "$out
 # One case a run, so that its log says whether it was shared.
 for api in vk gl; do
 	run --cases overlay-app-$api --script tests/conformance/scripts/helper_apps.json --expect tests/conformance/expect/helper_apps_linux_$api.json --out "$out"/helper-apps-shared-$api
-	check sh -c '! grep "isn.t shared with the session" "$1"/logs/*.log' - "$out"/helper-apps-shared-$api
+	check sh -c 'ls "$1"/logs/*.log >/dev/null && ! grep "isn.t shared with the session" "$1"/logs/*.log' - "$out"/helper-apps-shared-$api
 	check env OC_CONFORMANCE_NO_EXTERNAL_MEMORY=1 MESA_EXTENSION_OVERRIDE=-GL_EXT_memory_object_fd \
 		python3 tests/conformance/run.py --runtime "$build/$lib" --conformance "$build/tests/oc_conformance" --xr-runtime stand-in --ci \
 		--cases overlay-app-$api --script tests/conformance/scripts/helper_apps.json --expect tests/conformance/expect/helper_apps_linux_$api.json --out "$out"/helper-apps-readback-$api
+	check sh -c 'grep -q "isn.t shared with the session" "$1"/logs/*.log' - "$out"/helper-apps-readback-$api
 done
 # The game's pointer on an overlay app's overlay, and an overlay app that ends without shutting down (two programs each)
 run --cases remote-pointer,remote-pointer-overlay --jobs 2 --script tests/conformance/scripts/remote_pointer.json --ini tests/conformance/ini/laser_mouse.ini --expect tests/conformance/expect/remote_pointer.json --out "$out"/remote-pointer

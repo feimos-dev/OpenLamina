@@ -49,7 +49,11 @@ struct Commands {
 			return false;
 		}
 		bufferInfo.commandPool = pool;
-		return vkAllocateCommandBuffers(device, &bufferInfo, &buffer) == VK_SUCCESS && vkCreateFence(device, &fenceInfo, nullptr, &fence) == VK_SUCCESS;
+		if (vkAllocateCommandBuffers(device, &bufferInfo, &buffer) == VK_SUCCESS && vkCreateFence(device, &fenceInfo, nullptr, &fence) == VK_SUCCESS)
+			return true;
+		buffer = VK_NULL_HANDLE;
+		Drop();
+		return false;
 	}
 	void Drop()
 	{
@@ -416,7 +420,8 @@ struct OverlayTextureShare::Impl {
 		if (verdict == deviceVerdicts.end()) {
 			std::string no;
 			uint8_t device[VK_UUID_SIZE] = {}, driver[VK_UUID_SIZE] = {};
-			// Only there if the program enabled VK_KHR_external_memory_fd on its device
+			// Only there if the program enabled VK_KHR_external_memory_fd on its device (where a driver answers anyway,
+			// the import fails and the texture is read back)
 			if (!vkGetDeviceProcAddr(data->m_pDevice, "vkGetMemoryFdKHR"))
 				no = "the program's Vulkan device doesn't have VK_KHR_external_memory_fd";
 			else if (!DeviceIds(data->m_pPhysicalDevice, device, driver) || memcmp(device, uuid, VK_UUID_SIZE) || memcmp(driver, driverUuid, VK_UUID_SIZE))
@@ -427,7 +432,7 @@ struct OverlayTextureShare::Impl {
 			*why = verdict->second;
 			return nullptr;
 		}
-		if (program.device != data->m_pDevice || program.family != data->m_nQueueFamilyIndex || !program.pool) {
+		if (program.device != data->m_pDevice || program.family != data->m_nQueueFamilyIndex || !program.fence) {
 			// Another device: what was imported into the last one goes with it
 			for (auto& kv : shared)
 				if (kv.second.programDevice && kv.second.programDevice != data->m_pDevice)
@@ -580,16 +585,23 @@ struct OverlayTextureShare::Impl {
 				const GLint yes = GL_TRUE;
 				gl.memoryObjectParameteriv(s->glMemory, GL_DEDICATED_MEMORY_OBJECT_EXT, &yes);
 			}
-			// The import owns the descriptor
-			if (fd >= 0)
+			// A successful import owns the descriptor
+			bool imported = false;
+			if (fd >= 0) {
 				gl.importMemoryFd(s->glMemory, (GLuint64)s->size, GL_HANDLE_TYPE_OPAQUE_FD_EXT, fd);
+				imported = glGetError() == GL_NO_ERROR;
+				if (!imported)
+					close(fd);
+			}
 			glGenTextures(1, &s->glTexture);
 			glBindTexture(GL_TEXTURE_2D, s->glTexture);
 			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_TILING_EXT, GL_OPTIMAL_TILING_EXT);
 			gl.texStorageMem2D(GL_TEXTURE_2D, 1, (GLenum)internalFormat, width, height, s->glMemory, 0);
 			glBindTexture(GL_TEXTURE_2D, (GLuint)previous);
-			if (fd < 0 || glGetError() != GL_NO_ERROR) {
+			if (!imported || glGetError() != GL_NO_ERROR) {
+				// Not tried again in this context
 				*why = "the program's OpenGL context couldn't import the shared image";
+				contextVerdicts[context] = *why;
 				DropProgramSide(*s);
 				return nullptr;
 			}

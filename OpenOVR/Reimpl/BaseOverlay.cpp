@@ -3533,6 +3533,7 @@ EVROverlayError BaseOverlay::SetOverlayRaw(VROverlayHandle_t ulOverlayHandle, vo
 	if (std::shared_ptr<Compositor> comp = overlay->compositor.lock()) {
 		auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
 		backend->UnregisterOverlayCompositor(comp);
+		backend->ForgetOverlayTextures(overlay);
 	}
 	overlay->compositor.reset();
 	overlay->SetTexture({});

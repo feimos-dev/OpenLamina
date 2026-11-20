@@ -2485,13 +2485,13 @@ void XrBackend::ForgetOverlayTextures(const void* owner)
 
 const vr::VRVulkanTextureData_t* XrBackend::ShareOverlayTexture(const vr::Texture_t* texture, const void* owner, bool* flipY, std::string* why)
 {
-	*flipY = false;
 #if defined(SUPPORT_VK) && !defined(_WIN32)
 	if (overlayShare)
 		return overlayShare->CopyIn(texture, owner, flipY, why);
 #endif
+	*flipY = false;
 	if (why)
-		*why = "the overlay session's device can't share images (no Vulkan device with VK_KHR_external_memory_fd)";
+		*why = "the overlay session's device can't share images with the program";
 	return nullptr;
 }
 

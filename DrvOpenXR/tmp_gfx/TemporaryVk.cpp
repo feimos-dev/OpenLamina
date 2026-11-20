@@ -151,7 +151,7 @@ TemporaryVk::TemporaryVk()
 	addIfAvailable(VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME);
 #else
 	// An overlay application's textures are shared with this device by file descriptor (OverlayTextureShare)
-	externalMemoryFd = addIfAvailable(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+	externalMemoryFd = addIfAvailable(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) && appInfo.apiVersion >= VK_API_VERSION_1_1;
 #endif
 
 	devCreateInfo.enabledExtensionCount = deviceExtensionsCstr.size();

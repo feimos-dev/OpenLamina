@@ -54,5 +54,6 @@ public:
 	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 	VkDevice device = VK_NULL_HANDLE;
 	VkQueue queue = VK_NULL_HANDLE;
-	bool externalMemoryFd = false; // VK_KHR_external_memory_fd is enabled on the device
+	// VK_KHR_external_memory_fd is enabled on the device, and the instance is Vulkan 1.1 (its device UUID, image formats)
+	bool externalMemoryFd = false;
 };
