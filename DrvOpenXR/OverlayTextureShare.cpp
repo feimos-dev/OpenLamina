@@ -2,7 +2,7 @@
 
 #include "OverlayTextureShare.h"
 
-#ifdef SUPPORT_VK
+#if defined(SUPPORT_VK) && !defined(_WIN32)
 
 #include "../OpenOVR/logging.h"
 
@@ -111,13 +111,15 @@ VkImageMemoryBarrier Barrier(VkImage image, VkImageLayout from, VkImageLayout to
 	return b;
 }
 
-bool DeviceUuid(VkPhysicalDevice physicalDevice, uint8_t (&uuid)[VK_UUID_SIZE])
+// Memory is shared only between the same device on the same driver: both UUIDs. False if they can't be had.
+bool DeviceIds(VkPhysicalDevice physicalDevice, uint8_t (&device)[VK_UUID_SIZE], uint8_t (&driver)[VK_UUID_SIZE])
 {
 	VkPhysicalDeviceIDProperties id{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_ID_PROPERTIES };
 	VkPhysicalDeviceProperties2 props{ VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2, &id };
 	vkGetPhysicalDeviceProperties2(physicalDevice, &props);
-	memcpy(uuid, id.deviceUUID, VK_UUID_SIZE);
-	for (uint8_t b : uuid)
+	memcpy(device, id.deviceUUID, VK_UUID_SIZE);
+	memcpy(driver, id.driverUUID, VK_UUID_SIZE);
+	for (uint8_t b : device)
 		if (b)
 			return true;
 	return false;
@@ -146,6 +148,7 @@ VkFormat VkFormatOfGl(GLint internalFormat)
 // GL_EXT_memory_object(_fd), and what's needed around it, from the current context's driver
 struct GlFunctions {
 	PFNGLGETSTRINGIPROC getStringi = nullptr;
+	PFNGLGETUNSIGNEDBYTEVEXTPROC getUnsignedBytev = nullptr;
 	PFNGLGETUNSIGNEDBYTEI_VEXTPROC getUnsignedBytei = nullptr;
 	PFNGLCREATEMEMORYOBJECTSEXTPROC createMemoryObjects = nullptr;
 	PFNGLDELETEMEMORYOBJECTSEXTPROC deleteMemoryObjects = nullptr;
@@ -169,6 +172,7 @@ struct GlFunctions {
 			return usable;
 		loaded = true;
 		getStringi = Get<PFNGLGETSTRINGIPROC>("glGetStringi");
+		getUnsignedBytev = Get<PFNGLGETUNSIGNEDBYTEVEXTPROC>("glGetUnsignedBytevEXT");
 		getUnsignedBytei = Get<PFNGLGETUNSIGNEDBYTEI_VEXTPROC>("glGetUnsignedBytei_vEXT");
 		createMemoryObjects = Get<PFNGLCREATEMEMORYOBJECTSEXTPROC>("glCreateMemoryObjectsEXT");
 		deleteMemoryObjects = Get<PFNGLDELETEMEMORYOBJECTSEXTPROC>("glDeleteMemoryObjectsEXT");
@@ -179,7 +183,7 @@ struct GlFunctions {
 		fenceSync = Get<PFNGLFENCESYNCPROC>("glFenceSync");
 		clientWaitSync = Get<PFNGLCLIENTWAITSYNCPROC>("glClientWaitSync");
 		deleteSync = Get<PFNGLDELETESYNCPROC>("glDeleteSync");
-		usable = getStringi && getUnsignedBytei && createMemoryObjects && deleteMemoryObjects && memoryObjectParameteriv && importMemoryFd
+		usable = getStringi && getUnsignedBytev && getUnsignedBytei && createMemoryObjects && deleteMemoryObjects && memoryObjectParameteriv && importMemoryFd
 		    && texStorageMem2D && copyImageSubData && fenceSync && clientWaitSync && deleteSync;
 		return usable;
 	}
@@ -207,7 +211,9 @@ struct OverlayTextureShare::Impl {
 	uint32_t family;
 	VkQueue queue;
 	PFN_vkGetMemoryFdKHR getMemoryFd = nullptr;
-	uint8_t uuid[VK_UUID_SIZE] = {};
+	uint8_t uuid[VK_UUID_SIZE] = {}, driverUuid[VK_UUID_SIZE] = {};
+	// Why each program device or context can't share (empty if it can), found at its first texture
+	std::map<VkDevice, std::string> deviceVerdicts;
 	bool usable = false;
 	VkPhysicalDeviceMemoryProperties memory{};
 	Commands session; // on the session's queue
@@ -216,6 +222,7 @@ struct OverlayTextureShare::Impl {
 	Commands program;
 #ifdef SUPPORT_GL
 	GlFunctions gl;
+	std::map<GLXContext, std::string> contextVerdicts;
 #endif
 
 	// An image of the session's device shared with the program's side, for one overlay
@@ -237,6 +244,7 @@ struct OverlayTextureShare::Impl {
 		VkDeviceMemory programMemory = VK_NULL_HANDLE;
 #ifdef SUPPORT_GL
 		GLuint glMemory = 0, glTexture = 0;
+		GLXContext glContext = nullptr; // the context (and those sharing with it) the names are of
 #endif
 	};
 	std::map<const void*, Shared> shared;
@@ -251,8 +259,8 @@ struct OverlayTextureShare::Impl {
 		s.programMemory = VK_NULL_HANDLE;
 		s.programDevice = VK_NULL_HANDLE;
 #ifdef SUPPORT_GL
-		// Only while a context is current (the program's thread, in its call)
-		if ((s.glTexture || s.glMemory) && glXGetCurrentContext()) {
+		// Only in their context; elsewhere the names may be another texture's, and are left
+		if ((s.glTexture || s.glMemory) && s.glContext && glXGetCurrentContext() == s.glContext) {
 			if (s.glTexture)
 				glDeleteTextures(1, &s.glTexture);
 			if (s.glMemory && gl.deleteMemoryObjects)
@@ -260,6 +268,7 @@ struct OverlayTextureShare::Impl {
 		}
 		s.glTexture = 0;
 		s.glMemory = 0;
+		s.glContext = nullptr;
 #endif
 	}
 
@@ -403,14 +412,19 @@ struct OverlayTextureShare::Impl {
 			*why = "the Vulkan texture's data is incomplete";
 			return nullptr;
 		}
-		// Only there if the program enabled VK_KHR_external_memory_fd on its device
-		if (!vkGetDeviceProcAddr(data->m_pDevice, "vkGetMemoryFdKHR")) {
-			*why = "the program's Vulkan device doesn't have VK_KHR_external_memory_fd";
-			return nullptr;
+		auto verdict = deviceVerdicts.find(data->m_pDevice);
+		if (verdict == deviceVerdicts.end()) {
+			std::string no;
+			uint8_t device[VK_UUID_SIZE] = {}, driver[VK_UUID_SIZE] = {};
+			// Only there if the program enabled VK_KHR_external_memory_fd on its device
+			if (!vkGetDeviceProcAddr(data->m_pDevice, "vkGetMemoryFdKHR"))
+				no = "the program's Vulkan device doesn't have VK_KHR_external_memory_fd";
+			else if (!DeviceIds(data->m_pPhysicalDevice, device, driver) || memcmp(device, uuid, VK_UUID_SIZE) || memcmp(driver, driverUuid, VK_UUID_SIZE))
+				no = "the program's Vulkan device is another GPU or driver than the session's";
+			verdict = deviceVerdicts.emplace(data->m_pDevice, no).first;
 		}
-		uint8_t programUuid[VK_UUID_SIZE] = {};
-		if (!DeviceUuid(data->m_pPhysicalDevice, programUuid) || memcmp(programUuid, uuid, VK_UUID_SIZE) != 0) {
-			*why = "the program's Vulkan device is another GPU than the session's";
+		if (!verdict->second.empty()) {
+			*why = verdict->second;
 			return nullptr;
 		}
 		if (program.device != data->m_pDevice || program.family != data->m_nQueueFamilyIndex || !program.pool) {
@@ -498,25 +512,35 @@ struct OverlayTextureShare::Impl {
 	const vr::VRVulkanTextureData_t* CopyInGl(const vr::Texture_t* tex, const void* owner, std::string* why)
 	{
 		const GLuint name = (GLuint)(uintptr_t)tex->handle;
-		if (!name || !glXGetCurrentContext()) {
-			*why = "no OpenGL texture, or no context current";
+		const GLXContext context = glXGetCurrentContext();
+		if (!name || !context) {
+			*why = "no OpenGL texture, or no GLX context current";
 			return nullptr;
 		}
-		if (!gl.Load() || !gl.HasExtension("GL_EXT_memory_object_fd")) {
-			*why = "the program's OpenGL context doesn't have GL_EXT_memory_object_fd";
-			return nullptr;
+		auto verdict = contextVerdicts.find(context);
+		if (verdict == contextVerdicts.end()) {
+			std::string no;
+			if (!gl.Load() || !gl.HasExtension("GL_EXT_memory_object_fd")) {
+				no = "the program's OpenGL context doesn't have GL_EXT_memory_object_fd";
+			} else {
+				// The session's driver, and one of the context's devices
+				GLubyte driver[GL_UUID_SIZE_EXT] = {};
+				gl.getUnsignedBytev(GL_DRIVER_UUID_EXT, driver);
+				GLint devices = 0;
+				glGetIntegerv(GL_NUM_DEVICE_UUIDS_EXT, &devices);
+				bool same = false;
+				for (GLint i = 0; i < devices && !same; i++) {
+					GLubyte id[GL_UUID_SIZE_EXT] = {};
+					gl.getUnsignedBytei(GL_DEVICE_UUID_EXT, (GLuint)i, id);
+					same = memcmp(id, uuid, VK_UUID_SIZE) == 0;
+				}
+				if (!same || memcmp(driver, driverUuid, VK_UUID_SIZE))
+					no = "the program's OpenGL context is on another GPU or driver than the session's";
+			}
+			verdict = contextVerdicts.emplace(context, no).first;
 		}
-		// The same GPU: one of the context's devices is the session's
-		GLint devices = 0;
-		glGetIntegerv(GL_NUM_DEVICE_UUIDS_EXT, &devices);
-		bool same = false;
-		for (GLint i = 0; i < devices && !same; i++) {
-			GLubyte id[GL_UUID_SIZE_EXT] = {};
-			gl.getUnsignedBytei(GL_DEVICE_UUID_EXT, (GLuint)i, id);
-			same = memcmp(id, uuid, VK_UUID_SIZE) == 0;
-		}
-		if (!same) {
-			*why = "the program's OpenGL context is on another GPU than the session's";
+		if (!verdict->second.empty()) {
+			*why = verdict->second;
 			return nullptr;
 		}
 
@@ -542,7 +566,13 @@ struct OverlayTextureShare::Impl {
 			return nullptr;
 		}
 
+		// Names made in another context aren't this one's to use
+		if (s->glTexture && s->glContext != context) {
+			s->glTexture = 0;
+			s->glMemory = 0;
+		}
 		if (!s->glTexture) {
+			s->glContext = context;
 			// The shared memory as a texture of the program's context, laid out as the image is (optimal tiling)
 			const int fd = dup(s->fd);
 			gl.createMemoryObjects(1, &s->glMemory);
@@ -596,7 +626,7 @@ OverlayTextureShare::OverlayTextureShare(VkInstance instance, VkPhysicalDevice p
 	i.queue = queue;
 	i.getMemoryFd = (PFN_vkGetMemoryFdKHR)vkGetDeviceProcAddr(device, "vkGetMemoryFdKHR");
 	vkGetPhysicalDeviceMemoryProperties(physicalDevice, &i.memory);
-	const bool hasUuid = DeviceUuid(physicalDevice, i.uuid);
+	const bool hasUuid = DeviceIds(physicalDevice, i.uuid, i.driverUuid);
 	i.usable = i.getMemoryFd && hasUuid && i.session.Make(device, queueFamily);
 	if (!i.usable)
 		OOVR_LOGF("Overlay texture sharing: the session's Vulkan device can't share images (vkGetMemoryFdKHR %s, device UUID %s); overlay "
@@ -606,9 +636,15 @@ OverlayTextureShare::OverlayTextureShare(VkInstance instance, VkPhysicalDevice p
 
 OverlayTextureShare::~OverlayTextureShare()
 {
-	for (auto& kv : impl->shared)
+	// What's of the program's device or context is left: the program may have destroyed them by now
+	for (auto& kv : impl->shared) {
+		kv.second.programImage = VK_NULL_HANDLE;
+		kv.second.programMemory = VK_NULL_HANDLE;
+#ifdef SUPPORT_GL
+		kv.second.glContext = nullptr;
+#endif
 		impl->Drop(kv.second);
-	impl->program.Drop();
+	}
 	impl->session.Drop();
 }
 

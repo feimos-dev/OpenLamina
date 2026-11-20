@@ -1,10 +1,10 @@
 #pragma once
 // An overlay application's Vulkan or OpenGL texture copied, on the program's thread and on its own queue or context,
 // into an image of the overlay session's Vulkan device (OpenLamina's own) whose memory both share
-// (VK_KHR_external_memory_fd, GL_EXT_memory_object_fd): only on the same GPU (by device UUID), where the program's
-// device or context has the extension. Otherwise the texture is read back into memory (BaseOverlay).
+// (VK_KHR_external_memory_fd, GL_EXT_memory_object_fd): only on the same device and driver (by their UUIDs), where the
+// program's device or context has the extension. Otherwise the texture is read back into memory (BaseOverlay).
 
-#ifdef SUPPORT_VK
+#if defined(SUPPORT_VK) && !defined(_WIN32)
 
 #include "generated/interfaces/vrtypes.h"
 
@@ -15,7 +15,6 @@
 
 class OverlayTextureShare {
 public:
-	// The session's device, with VK_KHR_external_memory_fd enabled, and the queue the session's copies use
 	OverlayTextureShare(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device, uint32_t queueFamily, VkQueue queue);
 	~OverlayTextureShare();
 	OverlayTextureShare(const OverlayTextureShare&) = delete;
@@ -31,7 +30,6 @@ public:
 	// On the program's thread, after the session's copy from CopyIn's image was submitted: the image is handed back to
 	// the program's side once that copy has run (waited for, at most 100 ms)
 	void Release(const void* owner);
-	// What was made for owner's textures is let go (it shows none any more)
 	void Forget(const void* owner);
 
 private:

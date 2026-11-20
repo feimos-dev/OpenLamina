@@ -31,7 +31,7 @@ inline uint32_t TemporaryVkApiVersion(uint32_t loaderVersion, XrVersion minimum,
 {
 	const uint32_t lowest = VK_MAKE_VERSION((uint32_t)XR_VERSION_MAJOR(minimum), (uint32_t)XR_VERSION_MINOR(minimum), 0);
 	uint32_t version = lowest > VK_API_VERSION_1_0 ? lowest : VK_API_VERSION_1_0;
-	const bool runtimeHas11 = maximum == 0 || XR_VERSION_MAJOR(maximum) > 1 || (XR_VERSION_MAJOR(maximum) == 1 && XR_VERSION_MINOR(maximum) >= 1);
+	const bool runtimeHas11 = XR_VERSION_MAJOR(maximum) > 1 || (XR_VERSION_MAJOR(maximum) == 1 && XR_VERSION_MINOR(maximum) >= 1);
 	if (version < VK_API_VERSION_1_1 && loaderVersion >= VK_API_VERSION_1_1 && runtimeHas11)
 		version = VK_API_VERSION_1_1;
 	return version;

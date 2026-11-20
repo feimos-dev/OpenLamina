@@ -85,11 +85,15 @@ run --cases display-frequency --script tests/conformance/scripts/display_120.jso
 # Every interface as an overlay application on its session: nothing crashes, ends or hangs
 run --apptypes 2 --script tests/conformance/scripts/helper_apps.json --out "$out"/helper-apps-interfaces
 # An overlay app's Vulkan and OpenGL textures: shared with OpenLamina's own device (VK_KHR_external_memory_fd,
-# GL_EXT_memory_object_fd, which lavapipe and llvmpipe have), and read back into memory where the program has neither
-run --cases overlay-app-vk,overlay-app-gl --script tests/conformance/scripts/helper_apps.json --expect tests/conformance/expect/helper_apps_linux.json --out "$out"/helper-apps-textures
-export OC_CONFORMANCE_NO_EXTERNAL_MEMORY=1 MESA_EXTENSION_OVERRIDE=-GL_EXT_memory_object_fd
-run --cases overlay-app-vk,overlay-app-gl --script tests/conformance/scripts/helper_apps.json --expect tests/conformance/expect/helper_apps_linux.json --out "$out"/helper-apps-textures-readback
-unset OC_CONFORMANCE_NO_EXTERNAL_MEMORY MESA_EXTENSION_OVERRIDE
+# GL_EXT_memory_object_fd, which lavapipe and llvmpipe have), and read back into memory where the program has neither.
+# One case a run, so that its log says whether it was shared.
+for api in vk gl; do
+	run --cases overlay-app-$api --script tests/conformance/scripts/helper_apps.json --expect tests/conformance/expect/helper_apps_linux_$api.json --out "$out"/helper-apps-shared-$api
+	check sh -c '! grep "isn.t shared with the session" "$1"/logs/*.log' - "$out"/helper-apps-shared-$api
+	check env OC_CONFORMANCE_NO_EXTERNAL_MEMORY=1 MESA_EXTENSION_OVERRIDE=-GL_EXT_memory_object_fd \
+		python3 tests/conformance/run.py --runtime "$build/$lib" --conformance "$build/tests/oc_conformance" --xr-runtime stand-in --ci \
+		--cases overlay-app-$api --script tests/conformance/scripts/helper_apps.json --expect tests/conformance/expect/helper_apps_linux_$api.json --out "$out"/helper-apps-readback-$api
+done
 # The game's pointer on an overlay app's overlay, and an overlay app that ends without shutting down (two programs each)
 run --cases remote-pointer,remote-pointer-overlay --jobs 2 --script tests/conformance/scripts/remote_pointer.json --ini tests/conformance/ini/laser_mouse.ini --expect tests/conformance/expect/remote_pointer.json --out "$out"/remote-pointer
 run --cases remote-pointer-peer-dies,remote-pointer-dying-overlay --jobs 2 --script tests/conformance/scripts/remote_pointer.json --ini tests/conformance/ini/laser_mouse.ini --expect tests/conformance/expect/remote_pointer_peer_dies.json --out "$out"/remote-pointer-peer-dies

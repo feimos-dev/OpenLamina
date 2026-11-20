@@ -3360,9 +3360,8 @@ EVROverlayError BaseOverlay::SetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 #else
 		copy = xrBackend ? xrBackend->CopyOverlayTexture(&texture, &overlay->textureBounds, &why, overlay) : nullptr;
 #endif
-		// A Vulkan or OpenGL texture that can't be copied onto the session's device through D3D11 (on Windows; never
-		// on Linux, where that's OpenLamina's own Vulkan device) is shared with that device where it can be; else it's
-		// read back into memory on the program's thread and shown as an image from memory is
+		// A Vulkan or OpenGL texture that can't be copied onto the session's device (through D3D11, on Windows) is
+		// shared with that device where it can be (Linux); else it's read back on the program's thread
 		if (!copy && (texture.eType == TextureType_Vulkan || texture.eType == TextureType_OpenGL)) {
 			if (std::optional<EVROverlayError> shared = ShowShared(*overlay, texture))
 				return *shared;
@@ -3382,6 +3381,7 @@ EVROverlayError BaseOverlay::SetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 		overlay->compositor.reset();
 	}
 	overlay->SetTexture(texture);
+	overlay->shownFlipY = false;
 	overlay->textureCopySize = {};
 	overlay->givenSize = OverlayTextureSize(texture);
 	// A texture replaces an image from memory
@@ -3426,7 +3426,6 @@ std::optional<EVROverlayError> BaseOverlay::ShowShared(OverlayData& overlay, con
 	Texture_t shown{ &overlay.sharedImage, TextureType_Vulkan, texture.eColorSpace };
 	shown.eColorSpace = overlay.TextureColourSpace(shown.eColorSpace);
 
-	// No image from memory (an earlier read back) any more
 	overlay.raw.reset();
 	overlay.rawImage = {};
 	overlay.SetTexture(texture);
@@ -3496,6 +3495,7 @@ EVROverlayError BaseOverlay::ClearOverlayTexture(VROverlayHandle_t ulOverlayHand
 	auto session = xr_session.lock_shared();
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	overlay->SetTexture({});
+	overlay->shownFlipY = false;
 	overlay->textureCopySize = {};
 	overlay->givenSize.reset();
 	overlay->DropLive();
@@ -3536,6 +3536,7 @@ EVROverlayError BaseOverlay::SetOverlayRaw(VROverlayHandle_t ulOverlayHandle, vo
 	}
 	overlay->compositor.reset();
 	overlay->SetTexture({});
+	overlay->shownFlipY = false;
 	overlay->textureCopySize = {};
 	overlay->givenSize.reset();
 	overlay->rawImage = std::move(image);

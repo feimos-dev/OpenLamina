@@ -319,7 +319,9 @@ private:
 	std::atomic<bool> usingApplicationGraphicsAPI{ false };
 	// An overlay application's textures, copied onto its session's device
 	std::unique_ptr<class OverlayTextureCopy> overlayCopy;
+#if defined(SUPPORT_VK) && !defined(_WIN32)
 	std::unique_ptr<class OverlayTextureShare> overlayShare;
+#endif
 
 	// A helper program's frame loop (overlay sessions) or event loop (headless ones), made with each session
 	void StartHelperLoop();
