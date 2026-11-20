@@ -73,10 +73,10 @@ def check(name, want, out):
             misses.append(f"frame-loop: device events {seq}, expected {want['device_events']} in that order")
         if 704 in seq:
             misses.append("frame-loop: VREvent_DriverRequestedQuit polled after a loss")
-    for key, at_least in (("sessions_lost", False), ("sessions_created_min", True)):
+    for key, at_least in (("sessions_lost", False), ("sessions_created_min", True), ("instances_lost", False), ("instances_created_min", True)):
         if key in want:
             dump = json.loads(dump_path.read_text(encoding="utf-8")) if dump_path.exists() else {}
-            name = "sessions_created" if at_least else key
+            name = key.removesuffix("_min")
             got = dump.get(name, 0)
             if (got < want[key]) if at_least else (got != want[key]):
                 misses.append(f"frame-loop: the runtime saw {got} {name.replace('_', ' ')}, expected {'at least ' if at_least else ''}{want[key]}")
@@ -96,12 +96,27 @@ def check(name, want, out):
                 misses.append(f"overlay-app-loss: {key.removesuffix('_min')} {r.get(key.removesuffix('_min'))}, expected at least {value}")
             elif key in ("sessions_lost", "instances_lost", "manifest") and r.get(key) != value:
                 misses.append(f"overlay-app-loss: {key} {r.get(key)}, expected {value}")
-    if "action_attaches_min" in want:
-        # Case input-frames through a loss: the game's actions are attached to the session made again too
+    if "rebuilt_actions" in want:
+        # Case input-frames through an instance loss: the last instance has the game's manifest's actions and their
+        # bindings
         path = out / "raw" / "case-input-frames.dump.json"
         dump = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
-        if dump.get("sessions_lost") != 1 or dump.get("action_attaches", 0) < want["action_attaches_min"]:
-            misses.append(f"input-frames: {dump.get('sessions_lost')} sessions lost and {dump.get('action_attaches')} action attaches, expected 1 and at least {want['action_attaches_min']}")
+        if dump.get("instances_lost") != 1 or dump.get("instances_created", 0) < 2:
+            misses.append(f"input-frames: {dump.get('instances_lost')} instances lost and {dump.get('instances_created')} made, expected 1 and at least 2")
+        names = {a.get("name") for a in dump.get("actions", [])}
+        missing = [n for n in want["rebuilt_actions"] if n not in names]
+        if missing:
+            misses.append(f"input-frames: the new instance has no actions {missing}")
+        if not dump.get("suggested_bindings"):
+            misses.append("input-frames: the new instance had no bindings suggested")
+    if "action_attaches_min" in want:
+        # Case input-frames through a session or instance loss: the game's actions are attached to the session made
+        # again too
+        path = out / "raw" / "case-input-frames.dump.json"
+        dump = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        lost = (dump.get("sessions_lost") or 0) + (dump.get("instances_lost") or 0)
+        if lost != 1 or dump.get("action_attaches", 0) < want["action_attaches_min"]:
+            misses.append(f"input-frames: {lost} sessions or instances lost and {dump.get('action_attaches')} action attaches, expected 1 and at least {want['action_attaches_min']}")
     if "old_event_quits" in want:
         # IVRSystem_009's events (case old-events): the quit arrives, and nothing is written past the 32-byte event
         olds = [r for r in records if r.get("case") == "old-events" and str(r.get("method", "")).startswith("frame ")]

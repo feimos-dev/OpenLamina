@@ -491,6 +491,12 @@ public: // INTERNAL FUNCTIONS
 	 */
 	void LoadEmptyManifestIfRequired();
 
+	// The OpenXR instance is lost: the actions' handles went with it, and are forgotten (the session lock held)
+	void _ForgetInstance();
+	// On the new instance and its session: the actions and bindings are made again from the manifest that was loaded
+	// (or legacy input's), if _ForgetInstance forgot any
+	void _RebuildForNewInstance();
+
 	/**
 	 * Update the input stuff, called by BaseSystem.
 	 *
@@ -519,6 +525,18 @@ public: // INTERNAL FUNCTIONS
 	// set before it
 	bool LegacyInputAsked() const { return legacyInputAsked; }
 
+private:
+	// The actions, action sets and their evaluators go (destroyHandles: with xrDestroyActionSet; not when the instance
+	// they belonged to is gone)
+	void DropActions(bool destroyHandles);
+	// The manifest (empty for legacy input) whose actions _ForgetInstance forgot, to be loaded again; under the session
+	// lock
+	std::string manifestToRebuild;
+	bool rebuildPending = false;
+	bool rebuildLegacy = false; // legacy input's actions are made again (there's no manifest to)
+	bool pathsStale = false; // the cached paths are the lost instance's
+
+public:
 	/** One hand's laser for pointing at overlays (LaserMouse) */
 	struct HandPointer {
 		XrPosef aim; // the aim pose: the laser runs along its -Z

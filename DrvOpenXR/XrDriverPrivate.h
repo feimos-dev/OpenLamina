@@ -20,5 +20,8 @@ XrResult SetupSession();
 void ShutdownSession();
 // xrGetSystem for the headset again (after a loss): XR_SUCCESS once it is there
 XrResult FindSystem();
+// After the instance was lost (its session already ended): the old instance destroyed, a new one made on the same
+// extensions, with its function pointers, system and views. XR_SUCCESS once there's a headset on it.
+XrResult RemakeInstance();
 void FullShutdown();
 } // namespace DrvOpenXR

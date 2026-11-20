@@ -9,7 +9,10 @@
 //   "events":   [{ "frame": 60, "type": "session_state", "state": "LOSS_PENDING" }]
 //               (LOSS_PENDING loses the session for real, once per process: its calls answer XR_ERROR_SESSION_LOST
 //               from then on, and xrGetSystem answers XR_ERROR_FORM_FACTOR_UNAVAILABLE for loss_unavailable_ms;
-//               EXITING on a running session is the user quitting: STOPPING, then EXITING after xrEndSession),
+//               EXITING on a running session is the user quitting: STOPPING, then EXITING after xrEndSession;
+//               { "frame": 60, "type": "instance_lost" } loses the instance, once per process, as a dead monado-service
+//               does: xrPollEvent and the frame, session and system calls answer XR_ERROR_INSTANCE_LOST until
+//               xrDestroyInstance, and xrCreateInstance fails for loss_unavailable_ms),
 //               (or { "frame": 10, "type": "refresh_rate", "rate": 120 }: the display changes to that rate, announced
 //               with XrEventDataDisplayRefreshRateChangedFB),
 //   "fail":     [{ "function": "xrEndFrame", "result": "XR_ERROR_RUNTIME_FAILURE", "after": 29, "count": 1 }]

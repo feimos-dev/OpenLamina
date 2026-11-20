@@ -1,0 +1,1 @@
+{ "#": "The instance is lost at frame 5 and the runtime is back at once (case input-frames): the game's actions and bindings are made again on the new instance, whose paths differ from the old one's, and its input calls keep working", "events": [{ "frame": 5, "type": "instance_lost" }], "interaction_profile": "/interaction_profiles/valve/index_controller" }

@@ -28,7 +28,9 @@ if (WIN32)
 else ()
 	target_compile_definitions(oc_test_runtime PRIVATE XR_USE_PLATFORM_XLIB)
 	# GL and GLX from libGL; X11 for the display the binding names; Vulkan's loader is opened at run time
-	target_link_libraries(oc_test_runtime PRIVATE ${jsoncppLib} GL X11 ${CMAKE_DL_LIBS} -Wl,--no-undefined)
+	# nodelete: the loader unloads a runtime whose last instance is destroyed, and the state of a scripted loss must
+	# outlive the lost instance
+	target_link_libraries(oc_test_runtime PRIVATE ${jsoncppLib} GL X11 ${CMAKE_DL_LIBS} -Wl,--no-undefined -Wl,-z,nodelete)
 endif ()
 set_target_properties(oc_test_runtime PROPERTIES PREFIX "")
 

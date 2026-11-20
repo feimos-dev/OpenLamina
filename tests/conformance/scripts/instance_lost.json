@@ -1,0 +1,1 @@
+{ "#": "The instance is lost at frame 10 (the runtime's service died), and the runtime is back after 300 ms: the devices deactivated, a new instance and session made about a second later with the game's actions on them, the devices activated again, and no VREvent_Quit", "events": [{ "frame": 10, "type": "instance_lost" }], "loss_unavailable_ms": 300 }

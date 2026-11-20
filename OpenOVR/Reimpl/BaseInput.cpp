@@ -401,6 +401,13 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 	// no other thread reads input. Taken before evaluatorLock (see its declaration).
 	auto sessionLock = xr_session.lock();
 
+	// While a lost instance is made again: this manifest is the one loaded on the new instance
+	if (rebuildPending) {
+		manifestToRebuild = pchActionManifestPath;
+		rebuildLegacy = false;
+		return vr::VRInputError_None;
+	}
+
 	bool reloading = hasLoadedActions;
 	if (hasLoadedActions) {
 		// It stands to reason that nothing would happen if we try to load the same manifest again
@@ -408,33 +415,7 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 			return vr::VRInputError_None;
 
 		OOVR_LOG("Received another manifest! Restarting session to reattach inputs...");
-		std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
-		for (std::unique_ptr<ActionSet>& as : actionSets.GetItems()) {
-			OC_XR_LOG(xrDestroyActionSet(as->xr));
-		}
-		OC_XR_LOG(xrDestroyActionSet(legacyInputsSet));
-		legacyInputsSet = XR_NULL_HANDLE;
-		eyeGazeAction = XR_NULL_HANDLE;
-		eyeGazeSpace = XR_NULL_HANDLE;
-		trackerPoseAction = XR_NULL_HANDLE;
-		trackerPoseSession = XR_NULL_HANDLE;
-		if (rawInputsSet != XR_NULL_HANDLE)
-			OC_XR_LOG(xrDestroyActionSet(rawInputsSet));
-		rawInputsSet = XR_NULL_HANDLE;
-		rawActions.clear();
-		rawComponents.clear();
-		evaluators.clear();
-		bindingFiles.clear();
-		aliasedBindingFiles.clear();
-		evaluatedThisSync.clear();
-		legacyEvaluators.clear();
-		{
-			std::lock_guard<std::mutex> queueGuard(hapticQueueLock);
-			pendingHaptics.clear();
-		}
-		actions.Reset();
-		actionSets.Reset();
-		usingLegacyInput = false;
+		DropActions(true);
 	}
 
 	restartingSession = true;
@@ -782,6 +763,99 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 	return vr::VRInputError_None;
 }
 
+void BaseInput::DropActions(bool destroyHandles)
+{
+	std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
+	if (destroyHandles) {
+		for (std::unique_ptr<ActionSet>& as : actionSets.GetItems()) {
+			OC_XR_LOG(xrDestroyActionSet(as->xr));
+		}
+		if (legacyInputsSet != XR_NULL_HANDLE)
+			OC_XR_LOG(xrDestroyActionSet(legacyInputsSet));
+		if (rawInputsSet != XR_NULL_HANDLE)
+			OC_XR_LOG(xrDestroyActionSet(rawInputsSet));
+	}
+	legacyInputsSet = XR_NULL_HANDLE;
+	eyeGazeAction = XR_NULL_HANDLE;
+	eyeGazeSpace = XR_NULL_HANDLE;
+	trackerPoseAction = XR_NULL_HANDLE;
+	trackerPoseSession = XR_NULL_HANDLE;
+	rawInputsSet = XR_NULL_HANDLE;
+	rawActions.clear();
+	rawComponents.clear();
+	evaluators.clear();
+	bindingFiles.clear();
+	aliasedBindingFiles.clear();
+	evaluatedThisSync.clear();
+	legacyEvaluators.clear();
+	{
+		std::lock_guard<std::mutex> queueGuard(hapticQueueLock);
+		pendingHaptics.clear();
+	}
+	actions.Reset();
+	actionSets.Reset();
+	usingLegacyInput = false;
+}
+
+void BaseInput::_ForgetInstance()
+{
+	auto sessionLock = xr_session.lock();
+	// Paths are the instance's own too: looked up again on the new one
+	pathsStale = true;
+	// Until the new instance has a session, the game's input calls only say what to load on it
+	if (rebuildPending)
+		return; // forgotten at an earlier try
+	rebuildPending = true;
+	rebuildLegacy = false;
+	manifestToRebuild.clear();
+	if (!hasLoadedActions)
+		return;
+	{
+		std::lock_guard<std::mutex> pathGuard(loadedActionsPathLock);
+		manifestToRebuild = loadedActionsPath;
+		loadedActionsPath.clear();
+	}
+	rebuildLegacy = manifestToRebuild.empty();
+	// Their handles went with the old instance: forgotten, not destroyed
+	DropActions(false);
+	for (XrHandTrackerEXT& handTracker : handTrackers)
+		handTracker = XR_NULL_HANDLE;
+	hasLoadedActions = false;
+}
+
+void BaseInput::_RebuildForNewInstance()
+{
+	// Exclusive to the end, as a manifest's loading is
+	auto sessionLock = xr_session.lock();
+	if (pathsStale) {
+		pathsStale = false;
+		for (size_t i = 0; i < allSubactionPathNames.size() && i < allSubactionPaths.size(); i++) {
+			allSubactionPaths[i] = XR_NULL_PATH;
+			OC_XR_LOG(xrStringToPath(xr_instance, allSubactionPathNames[i].c_str(), &allSubactionPaths[i]));
+		}
+		std::fill(handInteractionProfiles.begin(), handInteractionProfiles.end(), nullptr);
+		std::lock_guard<std::mutex> registryGuard(inputHandleRegistryLock);
+		for (auto& [name, handle] : inputHandleRegistry) {
+			handle->devicePath = XR_NULL_PATH;
+			if (!handle->devicePathString.empty())
+				OC_XR_LOG(xrStringToPath(xr_instance, handle->devicePathString.c_str(), &handle->devicePath));
+		}
+	}
+	if (!rebuildPending)
+		return;
+	rebuildPending = false;
+	if (manifestToRebuild.empty() && !rebuildLegacy)
+		return; // the game had no actions
+	OOVR_LOG("Making the game's actions again on the new OpenXR instance");
+	if (!manifestToRebuild.empty()) {
+		if (EVRInputError err = SetActionManifestPath(manifestToRebuild.c_str()); err == vr::VRInputError_None)
+			return;
+		else
+			OOVR_LOGF("The game's manifest couldn't be loaded again (%d): legacy input instead", (int)err);
+	}
+	LoadEmptyManifestIfRequired();
+}
+
 void BaseInput::LoadEmptyManifestIfRequired()
 {
 	if (hasLoadedActions)
@@ -793,9 +867,12 @@ void BaseInput::LoadEmptyManifestIfRequired()
 	if (!XrBackend::InputsMayAttach())
 		return;
 
-	// As in SetActionManifestPath, exclusive to the end; another thread may have loaded the actions while this waited
+	// As in SetActionManifestPath, exclusive to the end; another thread may have loaded the actions while this waited.
+	// Nor while a lost instance is made again: the actions are made on the new one.
 	auto sessionLock = xr_session.lock();
-	if (hasLoadedActions)
+	if (rebuildPending && manifestToRebuild.empty())
+		rebuildLegacy = true;
+	if (hasLoadedActions || rebuildPending)
 		return;
 
 	restartingSession = true;

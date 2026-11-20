@@ -2171,6 +2171,10 @@ void XrBackend::PumpEvents()
 	std::unique_lock<std::mutex> pumpLock(pumping, std::try_to_lock);
 	if (!pumpLock.owns_lock())
 		return;
+	// Nor while another thread makes the instance or session again (it holds the session lock, and pumps itself)
+	SessionLock sessionLock(xr_session, SessionLock::TryShared{});
+	if (!sessionLock.IsHeld())
+		return;
 
 	// Poll for OpenXR events
 	while (true) {
@@ -2179,7 +2183,7 @@ void XrBackend::PumpEvents()
 		if (XR_FAILED(res)) {
 			OOVR_LOG_ONCE("xrPollEvent failed: no events this frame");
 			if (res == XR_ERROR_INSTANCE_LOST)
-				OnSessionLost();
+				OnInstanceLost();
 			break;
 		}
 
@@ -2204,11 +2208,11 @@ void XrBackend::PumpEvents()
 			continue;
 		}
 
-		// The instance is going away (the runtime updating or shutting down): its session with it
+		// The instance is going away (the runtime updating or shutting down): it's made again, with its session
 		if (ev.type == XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING) {
 			OOVR_LOG("The OpenXR instance will be lost");
 			if (!exitExpected)
-				OnSessionLost();
+				OnInstanceLost();
 			continue;
 		}
 
@@ -2487,7 +2491,9 @@ bool XrBackend::WaitForEvents(const std::function<bool()>& done, int timeoutMs)
 void XrBackend::OnFrameCallFailed(XrResult res)
 {
 	renderingFrame = false;
-	if (res == XR_ERROR_SESSION_LOST || res == XR_ERROR_INSTANCE_LOST || ++frameCallFailures >= 5)
+	if (res == XR_ERROR_INSTANCE_LOST)
+		OnInstanceLost();
+	else if (res == XR_ERROR_SESSION_LOST || ++frameCallFailures >= 5)
 		OnSessionLost();
 	// No waited frame to pace the game: about one frame's wait instead of a busy loop
 	std::this_thread::sleep_for(std::chrono::milliseconds(11));
@@ -2508,6 +2514,70 @@ void XrBackend::OnSessionLost()
 	if (!devicesDeactivated.exchange(true)) {
 		for (TrackedDeviceIndex_t i : PresentDevices(*this))
 			OcPostEvent(VREvent_TrackedDeviceDeactivated, i, VREvent_Data_t{}, false);
+	}
+}
+
+void XrBackend::OnInstanceLost()
+{
+	if (!instanceLost.exchange(true))
+		OOVR_LOG("The OpenXR instance is lost: making it again once the runtime is back");
+	OnSessionLost();
+}
+
+// A new instance's xrCreateSession wants the graphics requirements of the binding's API asked of it first
+static void AskGraphicsRequirements(const void* binding)
+{
+	const auto* header = (const XrBaseInStructure*)binding;
+	if (!header)
+		return;
+	switch (header->type) {
+#if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+	case XR_TYPE_GRAPHICS_BINDING_D3D11_KHR: {
+		XrGraphicsRequirementsD3D11KHR requirements{ XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR };
+		OC_XR_LOG(xr_ext->xrGetD3D11GraphicsRequirementsKHR(xr_instance, xr_system, &requirements));
+		break;
+	}
+#endif
+#if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX12)
+	case XR_TYPE_GRAPHICS_BINDING_D3D12_KHR: {
+		XrGraphicsRequirementsD3D12KHR requirements{ XR_TYPE_GRAPHICS_REQUIREMENTS_D3D12_KHR };
+		OC_XR_LOG(xr_ext->xrGetD3D12GraphicsRequirementsKHR(xr_instance, xr_system, &requirements));
+		break;
+	}
+#endif
+#if defined(SUPPORT_VK)
+	case XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR: {
+		XrGraphicsRequirementsVulkanKHR requirements{ XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN_KHR };
+		OC_XR_LOG(xr_ext->xrGetVulkanGraphicsRequirementsKHR(xr_instance, xr_system, &requirements));
+		// The session's device must be the one the new instance names
+		const auto* vk = (const XrGraphicsBindingVulkanKHR*)binding;
+		VkPhysicalDevice wanted = VK_NULL_HANDLE;
+		if (XR_SUCCEEDED(xr_ext->xrGetVulkanGraphicsDeviceKHR(xr_instance, xr_system, vk->instance, &wanted)) && wanted != vk->physicalDevice)
+			OOVR_LOG("The new OpenXR instance wants another Vulkan device than the session's: its session may fail");
+		break;
+	}
+#endif
+#if defined(SUPPORT_GL)
+#ifdef _WIN32
+	case XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR:
+#else
+	case XR_TYPE_GRAPHICS_BINDING_OPENGL_XLIB_KHR:
+#endif
+	{
+		XrGraphicsRequirementsOpenGLKHR requirements{ XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_KHR };
+		OC_XR_LOG(xr_ext->xrGetOpenGLGraphicsRequirementsKHR(xr_instance, xr_system, &requirements));
+		break;
+	}
+#endif
+#if defined(SUPPORT_GLES)
+	case XR_TYPE_GRAPHICS_BINDING_OPENGL_ES_ANDROID_KHR: {
+		XrGraphicsRequirementsOpenGLESKHR requirements{ XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_ES_KHR };
+		OC_XR_LOG(xr_ext->xrGetOpenGLESGraphicsRequirementsKHR(xr_instance, xr_system, &requirements));
+		break;
+	}
+#endif
+	default:
+		break;
 	}
 }
 
@@ -2540,16 +2610,38 @@ void XrBackend::RecoverLostSession(std::mutex* passLock)
 		pass = std::unique_lock<std::mutex>(*passLock);
 	if (!sessionLost || quitting)
 		return;
-	// The lost session first, once: its handles are no use any more
+	// With a lost instance, the game's actions go first (forgotten: they went with it, and are made again on the new
+	// one), with the paths and the trackers' list of devices made on it. The info set goes with the session.
+	if (instanceLost) {
+		if (BaseInput* input = GetUnsafeBaseInput())
+			input->_ForgetInstance();
+		subactionPaths[0] = subactionPaths[1] = XR_NULL_PATH;
+		generic_trackers_generation = UINT64_MAX;
+		generic_trackers_session = XR_NULL_HANDLE;
+	}
+	// The lost session, once: its handles are no use any more
 	if (!lostSessionDestroyed) {
 		if (xr_gbl || xr_session.get())
 			DrvOpenXR::ShutdownSession();
 		lostSessionDestroyed = true;
 	}
-	if (XR_FAILED(DrvOpenXR::FindSystem()))
+	if (instanceLost) {
+		if (XR_FAILED(DrvOpenXR::RemakeInstance()))
+			return; // no runtime or headset yet: the next try in a second
+		instanceLost = false;
+	} else if (XrResult res = DrvOpenXR::FindSystem(); XR_FAILED(res)) {
+		if (res == XR_ERROR_INSTANCE_LOST)
+			instanceLost = true; // the instance went too while the session was lost: made again at the next try
 		return; // no headset yet: the next try in a second
-	if (XR_SUCCEEDED(RebuildSession(RebuildReason::Loss)) && !sessionLost)
-		OOVR_LOG("The OpenXR session is back");
+	}
+	// Asked of the system found (on a new instance, or a new system id), as xrCreateSession wants
+	AskGraphicsRequirements(GetCurrentGraphicsBinding());
+	if (XR_FAILED(RebuildSession(RebuildReason::Loss)) || sessionLost)
+		return;
+	// After a new instance: the game's actions and bindings, from its manifest, on it and its session
+	if (BaseInput* input = GetUnsafeBaseInput())
+		input->_RebuildForNewInstance();
+	OOVR_LOG("The OpenXR session is back");
 }
 
 // Own frames call xrEndFrame on their own thread, where the runtime may use the session's device while the game's
