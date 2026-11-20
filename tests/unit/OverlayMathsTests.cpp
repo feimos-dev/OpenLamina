@@ -6,6 +6,7 @@
 #include "Misc/OverlayMaths.h"
 
 #include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 #include <cmath>
 #include <map>
@@ -293,4 +294,33 @@ TEST_CASE("Image_rectangle_selects_the_area_of_a_copy_and_follows_its_mirroring"
 	CHECK(r.offset.y == 0);
 	CHECK(r.extent.width == 100);
 	CHECK(r.extent.height == 200);
+}
+
+TEST_CASE("BeamPlacement_along_and_facing_the_head")
+{
+	// A beam 2 m straight ahead (-Z) at hand height, the head above and behind its start
+	std::optional<Placement> p = BeamPlacement({ 0, 1, 0 }, { 0, 1, -2 }, { 0, 1.5f, 0.2f }, 0.004f);
+	REQUIRE(p);
+	CHECK(p->width == doctest::Approx(0.004f));
+	CHECK(p->height == doctest::Approx(2.0f));
+	CHECK(p->pose.position.y == doctest::Approx(1.0f));
+	CHECK(p->pose.position.z == doctest::Approx(-1.0f));
+	const glm::quat q(p->pose.orientation.w, p->pose.orientation.x, p->pose.orientation.y, p->pose.orientation.z);
+	// Its height along the beam, its face towards the head and across the beam
+	const glm::vec3 up = q * glm::vec3(0, 1, 0), face = q * glm::vec3(0, 0, 1);
+	CHECK(up.z == doctest::Approx(-1.0f).epsilon(0.001));
+	CHECK(std::fabs(glm::dot(face, up)) < 0.001f);
+	const glm::vec3 toHead = glm::vec3(0, 1.5f, 0.2f) - glm::vec3(0, 1, -1);
+	CHECK(glm::dot(face, toHead) > 0.0f);
+	CHECK(face.y > 0.9f);
+}
+
+TEST_CASE("BeamPlacement_end_on_and_too_short")
+{
+	// The head on the beam's line: still a quad along the beam
+	std::optional<Placement> p = BeamPlacement({ 0, 0, 0 }, { 0, 0, -1 }, { 0, 0, 1 }, 0.004f);
+	REQUIRE(p);
+	const glm::quat q(p->pose.orientation.w, p->pose.orientation.x, p->pose.orientation.y, p->pose.orientation.z);
+	CHECK((q * glm::vec3(0, 1, 0)).z == doctest::Approx(-1.0f).epsilon(0.001));
+	CHECK_FALSE(BeamPlacement({ 0, 0, 0 }, { 0, 0, -0.0005f }, { 0, 1, 0 }, 0.004f));
 }

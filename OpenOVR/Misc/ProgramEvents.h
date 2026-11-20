@@ -19,6 +19,9 @@ constexpr uint32_t OcEvent_RemotePointer = OcEvent_First;
 // An event for one program only: data[0..1] the event's data's first 16 bytes, data[2] its type (low 32 bits) and the
 // process id it's for (high 32 bits), data[3] the device
 constexpr uint32_t OcEvent_ToProgram = OcEvent_First + 1;
+// A change to an overlay of the one program it's for, asked for by another program through FindOverlay's handle for
+// it: that program applies it (OcOverlayCommand)
+constexpr uint32_t OcEvent_OverlayCommand = OcEvent_First + 2;
 constexpr uint32_t OcEvent_Last = vr::VREvent_VendorSpecific_Reserved_Start + 99;
 inline bool OcIsPrivateEvent(uint32_t eventType)
 {
@@ -46,3 +49,31 @@ void OcSetLocalEventSink(OcLocalEventSink sink);
  * other program gets the event with that part zeroed. */
 std::array<uint64_t, 4> OcPackEvent(vr::TrackedDeviceIndex_t device, const vr::VREvent_Data_t& data);
 vr::VREvent_t OcUnpackEvent(uint32_t eventType, const uint64_t (&packed)[4]);
+
+/** What another program asks of an overlay (OcEvent_OverlayCommand). Show and Hide take nothing; Alpha and Width a
+ * float (number); Flag the flag's bit number (flag) and whether it's set (enabled); SortOrder a number; Event an overlay
+ * event of eventType with the first 16 bytes of its data (data), as PostOverlayEvent posts it. */
+struct OcOverlayCommand {
+	enum Kind : uint8_t {
+		Show = 1,
+		Hide,
+		Alpha,
+		Width,
+		Flag,
+		SortOrder,
+		Event,
+	};
+	uint32_t pid = 0; // the program whose overlay it is
+	uint64_t handle = 0; // the overlay's handle in that program
+	Kind kind = Show;
+	uint32_t eventType = 0; // an Event's, below 2^24
+	float number = 0;
+	uint32_t flag = 0;
+	bool enabled = false;
+	uint32_t sortOrder = 0;
+	uint8_t data[16] = {};
+};
+/** A command as it crosses between programs: data[0] the handle, data[1] the pid (high 32 bits), the kind (the next 8)
+ * and an event's type (the low 24), data[2..3] what it takes; and back. Nothing for an event type of 2^24 or more. */
+std::optional<std::array<uint64_t, 4>> OcPackOverlayCommand(const OcOverlayCommand& command);
+OcOverlayCommand OcUnpackOverlayCommand(const uint64_t (&packed)[4]);

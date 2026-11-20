@@ -85,3 +85,64 @@ std::optional<vr::VREvent_t> OcEventForProgram(const StoreEvent& s, uint32_t sel
 		return std::nullopt;
 	return OcUnpackEvent(s.eventType, s.data);
 }
+
+std::optional<std::array<uint64_t, 4>> OcPackOverlayCommand(const OcOverlayCommand& c)
+{
+	if (c.eventType >= (1u << 24))
+		return std::nullopt;
+	std::array<uint64_t, 4> packed{};
+	packed[0] = c.handle;
+	packed[1] = ((uint64_t)c.pid << 32) | ((uint64_t)c.kind << 24) | c.eventType;
+	switch (c.kind) {
+	case OcOverlayCommand::Alpha:
+	case OcOverlayCommand::Width: {
+		uint32_t bits = 0;
+		memcpy(&bits, &c.number, sizeof(bits));
+		packed[2] = bits;
+		break;
+	}
+	case OcOverlayCommand::Flag:
+		packed[2] = c.flag;
+		packed[3] = c.enabled ? 1 : 0;
+		break;
+	case OcOverlayCommand::SortOrder:
+		packed[2] = c.sortOrder;
+		break;
+	case OcOverlayCommand::Event:
+		memcpy(&packed[2], c.data, sizeof(c.data));
+		break;
+	default:
+		break;
+	}
+	return packed;
+}
+
+OcOverlayCommand OcUnpackOverlayCommand(const uint64_t (&packed)[4])
+{
+	OcOverlayCommand c;
+	c.handle = packed[0];
+	c.pid = (uint32_t)(packed[1] >> 32);
+	c.kind = (OcOverlayCommand::Kind)(uint8_t)(packed[1] >> 24);
+	c.eventType = (uint32_t)(packed[1] & 0xFFFFFF);
+	switch (c.kind) {
+	case OcOverlayCommand::Alpha:
+	case OcOverlayCommand::Width: {
+		const uint32_t bits = (uint32_t)packed[2];
+		memcpy(&c.number, &bits, sizeof(bits));
+		break;
+	}
+	case OcOverlayCommand::Flag:
+		c.flag = (uint32_t)packed[2];
+		c.enabled = packed[3] != 0;
+		break;
+	case OcOverlayCommand::SortOrder:
+		c.sortOrder = (uint32_t)packed[2];
+		break;
+	case OcOverlayCommand::Event:
+		memcpy(c.data, &packed[2], sizeof(c.data));
+		break;
+	default:
+		break;
+	}
+	return c;
+}
