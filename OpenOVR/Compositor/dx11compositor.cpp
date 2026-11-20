@@ -988,7 +988,7 @@ void DX11Compositor::MirrorUpdate(const vr::Texture_t* texture, const vr::VRText
 	src->GetDevice(&device);
 	D3D11_TEXTURE2D_DESC desc;
 	src->GetDesc(&desc);
-	// The bounds' area, as it lies in the texture (bounds that run backwards aren't turned round here)
+	// The bounds' area, as it lies in the texture; bounds that run backwards turn it round (CopyTurned)
 	const bool multisampled = desc.SampleDesc.Count > 1;
 	TextureRegion area;
 	if (!RegionFromBounds(bounds, desc.Width, desc.Height, area))
@@ -1021,8 +1021,44 @@ void DX11Compositor::MirrorUpdate(const vr::Texture_t* texture, const vr::VRText
 	device->GetImmediateContext(&ctx);
 	// What fits in the mirror, from the area's origin
 	const UINT width = (std::min)(area.Width(), made.Width), height = (std::min)(area.Height(), made.Height);
+	// The area of `from` that lands at the mirror's origin: the area's far end where it's turned round
+	const UINT x0 = area.flipX ? area.x1 - width : area.x0, y0 = area.flipY ? area.y1 - height : area.y0;
+	// One texture's width x height area at (x, y), to the origin of `to`, turned round as the bounds say: a copy of rows
+	// (or columns) one at a time, a copy can't turn them; both ways through a texture of that size between
+	auto copyTurned = [&](ID3D11Texture2D* to, ID3D11Texture2D* from, UINT x, UINT y) {
+		if (!area.flipX && !area.flipY) {
+			const D3D11_BOX box{ x, y, 0, x + width, y + height, 1 };
+			ctx->CopySubresourceRegion(to, 0, 0, 0, 0, from, 0, &box);
+			return;
+		}
+		ID3D11Texture2D* rowsInto = to;
+		ComPtr<ID3D11Texture2D> between;
+		if (area.flipX && area.flipY) {
+			between.Attach(MakeMirrorTexture(device.Get(), width, height, made.Format));
+			if (!between) {
+				OOVR_LOG_ONCE("No texture to turn a mirror frame round in: frame not copied");
+				return;
+			}
+			rowsInto = between.Get();
+		}
+		if (area.flipY) {
+			for (UINT r = 0; r < height; r++) {
+				const D3D11_BOX row{ x, y + r, 0, x + width, y + r + 1, 1 };
+				ctx->CopySubresourceRegion(rowsInto, 0, 0, height - 1 - r, 0, from, 0, &row);
+			}
+		}
+		if (area.flipX) {
+			// From the rows just turned (both ways), else from the frame
+			ID3D11Texture2D* columnsFrom = area.flipY ? between.Get() : from;
+			const UINT cx = area.flipY ? 0 : x, cy = area.flipY ? 0 : y;
+			for (UINT c = 0; c < width; c++) {
+				const D3D11_BOX column{ cx + c, cy, 0, cx + c + 1, cy + height, 1 };
+				ctx->CopySubresourceRegion(to, 0, width - 1 - c, 0, 0, columnsFrom, 0, &column);
+			}
+		}
+	};
 	if (multisampled) {
-		if (made.Width == desc.Width && made.Height == desc.Height) {
+		if (made.Width == desc.Width && made.Height == desc.Height && !area.flipX && !area.flipY) {
 			ctx->ResolveSubresource(*mirror, 0, src.Get(), 0, typed);
 		} else {
 			// Resolved whole into a texture of the frame's size, of which the mirror takes its part. It is kept for the next
@@ -1043,12 +1079,10 @@ void DX11Compositor::MirrorUpdate(const vr::Texture_t* texture, const vr::VRText
 			if (!resolved)
 				return;
 			ctx->ResolveSubresource(resolved.Get(), 0, src.Get(), 0, typed);
-			const D3D11_BOX box{ area.x0, area.y0, 0, area.x0 + width, area.y0 + height, 1 };
-			ctx->CopySubresourceRegion(*mirror, 0, 0, 0, 0, resolved.Get(), 0, &box);
+			copyTurned(*mirror, resolved.Get(), x0, y0);
 		}
 	} else {
-		const D3D11_BOX box{ area.x0, area.y0, 0, area.x0 + width, area.y0 + height, 1 };
-		ctx->CopySubresourceRegion(*mirror, 0, 0, 0, 0, src.Get(), 0, &box);
+		copyTurned(*mirror, src.Get(), x0, y0);
 	}
 }
 
