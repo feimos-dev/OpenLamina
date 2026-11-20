@@ -38,6 +38,7 @@
 #include "../OpenOVR/Reimpl/BaseClientCore.h"
 #include "../OpenOVR/Reimpl/BaseInput.h"
 #include "../OpenOVR/Reimpl/BaseOverlay.h"
+#include "../OpenOVR/Reimpl/BaseScreenshots.h"
 #include "../OpenOVR/Reimpl/BaseSystem.h"
 #include "../OpenOVR/Compositor/DepthRange.h"
 #include "../OpenOVR/Misc/Equirect.h"
@@ -1042,6 +1043,14 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 			Image mirror;
 			if (eye == vr::Eye_Left && MirrorWindow::Get().WantsFrame() && comp.ReadbackToCpu(texture, bounds, mirror))
 				MirrorWindow::Get().Offer(std::move(mirror));
+			// A screenshot the compositor takes: this eye's image, read back
+			if (BaseScreenshots::_WantsEyeImages()) {
+				Image shot;
+				if (comp.ReadbackToCpu(texture, bounds, shot))
+					BaseScreenshots::_OfferEyeImage(eye, std::move(shot));
+				else
+					BaseScreenshots::_FailEyeImages();
+			}
 		}
 	}
 

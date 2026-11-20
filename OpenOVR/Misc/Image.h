@@ -60,3 +60,9 @@ Image DecodeTexels(TexelLayout layout, const void* data, uint32_t width, uint32_
 constexpr uint32_t kMaxImageFileSide = 8192;
 constexpr uint64_t kMaxImageFileBytes = 64ull * 1024 * 1024;
 std::optional<Image> LoadImageFile(const std::filesystem::path& path, std::string* why);
+
+// An image as a PNG file (its folder made where missing); false, with why, if it can't be written
+bool WritePngFile(const Image& image, const std::filesystem::path& path, std::string* why);
+
+// Two images side by side, left's at the left, as tall as the taller (the space under the shorter is clear)
+Image SideBySide(const Image& left, const Image& right);

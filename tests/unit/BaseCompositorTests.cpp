@@ -189,7 +189,75 @@ TEST_CASE("The_interop_extension_list_fills_the_buffer_it_fits_in")
 	CHECK(std::string(BaseCompositor::InteropVulkanExtensions(true)).find("VK_KHR_external_memory_win32") != std::string::npos);
 }
 
+#include "Misc/Image.h"
 #include "Reimpl/BaseScreenshots.h"
+
+namespace {
+Image Filled(uint32_t width, uint32_t height, uint32_t rgba)
+{
+	Image image;
+	image.width = width;
+	image.height = height;
+	for (uint32_t i = 0; i < width * height; i++)
+		for (int c = 3; c >= 0; c--)
+			image.rgba.push_back((uint8_t)(rgba >> (c * 8)));
+	return image;
+}
+} // namespace
+
+TEST_CASE("Screenshots_the_compositor_takes_are_the_next_frame_written_as_png")
+{
+	BaseScreenshots screenshots;
+	using Error = BaseScreenshots::EVRScreenshotError;
+	const std::filesystem::path dir = std::filesystem::temp_directory_path()
+	    / ("oc_shots_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+	const std::string preview = (dir / "preview").string(), vrFile = (dir / "sub" / "vr.jpg").string();
+
+	vr::ScreenshotHandle_t handle = vr::k_unScreenshotHandleInvalid;
+	CHECK_FALSE(BaseScreenshots::_WantsEyeImages());
+	CHECK(screenshots.TakeStereoScreenshot(&handle, nullptr, vrFile.c_str()) == Error::VRScreenshotError_RequestFailed);
+	REQUIRE(screenshots.TakeStereoScreenshot(&handle, preview.c_str(), vrFile.c_str()) == Error::VRScreenshotError_None);
+	CHECK(handle != vr::k_unScreenshotHandleInvalid);
+	CHECK(BaseScreenshots::_WantsEyeImages());
+	// One at a time
+	vr::ScreenshotHandle_t other = vr::k_unScreenshotHandleInvalid;
+	CHECK(screenshots.RequestScreenshot(&other, vr::VRScreenshotType_Mono, preview.c_str(), nullptr) == Error::VRScreenshotError_RequestFailed);
+
+	// A right eye before the left is another frame's; the left eye alone isn't a stereo shot; both are
+	BaseScreenshots::_OfferEyeImage(vr::Eye_Right, Filled(2, 1, 0xffffffff));
+	BaseScreenshots::_OfferEyeImage(vr::Eye_Left, Filled(2, 1, 0xff0000ff));
+	CHECK(BaseScreenshots::_WantsEyeImages());
+	BaseScreenshots::_OfferEyeImage(vr::Eye_Right, Filled(2, 1, 0x0000ffff));
+	CHECK_FALSE(BaseScreenshots::_WantsEyeImages());
+
+	// The preview is the left eye, the VR image both side by side, as .png
+	std::optional<Image> written = LoadImageFile(dir / "preview.png", nullptr);
+	REQUIRE(written.has_value());
+	CHECK(written->width == 2);
+	CHECK(written->At(1, 0) == 0xff0000ff);
+	written = LoadImageFile(dir / "sub" / "vr.png", nullptr);
+	REQUIRE(written.has_value());
+	CHECK(written->width == 4);
+	CHECK(written->At(0, 0) == 0xff0000ff);
+	CHECK(written->At(3, 0) == 0x0000ffff);
+
+	// A mono shot of a game that hooked none: the left eye only
+	REQUIRE(screenshots.RequestScreenshot(&other, vr::VRScreenshotType_Mono, (dir / "mono").string().c_str(), nullptr) == Error::VRScreenshotError_None);
+	CHECK(other != handle);
+	BaseScreenshots::_OfferEyeImage(vr::Eye_Left, Filled(1, 1, 0x00ff00ff));
+	CHECK_FALSE(BaseScreenshots::_WantsEyeImages());
+	CHECK(LoadImageFile(dir / "mono.png", nullptr).has_value());
+
+	// An eye image that can't be read back: that shot fails, and the next can be taken
+	REQUIRE(screenshots.TakeStereoScreenshot(&handle, preview.c_str(), vrFile.c_str()) == Error::VRScreenshotError_None);
+	BaseScreenshots::_FailEyeImages();
+	CHECK_FALSE(BaseScreenshots::_WantsEyeImages());
+	CHECK(screenshots.TakeStereoScreenshot(&handle, preview.c_str(), vrFile.c_str()) == Error::VRScreenshotError_None);
+	BaseScreenshots::_FailEyeImages();
+
+	std::error_code ec;
+	std::filesystem::remove_all(dir, ec);
+}
 
 TEST_CASE("Screenshots_are_requested_of_a_game_that_hooked_them")
 {
@@ -199,8 +267,8 @@ TEST_CASE("Screenshots_are_requested_of_a_game_that_hooked_them")
 	BaseScreenshots::EVRScreenshotError error;
 	using Error = BaseScreenshots::EVRScreenshotError;
 
-	// Not hooked: nobody to take it
-	CHECK(screenshots.RequestScreenshot(&handle, vr::VRScreenshotType_Stereo, "preview", "vr") == Error::VRScreenshotError_RequestFailed);
+	// Not hooked: a cubemap nobody takes (the compositor takes mono and stereo ones, below)
+	CHECK(screenshots.RequestScreenshot(&handle, vr::VRScreenshotType_Cubemap, "preview", "vr") == Error::VRScreenshotError_RequestFailed);
 	CHECK(handle == vr::k_unScreenshotHandleInvalid);
 
 	const vr::EVRScreenshotType types[] = { vr::VRScreenshotType_Stereo };

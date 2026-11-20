@@ -2,12 +2,15 @@
 #define BASE_IMPL
 #include "BaseScreenshots.h"
 
+#include "../Misc/Image.h"
 #include "../Misc/ProgramEvents.h"
 
 #include <algorithm>
+#include <atomic>
 #include <cstring>
 #include <filesystem>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -71,7 +74,88 @@ void PostScreenshotEvent(EVREventType event, ScreenshotHandle_t handle, EVRScree
 	data.screenshot.type = type;
 	OcPostEvent(event, k_unTrackedDeviceIndexInvalid, data, false);
 }
+
+// The compositor's own screenshot, waiting for the game's eye images; one at a time
+struct Capture {
+	Request request;
+	Image eyes[2];
+};
+std::mutex captureLock;
+std::optional<Capture> capture;
+std::atomic<bool> captureWanted{ false };
+
+// A screenshot of the game's next frame, to be written to the request's files: false if one is already waiting
+bool StartCapture(const Request& request)
+{
+	std::lock_guard<std::mutex> guard(captureLock);
+	if (capture)
+		return false;
+	capture = Capture{ request, {} };
+	captureWanted = true;
+	return true;
+}
+
+// The compositor takes these types itself
+bool CompositorTakes(EVRScreenshotType type)
+{
+	return type == VRScreenshotType_Mono || type == VRScreenshotType_Stereo;
+}
 } // namespace
+
+bool BaseScreenshots::_WantsEyeImages()
+{
+	return captureWanted;
+}
+
+void BaseScreenshots::_FailEyeImages()
+{
+	Request failed;
+	{
+		std::lock_guard<std::mutex> guard(captureLock);
+		if (!capture)
+			return;
+		failed = capture->request;
+		capture.reset();
+		captureWanted = false;
+	}
+	OOVR_LOG("The screenshot couldn't be taken: the game's eye image couldn't be read back");
+	PostScreenshotEvent(VREvent_ScreenshotFailed, failed.handle, failed.type);
+}
+
+void BaseScreenshots::_OfferEyeImage(EVREye eye, Image image)
+{
+	if ((eye != Eye_Left && eye != Eye_Right) || image.Empty())
+		return;
+	Capture done;
+	{
+		std::lock_guard<std::mutex> guard(captureLock);
+		if (!capture)
+			return;
+		// A frame's eyes go together: from its left eye on (a right eye before any left one is another frame's)
+		if (eye == Eye_Right && capture->eyes[Eye_Left].Empty())
+			return;
+		capture->eyes[eye] = std::move(image);
+		// A mono shot needs the left eye; a stereo one both
+		const bool stereo = capture->request.type == VRScreenshotType_Stereo;
+		if (capture->eyes[Eye_Left].Empty() || (stereo && capture->eyes[Eye_Right].Empty()))
+			return;
+		done = std::move(*capture);
+		capture.reset();
+		captureWanted = false;
+	}
+
+	// Written on the thread that submitted: a screenshot is worth a frame
+	const Request& r = done.request;
+	std::string why;
+	bool written = WritePngFile(done.eyes[Eye_Left], WithPng(r.preview), &why);
+	if (written && !r.vrFile.empty()) {
+		const Image vr = r.type == VRScreenshotType_Stereo ? SideBySide(done.eyes[Eye_Left], done.eyes[Eye_Right]) : done.eyes[Eye_Left];
+		written = WritePngFile(vr, WithPng(r.vrFile), &why);
+	}
+	if (!written)
+		OOVR_LOGF("The screenshot couldn't be written: %s", why.c_str());
+	PostScreenshotEvent(written ? VREvent_ScreenshotTaken : VREvent_ScreenshotFailed, r.handle, r.type);
+}
 
 EVRScreenshotError BaseScreenshots::RequestScreenshot(ScreenshotHandle_t* pOutScreenshotHandle, EVRScreenshotType type, const char* pchPreviewFilename, const char* pchVRFilename)
 {
@@ -82,10 +166,19 @@ EVRScreenshotError BaseScreenshots::RequestScreenshot(ScreenshotHandle_t* pOutSc
 	ScreenshotHandle_t handle;
 	{
 		std::lock_guard<std::mutex> guard(lock);
-		// Only the game takes the shot, and only of the types it said it can
-		if (!isHooked || std::find(hooked.begin(), hooked.end(), type) == hooked.end()) {
-			OOVR_LOG_ONCE("A screenshot was requested of a game that hasn't hooked screenshots of that type: not taken");
-			return VRScreenshotError_RequestFailed;
+		// The game takes the shot of the types it said it can; the compositor takes a mono or stereo one of a game that
+		// didn't say so, from its next frame
+		const bool gameTakes = isHooked && std::find(hooked.begin(), hooked.end(), type) != hooked.end();
+		if (!gameTakes) {
+			if (!CompositorTakes(type)) {
+				OOVR_LOG_ONCE("A screenshot was requested of a game that hasn't hooked screenshots of that type: not taken");
+				return VRScreenshotError_RequestFailed;
+			}
+			const Request request{ lastHandle + 1, type, pchPreviewFilename, pchVRFilename ? pchVRFilename : "" };
+			if (!StartCapture(request))
+				return VRScreenshotError_RequestFailed; // another is waiting for a frame
+			*pOutScreenshotHandle = ++lastHandle;
+			return VRScreenshotError_None;
 		}
 		if (requests.size() >= kMaxRequests)
 			requests.erase(requests.begin());
@@ -154,7 +247,15 @@ EVRScreenshotError BaseScreenshots::TakeStereoScreenshot(ScreenshotHandle_t* pOu
 {
 	if (pOutScreenshotHandle)
 		*pOutScreenshotHandle = k_unScreenshotHandleInvalid;
-	OC_UNSUPPORTED(VRScreenshotError_RequestFailed, "TakeStereoScreenshot: the compositor keeps no image of the game's frames to write");
+	if (!pOutScreenshotHandle || !pchPreviewFilename || !*pchPreviewFilename || !pchVRFilename || !*pchVRFilename)
+		return VRScreenshotError_RequestFailed;
+	// The game's next frame, written by the compositor without asking the game
+	std::lock_guard<std::mutex> guard(lock);
+	const Request request{ lastHandle + 1, VRScreenshotType_Stereo, pchPreviewFilename, pchVRFilename };
+	if (!StartCapture(request))
+		return VRScreenshotError_RequestFailed; // another is waiting for a frame
+	*pOutScreenshotHandle = ++lastHandle;
+	return VRScreenshotError_None;
 }
 
 EVRScreenshotError BaseScreenshots::SubmitScreenshot(ScreenshotHandle_t screenshotHandle, EVRScreenshotType type, const char* pchSourcePreviewFilename, const char* pchSourceVRFilename)

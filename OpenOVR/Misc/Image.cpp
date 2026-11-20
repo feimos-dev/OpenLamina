@@ -4,6 +4,7 @@
 
 #include "lodepng.h"
 
+#include <algorithm>
 #include <fstream>
 #include <iterator>
 
@@ -186,6 +187,49 @@ void EncodeSrgbInPlace(Image& image)
 	for (size_t i = 0; i + 3 < image.rgba.size(); i += 4)
 		for (int c = 0; c < 3; c++)
 			image.rgba[i + c] = table[image.rgba[i + c]];
+}
+
+bool WritePngFile(const Image& image, const std::filesystem::path& path, std::string* why)
+{
+	auto fail = [&](const char* reason) {
+		if (why)
+			*why = reason;
+		return false;
+	};
+	if (image.Empty() || image.rgba.size() != (size_t)image.width * image.height * 4)
+		return fail("there's no image");
+	std::vector<unsigned char> png;
+	try {
+		if (lodepng::encode(png, image.rgba, image.width, image.height, LCT_RGBA, 8) != 0)
+			return fail("it couldn't be encoded");
+	} catch (const std::exception&) {
+		return fail("it's too big for memory");
+	}
+	std::error_code ec;
+	if (path.has_parent_path())
+		std::filesystem::create_directories(path.parent_path(), ec);
+	std::ofstream out(path, std::ios::binary | std::ios::trunc);
+	if (!out || !out.write((const char*)png.data(), (std::streamsize)png.size()))
+		return fail("the file can't be written");
+	out.close();
+	if (out.fail())
+		return fail("the file can't be written");
+	return true;
+}
+
+Image SideBySide(const Image& left, const Image& right)
+{
+	Image both;
+	both.width = left.width + right.width;
+	both.height = (std::max)(left.height, right.height);
+	both.rgba.assign((size_t)both.width * both.height * 4, 0);
+	auto place = [&](const Image& part, uint32_t x0) {
+		for (uint32_t y = 0; y < part.height; y++)
+			std::memcpy(&both.rgba[((size_t)y * both.width + x0) * 4], &part.rgba[(size_t)y * part.width * 4], (size_t)part.width * 4);
+	};
+	place(left, 0);
+	place(right, left.width);
+	return both;
 }
 
 std::optional<Image> LoadImageFile(const std::filesystem::path& path, std::string* why)
