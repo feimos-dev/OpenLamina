@@ -10,6 +10,7 @@
 #include "../Compositor/compositor_backend.h" // TODO don't import from OCOVR, and remove the "../"
 
 #include <mutex>
+#include <string>
 #include <vector>
 
 typedef unsigned int GLuint;
@@ -197,6 +198,47 @@ public:
 	{
 		return device ? "VK_KHR_external_memory VK_KHR_external_memory_win32 VK_KHR_dedicated_allocation VK_KHR_get_memory_requirements2"
 		              : "VK_KHR_external_memory_capabilities VK_KHR_get_physical_device_properties2";
+	}
+	// The physical devices GetOutputDevice named: the only ones GetVulkanDeviceExtensionsRequired asks about (a game
+	// may pass anything, and a pointer that isn't a physical device can't be told apart from one)
+	static void NotePhysicalDevice(void* physicalDevice)
+	{
+		std::lock_guard<std::mutex> lock(physicalDevicesLock);
+		if (physicalDevice && physicalDevices.size() < 16)
+			physicalDevices.push_back(physicalDevice);
+	}
+	static bool KnownPhysicalDevice(void* physicalDevice)
+	{
+		std::lock_guard<std::mutex> lock(physicalDevicesLock);
+		for (void* known : physicalDevices)
+			if (known == physicalDevice)
+				return true;
+		return false;
+	}
+	inline static std::mutex physicalDevicesLock;
+	inline static std::vector<void*> physicalDevices;
+	// The extensions that let the copies through D3D11 be waited for on the GPU (shared fences as semaphores): asked
+	// for only where the game's physical device has them
+	static const char* InteropVulkanSemaphoreExtensions() { return "VK_KHR_external_semaphore VK_KHR_external_semaphore_win32"; }
+	// The names of a space-separated extension list that are among `available`, space separated again, in the list's
+	// order
+	static std::string ExtensionsAmong(const std::string& list, const std::vector<std::string>& available)
+	{
+		std::string out;
+		size_t start = 0;
+		while (start < list.size()) {
+			size_t end = list.find(' ', start);
+			if (end == std::string::npos)
+				end = list.size();
+			const std::string name = list.substr(start, end - start);
+			bool has = false;
+			for (const std::string& a : available)
+				has = has || a == name;
+			if (!name.empty() && has)
+				out += (out.empty() ? "" : " ") + name;
+			start = end + 1;
+		}
+		return out;
 	}
 	// Copies a list into the game's buffer (as much as fits, always ended) and answers the size it needs, as with the
 	// runtime's own lists

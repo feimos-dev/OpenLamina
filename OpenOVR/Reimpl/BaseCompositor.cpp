@@ -917,10 +917,46 @@ uint32_t BaseCompositor::GetVulkanDeviceExtensionsRequired(VkPhysicalDevice_T* p
 	if (pchValue && unBufferSize)
 		pchValue[0] = 0;
 #if defined(SUPPORT_VK)
+	// The extensions the game's physical device has, where it names one GetOutputDevice answered
+	std::vector<std::string> available;
+	bool knowAvailable = false;
+	if (pPhysicalDevice && KnownPhysicalDevice(pPhysicalDevice)) {
+		uint32_t count = 0;
+		if (vkEnumerateDeviceExtensionProperties(pPhysicalDevice, nullptr, &count, nullptr) == VK_SUCCESS) {
+			std::vector<VkExtensionProperties> props(count);
+			if (vkEnumerateDeviceExtensionProperties(pPhysicalDevice, nullptr, &count, props.data()) >= 0) {
+				for (uint32_t i = 0; i < count && i < props.size(); i++)
+					available.emplace_back(props[i].extensionName);
+				knowAvailable = true;
+			}
+		}
+	}
 #if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX11)
-	if (!xr_ext->xrGetVulkanDeviceExtensionsKHR_Available() && xr_ext->xrGetD3D11GraphicsRequirementsKHR_Available())
-		return ExtensionListSize(InteropVulkanExtensions(true), pchValue, unBufferSize);
+	if (!xr_ext->xrGetVulkanDeviceExtensionsKHR_Available() && xr_ext->xrGetD3D11GraphicsRequirementsKHR_Available()) {
+		// The copies' own, and their GPU-side wait's where the device has them (else they're waited for on the CPU)
+		std::string list = InteropVulkanExtensions(true);
+		const std::string semaphores = knowAvailable ? ExtensionsAmong(InteropVulkanSemaphoreExtensions(), available) : std::string();
+		if (semaphores == InteropVulkanSemaphoreExtensions())
+			list += " " + semaphores;
+		return ExtensionListSize(list.c_str(), pchValue, unBufferSize);
+	}
 #endif
+	if (knowAvailable && xr_ext->xrGetVulkanDeviceExtensionsKHR_Available()) {
+		// The runtime's list, less what the game's physical device lacks: asking for one it lacks fails vkCreateDevice
+		// outright, where without it only the session may fail (and falls back)
+		uint32_t size = 0;
+		XrResult res = xr_ext->xrGetVulkanDeviceExtensionsKHR(xr_instance, xr_system, 0, &size, nullptr);
+		std::string full(size, '\0');
+		if (XR_SUCCEEDED(res) && size > 0)
+			res = xr_ext->xrGetVulkanDeviceExtensionsKHR(xr_instance, xr_system, size, &size, full.data());
+		if (XR_SUCCEEDED(res)) {
+			full.resize(strnlen(full.c_str(), full.size()));
+			const std::string kept = ExtensionsAmong(full, available);
+			if (kept.size() != full.size())
+				OOVR_LOG_ONCEF("GetVulkanDeviceExtensionsRequired: the runtime's \"%s\", of which the game's GPU has \"%s\"", full.c_str(), kept.c_str());
+			return ExtensionListSize(kept.c_str(), pchValue, unBufferSize);
+		}
+	}
 	uint32_t size = 0;
 	XrResult res = xr_ext->xrGetVulkanDeviceExtensionsKHR(xr_instance, xr_system, pchValue ? unBufferSize : 0, &size, pchValue);
 	if (res != XR_ERROR_SIZE_INSUFFICIENT)
