@@ -463,7 +463,6 @@ void DashboardSceneCase(CaseContext& c)
 				r["action_active_while_open"] = data.bActive;
 			}
 		}
-		// The overlay app's event for the game's dashboard overlay (PostOverlayEvent through its handle)
 		vr::VREvent_t posted{};
 		while (ov && ownDashboard != vr::k_ulOverlayHandleInvalid && ov->PollNextOverlayEvent(ownDashboard, &posted, sizeof(posted)))
 			if (posted.eventType == vr::VREvent_ButtonPress && posted.data.controller.button == 7)

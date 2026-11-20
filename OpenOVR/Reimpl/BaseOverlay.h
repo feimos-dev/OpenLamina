@@ -249,8 +249,8 @@ private:
 	// An overlay application while a scene app is running: the scene app's instance points, and this one doesn't
 	bool SceneAppPoints() const;
 	// A handle FindOverlay gave for another program's overlay: its entry in the store's Overlays document. False if the
-	// handle isn't such a one, or its program has ended or no longer has the overlay. What this program asked of it and
-	// that program hasn't published yet is as it was asked. The dashboard's panel (system.systemui) is such an entry.
+	// handle isn't such a one, or its program has ended or no longer has the overlay. Values this program set and that
+	// program hasn't published yet are as they were set. The dashboard's panel (system.systemui) is such an entry.
 	bool RemoteOverlayEntry(vr::VROverlayHandle_t handle, Json::Value& entry);
 	// What's pending for such a handle (SendRemoteCommand), put over its entry; what the entry shows is pending no more
 	void ApplyPending(vr::VROverlayHandle_t handle, Json::Value& entry);

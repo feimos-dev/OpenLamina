@@ -1434,7 +1434,6 @@ void BaseOverlay::_PublishOverlays()
 	const bool helper = IsHelperSession();
 	if (!helper && !SceneDashboard() && !oovr_global_configuration.LaserMouse())
 		return;
-	// Other programs' changes to this program's overlays, applied before they're published
 	{
 		std::lock_guard<std::recursive_mutex> lock(layersLock);
 		TakeRemoteEvents();
@@ -2256,6 +2255,9 @@ EVROverlayError BaseOverlay::FindOverlay(const char* pchOverlayKey, VROverlayHan
 					remote = std::make_unique<Sharing::Remote>();
 					remote->local = nextOverlayHandle++;
 				}
+				// Another overlay under the key: nothing asked of the last one applies to it
+				if (remote->pid != pid || remote->handle != o["handle"].asUInt64())
+					remote->pending = {};
 				remote->pid = pid;
 				remote->handle = o["handle"].asUInt64();
 				sharing->remoteKeys[remote->local] = pchOverlayKey;
@@ -2299,6 +2301,7 @@ bool BaseOverlay::RemoteOverlayEntry(VROverlayHandle_t handle, Json::Value& entr
 		entry["mouse_scale"] = Json::Value(Json::arrayValue);
 		entry["mouse_scale"].append(Dashboard::kWidth);
 		entry["mouse_scale"].append(Dashboard::kHeight);
+		// Drawn by OpenLamina in the scene app
 		entry["rendering_pid"] = PidOf(doc["scene_pid"]);
 		return true;
 	}
@@ -2345,12 +2348,12 @@ void BaseOverlay::ApplyPending(VROverlayHandle_t handle, Json::Value& entry)
 		else
 			value.reset();
 	};
-	auto exact = [](auto a, auto b) { return a == b; };
-	auto near = [](float a, float b) { return std::fabs(a - b) < 0.002f; };
-	settle(p.shown, "shown", [](const Json::Value& v) { return v.asBool(); }, exact);
-	settle(p.alpha, "alpha", [](const Json::Value& v) { return v.asFloat(); }, near);
-	settle(p.width, "width", [](const Json::Value& v) { return v.asFloat(); }, near);
-	settle(p.sortOrder, "sort_order", [](const Json::Value& v) { return v.asUInt(); }, exact);
+	auto same = [](auto a, auto b) { return a == b; };
+	auto nearly = [](float a, float b) { return std::fabs(a - b) < 0.002f; };
+	settle(p.shown, "shown", [](const Json::Value& v) { return v.asBool(); }, same);
+	settle(p.alpha, "alpha", [](const Json::Value& v) { return v.asFloat(); }, nearly);
+	settle(p.width, "width", [](const Json::Value& v) { return v.asFloat(); }, nearly);
+	settle(p.sortOrder, "sort_order", [](const Json::Value& v) { return v.asUInt(); }, same);
 	uint64_t flags = entry["flags"].asUInt64();
 	for (auto it = p.flags.begin(); it != p.flags.end();) {
 		const bool published = (flags & (1uLL << it->first)) != 0;
@@ -2375,7 +2378,25 @@ bool BaseOverlay::SendRemoteCommand(VROverlayHandle_t handle, OcOverlayCommand c
 		command.pid = remote.pid;
 		command.handle = remote.handle;
 	}
-	// Posted without the layers' lock: the store may be another program's for a moment
+	// An overlay its program no longer has (or a program that ended) is gone, as an overlay destroyed here is
+	Json::Value entry;
+	if (!RemoteOverlayEntry(handle, entry)) {
+		sent = VROverlayError_InvalidHandle;
+		return true;
+	}
+	// A value already in effect isn't sent again: programs set some every frame, and the ring is every program's
+	const uint64_t flags = entry["flags"].asUInt64();
+	const bool unchanged = (command.kind == OcOverlayCommand::Show && entry["shown"].asBool())
+	    || (command.kind == OcOverlayCommand::Hide && entry["shown"].isBool() && !entry["shown"].asBool())
+	    || (command.kind == OcOverlayCommand::Alpha && entry["alpha"].isNumeric() && entry["alpha"].asFloat() == command.number)
+	    || (command.kind == OcOverlayCommand::Width && entry["width"].isNumeric() && entry["width"].asFloat() == command.number)
+	    || (command.kind == OcOverlayCommand::SortOrder && entry["sort_order"].isNumeric() && entry["sort_order"].asUInt() == command.sortOrder)
+	    || (command.kind == OcOverlayCommand::Flag && ((flags >> command.flag) & 1) == (command.enabled ? 1u : 0u));
+	if (unchanged) {
+		sent = VROverlayError_None;
+		return true;
+	}
+	// Posted without the layers' lock: the store's own lock may be held by another program
 	std::optional<std::array<uint64_t, 4>> packed = OcPackOverlayCommand(command);
 	if (!packed || !SharedStore::Get().PostEvent(OcEvent_OverlayCommand, *packed)) {
 		sent = VROverlayError_RequestFailed;
@@ -2710,7 +2731,7 @@ uint32_t BaseOverlay::GetOverlayRenderingPid(VROverlayHandle_t ulOverlayHandle)
 }
 EVROverlayError BaseOverlay::SetOverlayFlag(VROverlayHandle_t ulOverlayHandle, VROverlayFlags eOverlayFlag, bool bEnabled)
 {
-	// A flag of no bit OpenLamina keeps isn't sent: an invalid handle, or as this program's own overlay takes it
+	// Flags are bits of a 64-bit mask; past them, as before
 	if ((uint32_t)eOverlayFlag < 64) {
 		OcOverlayCommand command;
 		command.kind = OcOverlayCommand::Flag;
