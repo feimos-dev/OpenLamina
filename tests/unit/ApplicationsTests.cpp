@@ -761,6 +761,11 @@ TEST_CASE("Event_for_one_program_reaches_only_it")
 	CHECK(e->data.process.pid == 1234);
 	CHECK(e->data.process.oldPid == 99);
 
+	// A private type addressed to it is still OpenLamina's own
+	StoreEvent own = got[0];
+	own.data[2] = (uint64_t)OcEvent_RemotePointer | ((uint64_t)1234 << 32);
+	CHECK_FALSE(OcEventForProgram(own, 1234));
+
 	// A public event is every program's
 	StoreEvent pub{};
 	pub.eventType = vr::VREvent_ApplicationListUpdated;
@@ -1064,8 +1069,10 @@ TEST_CASE("A_launch_asked_for_long_ago_is_dropped_not_taken_over")
 		doc["transition"]["launch"] = true;
 		doc["transition"]["since_ms"] = (Json::UInt64)1; // long ago
 	});
+	EventRecorder recorder;
 	CHECK(apps.GetTransitionState() == VRApplicationTransition_None);
 	CHECK_FALSE(store.Read(StoreDoc::Scene).isMember("transition"));
+	CHECK(CountEvents((vr::EVREventType)1301) == 1);
 	std::this_thread::sleep_for(std::chrono::milliseconds(300));
 	CHECK_FALSE(fs::exists(dir.path / "marker.txt"));
 }

@@ -5,6 +5,7 @@
 
 #include "json/json.h"
 
+#include <atomic>
 #include <mutex>
 #include <optional>
 
@@ -145,5 +146,9 @@ private:
 	std::mutex lock;
 	std::optional<ChaperoneData> working;
 	bool workingKept = false;
-	bool previewShown = false; // lock held
+	// The preview, read on the frames' thread: a flag, and the play area last read under lock, kept for when lock is
+	// held elsewhere (a commit waiting on the store)
+	std::atomic<bool> previewShown{ false };
+	std::pair<float, float> previewedArea{ 0.0f, 0.0f }; // previewLock held
+	std::mutex previewLock;
 };

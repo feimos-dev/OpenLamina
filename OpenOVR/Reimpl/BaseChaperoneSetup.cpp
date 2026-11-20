@@ -421,20 +421,21 @@ void BaseChaperoneSetup::SetWorkingPerimeter(VR_ARRAY_COUNT(unPointCount) const 
 void BaseChaperoneSetup::ShowWorkingSetPreview()
 {
 	// The working copy's play area, drawn as the bounds' walls (whole, whether or not drawBounds is on) until hidden
-	std::lock_guard guard(lock);
 	previewShown = true;
 }
 void BaseChaperoneSetup::HideWorkingSetPreview()
 {
-	std::lock_guard guard(lock);
 	previewShown = false;
 }
 std::optional<std::pair<float, float>> BaseChaperoneSetup::PreviewedPlayArea()
 {
-	std::lock_guard guard(lock);
 	if (!previewShown)
 		return std::nullopt;
-	return std::make_pair(Working().playArea[0], Working().playArea[1]);
+	std::lock_guard preview(previewLock);
+	std::unique_lock guard(lock, std::try_to_lock);
+	if (guard.owns_lock())
+		previewedArea = { Working().playArea[0], Working().playArea[1] };
+	return previewedArea;
 }
 void BaseChaperoneSetup::RoomSetupStarting()
 {

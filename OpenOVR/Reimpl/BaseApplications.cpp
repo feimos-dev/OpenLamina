@@ -383,6 +383,7 @@ void BaseApplications::LaunchForTransition(SharedStore& store, const std::string
 		if (scene.isObject())
 			scene.removeMember("transition");
 	});
+	OcPostEvent(kTransitionAborted, vr::k_unTrackedDeviceIndexInvalid, vr::VREvent_Data_t{}, true);
 }
 
 void BaseApplications::TakeOverPendingLaunch(SharedStore& store)
@@ -394,9 +395,9 @@ void BaseApplications::TakeOverPendingLaunch(SharedStore& store)
 	    || pending["state"].asInt() != VRApplicationTransition_OldAppQuitSent || PidOf(pending["old_pid"]) == oc_current_pid()
 	    || SharedStore::IsSameProcessAlive(PidOf(pending["old_pid"]), UInt64Or(pending["old_start"], 0)))
 		return;
-	const bool stale = NowMs() >= UInt64Or(pending["since_ms"], 0) + kTakeOverMs;
 	std::string key;
 	uint32_t oldPid = 0;
+	bool dropped = false;
 	store.Update(StoreDoc::Scene, [&](Json::Value& scene) {
 		if (!scene.isObject() || !scene["transition"].isObject())
 			return;
@@ -407,14 +408,17 @@ void BaseApplications::TakeOverPendingLaunch(SharedStore& store)
 		if (oldPid == oc_current_pid() || SharedStore::IsSameProcessAlive(oldPid, UInt64Or(tr["old_start"], 0)))
 			return;
 		// Asked for too long ago: dropped, not launched
-		if (stale) {
+		if (NowMs() >= UInt64Or(tr["since_ms"], 0) + kTakeOverMs) {
 			scene.removeMember("transition");
+			dropped = true;
 			return;
 		}
 		key = StringOr(tr["app_key"]);
 		tr["state"] = VRApplicationTransition_NewAppLaunched;
 		tr["since_ms"] = (Json::UInt64)NowMs();
 	});
+	if (dropped)
+		OcPostEvent(kTransitionAborted, vr::k_unTrackedDeviceIndexInvalid, vr::VREvent_Data_t{}, true);
 	if (!key.empty())
 		LaunchForTransition(store, key, oldPid);
 }

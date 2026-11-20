@@ -75,8 +75,11 @@ std::optional<vr::VREvent_t> OcEventForProgram(const StoreEvent& s, uint32_t sel
 	if (s.eventType == OcEvent_ToProgram) {
 		if ((uint32_t)(s.data[2] >> 32) != selfPid)
 			return std::nullopt;
+		const uint32_t type = (uint32_t)s.data[2];
+		if (OcIsPrivateEvent(type))
+			return std::nullopt;
 		uint64_t packed[4] = { s.data[0], s.data[1], 0, s.data[3] };
-		return OcUnpackEvent((uint32_t)s.data[2], packed);
+		return OcUnpackEvent(type, packed);
 	}
 	if (OcIsPrivateEvent(s.eventType))
 		return std::nullopt;
