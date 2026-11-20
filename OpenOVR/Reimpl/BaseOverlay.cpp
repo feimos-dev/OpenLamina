@@ -2031,8 +2031,11 @@ EVROverlayError BaseOverlay::DestroyOverlay(VROverlayHandle_t ulOverlayHandle)
 		gamepadFocusOverlay = vr::k_ulOverlayHandleInvalid;
 	if (pointing->keyboardFor == ulOverlayHandle)
 		pointing->keyboardFor = vr::k_ulOverlayHandleInvalid;
-	// Nothing keeps pointing at the overlay: the others' cursor, parent and neighbours
+	pointing->mouse.Forget(ulOverlayHandle);
+	// Nothing keeps pointing at the overlay: the laser mouse, the others' cursor, parent and neighbours
 	for (const auto& kv : overlays) {
+		if (!kv.second)
+			continue;
 		OverlayData& other = *kv.second;
 		if (other.cursor == ulOverlayHandle)
 			other.cursor = vr::k_ulOverlayHandleInvalid;
@@ -2410,7 +2413,9 @@ EVROverlayError BaseOverlay::SetOverlayTextureBounds(VROverlayHandle_t ulOverlay
 	else
 		overlay->textureBounds = { 0, 0, 1, 1 };
 
-	// The texture's copy is whole: its bounds are the layer's image rectangle in it
+	// The texture's copy is whole: its bounds are the layer's image rectangle in it. A flip (min above max) is made
+	// when the texture is copied, so a change of flip shows from the next SetOverlayTexture: the texture handle the
+	// game gave may not be valid any more to copy again now.
 	overlay->ApplyTextureBounds();
 
 	return VROverlayError_None;

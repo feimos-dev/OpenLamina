@@ -70,6 +70,22 @@ public:
 	vr::VROverlayHandle_t Focus() const { return focus; }
 	// The last target the mouse was on: it stays when the laser leaves every target, until another is pointed at
 	vr::VROverlayHandle_t Hover() const { return hover; }
+	// A target that no longer exists: nothing keeps pointing at it (its handle may be reused by a new overlay)
+	void Forget(vr::VROverlayHandle_t handle)
+	{
+		for (Hand& h : hands) {
+			if (h.target == handle) {
+				h.target = vr::k_ulOverlayHandleInvalid;
+				h.hit.reset();
+				h.held = false;
+			}
+		}
+		if (clickTarget == handle)
+			clickOwner = -1;
+		for (vr::VROverlayHandle_t* held : { &clickTarget, &focus, &hover, &movedOn })
+			if (*held == handle)
+				*held = vr::k_ulOverlayHandleInvalid;
+	}
 
 private:
 	struct Hand {

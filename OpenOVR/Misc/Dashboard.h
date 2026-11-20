@@ -95,5 +95,5 @@ bool DashboardDocOpen(const Json::Value& doc, const ProcessAlive& alive);
 bool DashboardDocRequest(const Json::Value& doc, double nowWall, const ProcessAlive& alive);
 
 // Starts the installed dashboard overlay programs whose auto-launch flag is set (those already running are left as
-// they are). Returns the app keys it tried to start.
+// they are). Returns the app keys of both, the ones started and the ones already running.
 std::vector<std::string> StartAutolaunchOverlays(BaseApplications& apps);
