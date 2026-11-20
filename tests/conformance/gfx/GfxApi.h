@@ -65,6 +65,10 @@ public:
 	// Vulkan: queues n clears of a 4096 x 4096 image and returns without waiting, a game's rendering still under way
 	// when it submits; nothing for the other APIs
 	virtual void Busy(int n) { (void)n; }
+	// Vulkan: queues a clear of the texture (made by Pattern) to rgba (0xRRGGBBAA) and returns without waiting
+	virtual void Paint(GfxTexture& tex, uint32_t rgba) { (void)tex, (void)rgba; }
+	// OpenGL: leaves a plain 2D texture bound, as a game's context mostly has one
+	virtual void LeaveTextureBound() {}
 	// Waits until everything the device was asked to do is done
 	virtual void Flush() = 0;
 	virtual ~GfxApi() = default;

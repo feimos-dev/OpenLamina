@@ -578,6 +578,8 @@ void Skybox(CaseContext& c, uint32_t count)
 				l["eye_visibility"] = layer["eye_visibility"];
 				l["rect"] = layer["rect"];
 				l["tl"] = layer["samples"]["tl"];
+				if (layer.isMember("grid"))
+					l["grid"] = layer["grid"];
 				l["invalid"] = layer["invalid"];
 				last.append(l);
 			}
@@ -745,12 +747,14 @@ void MirrorFlipped(CaseContext& c)
 // slice 1 of two-slice array textures (SubmitWithArrayIndex: the other eye's pattern), one two-slice array of eye 0's
 // pattern submitted with Submit_GlArrayTexture and no index (the left eye slice 0, the right slice 1: eye 1's pattern),
 // a 4x multisampled texture, a renderbuffer (Submit_GlRenderBuffer), a 4x multisampled one, and a renderbuffer with
-// flipped bounds (upside down). Every one shown the right way up, as a plain texture is.
+// flipped bounds (upside down). Every one shown the right way up, as a plain texture is, with another texture bound
+// in the context, as a game's mostly has.
 void GlInteropOdd(CaseContext& c)
 {
 	Scene s(c);
 	if (!s.Start(GfxKind::OpenGL, "array slice 1"))
 		return;
+	s.gfx->LeaveTextureBound();
 	enum class Make { Array, ArrayFlag, Multisampled, Renderbuffer };
 	struct Odd {
 		const char* name;
@@ -858,7 +862,10 @@ void VkInteropOdd(CaseContext& c)
 // A Vulkan game that makes its device with the extensions OpenVR asks for (GetOutputDevice, then
 // GetVulkanDeviceExtensionsRequired for that GPU), under a runtime with D3D11 alone (expect/gfx_interop.json): its
 // frames go through the interop, where the copies are waited for on the GPU (shared fences), and show as the basic
-// case's. "semaphores_asked": the list has VK_KHR_external_semaphore_win32 (the GPU-side wait's). --case-arg
+// case's. "semaphores_asked": the list has VK_KHR_external_semaphore_win32 (the GPU-side wait's). Then "painted":
+// 960 x 960 textures cleared, each frame, to another colour on the game's queue while it's still busy (clearing a
+// 4096 x 4096 image 20 times), and submitted at once: the last frame's colour (red) shows. A GPU that runs the two
+// APIs' work in the order it was submitted shows it without the wait too. --case-arg
 // plain=1 makes the device without them (the copies are then waited for on the CPU); --case-arg time=<frames> shows
 // that many more frames and records the Submit calls' time per frame, in ms, as "submit_ms"; --case-arg busy=<n> has
 // the game's queue still clearing a 4096 x 4096 image n times when it submits.
@@ -920,7 +927,7 @@ void VkInteropGpuWait(CaseContext& c)
 			r["left"] = (int)comp->Submit(vr::Eye_Left, left.Texture(), &kFull, vr::Submit_Default);
 			r["right"] = (int)comp->Submit(vr::Eye_Right, right.Texture(), &kFull, vr::Submit_Default);
 		}
-		r["dump_join"] = "last_projection";
+		r["dump_join"] = RectJoin(1024, 1024);
 		double submitting = 0;
 		for (int frame = 1; frame <= timed; frame++) {
 			vr::TrackedDevicePose_t poses[16];
@@ -935,6 +942,27 @@ void VkInteropGpuWait(CaseContext& c)
 			r["submit_ms"] = submitting / timed;
 	}
 	c.Record("frame", r);
+
+	GfxTexture paintedLeft = gfx->Pattern(960, 960, kVkRGBA8Srgb, 0);
+	GfxTexture paintedRight = gfx->Pattern(960, 960, kVkRGBA8Srgb, 1);
+	gfx->Flush();
+	Json::Value p;
+	if (!paintedLeft.Made() || !paintedRight.Made()) {
+		p["error"] = "the textures couldn't be made";
+	} else {
+		const uint32_t colours[2] = { 0xff0000ff, 0x0000ffff };
+		for (int frame = 1; frame <= kFrames; frame++) {
+			vr::TrackedDevicePose_t poses[16];
+			comp->WaitGetPoses(poses, 16, nullptr, 0);
+			gfx->Busy(20);
+			gfx->Paint(paintedLeft, colours[frame % 2]);
+			gfx->Paint(paintedRight, colours[frame % 2]);
+			p["left"] = (int)comp->Submit(vr::Eye_Left, paintedLeft.Texture(), &kFull, vr::Submit_Default);
+			p["right"] = (int)comp->Submit(vr::Eye_Right, paintedRight.Texture(), &kFull, vr::Submit_Default);
+		}
+		p["dump_join"] = RectJoin(960, 960);
+	}
+	c.Record("painted", p);
 	// OpenLamina first, then the textures and the device
 	c.core->Cleanup();
 	gfx->Flush();
@@ -1074,7 +1102,7 @@ const std::map<std::string, CaseFn>& conformance::GfxCases()
 		{ "gfx-vk-interop-odd", VkInteropOdd },
 		{ "gfx-vk-interop-gpu-wait", VkInteropGpuWait },
 		// As the formats ones, under a script whose runtime has D3D11 alone, with RGBA8 sRGB swapchains only
-		// (expect/gfx_interop_formats.json): formats the interop used to refuse
+		// (expect/gfx_interop_formats.json)
 		{ "gfx-gl-interop-formats", [](CaseContext& c) { Formats(c, GfxKind::OpenGL, { { "rgb8", 0x8051 }, { "r11g11b10f", 0x8C3A }, { "rgba16f", 0x881A }, { "rgb10a2", 0x8059 } }); } },
 		{ "gfx-vk-interop-formats", [](CaseContext& c) { Formats(c, GfxKind::Vulkan, { { "b10g11r11", 122 }, { "rgba16f", 97 }, { "rgb10a2", 64 }, { "bgra8", 44 } }); } },
 	};

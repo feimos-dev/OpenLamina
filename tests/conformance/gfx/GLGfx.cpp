@@ -368,6 +368,13 @@ public:
 		return Wrap(tex);
 	}
 
+	void LeaveTextureBound() override
+	{
+		GfxTexture plain = Pattern(16, 16, kSRGB8Alpha8, 0, 1, 1);
+		if (plain.Made())
+			glBindTexture(GL_TEXTURE_2D, (GLuint)(uintptr_t)plain.keep);
+	}
+
 	void Flush() override { glFinish(); }
 };
 

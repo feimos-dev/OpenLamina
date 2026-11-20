@@ -72,6 +72,8 @@ public:
 			Flush();
 			if (busyFence)
 				D<PFN_vkDestroyFence>("vkDestroyFence")(device, busyFence, nullptr);
+			if (paintPool)
+				D<PFN_vkDestroyCommandPool>("vkDestroyCommandPool")(device, paintPool, nullptr);
 			if (busyPool)
 				D<PFN_vkDestroyCommandPool>("vkDestroyCommandPool")(device, busyPool, nullptr);
 			for (const Made& m : made) {
@@ -369,6 +371,40 @@ public:
 			Barrier(cb, image, VK_IMAGE_ASPECT_DEPTH_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
 		});
 		return Wrap(ok ? image : VK_NULL_HANDLE, VK_FORMAT_D32_SFLOAT, w, h, 1);
+	}
+
+	VkCommandPool paintPool = VK_NULL_HANDLE;
+	std::vector<VkCommandBuffer> paints;
+
+	void Paint(GfxTexture& tex, uint32_t rgba) override
+	{
+		VkCommandPoolCreateInfo pci{ VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
+		pci.queueFamilyIndex = family;
+		if (!paintPool && D<PFN_vkCreateCommandPool>("vkCreateCommandPool")(device, &pci, nullptr, &paintPool) != VK_SUCCESS)
+			return;
+		VkCommandBufferAllocateInfo ai{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+		ai.commandPool = paintPool;
+		ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		ai.commandBufferCount = 1;
+		VkCommandBuffer cb = VK_NULL_HANDLE;
+		if (D<PFN_vkAllocateCommandBuffers>("vkAllocateCommandBuffers")(device, &ai, &cb) != VK_SUCCESS)
+			return;
+		paints.push_back(cb);
+		VkCommandBufferBeginInfo bi{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+		bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+		D<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer")(cb, &bi);
+		const VkImage image = (VkImage)tex.vk.m_nImage;
+		Barrier(cb, image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+		// 0 and 255 in each channel: the same in sRGB and linear
+		VkClearColorValue colour{ { (rgba >> 24) / 255.0f, ((rgba >> 16) & 0xff) / 255.0f, ((rgba >> 8) & 0xff) / 255.0f, (rgba & 0xff) / 255.0f } };
+		VkImageSubresourceRange range{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, VK_REMAINING_ARRAY_LAYERS };
+		D<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(cb, image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &colour, 1, &range);
+		Barrier(cb, image, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL);
+		D<PFN_vkEndCommandBuffer>("vkEndCommandBuffer")(cb);
+		VkSubmitInfo si{ VK_STRUCTURE_TYPE_SUBMIT_INFO };
+		si.commandBufferCount = 1;
+		si.pCommandBuffers = &cb;
+		D<PFN_vkQueueSubmit>("vkQueueSubmit")(queue, 1, &si, VK_NULL_HANDLE);
 	}
 
 	VkImage busyImage = VK_NULL_HANDLE;
