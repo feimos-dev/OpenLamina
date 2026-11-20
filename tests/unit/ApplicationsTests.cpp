@@ -967,3 +967,61 @@ TEST_CASE("Other_programs_see_whether_the_scene_application_has_a_dashboard")
 	CHECK(DashboardButtonFromSetting("off") == Dashboard::Button::Off);
 	CHECK(DashboardButtonFromSetting("") == Dashboard::Button::Off);
 }
+
+TEST_CASE("A_launch_under_way_holds_off_others_once_the_old_application_has_gone")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	BaseApplications apps(store);
+	AppType type(vr::VRApplication_Utility);
+	REQUIRE(apps.AddApplicationManifest(PathToUtf8(WriteEchoManifest(dir.path, "oc.test.next")).c_str()) == VRApplicationError_None);
+	REQUIRE(apps.AddApplicationManifest(PathToUtf8(WriteEchoManifest(dir.path, "oc.test.third")).c_str()) == VRApplicationError_None);
+	// The old scene application has gone and the new one is starting: no scene application is named
+	store.Update(StoreDoc::Scene, [&](Json::Value& doc) {
+		doc["transition"]["state"] = VRApplicationTransition_NewAppLaunched;
+		doc["transition"]["app_key"] = "oc.test.next";
+		doc["transition"]["since_ms"] = (Json::UInt64)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+	});
+	CHECK(apps.PerformApplicationPrelaunchCheck("oc.test.next") == VRApplicationError_ApplicationAlreadyStarting);
+	CHECK(apps.PerformApplicationPrelaunchCheck("oc.test.third") == VRApplicationError_LaunchInProgress);
+	CHECK(apps.LaunchApplication("oc.test.third") == VRApplicationError_LaunchInProgress);
+	CHECK_FALSE(fs::exists(dir.path / "marker.txt"));
+}
+
+TEST_CASE("A_launch_left_by_an_application_that_ended_without_its_session_s_end_is_taken_over")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	BaseApplications apps(store);
+	AppType type(vr::VRApplication_Utility);
+	EventRecorder recorder;
+	REQUIRE(apps.AddApplicationManifest(PathToUtf8(WriteEchoManifest(dir.path, "oc.test.next")).c_str()) == VRApplicationError_None);
+	const uint32_t gone = ExitedProcessId();
+	store.Update(StoreDoc::Scene, [&](Json::Value& doc) {
+		doc["transition"]["state"] = VRApplicationTransition_OldAppQuitSent;
+		doc["transition"]["app_key"] = "oc.test.next";
+		doc["transition"]["old_pid"] = gone;
+		doc["transition"]["launch"] = true;
+	});
+	// The next look at the transition launches it, once
+	CHECK(apps.GetTransitionState() == VRApplicationTransition_NewAppLaunched);
+	CHECK(apps.GetTransitionState() == VRApplicationTransition_NewAppLaunched);
+	CHECK(CountEvents((vr::EVREventType)1302) == 1);
+	bool started = false;
+	for (int i = 0; i < 50 && !started; i++) {
+		started = fs::exists(dir.path / "marker.txt");
+		if (!started)
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	}
+	CHECK(started);
+}
+
+TEST_CASE("Listing_itself_again_writes_nothing")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	BaseApplications::AddThisProcess(store);
+	const uint64_t generation = store.Generation(StoreDoc::Applications);
+	BaseApplications::AddThisProcess(store);
+	CHECK(store.Generation(StoreDoc::Applications) == generation);
+}

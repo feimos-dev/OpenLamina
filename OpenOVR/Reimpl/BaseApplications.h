@@ -256,6 +256,10 @@ private:
 	 * appKey, which starts once it has gone if launchAfter. VRApplicationError_OldApplicationQuitting if it was asked
 	 * (now or before), None if there's none to ask, or why appKey can't start now. */
 	EVRApplicationError AskSceneApplicationToQuit(const std::string& appKey, bool launchAfter);
+	/** Launches the transition's new application, or ends the transition if it can't be */
+	static void LaunchForTransition(SharedStore& store, const std::string& appKey, uint32_t oldPid);
+	/** Launches the new application of a transition whose old application ended without launching it */
+	static void TakeOverPendingLaunch(SharedStore& store);
 
 	SharedStore* store = nullptr;
 };

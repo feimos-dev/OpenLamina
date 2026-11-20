@@ -3,11 +3,11 @@
 #define BASE_IMPL
 #include "BaseApplications.h"
 #include "BaseClientCore.h"
+#include "Misc/ProgramEvents.h"
 #include "Misc/AppManifest.h"
 #include "Misc/Config.h"
 #include "Misc/Dashboard.h"
 #include "Misc/Process.h"
-#include "Misc/ProgramEvents.h"
 #include "Misc/SharedStore.h"
 
 #include <algorithm>
@@ -74,7 +74,6 @@ uint64_t NowMs()
 	return (uint64_t)duration_cast<milliseconds>(system_clock::now().time_since_epoch()).count();
 }
 
-// A process id kept as a document key; 0 for anything else
 // Events of older OpenVR versions, which programs built with them still wait for
 constexpr vr::EVREventType kTransitionStarted = (vr::EVREventType)1300;
 constexpr vr::EVREventType kTransitionAborted = (vr::EVREventType)1301;
@@ -87,6 +86,7 @@ constexpr uint64_t kNewAppLaunchMs = 30000;
 // Launch arguments kept for running applications at most: the oldest go first
 constexpr size_t kMaxLaunchArgs = 32;
 
+// A process id kept as a document key; 0 for anything else
 uint32_t ParsePid(const std::string& text)
 {
 	char* end = nullptr;
@@ -342,27 +342,13 @@ void BaseApplications::SetSceneProcess(SharedStore& store, bool running)
 		OcPostEvent(vr::VREvent_SceneApplicationStateChanged, vr::k_unTrackedDeviceIndexInvalid, data, true);
 	}
 
+	if (!toLaunch.empty())
+		LaunchForTransition(store, toLaunch, pid);
 	if (quitAsked) {
 		// What a program that asked this one to quit waits for before it tries again
 		vr::VREvent_Data_t data{};
 		data.process.pid = pid;
 		OcPostEvent(vr::VREvent_ProcessQuit, vr::k_unTrackedDeviceIndexInvalid, data, true);
-	}
-	if (!toLaunch.empty()) {
-		BaseApplications apps(store);
-		std::optional<AppManifestEntry> app = apps.Find(toLaunch.c_str());
-		uint32_t started = 0;
-		if (app && apps.Launch(*app, "", &started) == VRApplicationError_None) {
-			vr::VREvent_Data_t data{};
-			data.process.pid = started;
-			data.process.oldPid = pid;
-			OcPostEvent(kTransitionNewAppStarted, vr::k_unTrackedDeviceIndexInvalid, data, true);
-		} else {
-			store.Update(StoreDoc::Scene, [&](Json::Value& scene) {
-				if (scene.isObject())
-					scene.removeMember("transition");
-			});
-		}
 	}
 	// A new scene application's session starts the dashboard overlays flagged to start with the dashboard, where it
 	// has one
@@ -378,12 +364,61 @@ void BaseApplications::SetSceneProcess(SharedStore& store, bool running)
 	}
 }
 
+void BaseApplications::LaunchForTransition(SharedStore& store, const std::string& appKey, uint32_t oldPid)
+{
+	BaseApplications apps(store);
+	std::optional<AppManifestEntry> app = apps.Find(appKey.c_str());
+	uint32_t started = 0;
+	if (app && apps.Launch(*app, "", &started) == VRApplicationError_None) {
+		vr::VREvent_Data_t data{};
+		data.process.pid = started;
+		data.process.oldPid = oldPid;
+		OcPostEvent(kTransitionNewAppStarted, vr::k_unTrackedDeviceIndexInvalid, data, true);
+		return;
+	}
+	store.Update(StoreDoc::Scene, [&](Json::Value& scene) {
+		if (scene.isObject())
+			scene.removeMember("transition");
+	});
+}
+
+void BaseApplications::TakeOverPendingLaunch(SharedStore& store)
+{
+	// An old scene application that ended without its session's end (it crashed, or was killed) launches nothing: the
+	// first program to notice does
+	const Json::Value pending = store.ReadAt(StoreDoc::Scene, { "transition" });
+	if (!pending.isObject() || !BoolOr(pending["launch"], false) || PidOf(pending["old_pid"]) == oc_current_pid())
+		return;
+	std::string key;
+	uint32_t oldPid = 0;
+	store.Update(StoreDoc::Scene, [&](Json::Value& scene) {
+		if (!scene.isObject() || !scene["transition"].isObject())
+			return;
+		Json::Value& tr = scene["transition"];
+		if (!tr["state"].isInt() || tr["state"].asInt() != VRApplicationTransition_OldAppQuitSent || !BoolOr(tr["launch"], false))
+			return;
+		oldPid = PidOf(tr["old_pid"]);
+		if (oldPid == oc_current_pid() || SharedStore::IsSameProcessAlive(oldPid, UInt64Or(tr["old_start"], 0)))
+			return;
+		key = StringOr(tr["app_key"]);
+		tr["state"] = VRApplicationTransition_NewAppLaunched;
+		tr["since_ms"] = (Json::UInt64)NowMs();
+	});
+	if (!key.empty())
+		LaunchForTransition(store, key, oldPid);
+}
+
 void BaseApplications::AddThisProcess(SharedStore& store)
 {
+	TakeOverPendingLaunch(store);
 	const uint32_t pid = oc_current_pid();
 	const std::string name = std::to_string(pid);
-	const std::string key = CurrentProcessAppKey(store);
 	const uint64_t start = SharedStore::OwnStartTime();
+	// Listed already, by IdentifyApplication or an earlier init: nothing to write
+	const Json::Value listedStart = store.ReadAt(StoreDoc::Applications, { "pid_starts", name });
+	if (store.ReadAt(StoreDoc::Applications, { "pids", name }).isString() && (!listedStart.isUInt64() || !start || listedStart.asUInt64() == start))
+		return;
+	const std::string key = CurrentProcessAppKey(store);
 	UpdateApplications(store, [&](Json::Value& doc) {
 		// IdentifyApplication's entry for this process stays as it is
 		const Json::Value& starts = doc["pid_starts"];
@@ -413,36 +448,50 @@ void BaseApplications::AbortTransition()
 EVRApplicationError BaseApplications::AskSceneApplicationToQuit(const std::string& appKey, bool launchAfter)
 {
 	SharedStore& store = Store();
-	Json::Value scene = store.Read(StoreDoc::Scene);
-	// The scene application with a session (this program's too): one that has none yet isn't waited for
-	const uint32_t scenePid = LiveScenePid(scene);
-	if (!scenePid)
-		return VRApplicationError_None;
-	const Transition t = LiveTransition(scene);
-	if (t.state == VRApplicationTransition_NewAppLaunched)
-		return t.appKey == appKey ? VRApplicationError_ApplicationAlreadyStarting : VRApplicationError_LaunchInProgress;
-	if (t.state == VRApplicationTransition_OldAppQuitSent && t.appKey != appKey)
-		return VRApplicationError_LaunchInProgress;
-	// The application that is the scene application already
-	const std::string sceneKey = scenePid == oc_current_pid() ? CurrentProcessAppKey(store) : StringOr(scene["app_key"]);
-	if (sceneKey == appKey)
+	TakeOverPendingLaunch(store);
+	// Nothing running and nothing starting: no store write
+	const Json::Value current = store.Read(StoreDoc::Scene);
+	if (!LiveScenePid(current) && LiveTransition(current).state == VRApplicationTransition_None)
 		return VRApplicationError_None;
 
-	const bool sent = t.state == VRApplicationTransition_OldAppQuitSent && t.oldPid == scenePid;
-	const uint64_t oldStart = scenePid == oc_current_pid() ? SharedStore::OwnStartTime() : SharedStore::ProcessStartTime(scenePid);
+	const uint32_t self = oc_current_pid();
+	const std::string selfKey = CurrentProcessAppKey(store);
+	EVRApplicationError result = VRApplicationError_None;
+	uint32_t scenePid = 0;
+	bool post = false;
+	// Decided and written at once, so two programs asking together don't both pass
 	store.Update(StoreDoc::Scene, [&](Json::Value& doc) {
 		if (!doc.isObject())
 			doc = Json::Value(Json::objectValue);
-		Json::Value& tr = doc["transition"];
-		tr = Json::Value(Json::objectValue);
+		const Transition t = LiveTransition(doc);
+		if (t.state == VRApplicationTransition_NewAppLaunched) {
+			result = t.appKey == appKey ? VRApplicationError_ApplicationAlreadyStarting : VRApplicationError_LaunchInProgress;
+			return;
+		}
+		// The scene application with a session (this program's too): one that has none yet isn't waited for
+		scenePid = LiveScenePid(doc);
+		if (!scenePid)
+			return;
+		if (t.state == VRApplicationTransition_OldAppQuitSent && t.appKey != appKey) {
+			result = VRApplicationError_LaunchInProgress;
+			return;
+		}
+		// The application that is the scene application already
+		if ((scenePid == self ? selfKey : StringOr(doc["app_key"])) == appKey)
+			return;
+		const bool sent = t.state == VRApplicationTransition_OldAppQuitSent && t.oldPid == scenePid;
+		Json::Value tr(Json::objectValue);
 		tr["state"] = VRApplicationTransition_OldAppQuitSent;
 		tr["app_key"] = appKey;
 		tr["old_pid"] = scenePid;
-		tr["old_start"] = (Json::UInt64)oldStart;
+		tr["old_start"] = (Json::UInt64)(scenePid == self ? SharedStore::OwnStartTime() : SharedStore::ProcessStartTime(scenePid));
 		tr["launch"] = launchAfter || (sent && t.launch);
 		tr["since_ms"] = (Json::UInt64)NowMs();
+		doc["transition"] = tr;
+		result = VRApplicationError_OldApplicationQuitting;
+		post = !sent;
 	});
-	if (!sent) {
+	if (post) {
 		// To the scene application alone: every other program carries on
 		vr::VREvent_Data_t data{};
 		data.process.pid = scenePid;
@@ -451,7 +500,7 @@ EVRApplicationError BaseApplications::AskSceneApplicationToQuit(const std::strin
 		data.process.pid = 0;
 		OcPostEvent(kTransitionStarted, vr::k_unTrackedDeviceIndexInvalid, data, true);
 	}
-	return VRApplicationError_OldApplicationQuitting;
+	return result;
 }
 
 // Used by Viveport
@@ -687,7 +736,7 @@ EVRApplicationError BaseApplications::LaunchApplicationFromMimeType(const char* 
 		while (list.size() >= kMaxLaunchArgs) {
 			// The oldest handle goes
 			std::vector<std::string> names = list.getMemberNames();
-			auto oldest = std::min_element(names.begin(), names.end(), [](const std::string& a, const std::string& b) { return ParsePid(a) < ParsePid(b); });
+			auto oldest = std::min_element(names.begin(), names.end(), [](const std::string& a, const std::string& b) { return std::strtoul(a.c_str(), nullptr, 10) < std::strtoul(b.c_str(), nullptr, 10); });
 			list.removeMember(*oldest);
 		}
 		Json::Value entry(Json::objectValue);
@@ -962,6 +1011,7 @@ EVRApplicationError BaseApplications::GetStartingApplication(VR_OUT_STRING() cha
 {
 	Clear(pchAppKeyBuffer, unAppKeyBufferLen);
 	// The application waiting for the scene application to quit, or launched once it had
+	TakeOverPendingLaunch(Store());
 	Transition t = LiveTransition(Store().Read(StoreDoc::Scene));
 	if (t.state == VRApplicationTransition_None || t.appKey.empty())
 		return VRApplicationError_NoApplication;
@@ -969,6 +1019,7 @@ EVRApplicationError BaseApplications::GetStartingApplication(VR_OUT_STRING() cha
 }
 BaseApplications::EVRApplicationTransitionState BaseApplications::GetTransitionState()
 {
+	TakeOverPendingLaunch(Store());
 	return LiveTransition(Store().Read(StoreDoc::Scene)).state;
 }
 BaseApplications::EVRSceneApplicationState BaseApplications::GetSceneApplicationState()
