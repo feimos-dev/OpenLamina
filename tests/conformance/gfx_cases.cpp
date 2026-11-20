@@ -10,9 +10,11 @@
 
 #include "IVRCompositor_029.h"
 #include "IVROverlay_028.h"
+#include "IVRSystem_022.h"
 
 #ifdef _WIN32
 #include <d3d11.h>
+#include <d3d12.h>
 #endif
 
 #include <algorithm>
@@ -54,6 +56,15 @@ std::unique_ptr<GfxApi> GfxApi::Create(GfxKind kind, std::string* whyNot)
 		return nullptr;
 	}
 #endif
+}
+
+std::unique_ptr<GfxApi> GfxApi::CreateOnWarp(GfxKind kind, std::string* whyNot)
+{
+#ifdef _WIN32
+	if (kind == GfxKind::D3D12)
+		return MakeD3D12Gfx(whyNot, true);
+#endif
+	return Create(kind, whyNot);
 }
 
 namespace {
@@ -321,8 +332,9 @@ std::string RectJoin(uint32_t w, uint32_t h)
 }
 
 // One texture per eye of each format, a size of its own each (the dump's projection layer is found by its rect), under
-// a script whose runtime offers RGBA8 sRGB only: each is converted into it
-void Formats(CaseContext& c, GfxKind kind, const std::vector<std::pair<std::string, int64_t>>& formats)
+// a script whose runtime offers RGBA8 sRGB only: each is converted into it. samples > 1: multisampled textures
+// (resolved, then converted), which have the quadrants alone.
+void Formats(CaseContext& c, GfxKind kind, const std::vector<std::pair<std::string, int64_t>>& formats, uint32_t samples = 1)
 {
 	Scene s(c);
 	if (!s.Start(kind, "format " + formats[0].first))
@@ -330,8 +342,8 @@ void Formats(CaseContext& c, GfxKind kind, const std::vector<std::pair<std::stri
 	uint32_t size = 512;
 	bool first = true;
 	for (const auto& [name, format] : formats) {
-		GfxTexture left = s.gfx->Pattern(size, size, format, 0);
-		GfxTexture right = s.gfx->Pattern(size, size, format, 1);
+		GfxTexture left = s.gfx->Pattern(size, size, format, 0, samples);
+		GfxTexture right = s.gfx->Pattern(size, size, format, 1, samples);
 		s.gfx->Flush();
 		Json::Value r;
 		if (!left.Made() || !right.Made()) {
@@ -442,6 +454,197 @@ void Bounds(CaseContext& c, GfxKind kind, int64_t format)
 		c.Record(cfg.name, r);
 		first = false;
 	}
+}
+
+// Vulkan textures out of the ordinary, under a script whose runtime has single-sampled swapchains only (so a multisampled
+// texture is resolved): 4x MSAA RGBA8 sRGB of 600 x 600 with full bounds, the same of 640 x 640 with flipped bounds
+// (resolved, then flipped by a blit), and 512 x 512 textures filled on, and submitted with, a second queue of the first
+// one's family (skipped where the family has one queue), done there before they're submitted.
+// Multisampled patterns have the quadrants alone. Each found in the dump by its size.
+void VkOdd(CaseContext& c)
+{
+	Scene s(c);
+	if (!s.Start(GfxKind::Vulkan, "msaa"))
+		return;
+	struct Odd {
+		const char* name;
+		uint32_t size, samples;
+		vr::VRTextureBounds_t bounds;
+		bool otherQueue;
+	};
+	const Odd odds[] = {
+		{ "msaa", 600, 4, kFull, false },
+		{ "msaa flipped", 640, 4, { 0, 1, 1, 0 }, false },
+		{ "other queue", 512, 1, kFull, true },
+	};
+	bool first = true;
+	for (const Odd& o : odds) {
+		Json::Value r;
+		if (o.otherQueue && !s.gfx->UseOtherQueue()) {
+			c.Record(o.name, Skipped("the queue family has one queue"));
+			continue;
+		}
+		GfxTexture left = s.gfx->Pattern(o.size, o.size, kVkRGBA8Srgb, 0, o.samples);
+		GfxTexture right = s.gfx->Pattern(o.size, o.size, kVkRGBA8Srgb, 1, o.samples);
+		s.gfx->Flush();
+		if (!left.Made() || !right.Made()) {
+			r["error"] = "the pattern textures couldn't be made";
+		} else {
+			s.Frames(first ? kFrames : 4, left, right, o.bounds, o.bounds, r);
+			r["dump_join"] = RectJoin(o.size, o.size);
+		}
+		c.Record(o.name, r);
+		first = false;
+	}
+}
+
+// A Vulkan game whose textures change size from frame to frame (dynamic resolution): 800, 640, 720 and then 960 pixels a
+// side, each for 4 frames. Each size's view shows its whole texture; the swapchain under it (image) is made again
+// only when the texture grows past it: 800 x 800 for the first three, 960 x 960 for the last.
+void VkDynamicResolution(CaseContext& c)
+{
+	Scene s(c);
+	if (!s.Start(GfxKind::Vulkan, "800"))
+		return;
+	bool first = true;
+	for (uint32_t size : { 800u, 640u, 720u, 960u }) {
+		GfxTexture left = s.gfx->Pattern(size, size, kVkRGBA8Srgb, 0);
+		GfxTexture right = s.gfx->Pattern(size, size, kVkRGBA8Srgb, 1);
+		s.gfx->Flush();
+		Json::Value r;
+		if (!left.Made() || !right.Made()) {
+			r["error"] = "the pattern textures couldn't be made";
+		} else {
+			s.Frames(first ? kFrames : 4, left, right, kFull, kFull, r);
+			r["dump_join"] = RectJoin(size, size);
+		}
+		c.Record(std::to_string(size), r);
+		first = false;
+	}
+}
+
+// A game that makes its device again mid-run (as after a device removal, or a GPU switch in its settings): 512 x 512
+// textures of its first device for 10 frames, then 576 x 576 ones of a new device of the same API for 10 frames.
+// D3D11 and D3D12: the session follows the textures onto the new device; under a script whose runtime refuses that
+// session (the third xrCreateSession), the game's frames are left out. Vulkan: the new device's are refused. The game
+// isn't told to quit ("quit": a VREvent_Quit came).
+void NewDevice(CaseContext& c, GfxKind kind, int64_t format)
+{
+	Scene s(c);
+	if (!s.Start(kind, "first device"))
+		return;
+	vr::EVRInitError le = vr::VRInitError_None;
+	auto* sys = (vr::IVRSystem_022::IVRSystem*)c.core->GetGenericInterface("IVRSystem_022", &le);
+	bool quit = false;
+	auto frames = [&](GfxTexture& left, GfxTexture& right, Json::Value& r) {
+		for (int frame = 1; frame <= kFrames; frame++) {
+			s.Frames(1, left, right, kFull, kFull, r);
+			vr::VREvent_t ev{};
+			while (sys && sys->PollNextEvent(&ev, sizeof(ev)))
+				quit = quit || ev.eventType == vr::VREvent_Quit;
+		}
+	};
+	{
+		GfxTexture left = s.gfx->Pattern(512, 512, format, 0);
+		GfxTexture right = s.gfx->Pattern(512, 512, format, 1);
+		s.gfx->Flush();
+		Json::Value r;
+		if (!left.Made() || !right.Made()) {
+			r["error"] = "the pattern textures couldn't be made";
+		} else {
+			frames(left, right, r);
+			r["dump_join"] = RectJoin(512, 512);
+		}
+		c.Record("first device", r);
+	}
+	std::string why;
+	std::unique_ptr<GfxApi> second = GfxApi::CreateOnWarp(kind, &why);
+	if (!second) {
+		c.Record("new device", Skipped(why));
+		return;
+	}
+	GfxTexture left = second->Pattern(576, 576, format, 0);
+	GfxTexture right = second->Pattern(576, 576, format, 1);
+	second->Flush();
+#ifdef _WIN32
+	if (kind == GfxKind::D3D12 && left.Made()) {
+		// One D3D12 device per adapter: with WARP the only adapter, the second device is the first
+		GfxTexture probe = s.gfx->Pattern(8, 8, format, 0);
+		ID3D12Device *a = nullptr, *b = nullptr;
+		if (probe.Made())
+			probe.d3d12.m_pResource->GetDevice(IID_PPV_ARGS(&a));
+		left.d3d12.m_pResource->GetDevice(IID_PPV_ARGS(&b));
+		const bool same = a == b;
+		if (a)
+			a->Release();
+		if (b)
+			b->Release();
+		if (same) {
+			c.Record("new device", Skipped("one D3D12 adapter: the second device is the first"));
+			c.core->Cleanup();
+			s.started = false;
+			return;
+		}
+	}
+#endif
+	Json::Value r;
+	if (!left.Made() || !right.Made()) {
+		r["error"] = "the pattern textures couldn't be made";
+	} else {
+		frames(left, right, r);
+		r["dump_join"] = RectJoin(576, 576);
+	}
+	r["quit"] = quit;
+	c.Record("new device", r);
+	// OpenLamina first, then the textures and the devices
+	c.core->Cleanup();
+	s.started = false;
+	second->Flush();
+}
+
+// A D3D11 game whose eyes are on two devices (the left eye on its first one, the right on a second), 10 frames: the
+// session follows the eye on the other device a few times (ending on the right eye's), and then the left is left out. No frame names a swapchain of a session
+// that's gone ("no_invalid_layers"), and the game isn't told to quit.
+void EyesOnTwoDevices(CaseContext& c)
+{
+	Scene s(c);
+	if (!s.Start(GfxKind::D3D11, "eyes on two devices"))
+		return;
+	vr::EVRInitError le = vr::VRInitError_None;
+	auto* sys = (vr::IVRSystem_022::IVRSystem*)c.core->GetGenericInterface("IVRSystem_022", &le);
+	std::string why;
+	std::unique_ptr<GfxApi> second = GfxApi::Create(GfxKind::D3D11, &why);
+	if (!second) {
+		c.Record("eyes on two devices", Skipped(why));
+		return;
+	}
+	GfxTexture left = s.gfx->Pattern(512, 512, kDxgiRGBA8Srgb, 0);
+	GfxTexture right = second->Pattern(512, 512, kDxgiRGBA8Srgb, 1);
+	s.gfx->Flush();
+	second->Flush();
+	Json::Value r;
+	bool quit = false;
+	for (int frame = 1; frame <= kFrames; frame++) {
+		s.Frames(1, left, right, kFull, kFull, r);
+		vr::VREvent_t ev{};
+		while (sys && sys->PollNextEvent(&ev, sizeof(ev)))
+			quit = quit || ev.eventType == vr::VREvent_Quit;
+	}
+	r["quit"] = quit;
+	c.core->Cleanup();
+	s.started = false;
+	second->Flush();
+	Json::Value dump = ReadStandInDump();
+	if (!dump.isNull()) {
+		bool clean = true;
+		for (const Json::Value& layer : dump["layers"]) {
+			clean = clean && layer["invalid"].empty();
+			for (const Json::Value& view : layer["views"])
+				clean = clean && view["invalid"].empty();
+		}
+		r["no_invalid_layers"] = clean;
+	}
+	c.Record("eyes on two devices", r);
 }
 
 // The pose a frame was rendered with and its depth: each eye's texture goes with a head pose 0.5 m to the left of the
@@ -797,6 +1000,13 @@ const std::map<std::string, CaseFn>& conformance::GfxCases()
 		{ "gfx-vk-formats", [](CaseContext& c) { Formats(c, GfxKind::Vulkan, { { "rgba16f", 97 }, { "r11g11b10f", 122 }, { "rgb10a2", 64 }, { "bgra8", 44 } }); } },
 		{ "gfx-gl-formats", [](CaseContext& c) { Formats(c, GfxKind::OpenGL, { { "rgba16f", 0x881A }, { "r11g11b10f", 0x8C3A }, { "rgb10a2", 0x8059 }, { "rgb8", 0x8051 } }); } },
 		{ "gfx-d3d11-odd", D3D11Odd },
+		{ "gfx-vk-odd", VkOdd },
+		{ "gfx-vk-dynamic-resolution", VkDynamicResolution },
+		{ "gfx-vk-msaa-formats", [](CaseContext& c) { Formats(c, GfxKind::Vulkan, { { "msaa bgra8", 44 } }, 4); } },
+		{ "gfx-d3d11-new-device", [](CaseContext& c) { NewDevice(c, GfxKind::D3D11, kDxgiRGBA8Srgb); } },
+		{ "gfx-d3d12-new-device", [](CaseContext& c) { NewDevice(c, GfxKind::D3D12, kDxgiRGBA8Srgb); } },
+		{ "gfx-vk-new-device", [](CaseContext& c) { NewDevice(c, GfxKind::Vulkan, kVkRGBA8Srgb); } },
+		{ "gfx-d3d11-eyes-two-devices", EyesOnTwoDevices },
 		{ "gfx-d3d11-pose-depth", [](CaseContext& c) { PoseDepth(c, GfxKind::D3D11, kDxgiRGBA8Srgb); } },
 		{ "gfx-d3d12-pose-depth", [](CaseContext& c) { PoseDepth(c, GfxKind::D3D12, kDxgiRGBA8Srgb); } },
 		{ "gfx-vk-pose-depth", [](CaseContext& c) { PoseDepth(c, GfxKind::Vulkan, kVkRGBA8Srgb); } },

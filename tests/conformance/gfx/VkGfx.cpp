@@ -1,7 +1,7 @@
 // Vulkan for the frame cases: an instance (Vulkan 1.1 where the loader has it), the first physical device and a device
-// with one graphics queue (and on Windows VK_KHR_external_memory_win32 where the driver has it, as a game that shares
-// images with D3D11 enables it), all through vulkan-1.dll (libvulkan.so.1) looked up at run time (oc_conformance starts
-// without it). Textures are filled from a staging buffer and left in VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, as OpenVR's
+// with a graphics queue, and a second one of its family where it has one (and on Windows VK_KHR_external_memory_win32
+// where the driver has it, as a game that shares images with D3D11 enables it), all through vulkan-1.dll
+// (libvulkan.so.1) looked up at run time (oc_conformance starts without it). Textures are filled from a staging buffer and left in VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, as OpenVR's
 // Vulkan games submit them.
 
 #include "GfxApi.h"
@@ -52,6 +52,10 @@ public:
 	VkPhysicalDevice physical = VK_NULL_HANDLE;
 	VkDevice device = VK_NULL_HANDLE;
 	VkQueue queue = VK_NULL_HANDLE;
+	// The family's second queue where it has one (UseOtherQueue)
+	VkQueue otherQueue = VK_NULL_HANDLE;
+	// The queue textures are filled on and submitted with
+	VkQueue current = VK_NULL_HANDLE;
 	uint32_t family = 0;
 	VkPhysicalDeviceMemoryProperties memProps{};
 	struct Made {
@@ -129,11 +133,11 @@ public:
 			*whyNot = "no Vulkan graphics queue";
 			return false;
 		}
-		float priority = 1;
+		const float priorities[2] = { 1, 1 };
 		VkDeviceQueueCreateInfo qci{ VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
 		qci.queueFamilyIndex = family;
-		qci.queueCount = 1;
-		qci.pQueuePriorities = &priority;
+		qci.queueCount = props[family].queueCount >= 2 ? 2 : 1;
+		qci.pQueuePriorities = priorities;
 		VkDeviceCreateInfo dci{ VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
 		dci.queueCreateInfoCount = 1;
 		dci.pQueueCreateInfos = &qci;
@@ -162,6 +166,9 @@ public:
 		}
 		gdpa = I<PFN_vkGetDeviceProcAddr>("vkGetDeviceProcAddr");
 		D<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(device, family, 0, &queue);
+		if (qci.queueCount >= 2)
+			D<PFN_vkGetDeviceQueue>("vkGetDeviceQueue")(device, family, 1, &otherQueue);
+		current = queue;
 		I<PFN_vkGetPhysicalDeviceMemoryProperties>("vkGetPhysicalDeviceMemoryProperties")(physical, &memProps);
 		return true;
 	}
@@ -196,7 +203,7 @@ public:
 			VkSubmitInfo si{ VK_STRUCTURE_TYPE_SUBMIT_INFO };
 			si.commandBufferCount = 1;
 			si.pCommandBuffers = &cb;
-			ok = D<PFN_vkQueueSubmit>("vkQueueSubmit")(queue, 1, &si, VK_NULL_HANDLE) == VK_SUCCESS;
+			ok = D<PFN_vkQueueSubmit>("vkQueueSubmit")(current, 1, &si, VK_NULL_HANDLE) == VK_SUCCESS;
 			Flush();
 		}
 		D<PFN_vkDestroyCommandPool>("vkDestroyCommandPool")(device, pool, nullptr);
@@ -218,7 +225,7 @@ public:
 	}
 
 	// An image with its own memory, kept until the GfxApi goes
-	VkImage MakeImage(VkFormat format, uint32_t w, uint32_t h, uint32_t layers, VkImageUsageFlags usage)
+	VkImage MakeImage(VkFormat format, uint32_t w, uint32_t h, uint32_t layers, VkImageUsageFlags usage, uint32_t samples = 1)
 	{
 		VkImageCreateInfo ici{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
 		ici.imageType = VK_IMAGE_TYPE_2D;
@@ -226,7 +233,7 @@ public:
 		ici.extent = { w, h, 1 };
 		ici.mipLevels = 1;
 		ici.arrayLayers = layers;
-		ici.samples = VK_SAMPLE_COUNT_1_BIT;
+		ici.samples = (VkSampleCountFlagBits)samples;
 		ici.tiling = VK_IMAGE_TILING_OPTIMAL;
 		ici.usage = usage;
 		ici.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
@@ -260,7 +267,7 @@ public:
 		g.vk.m_pDevice = (VkDevice_T*)device;
 		g.vk.m_pPhysicalDevice = (VkPhysicalDevice_T*)physical;
 		g.vk.m_pInstance = (VkInstance_T*)instance;
-		g.vk.m_pQueue = (VkQueue_T*)queue;
+		g.vk.m_pQueue = (VkQueue_T*)current;
 		g.vk.m_nQueueFamilyIndex = family;
 		g.vk.m_nWidth = w;
 		g.vk.m_nHeight = h;
@@ -275,8 +282,10 @@ public:
 	{
 		gfx::Texels texels = TexelsOfVk(nativeFormat);
 		auto format = (VkFormat)nativeFormat;
-		if (texels == gfx::Texels::Unknown || !w || !h || samples > 1)
-			return Wrap(VK_NULL_HANDLE, format, w, h, samples); // multisampled patterns: D3D11 only for now
+		if (texels == gfx::Texels::Unknown || !w || !h)
+			return Wrap(VK_NULL_HANDLE, format, w, h, samples);
+		if (samples > 1)
+			return Multisampled(w, h, format, eye, samples);
 		arraySize = arraySize ? arraySize : 1;
 		VkImage image = MakeImage(format, w, h, arraySize,
 		    VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT);
@@ -350,10 +359,118 @@ public:
 		return Wrap(ok ? image : VK_NULL_HANDLE, VK_FORMAT_D32_SFLOAT, w, h, 1);
 	}
 
+	// A multisampled pattern: the quadrants alone (no grey block), each cleared in a render pass, as a game's renders
+	// leave a multisampled image (every sample of a texel the same). Left in TRANSFER_SRC_OPTIMAL.
+	GfxTexture Multisampled(uint32_t w, uint32_t h, VkFormat format, int eye, uint32_t samples)
+	{
+		VkImage image = MakeImage(format, w, h, 1, VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, samples);
+		if (!image)
+			return Wrap(VK_NULL_HANDLE, format, w, h, samples);
+		VkAttachmentDescription attachment{};
+		attachment.format = format;
+		attachment.samples = (VkSampleCountFlagBits)samples;
+		attachment.loadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		attachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+		attachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+		attachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+		attachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+		attachment.finalLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+		VkAttachmentReference ref{ 0, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL };
+		VkSubpassDescription subpass{};
+		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+		subpass.colorAttachmentCount = 1;
+		subpass.pColorAttachments = &ref;
+		// The pass's writes are over before a later transfer reads the image
+		VkSubpassDependency after{};
+		after.srcSubpass = 0;
+		after.dstSubpass = VK_SUBPASS_EXTERNAL;
+		after.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		after.dstStageMask = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		after.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		after.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+		VkRenderPassCreateInfo rpci{ VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO };
+		rpci.attachmentCount = 1;
+		rpci.pAttachments = &attachment;
+		rpci.subpassCount = 1;
+		rpci.pSubpasses = &subpass;
+		rpci.dependencyCount = 1;
+		rpci.pDependencies = &after;
+		VkRenderPass pass = VK_NULL_HANDLE;
+		VkImageView view = VK_NULL_HANDLE;
+		VkFramebuffer framebuffer = VK_NULL_HANDLE;
+		bool ok = D<PFN_vkCreateRenderPass>("vkCreateRenderPass")(device, &rpci, nullptr, &pass) == VK_SUCCESS;
+		if (ok) {
+			VkImageViewCreateInfo vci{ VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
+			vci.image = image;
+			vci.viewType = VK_IMAGE_VIEW_TYPE_2D;
+			vci.format = format;
+			vci.subresourceRange = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+			ok = D<PFN_vkCreateImageView>("vkCreateImageView")(device, &vci, nullptr, &view) == VK_SUCCESS;
+		}
+		if (ok) {
+			VkFramebufferCreateInfo fci{ VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO };
+			fci.renderPass = pass;
+			fci.attachmentCount = 1;
+			fci.pAttachments = &view;
+			fci.width = w;
+			fci.height = h;
+			fci.layers = 1;
+			ok = D<PFN_vkCreateFramebuffer>("vkCreateFramebuffer")(device, &fci, nullptr, &framebuffer) == VK_SUCCESS;
+		}
+		if (ok) {
+			ok = Run([&](VkCommandBuffer cb) {
+				VkRenderPassBeginInfo bi{ VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO };
+				bi.renderPass = pass;
+				bi.framebuffer = framebuffer;
+				bi.renderArea = { { 0, 0 }, { w, h } };
+				D<PFN_vkCmdBeginRenderPass>("vkCmdBeginRenderPass")(cb, &bi, VK_SUBPASS_CONTENTS_INLINE);
+				const uint32_t halfW = w / 2, halfH = h / 2;
+				const VkRect2D quadrants[4] = {
+					{ { 0, 0 }, { halfW, halfH } },
+					{ { (int32_t)halfW, 0 }, { w - halfW, halfH } },
+					{ { 0, (int32_t)halfH }, { halfW, h - halfH } },
+					{ { (int32_t)halfW, (int32_t)halfH }, { w - halfW, h - halfH } },
+				};
+				// Each quadrant's colour, from its outer corner (away from the grey block)
+				const uint32_t corners[4][2] = { { 0, 0 }, { w - 1, 0 }, { 0, h - 1 }, { w - 1, h - 1 } };
+				for (int i = 0; i < 4; i++) {
+					const VkRect2D& q = quadrants[i];
+					// The quadrants' colours are 0 and 255 in each channel: the same in sRGB and linear
+					uint32_t c = gfx::PatternColour(corners[i][0], corners[i][1], w, h, eye);
+					VkClearAttachment clear{};
+					clear.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+					clear.colorAttachment = 0;
+					clear.clearValue.color = { { (c >> 24) / 255.0f, ((c >> 16) & 0xff) / 255.0f, ((c >> 8) & 0xff) / 255.0f, (c & 0xff) / 255.0f } };
+					VkClearRect rect{ q, 0, 1 };
+					D<PFN_vkCmdClearAttachments>("vkCmdClearAttachments")(cb, 1, &clear, 1, &rect);
+				}
+				D<PFN_vkCmdEndRenderPass>("vkCmdEndRenderPass")(cb);
+			});
+		}
+		if (framebuffer)
+			D<PFN_vkDestroyFramebuffer>("vkDestroyFramebuffer")(device, framebuffer, nullptr);
+		if (view)
+			D<PFN_vkDestroyImageView>("vkDestroyImageView")(device, view, nullptr);
+		if (pass)
+			D<PFN_vkDestroyRenderPass>("vkDestroyRenderPass")(device, pass, nullptr);
+		return Wrap(ok ? image : VK_NULL_HANDLE, format, w, h, samples);
+	}
+
+	bool UseOtherQueue() override
+	{
+		if (!otherQueue)
+			return false;
+		Flush();
+		current = otherQueue;
+		return true;
+	}
+
 	void Flush() override
 	{
 		if (queue)
 			D<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(queue);
+		if (otherQueue)
+			D<PFN_vkQueueWaitIdle>("vkQueueWaitIdle")(otherQueue);
 	}
 };
 

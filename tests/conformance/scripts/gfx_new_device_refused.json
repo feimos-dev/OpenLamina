@@ -1,0 +1,5 @@
+{
+ "#": "The new-device cases (gfx-*-new-device) under a runtime that refuses the session for the game's new device (the third xrCreateSession, after OpenLamina's temporary one and the one for the game's first device)",
+ "extensions": ["XR_KHR_D3D11_enable", "XR_KHR_D3D12_enable", "XR_KHR_vulkan_enable", "XR_KHR_vulkan_enable2", "XR_KHR_opengl_enable"],
+ "fail": [{ "function": "xrCreateSession", "result": "XR_ERROR_GRAPHICS_DEVICE_INVALID", "after": 2, "count": 1 }]
+}

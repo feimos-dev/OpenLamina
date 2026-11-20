@@ -1,0 +1,6 @@
+{
+ "#": "The odd Vulkan cases (gfx-vk-odd, gfx-vk-dynamic-resolution, gfx-vk-msaa-formats): every graphics API, single-sampled swapchains only (maxSwapchainSampleCount 1), so multisampled textures are resolved into them, and one swapchain format, RGBA8 sRGB, in each API's enum, so other formats are converted into it",
+ "extensions": ["XR_KHR_D3D11_enable", "XR_KHR_D3D12_enable", "XR_KHR_vulkan_enable", "XR_KHR_vulkan_enable2", "XR_KHR_opengl_enable"],
+ "max_swapchain_samples": 1,
+ "swapchain_formats": [29, 43, 35907]
+}
