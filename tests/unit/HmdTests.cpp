@@ -476,3 +476,16 @@ TEST_CASE("Without a runtime the display's rates are unknown")
 	CHECK_FALSE(hmd.GetBoolTrackedDeviceProperty(vr::Prop_DisplaySupportsMultipleFramerates_Bool, &err));
 	CHECK(err == vr::TrackedProp_Success);
 }
+
+TEST_CASE("Standing poses use the stage, else the local floor where the runtime has it, else the local space")
+{
+	const std::vector<XrReferenceSpaceType> withFloor = XrSessionGlobals::StandingSpaceTypes(true);
+	REQUIRE(withFloor.size() == 3);
+	CHECK(withFloor[0] == XR_REFERENCE_SPACE_TYPE_STAGE);
+	CHECK(withFloor[1] == OC_XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR);
+	CHECK(withFloor[2] == XR_REFERENCE_SPACE_TYPE_LOCAL);
+	const std::vector<XrReferenceSpaceType> without = XrSessionGlobals::StandingSpaceTypes(false);
+	REQUIRE(without.size() == 2);
+	CHECK(without[0] == XR_REFERENCE_SPACE_TYPE_STAGE);
+	CHECK(without[1] == XR_REFERENCE_SPACE_TYPE_LOCAL);
+}

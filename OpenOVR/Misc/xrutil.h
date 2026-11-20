@@ -58,6 +58,10 @@ public:
 	// seatedSpace's pose in LOCAL: identity until ResetSeatedZeroPose moves it
 	XrPosef seatedPose = { { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
 	XrSpace viewSpace = XR_NULL_HANDLE;
+	// The reference space floorSpace was made from (StandingSpaceTypes); XR_REFERENCE_SPACE_TYPE_MAX_ENUM if none
+	XrReferenceSpaceType floorSpaceType = XR_REFERENCE_SPACE_TYPE_MAX_ENUM;
+	// The reference spaces the standing space is made from, in the order they're tried
+	static std::vector<XrReferenceSpaceType> StandingSpaceTypes(bool localFloor);
 
 	XrSystemProperties systemProperties = { XR_TYPE_SYSTEM_PROPERTIES };
 	XrSystemHandTrackingPropertiesEXT handTrackingProperties = { XR_TYPE_SYSTEM_HAND_TRACKING_PROPERTIES_EXT };

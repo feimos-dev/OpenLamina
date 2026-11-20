@@ -11,6 +11,7 @@
 #include "xr_ext.h"
 
 XrInstance xr_instance = XR_NULL_HANDLE;
+XrVersion xr_instance_version = 0;
 // Never destroyed: the backend's static destructor takes its lock when a game exits without VR_Shutdown
 SessionWrapper& xr_session = *new SessionWrapper();
 XrSystemId xr_system = XR_NULL_SYSTEM_ID;
@@ -70,6 +71,8 @@ XrExt::XrExt(XrGraphicsApiSupportedFlags apis, const std::vector<const char*>& e
 			refreshRate = true;
 		if (strcmp(ext, OC_XR_EXT_USER_PRESENCE_EXTENSION_NAME) == 0)
 			supportsUserPresence = true;
+		if (strcmp(ext, OC_XR_EXT_LOCAL_FLOOR_EXTENSION_NAME) == 0)
+			supportsLocalFloor = true;
 	}
 
 #define XR_BIND(name, function) OOVR_FAILED_XR_ABORT(xrGetInstanceProcAddr(xr_instance, #name, (PFN_xrVoidFunction*)&this->function))
@@ -166,12 +169,20 @@ XrSessionGlobals::XrSessionGlobals()
 	OC_XR_LOG(xrCreateReferenceSpace(xr_session.get(), &spaceInfo, &seatedSpace));
 	spaceInfo.poseInReferenceSpace = { { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
 
-	spaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_STAGE;
-	if (XR_FAILED(xrCreateReferenceSpace(xr_session.get(), &spaceInfo, &floorSpace))) {
-		OOVR_LOG("No stage space from the runtime: standing poses use the local space");
-		spaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
-		OC_XR_LOG(xrCreateReferenceSpace(xr_session.get(), &spaceInfo, &floorSpace));
+	// The standing space: the stage; without one, the local space at the floor's height where the runtime has it, else
+	// the local space
+	for (XrReferenceSpaceType type : StandingSpaceTypes(xr_ext && xr_ext->LocalFloor_Available())) {
+		spaceInfo.referenceSpaceType = type;
+		if (XR_SUCCEEDED(xrCreateReferenceSpace(xr_session.get(), &spaceInfo, &floorSpace))) {
+			floorSpaceType = type;
+			break;
+		}
+		floorSpace = XR_NULL_HANDLE;
 	}
+	if (floorSpaceType == OC_XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR)
+		OOVR_LOG("No stage space from the runtime: standing poses use the local floor space");
+	else if (floorSpaceType != XR_REFERENCE_SPACE_TYPE_STAGE)
+		OOVR_LOG("No stage space from the runtime: standing poses use the local space");
 
 	spaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
 	OC_XR_LOG(xrCreateReferenceSpace(xr_session.get(), &spaceInfo, &viewSpace));
@@ -196,6 +207,13 @@ XrSessionGlobals::XrSessionGlobals()
 	}
 	if (xr_ext->EyeGaze_Available())
 		OOVR_LOGF("Eye gaze: %s", eyeGazeProperties.supportsEyeGazeInteraction ? "available" : "not available on this system");
+}
+
+std::vector<XrReferenceSpaceType> XrSessionGlobals::StandingSpaceTypes(bool localFloor)
+{
+	if (localFloor)
+		return { XR_REFERENCE_SPACE_TYPE_STAGE, OC_XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR, XR_REFERENCE_SPACE_TYPE_LOCAL };
+	return { XR_REFERENCE_SPACE_TYPE_STAGE, XR_REFERENCE_SPACE_TYPE_LOCAL };
 }
 
 XrTime XrSessionGlobals::GetBestTime()

@@ -1905,9 +1905,6 @@ static void PostPresenceChange(bool present)
 	    VREvent_Data_t{}, false);
 }
 
-// XR_EXT_local_floor's reference space type, which the bundled headers predate
-static const XrReferenceSpaceType kReferenceSpaceLocalFloor = (XrReferenceSpaceType)1000426000;
-
 // A device's role (which controller is the left hand, say) changed: no device in particular
 static void PostRoleChange()
 {
@@ -1979,7 +1976,7 @@ void XrBackend::PumpEvents()
 				continue;
 			switch ((int)change->referenceSpaceType) {
 			case (int)XR_REFERENCE_SPACE_TYPE_STAGE:
-			case (int)kReferenceSpaceLocalFloor:
+			case (int)OC_XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR:
 				OcPostEvent(VREvent_StandingZeroPoseReset, k_unTrackedDeviceIndex_Hmd, VREvent_Data_t{}, false);
 				OcPostEvent(VREvent_ChaperoneUniverseHasChanged, k_unTrackedDeviceIndexInvalid, VREvent_Data_t{}, false);
 				break;

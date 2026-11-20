@@ -285,6 +285,9 @@ InstancePlan PlanInstance(const std::set<std::string>& available, SessionKind ki
 		else
 			OOVR_LOGF("The OpenXR runtime has no %s: a background application's poses are located at its session's last state change", clock);
 	}
+	// The local space at the floor's height, for standing poses where the runtime has no stage
+	if (available.contains(OC_XR_EXT_LOCAL_FLOOR_EXTENSION_NAME))
+		plan.extensions.push_back(OC_XR_EXT_LOCAL_FLOOR_EXTENSION_NAME);
 	// The headset's proximity sensor
 	if (available.contains(OC_XR_EXT_USER_PRESENCE_EXTENSION_NAME))
 		plan.extensions.push_back(OC_XR_EXT_USER_PRESENCE_EXTENSION_NAME);
@@ -293,7 +296,7 @@ InstancePlan PlanInstance(const std::set<std::string>& available, SessionKind ki
 }
 
 // Makes the instance for a plan, at the newest OpenXR version the loader and runtime take
-XrResult MakeInstance(const InstancePlan& plan, XrInstance* instance)
+XrResult MakeInstance(const InstancePlan& plan, XrInstance* instance, XrVersion* version)
 {
 	XrApplicationInfo appInfo{};
 	DrvOpenXR::GetXRAppName(appInfo.applicationName);
@@ -338,16 +341,16 @@ XrResult MakeInstance(const InstancePlan& plan, XrInstance* instance)
 	createInfo.next = &androidInfo;
 #endif
 
-	XrVersion version = 0;
-	XrResult res = DrvOpenXR::CreateInstanceNewestVersion(createInfo, instance, &version, xrCreateInstance);
+	XrResult res = DrvOpenXR::CreateInstanceNewestVersion(createInfo, instance, version, xrCreateInstance);
 	if (XR_SUCCEEDED(res))
-		OOVR_LOGF("Created the OpenXR instance for OpenXR %d.%d", (int)XR_VERSION_MAJOR(version), (int)XR_VERSION_MINOR(version));
+		OOVR_LOGF("Created the OpenXR instance for OpenXR %d.%d", (int)XR_VERSION_MAJOR(*version), (int)XR_VERSION_MINOR(*version));
 	return res;
 }
 
 // The instance VR_IsHmdPresent made, with the extensions it was made with, for the scene application's session
 std::mutex probeLock;
 XrInstance probedInstance = XR_NULL_HANDLE;
+XrVersion probedVersion = 0;
 std::vector<std::string> probedExtensions;
 
 std::vector<std::string> ExtensionNames(const InstancePlan& plan)
@@ -356,10 +359,11 @@ std::vector<std::string> ExtensionNames(const InstancePlan& plan)
 }
 
 // The probe's instance where it was made with the plan's extensions; otherwise none, and the probe's is destroyed
-XrInstance TakeProbedInstance(const InstancePlan& plan)
+XrInstance TakeProbedInstance(const InstancePlan& plan, XrVersion* version)
 {
 	std::lock_guard<std::mutex> lock(probeLock);
 	XrInstance taken = probedInstance;
+	*version = probedVersion;
 	probedInstance = XR_NULL_HANDLE;
 	if (taken && probedExtensions != ExtensionNames(plan)) {
 		OOVR_LOG("The OpenXR instance VR_IsHmdPresent made has other extensions: making another");
@@ -416,12 +420,14 @@ bool DrvOpenXR::ProbeForHmd()
 	// As a scene application's: the session that follows takes this instance rather than making a second one
 	const InstancePlan plan = PlanInstance(available, SessionKind::Scene);
 	XrInstance instance = XR_NULL_HANDLE;
-	if (XR_FAILED(MakeInstance(plan, &instance)))
+	XrVersion version = 0;
+	if (XR_FAILED(MakeInstance(plan, &instance, &version)))
 		return false;
 
 	XrResult res = xrGetSystem(instance, &systemInfo, &id);
 	if (res == XR_SUCCESS) {
 		probedInstance = instance;
+		probedVersion = version;
 		probedExtensions = ExtensionNames(plan);
 		return true;
 	}
@@ -508,9 +514,9 @@ IBackend* DrvOpenXR::CreateOpenXRBackend(const char* startupInfo, vr::EVRInitErr
 	const InstancePlan plan = PlanInstance(availableExtensions, choice.kind);
 	const std::vector<const char*>& extensions = plan.extensions;
 	const XrGraphicsApiSupportedFlags apiFlags = plan.apiFlags;
-	xr_instance = TakeProbedInstance(plan);
+	xr_instance = TakeProbedInstance(plan, &xr_instance_version);
 	if (!xr_instance) {
-		if (XrResult res = MakeInstance(plan, &xr_instance); XR_FAILED(res)) {
+		if (XrResult res = MakeInstance(plan, &xr_instance, &xr_instance_version); XR_FAILED(res)) {
 			OOVR_LOGF("WARNING: Instance creation failed: XrResult %d", res);
 			if (res == XR_ERROR_RUNTIME_FAILURE) {
 				OOVR_LOGF("Is your OpenXR runtime running?");
