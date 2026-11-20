@@ -704,8 +704,10 @@ uint64_t XrHMD::GetUint64TrackedDeviceProperty(vr::ETrackedDeviceProperty prop, 
 	return XrTrackedDevice::GetUint64TrackedDeviceProperty(prop, pErrorL);
 }
 
-void XrHMD::SetInteractionProfile(const InteractionProfile* profile)
+bool XrHMD::SetInteractionProfile(const InteractionProfile* profile)
 {
 	std::unique_lock lock(profile_mutex);
+	const bool changed = this->profile != profile;
 	this->profile = profile;
+	return changed;
 }

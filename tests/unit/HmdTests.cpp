@@ -489,3 +489,15 @@ TEST_CASE("Standing poses use the stage, else the local floor where the runtime 
 	CHECK(without[0] == XR_REFERENCE_SPACE_TYPE_STAGE);
 	CHECK(without[1] == XR_REFERENCE_SPACE_TYPE_LOCAL);
 }
+
+#include "Misc/Input/KhrSimpleInteractionProfile.h"
+
+TEST_CASE("The headset tells whether its controllers' profile changed")
+{
+	XrHMD hmd;
+	KhrSimpleInteractionProfile first, second;
+	CHECK(hmd.SetInteractionProfile(&first));
+	CHECK_FALSE(hmd.SetInteractionProfile(&first));
+	CHECK(hmd.SetInteractionProfile(&second));
+	CHECK(hmd.SetInteractionProfile(nullptr));
+}

@@ -2710,6 +2710,8 @@ void XrBackend::UpdateInteractionProfile()
 	};
 
 	bool hmdProfileSet = false;
+	// The headset's properties (from the controllers' profile) changed: the game is told once
+	bool hmdUpdated = false;
 	for (hand_info& info : hands) {
 		XrInteractionProfileState state{ XR_TYPE_INTERACTION_PROFILE_STATE };
 		XrPath path = XR_NULL_PATH;
@@ -2727,7 +2729,7 @@ void XrBackend::UpdateInteractionProfile()
 				if (profile->GetPath() == path_name) {
 					// The first hand with a known profile decides the headset's identity
 					if (!hmdProfileSet) {
-						hmd->SetInteractionProfile(profile.get());
+						hmdUpdated |= hmd->SetInteractionProfile(profile.get());
 						hmdProfileSet = true;
 					}
 					std::shared_ptr<XrController> current = Hand(info.hand);
@@ -2754,11 +2756,7 @@ void XrBackend::UpdateInteractionProfile()
 							.trackedDeviceIndex = (TrackedDeviceIndex_t)info.hand + 1
 						};
 						system->_EnqueueEvent(event);
-						event = {
-							.eventType = VREvent_TrackedDeviceUpdated,
-							.trackedDeviceIndex = 0
-						};
-						system->_EnqueueEvent(event);
+						hmdUpdated = true;
 					}
 					if (handAppeared)
 						PostRoleChange();
@@ -2787,6 +2785,16 @@ void XrBackend::UpdateInteractionProfile()
 				}
 				PostRoleChange();
 			}
+		}
+	}
+
+	if (hmdUpdated) {
+		if (BaseSystem* system = GetUnsafeBaseSystem()) {
+			VREvent_t event = {
+				.eventType = VREvent_TrackedDeviceUpdated,
+				.trackedDeviceIndex = k_unTrackedDeviceIndex_Hmd
+			};
+			system->_EnqueueEvent(event);
 		}
 	}
 

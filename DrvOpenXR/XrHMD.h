@@ -142,7 +142,8 @@ public:
 	/** Of rates, the one nearest to wanted; 0 if there are none or nothing is wanted */
 	static float NearestRate(const std::vector<float>& rates, float wanted);
 
-	void SetInteractionProfile(const InteractionProfile* profile);
+	/** The profile the headset's properties come from (the controllers'); whether it changed */
+	bool SetInteractionProfile(const InteractionProfile* profile);
 };
 
 #ifdef _MSC_VER
