@@ -386,6 +386,9 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 	if (!usingApplicationGraphicsAPI) {
 		if (appGraphicsUnusable)
 			return false; // tried once already: the session stays on the temporary device
+		// Not while the session is lost: the first Submit after it's made again moves it to the game's device
+		if (sessionLost && !quitting)
+			return false;
 
 		// What can be checked before the session goes down is checked here, so a texture that can't be used
 		// leaves the running session alone
@@ -2354,8 +2357,8 @@ void XrBackend::PumpEvents()
 	// Not while a session is being ended (ShutdownSession pumps events while it waits, maybe under the input restart)
 	BaseInput* input = GetUnsafeBaseInput();
 	// Not before the game's device is known (InputsMayAttach): another session restart for it would follow
-	if (input && !exitExpected && InputsMayAttach() && !input->AreActionsLoaded() && sessionState == XR_SESSION_STATE_FOCUSED && !Hand(XrController::XCT_LEFT)
-	    && !Hand(XrController::XCT_RIGHT)) {
+	if (input && !exitExpected && !input->AreActionsLoaded() && sessionState == XR_SESSION_STATE_FOCUSED && !Hand(XrController::XCT_LEFT)
+	    && !Hand(XrController::XCT_RIGHT) && InputsMayAttach()) {
 		QueryForInteractionProfile();
 	}
 }
@@ -2682,6 +2685,7 @@ void XrBackend::StartHelperLoop()
 				    ScopeGuard done([] { recoveringInHelperLoop = false; });
 				    RecoverLostSession(&helperPassLock);
 			    }
+			    std::lock_guard<std::mutex> pass(helperPassLock);
 			    PumpEvents();
 			    return 0;
 		    }
