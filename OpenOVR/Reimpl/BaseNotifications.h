@@ -35,5 +35,6 @@ private:
 
 	std::mutex mutex;
 	uint32_t nextId = 1;
+	static constexpr size_t kMaxLive = 256;
 	std::map<uint32_t, Live> live;
 };

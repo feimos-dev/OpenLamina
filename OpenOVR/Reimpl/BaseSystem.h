@@ -3,10 +3,10 @@
 #include "custom_types.h"
 #include "generated/interfaces/IVRSystem_017.h"
 #include "openxr/openxr.h"
-#include <memory>
-#include <queue>
 #include <atomic>
+#include <memory>
 #include <mutex>
+#include <queue>
 
 class BaseSystem {
 	// Copied from IVRSystem, because MSVC made me.

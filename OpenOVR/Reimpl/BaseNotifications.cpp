@@ -38,6 +38,9 @@ vr::EVRNotificationError BaseNotifications::Add(OOVR_EVRNotificationType type, u
 				return vr::VRNotificationError_SystemWithUserValueAlreadyExists;
 		}
 	}
+	// A game that never removes its notifications doesn't grow the table without end: the oldest goes
+	if (live.size() >= kMaxLive)
+		live.erase(live.begin());
 	// 0 is the invalid id, so skip it if the counter wraps
 	uint32_t next = nextId++;
 	if (next == 0)
