@@ -60,7 +60,7 @@ TemporaryVk::TemporaryVk()
 
 	// Create a Vulkan instance that the runtime will find suitable
 	VkApplicationInfo appInfo{ VK_STRUCTURE_TYPE_APPLICATION_INFO };
-	appInfo.apiVersion = (std::max)((uint32_t)VK_API_VERSION_1_0, VK_MAKE_VERSION((uint32_t)XR_VERSION_MAJOR(req.minApiVersionSupported), (uint32_t)XR_VERSION_MINOR(req.minApiVersionSupported), 0));
+	appInfo.apiVersion = TemporaryVkApiVersion(loaderVersion, req.minApiVersionSupported, req.maxApiVersionSupported);
 	VkInstanceCreateInfo createInfo{ VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
 	createInfo.pApplicationInfo = &appInfo;
 
@@ -134,22 +134,24 @@ TemporaryVk::TemporaryVk()
 	auto addIfAvailable = [&](const char* name) {
 		for (const char* enabled : deviceExtensionsCstr) {
 			if (strcmp(enabled, name) == 0)
-				return; // the runtime asked for it already
+				return true; // the runtime asked for it already
 		}
 		for (const VkExtensionProperties& ext : available) {
 			if (strcmp(ext.extensionName, name) == 0) {
 				deviceExtensionsCstr.push_back(name);
-				return;
+				return true;
 			}
 		}
 		OOVR_LOGF("Device extension %s isn't available; continuing without it", name);
+		return false;
 	};
 	addIfAvailable(VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME);
 #ifdef _WIN32
 	// Don't import vulkan_win32 just for this constant, so hardcode the string
 	addIfAvailable(VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME);
 #else
-	addIfAvailable(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+	// An overlay application's textures are shared with this device by file descriptor (OverlayTextureShare)
+	externalMemoryFd = addIfAvailable(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) && appInfo.apiVersion >= VK_API_VERSION_1_1;
 #endif
 
 	devCreateInfo.enabledExtensionCount = deviceExtensionsCstr.size();

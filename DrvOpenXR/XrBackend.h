@@ -142,6 +142,17 @@ public:
 	std::shared_ptr<Compositor> MakeOverlayCompositor(ID3D11Texture2D* copy);
 
 	/**
+	 * Where the overlay session's device is Vulkan (Linux): an overlay application's Vulkan or OpenGL texture copied
+	 * into an image of that device that shares its memory with the program's device or context (OverlayTextureShare),
+	 * as a Vulkan texture of the session's device; flipY if its rows run bottom-up. nullptr, with why, if it can't be:
+	 * the texture is read back instead. ReleaseSharedOverlayTexture once the session's copy from it is submitted.
+	 */
+	const vr::VRVulkanTextureData_t* ShareOverlayTexture(const vr::Texture_t* texture, const void* owner, bool* flipY, std::string* why);
+	void ReleaseSharedOverlayTexture(const void* owner);
+	/** A compositor for a texture of the session's own device (ShareOverlayTexture's) */
+	std::shared_ptr<Compositor> MakeSessionOverlayCompositor(const vr::Texture_t* texture);
+
+	/**
 	 * Whether the thread running OpenLamina's frames fills the swapchains drawn from memory (and the pointer's): in an
 	 * overlay application, whose session is on OpenLamina's own device. In a game, the game's thread does, as it uses the
 	 * session's device itself.
@@ -308,6 +319,9 @@ private:
 	std::atomic<bool> usingApplicationGraphicsAPI{ false };
 	// An overlay application's textures, copied onto its session's device
 	std::unique_ptr<class OverlayTextureCopy> overlayCopy;
+#if defined(SUPPORT_VK) && !defined(_WIN32)
+	std::unique_ptr<class OverlayTextureShare> overlayShare;
+#endif
 
 	// A helper program's frame loop (overlay sessions) or event loop (headless ones), made with each session
 	void StartHelperLoop();

@@ -6,6 +6,7 @@
 #include "CpuSwapchain.h"
 #include "HelperSession.h"
 #include "OverlayTextureCopy.h"
+#include "OverlayTextureShare.h"
 #include "XrGenericTracker.h"
 #include "generated/interfaces/vrtypes.h"
 
@@ -61,6 +62,7 @@
 #include "tmp_gfx/TemporaryGraphics.h"
 
 #if defined(SUPPORT_VK)
+#include "../OpenOVR/Compositor/vkcompositor.h"
 #include "tmp_gfx/TemporaryVk.h"
 #endif
 
@@ -158,7 +160,10 @@ XrBackend::~XrBackend()
 	graphicsBinding = nullptr;
 
 	// This must happen after session destruction (which occurs in FullShutdown), as runtimes (namely Monado)
-	// may try to access these resources while destroying the session.
+	// may try to access these resources while destroying the session. What was shared with the device goes first.
+#if defined(SUPPORT_VK) && !defined(_WIN32)
+	overlayShare.reset();
+#endif
 	temporaryGraphics.reset();
 	gfxInterop.reset();
 #if defined(SUPPORT_DX) && defined(SUPPORT_DX10) && defined(SUPPORT_DX11)
@@ -2458,6 +2463,13 @@ bool XrBackend::EnsureOverlaySession()
 	if (binding->type == XR_TYPE_GRAPHICS_BINDING_D3D11_KHR && !overlayCopy)
 		overlayCopy = std::make_unique<OverlayTextureCopy>(((const XrGraphicsBindingD3D11KHR*)binding)->device);
 #endif
+#if defined(SUPPORT_VK) && !defined(_WIN32)
+	// The program's Vulkan and OpenGL textures are shared with the device where they can be (on its GPU)
+	TemporaryVk* vk = temporaryGraphics ? temporaryGraphics->GetAsVk() : nullptr;
+	if (binding->type == XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR && vk && vk->externalMemoryFd && !overlayShare)
+		overlayShare = std::make_unique<OverlayTextureShare>(vk->instance, vk->physicalDevice, vk->device,
+		    ((const XrGraphicsBindingVulkanKHR*)binding)->queueFamilyIndex, vk->queue);
+#endif
 	return true;
 }
 
@@ -2465,6 +2477,39 @@ void XrBackend::ForgetOverlayTextures(const void* owner)
 {
 	if (overlayCopy)
 		overlayCopy->Forget(owner);
+#if defined(SUPPORT_VK) && !defined(_WIN32)
+	if (overlayShare)
+		overlayShare->Forget(owner);
+#endif
+}
+
+const vr::VRVulkanTextureData_t* XrBackend::ShareOverlayTexture(const vr::Texture_t* texture, const void* owner, bool* flipY, std::string* why)
+{
+#if defined(SUPPORT_VK) && !defined(_WIN32)
+	if (overlayShare)
+		return overlayShare->CopyIn(texture, owner, flipY, why);
+#endif
+	*flipY = false;
+	if (why)
+		*why = "the overlay session's device can't share images with the program";
+	return nullptr;
+}
+
+void XrBackend::ReleaseSharedOverlayTexture(const void* owner)
+{
+#if defined(SUPPORT_VK) && !defined(_WIN32)
+	if (overlayShare)
+		overlayShare->Release(owner);
+#endif
+}
+
+std::shared_ptr<Compositor> XrBackend::MakeSessionOverlayCompositor(const vr::Texture_t* texture)
+{
+#ifdef SUPPORT_VK
+	if (texture && texture->eType == vr::TextureType_Vulkan)
+		return std::make_shared<VkCompositor>(texture);
+#endif
+	return nullptr;
 }
 
 ID3D11Texture2D* XrBackend::CopyOverlayTexture(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, std::string* why, const void* owner)

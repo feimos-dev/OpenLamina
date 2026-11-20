@@ -1,10 +1,12 @@
 // Vulkan for the frame cases: an instance (Vulkan 1.1 where the loader has it), the first physical device and a device
-// with one graphics queue (and on Windows VK_KHR_external_memory_win32 where the driver has it, as a game that shares
-// images with D3D11 enables it), all through vulkan-1.dll (libvulkan.so.1) looked up at run time (oc_conformance starts
-// without it). Textures are filled from a staging buffer and left in VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, as OpenVR's
-// Vulkan games submit them.
+// with one graphics queue (and VK_KHR_external_memory_win32 on Windows, VK_KHR_external_memory_fd elsewhere, where the
+// driver has it, as a program that shares images enables it), all through vulkan-1.dll (libvulkan.so.1) looked up at
+// run time (oc_conformance starts without it). Textures are filled from a staging buffer and left in
+// VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, as OpenVR's Vulkan games submit them.
 
 #include "GfxApi.h"
+
+#include <cstdlib>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -137,10 +139,15 @@ public:
 		VkDeviceCreateInfo dci{ VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
 		dci.queueCreateInfoCount = 1;
 		dci.pQueueCreateInfos = &qci;
+		// External memory is core in 1.1; its handles are an extension: Windows ones for D3D11, file descriptors for
+		// sharing images with OpenLamina's own device (unless OC_CONFORMANCE_NO_EXTERNAL_MEMORY is set)
 #ifdef _WIN32
-		// External memory is core in 1.1; its Windows handles are an extension
 		const char* externalMemory = "VK_KHR_external_memory_win32";
 		if (app.apiVersion >= VK_API_VERSION_1_1) {
+#else
+		const char* externalMemory = "VK_KHR_external_memory_fd";
+		if (app.apiVersion >= VK_API_VERSION_1_1 && !std::getenv("OC_CONFORMANCE_NO_EXTERNAL_MEMORY")) {
+#endif
 			auto enumerateExtensions = I<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
 			uint32_t extensionCount = 0;
 			enumerateExtensions(physical, nullptr, &extensionCount, nullptr);
@@ -153,7 +160,6 @@ public:
 				}
 			}
 		}
-#endif
 		r = I<PFN_vkCreateDevice>("vkCreateDevice")(physical, &dci, nullptr, &device);
 		if (r != VK_SUCCESS) {
 			device = VK_NULL_HANDLE;
