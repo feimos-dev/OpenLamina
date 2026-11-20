@@ -2731,7 +2731,7 @@ uint32_t BaseOverlay::GetOverlayRenderingPid(VROverlayHandle_t ulOverlayHandle)
 }
 EVROverlayError BaseOverlay::SetOverlayFlag(VROverlayHandle_t ulOverlayHandle, VROverlayFlags eOverlayFlag, bool bEnabled)
 {
-	// A flag of 64 or more has no bit in the mask: answered as a handle of this program's
+	// A flag of 64 or more has no bit in the mask, and isn't sent
 	if ((uint32_t)eOverlayFlag < 64) {
 		OcOverlayCommand command;
 		command.kind = OcOverlayCommand::Flag;
