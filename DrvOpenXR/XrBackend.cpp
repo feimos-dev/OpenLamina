@@ -1005,8 +1005,8 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 		if (result == kCompositorNone) {
 			KeepForMirror(eye, texture, bounds);
 #if defined(SUPPORT_GL)
-			// Not under the D3D11 interop: there texture is the D3D11 copy (and no OpenGL compositor has loaded the GL
-			// functions the mirror uses), so the OpenGL mirror is left as it is
+			// Returns at once for the D3D11 interop's copy (not an OpenGL texture; no OpenGL compositor has loaded the GL
+			// functions the mirror uses there), so the OpenGL mirror is filled only from OpenGL frames submitted directly
 			GLMirrorFrame((int)eye, texture, bounds, submitFlags);
 #endif
 			// The mirror window shows the left eye, read back while it's open
