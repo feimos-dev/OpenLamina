@@ -133,8 +133,7 @@ static bool IsKnownRenderModel(const char* name)
 }
 
 // Copies value into an app's buffer, cut short and terminated if it doesn't fit; returns the size needed with the
-// terminator, as SteamVR does
-// BufferTooSmall in *error (when given) if the buffer can't hold the string and its terminator
+// terminator, as SteamVR does, and BufferTooSmall in *error (when given) if the buffer can't hold both
 static uint32_t CopyOutModelString(const string& value, char* buffer, uint32_t size, EVRRenderModelError* error = nullptr)
 {
 	if (error && size < value.size() + 1)
@@ -982,8 +981,8 @@ bool BaseRenderModels::GetComponentState(const char* pchRenderModelName, const c
 		return true;
 	}
 
-	// A built-in model's one component, named after the model: where the model is, shown and still
-	if (pchRenderModelName && pchComponentName && IsOwnRenderModel(pchRenderModelName) && strcmp(pchRenderModelName, pchComponentName) == 0) {
+	// A known model's one component, named after the model: where the model is, shown and still
+	if (pchRenderModelName && IsKnownRenderModel(pchRenderModelName) && strcmp(pchRenderModelName, pchComponentName) == 0) {
 		const glm::mat4 identity = glm::identity<glm::mat4>();
 		pComponentState->mTrackingToComponentRenderModel = G2S_m34(identity);
 		pComponentState->mTrackingToComponentLocal = G2S_m34(identity);

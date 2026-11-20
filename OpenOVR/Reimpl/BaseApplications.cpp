@@ -136,7 +136,7 @@ bool UpdateApplications(SharedStore& store, const std::function<void(Json::Value
 					doc["pids"].removeMember(p);
 		}
 		// The start times of the processes that are no longer listed
-		if (doc.isMember("pid_starts") && doc["pid_starts"].isObject()) {
+		if (doc.isMember("pid_starts") && doc["pid_starts"].isObject() && doc["pids"].isObject()) {
 			for (const std::string& p : doc["pid_starts"].getMemberNames())
 				if (!doc["pids"].isMember(p))
 					doc["pid_starts"].removeMember(p);
