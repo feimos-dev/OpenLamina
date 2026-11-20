@@ -1,0 +1,19 @@
+{
+ "#": "An overlay app's Vulkan and OpenGL textures on Linux, read back into memory and shown from OpenLamina's own Vulkan device (scripts/helper_apps.json)",
+ "overlay-app-vk/textures/-/-": {
+  "init": 0,
+  "vulkan": 0,
+  "again": 0,
+  "binding": "vulkan",
+  "frame_order_errors": 0,
+  "quads_with_pattern": 1
+ },
+ "overlay-app-gl/textures/-/-": {
+  "init": 0,
+  "gl": 0,
+  "again": 0,
+  "binding": "vulkan",
+  "frame_order_errors": 0,
+  "quads_with_pattern": 1
+ }
+}

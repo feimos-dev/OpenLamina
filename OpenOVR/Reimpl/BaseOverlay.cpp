@@ -3345,6 +3345,10 @@ EVROverlayError BaseOverlay::SetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 #else
 		copy = xrBackend ? xrBackend->CopyOverlayTexture(&texture, &overlay->textureBounds, &why, overlay) : nullptr;
 #endif
+		// A Vulkan or OpenGL texture that can't be copied onto the session's device (on Linux, where that's OpenLamina's
+		// own Vulkan device) is read back into memory on the program's thread, and shown as an image from memory is
+		if (!copy && (texture.eType == TextureType_Vulkan || texture.eType == TextureType_OpenGL))
+			return ShowReadBack(*overlay, texture, why);
 		if (!copy)
 			OC_UNSUPPORTED(VROverlayError_InvalidTexture, "SetOverlayTexture: the overlay application's texture (type %d) can't be shown: %s", (int)texture.eType, why.c_str());
 		shown = Texture_t{ copy, TextureType_DirectX, texture.eColorSpace };
@@ -3385,6 +3389,44 @@ EVROverlayError BaseOverlay::SetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 
 	overlay->compositionLayer.base.space = xr_space_from_ref_space_type(BaseSystem::currentSpace);
 
+	return VROverlayError_None;
+}
+EVROverlayError BaseOverlay::ShowReadBack(OverlayData& overlay, const Texture_t& texture, const std::string& whyNotCopied)
+{
+	// Under the session's and the layers' locks. The texture's own API reads its bounds' area back (the program's queue
+	// waited for, or its OpenGL context, current on this thread): this stalls the overlay program, never the game.
+	Image image;
+	std::unique_ptr<Compositor> reader = BaseCompositor::CreateCompositorAPI(&texture);
+	if (!reader || !reader->ReadbackToCpu(&texture, &overlay.textureBounds, image) || image.Empty()) {
+		OC_UNSUPPORTED(VROverlayError_InvalidTexture, "SetOverlayTexture: the overlay application's texture (type %d) can't be copied (%s) nor read back",
+		    (int)texture.eType, whyNotCopied.c_str());
+	}
+	reader.reset();
+
+	auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
+	if (std::shared_ptr<Compositor> comp = overlay.compositor.lock(); comp && backend)
+		backend->UnregisterOverlayCompositor(comp);
+	overlay.compositor.reset();
+	overlay.DropLive();
+	if (backend)
+		backend->ForgetOverlayTextures(&overlay);
+	// The texture stays the overlay's (GetOverlayTexture's type and colour space); its image, already in its bounds'
+	// area and their flip, is what's shown, whole
+	overlay.SetTexture(texture);
+	overlay.textureCopySize = {};
+	overlay.givenSize = OverlayTextureSize(texture);
+	overlay.rawImage = std::move(image);
+	if (!overlay.raw)
+		overlay.raw = CpuSwapchain::Create(overlay.rawImage.width, overlay.rawImage.height);
+	if (!overlay.raw) {
+		// Logged (a soft failure) by Create: no session with a graphics API
+		overlay.rawImage = {};
+		return VROverlayError_RequestFailed;
+	}
+	// A failed upload (logged) is tried again when the frame's layers are built
+	if (overlay.raw->Upload(overlay.rawImage))
+		overlay.compositionLayer.quad.subImage = overlay.raw->SubImage();
+	overlay.compositionLayer.base.space = xr_space_from_ref_space_type(BaseSystem::currentSpace);
 	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::ClearOverlayTexture(VROverlayHandle_t ulOverlayHandle)
