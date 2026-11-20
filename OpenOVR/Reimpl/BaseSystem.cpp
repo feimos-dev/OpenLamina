@@ -161,7 +161,7 @@ bool BaseSystem::ComputeDistortionSet(EVREye eEye, EVRDistortionChannel eChannel
 		return true;
 	if (!pInput || !pOutput)
 		return false;
-	std::copy(pInput, pInput + nNumCoordinates, pOutput);
+	memmove(pOutput, pInput, nNumCoordinates * sizeof(*pInput)); // the two may be the same buffer
 	return true;
 }
 

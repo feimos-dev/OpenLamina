@@ -5,6 +5,7 @@
 // Since our interfaces don't use CVRCommon as their first ancestor, this
 // would return a reference to the CVRCommon part of the object.
 void* CreateInterfaceByName(const char* name);
+bool InterfaceExists(const char* name);
 
 // Get information about a given interface
 // name - The name of the interface (i.e. "IVRApplications_002")
