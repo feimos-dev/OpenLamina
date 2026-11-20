@@ -11,5 +11,6 @@
  { "interface": "IVRSystem_\\d+", "method": "GetHiddenAreaMesh", "field": "ret", "reason": "the struct's padding bytes are uninitialised (a minor finding: zero them)" },
  { "interface": "IVRSystem_\\d+", "method": "PollNextEvent|PollNextEventWithPose", "field": "ret|out", "reason": "whether VREvent_ProcessConnected from another test process is pending yet is timing" },
  { "interface": "IVRSystem_\\d+", "method": "GetOutputDevice", "field": "out", "reason": "the runtime's adapter's LUID (for D3D) or Vulkan physical device handle, which Windows and the Vulkan loader assign afresh" },
+ { "interface": "IVRSystem_\\d+", "method": "GetD3D9AdapterIndex|GetDXGIOutputInfo", "field": "ret|out", "reason": "the runtime's adapter's index among the machine's adapters, or -1 when it can't be told at that moment (no OpenXR instance yet, or Direct3D 9Ex not created): -1 once on CI's runner where it was 0" },
  { "interface": "IVRCompositor_\\d+", "method": "GetFrameTimeRemaining", "field": "ret", "reason": "the time left in the current frame, measured when it's asked" }
 ]
