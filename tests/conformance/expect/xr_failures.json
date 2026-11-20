@@ -37,8 +37,27 @@
    "frame-loop"
   ],
   "frames": 120,
-  "quit_events": 1,
-  "quit_from_frame": 60
+  "quit_events": 0,
+  "device_events": [
+   101,
+   100
+  ],
+  "sessions_lost": 1,
+  "sessions_created_min": 3,
+  "frames_ended_min": 30
+ },
+ "lost_unavailable": {
+  "cases": [
+   "frame-loop"
+  ],
+  "frames": 120,
+  "quit_events": 0,
+  "device_events": [
+   101,
+   100
+  ],
+  "sessions_lost": 1,
+  "sessions_created_min": 3
  },
  "exiting": {
   "cases": [

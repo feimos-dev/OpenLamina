@@ -66,6 +66,16 @@ public:
 	std::atomic<bool> sessionActive{ false };
 	std::atomic<bool> sessionLost{ false };
 	std::atomic<bool> exitExpected{ false };
+	// The user quit from the runtime: no session is made again
+	std::atomic<bool> quitting{ false };
+	// The session went through STOPPING since it last ran (an EXITING after it is the user quitting)
+	std::atomic<bool> sawStopping{ false };
+	// The game has been told the devices are deactivated (a loss), and not yet that they're back
+	std::atomic<bool> devicesDeactivated{ false };
+	// The last try to find the system again (RecoverLostSession), and whether the lost session is destroyed yet
+	std::chrono::steady_clock::time_point lastRecoveryTry{};
+	bool lostSessionDestroyed = false;
+	std::mutex recoveryLock;
 	// What the game has been told of the session, as SteamVR tells it: whether it lost input focus (sessionEvents), and
 	// the IPD (NaN until the session's first)
 	std::atomic<bool> inputFocusLost{ false };
@@ -89,15 +99,66 @@ public:
 	// DrvOpenXR::KeepOverlaysInstance
 	void KeepOverlaysInstance();
 
+	/** Why the session is made again (RebuildSession) */
+	enum class RebuildReason {
+		AppGraphics, // the game's first Submit: from the temporary device to the game's own
+		Inputs, // the game's actions, which can only be attached to a session that has none yet
+		Loss, // the runtime lost the session (or one couldn't be made): a new one once the system is back
+	};
+	static const char* RebuildReasonName(RebuildReason reason);
+
 	/**
-	 * The session is gone or going (LOSS_PENDING, an EXITING OpenComposite didn't ask for, or a session restart
-	 * that failed): VREvent_Quit is queued once, and no more frames are begun. There's no reconnecting.
+	 * Makes the session again, under the session lock: never in the middle of a frame (a frame the game has open is
+	 * ended first, as if it had submitted). What the game set on the old session is put back on the new one: its eye
+	 * compositors are made again at its next Submit, the skybox is shown again from the game's texture, and the overlays'
+	 * swapchains are made again from their textures. XR_SUCCESS, or what xrCreateSession answered.
+	 */
+	XrResult RebuildSession(RebuildReason reason);
+
+	/**
+	 * The session is lost (LOSS_PENDING, XR_ERROR_SESSION_LOST, an EXITING the user didn't ask for, or a session that
+	 * couldn't be made): no more frames; the headset and controllers are deactivated, their poses invalid, until
+	 * RecoverLostSession makes a new session. The game isn't told to quit.
 	 */
 	void OnSessionLost();
 	/** Pumps events until done() is true, for at most timeoutMs: whether it was */
 	bool WaitForEvents(const std::function<bool()>& done, int timeoutMs);
-	/** The runtime ends the session on its own: VREvent_DriverRequestedQuit, then OnSessionLost */
+	/**
+	 * The user quit from the runtime (EXITING after STOPPING): VREvent_DriverRequestedQuit and VREvent_Quit, once, and
+	 * no session is made again
+	 */
 	void OnRuntimeQuit();
+	/** Whether the current backend's session is gone (lost, or not made again yet): the devices have no poses */
+	static bool CurrentSessionGone();
+	/** Whether the current backend's session is lost and is to be made again (not the user quitting) */
+	static bool CurrentSessionLost();
+	/** Whether the user quit from the runtime (OnRuntimeQuit): the session isn't made again */
+	bool IsQuitting() const { return quitting; }
+
+	/** What an unasked session state change means for the game */
+	enum class StateOutcome {
+		Ignored,
+		Lost,
+		Quit,
+	};
+	/**
+	 * For a state the session went to: LOSS_PENDING is a loss; EXITING is the user quitting if the session went
+	 * through STOPPING since it last ran (sawStopping), a loss otherwise; neither while OpenLamina ends the session
+	 * itself (exitExpected)
+	 */
+	static StateOutcome OutcomeOfState(XrSessionState state, bool sawStopping, bool exitExpected);
+
+	/** The wait between tries to find the system again after a loss */
+	static constexpr std::chrono::milliseconds kRecoveryInterval{ 1000 };
+	/** Whether a try is due at now: the first at once, then one each kRecoveryInterval (lastTry is {} before the first) */
+	static bool RecoveryDue(std::chrono::steady_clock::time_point lastTry, std::chrono::steady_clock::time_point now);
+
+	/**
+	 * After a loss, on a thread that holds no session lock and no frame: destroys the lost session (once), then about
+	 * once a second asks for the system (xrGetSystem) and, once it's there, makes the session again (RebuildSession);
+	 * the devices are activated again. Retried for as long as it takes; nothing after the user quit.
+	 */
+	void RecoverLostSession();
 	bool IsSessionLost() const { return sessionLost; }
 	/** The session is lost, not running, or stopping, exiting or about to be lost: nothing can be shown in it any more */
 	bool IsSessionEnded() const
@@ -269,6 +330,8 @@ private:
 	// A skybox asked for while the session wasn't running, shown at the next frame's start; under pendingSkyboxLock
 	std::mutex pendingSkyboxLock;
 	SkyboxRequest pendingSkybox;
+	// The skybox shown until ClearSkyboxOverride, shown again on a new session (RebuildSession); under pendingSkyboxLock
+	SkyboxRequest shownSkybox;
 	bool EquirectSkyboxAvailable() const;
 	// The session lock held (shared) and the session running
 	IBackend::openvr_enum_t ShowSkybox(const vr::Texture_t* textures, uint32_t count);
@@ -306,6 +369,20 @@ private:
 
 	// Whether we've restarted the session to use the application's rendering API yet
 	std::atomic<bool> usingApplicationGraphicsAPI{ false };
+	// The game's frames begun on its own device: the info set is attached only after a while of them without the
+	// game's actions, so that a game that loads its manifest early needs no restart for it
+	std::atomic<uint32_t> framesOnGameDevice{ 0 };
+	static constexpr uint32_t kFramesBeforeInfoSet = 90;
+
+public:
+	/**
+	 * Whether the game's actions (its manifest's, or legacy input's) may be attached now: once the session is on the
+	 * game's device (or will stay where it is: a helper program's, or a game whose device can't be used). Before that
+	 * a session restart would come anyway, so attaching them would only add another.
+	 */
+	static bool InputsMayAttach();
+
+private:
 	// An overlay application's textures, copied onto its session's device
 	std::unique_ptr<class OverlayTextureCopy> overlayCopy;
 

@@ -479,7 +479,8 @@ ETrackedDeviceClass BaseSystem::GetTrackedDeviceClass(vr::TrackedDeviceIndex_t d
 
 bool BaseSystem::IsTrackedDeviceConnected(vr::TrackedDeviceIndex_t deviceIndex)
 {
-	return BackendManager::Instance().GetDevice(deviceIndex) != nullptr;
+	// None while the session is lost: the devices are deactivated until it's made again
+	return BackendManager::Instance().GetDevice(deviceIndex) != nullptr && !XrBackend::CurrentSessionLost();
 }
 
 bool BaseSystem::GetBoolTrackedDeviceProperty(vr::TrackedDeviceIndex_t unDeviceIndex, ETrackedDeviceProperty prop, ETrackedPropertyError* pErrorL)
@@ -843,7 +844,11 @@ bool BaseSystem::GetControllerState(vr::TrackedDeviceIndex_t controllerDeviceInd
 	memset(controllerState, 0, controllerStateSize);
 
 	// The headset's proximity sensor, while the runtime says whether the user wears it
-	if (controllerDeviceIndex == k_unTrackedDeviceIndex_Hmd && xr_gbl && xr_gbl->supportsUserPresence) {
+	const bool userPresence = [] {
+		auto lock = xr_session.lock_shared(); // held while reading: a session restart waits for it
+		return xr_gbl && xr_gbl->supportsUserPresence;
+	}();
+	if (controllerDeviceIndex == k_unTrackedDeviceIndex_Hmd && userPresence) {
 		std::shared_ptr<ITrackedDevice> hmd = BackendManager::Instance().GetDevice(k_unTrackedDeviceIndex_Hmd);
 		return hmd && hmd->GetControllerState(controllerState);
 	}
@@ -1240,6 +1245,7 @@ static bool GazeInHead(glm::quat* gazeInHead)
 // session locked (shared).
 static glm::quat EyeInHead(EVREye eye)
 {
+	auto lock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	if (!xr_gbl)
 		return glm::identity<glm::quat>();
 	XruCachedViews cached = xr_gbl->GetCachedViews(xr_gbl->viewSpace);

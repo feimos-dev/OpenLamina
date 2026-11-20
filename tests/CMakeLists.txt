@@ -134,6 +134,7 @@ add_executable(oc_unit_tests
 	unit/KeyboardTests.cpp
 	unit/RenderModelTests.cpp
 	unit/HmdTests.cpp
+	unit/SessionLifecycleTests.cpp
 	unit/DeviceSlotsTests.cpp
 	unit/EntryPointsTests.cpp
 	unit/BaseMailboxTests.cpp

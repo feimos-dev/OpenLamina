@@ -651,6 +651,11 @@ XrResult DrvOpenXR::SetupSession()
 	return XR_SUCCESS;
 }
 
+XrResult DrvOpenXR::FindSystem()
+{
+	return CreateSystemID();
+}
+
 void DrvOpenXR::KeepOverlaysInstance()
 {
 	if (currentBackend)

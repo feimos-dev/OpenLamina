@@ -1869,6 +1869,18 @@ bool BaseOverlay::_AnyVisible()
 	return false;
 }
 
+void BaseOverlay::_OnSessionRebuilt()
+{
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	for (const auto& kv : overlays) {
+		OverlayData* overlay = kv.second;
+		// An image from memory finds its own swapchain gone (its upload is made again); a texture's compositor went
+		// with the session, and the layer mustn't name its swapchain any more
+		if (overlay && overlay->rawImage.Empty() && !overlay->compositor.lock())
+			overlay->compositionLayer.quad.subImage = XrSwapchainSubImage{};
+	}
+}
+
 int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompositionLayerBaseHeader const* const*& layers, bool mayUpload)
 {
 	// Note that at least on MSVC, this shouldn't be doing any memory allocations

@@ -18,5 +18,7 @@ namespace DrvOpenXR {
 // XR_SUCCESS, or what xrCreateSession answered (no session then: the caller decides what next)
 XrResult SetupSession();
 void ShutdownSession();
+// xrGetSystem for the headset again (after a loss): XR_SUCCESS once it is there
+XrResult FindSystem();
 void FullShutdown();
 } // namespace DrvOpenXR

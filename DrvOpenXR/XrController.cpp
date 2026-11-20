@@ -1,4 +1,5 @@
 #include "XrController.h"
+#include "XrBackend.h"
 
 #include "../OpenOVR/Misc/LibMonado.h"
 
@@ -145,6 +146,13 @@ void XrController::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDevice
 	pose->bDeviceIsConnected = true;
 	pose->bPoseIsValid = false;
 	pose->eTrackingResult = vr::TrackingResult_Running_OutOfRange;
+
+	// No session (it was lost): deactivated until it's made again
+	if (XrBackend::CurrentSessionGone()) {
+		pose->bDeviceIsConnected = false;
+		pose->eTrackingResult = vr::TrackingResult_Uninitialized;
+		return;
+	}
 
 	BaseInput* input = GetUnsafeBaseInput();
 	if (input == nullptr)

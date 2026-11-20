@@ -1,0 +1,1 @@
+{ "#": "The session is lost at frame 10, and the headset is gone for 300 ms: the first try to find it fails, the next (a second later) makes the session again; no VREvent_Quit", "events": [{ "frame": 10, "type": "session_state", "state": "LOSS_PENDING" }], "loss_unavailable_ms": 300 }
