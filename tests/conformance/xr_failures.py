@@ -80,6 +80,22 @@ def check(name, want, out):
             got = dump.get(name, 0)
             if (got < want[key]) if at_least else (got != want[key]):
                 misses.append(f"frame-loop: the runtime saw {got} {name.replace('_', ' ')}, expected {'at least ' if at_least else ''}{want[key]}")
+    if "loss_record" in want:
+        # A helper program's loss (case overlay-app-loss): its device events in order, no quit, and a session made again
+        # that ran frames
+        r = by_method.get(("overlay-app-loss", "loss")) or {}
+        want_r = want["loss_record"]
+        events = r.get("events", [])
+        rest = iter(events)
+        if not all(any(e == w for e in rest) for w in want_r["device_events"]):
+            misses.append(f"overlay-app-loss: device events {events}, expected {want_r['device_events']} in that order")
+        if 700 in events or 704 in events:
+            misses.append(f"overlay-app-loss: a quit polled after a loss ({events})")
+        for key, value in want_r.items():
+            if key.endswith("_min") and (r.get(key.removesuffix("_min")) or 0) < value:
+                misses.append(f"overlay-app-loss: {key.removesuffix('_min')} {r.get(key.removesuffix('_min'))}, expected at least {value}")
+            elif key in ("sessions_lost", "instances_lost") and r.get(key) != value:
+                misses.append(f"overlay-app-loss: {key} {r.get(key)}, expected {value}")
     if "old_event_quits" in want:
         # IVRSystem_009's events (case old-events): the quit arrives, and nothing is written past the 32-byte event
         olds = [r for r in records if r.get("case") == "old-events" and str(r.get("method", "")).startswith("frame ")]

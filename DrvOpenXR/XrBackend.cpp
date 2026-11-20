@@ -2494,7 +2494,8 @@ void XrBackend::OnSessionCreated()
 	// A helper program's session has its own loop, whatever ownFrames says: an overlay session's frames are all
 	// OpenLamina's, and a headless one's events come from nowhere else
 	if (IsHelperSession()) {
-		StartHelperLoop();
+		if (!recoveringInHelperLoop)
+			StartHelperLoop();
 		return;
 	}
 
@@ -2556,6 +2557,18 @@ void XrBackend::StartHelperLoop()
 	    },
 	    std::chrono::milliseconds(0),
 	    [this, overlaySession](const OwnFrameLoop::LayerSource& source, const std::function<bool()>& wanted) -> XrDuration {
+		    // A lost session is made again here, between passes, about once a second until the runtime has one: no other
+		    // thread of a helper program runs frames to do it. Its loop and thread are kept through the rebuild.
+		    if (sessionLost) {
+			    if (!quitting) {
+				    std::lock_guard<std::mutex> pass(helperPassLock);
+				    recoveringInHelperLoop = true;
+				    RecoverLostSession();
+				    recoveringInHelperLoop = false;
+			    }
+			    PumpEvents();
+			    return 0;
+		    }
 		    // The session lock (shared) through the frame, if it's free: a session restart holds it while it stops this
 		    // loop. RunOwnFrame's own try then finds it held.
 		    SessionLock lock(xr_session, SessionLock::TryShared{});
@@ -2714,6 +2727,10 @@ void XrBackend::StopOwnFrames(bool forGood)
 {
 	if (forGood)
 		ownFramesStopped = true;
+	// The helper loop rebuilding its own session from its thread: it goes on (under the session lock, which a stop for
+	// good waits for)
+	if (recoveringInHelperLoop && !forGood)
+		return;
 	// Joins its thread, which doesn't wait for the session lock that a session restart here holds
 	ownFrames.reset();
 	// Goes with the interfaces, before them

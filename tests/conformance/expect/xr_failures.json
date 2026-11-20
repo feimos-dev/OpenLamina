@@ -59,6 +59,20 @@
   "sessions_lost": 1,
   "sessions_created_min": 3
  },
+ "lost_overlay": {
+  "cases": [
+   "overlay-app-loss"
+  ],
+  "loss_record": {
+   "device_events": [
+    101,
+    100
+   ],
+   "sessions_lost": 1,
+   "sessions_created_min": 2,
+   "frames_ended_min": 20
+  }
+ },
  "exiting": {
   "cases": [
    "frame-loop"
