@@ -1573,9 +1573,13 @@ EVRInputError BaseInput::UpdateActionState(VR_ARRAY_COUNT(unSetCount) VRActiveAc
 	if (EVRInputError err = CheckActiveSets(pSets, unSizeOfVRSelectedActionSet_t, unSetCount); err != VRInputError_None)
 		return err;
 
-	if (dominantHand != requestedDominantHand) {
-		dominantHand = requestedDominantHand;
-		ResolveHandAliases();
+	{
+		// The aliases and the hands' profiles are read by other threads' calls under the evaluator lock
+		std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
+		if (dominantHand != requestedDominantHand) {
+			dominantHand = requestedDominantHand;
+			ResolveHandAliases();
+		}
 	}
 
 	for (uint32_t i = 0; i < unSetCount; i++) {
@@ -1619,6 +1623,7 @@ EVRInputError BaseInput::UpdateActionState(VR_ARRAY_COUNT(unSetCount) VRActiveAc
 	syncSerial++;
 	FlushDueHaptics();
 
+	std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
 	for (size_t i = 0; i < allSubactionPaths.size(); i++) {
 		auto handDevice = BackendManager::Instance().GetBackendInstance()->GetDeviceByHand(static_cast<ITrackedDevice::TrackedDeviceType>(i));
 		auto newProfile = handDevice == nullptr ? nullptr : handDevice->GetInteractionProfile();
@@ -2406,8 +2411,11 @@ EVRInputError BaseInput::TriggerHapticVibrationAction(VRActionHandle_t action, f
 		pulse.duration = HapticDuration(fDurationSeconds);
 		pulse.amplitude = HapticAmplitude(fAmplitude, target->amplitudeScale);
 		if (delayed) {
-			pulse.due = EvaluatorClock() + fStartSecondsFromNow;
+			// At most a minute ahead, and a bounded queue: a game asking every frame doesn't grow it without end
+			pulse.due = EvaluatorClock() + std::min(fStartSecondsFromNow, 60.0f);
 			std::lock_guard<std::mutex> queueGuard(hapticQueueLock);
+			if (pendingHaptics.size() >= 256)
+				pendingHaptics.erase(pendingHaptics.begin());
 			pendingHaptics.push_back(pulse);
 		} else {
 			ApplyHaptic(pulse);
@@ -2475,17 +2483,22 @@ EVRInputError BaseInput::GetActionOrigins(VRActionSetHandle_t actionSetHandle, V
 		for (const ActionBinding& b : *fromFiles)
 			sources.insert(b.device + b.input);
 
-	// 20 will be more than enough, saves a second call
-	XrPath tmp[20];
+	// The runtime's bound sources: their count first, then that many
+	std::vector<XrPath> tmp;
 	uint32_t count = 0;
-	// On failure (or a count beyond tmp, from SIZE_INSUFFICIENT) the sources are none, or tmp's worth
 	const bool isPose = act->type == ActionType::Skeleton || act->type == ActionType::Pose;
-	XrResult enumResult = fromFiles || isPose || info.action == XR_NULL_HANDLE ? XR_SUCCESS : xrEnumerateBoundSourcesForAction(xr_session.get(), &info, std::size(tmp), &count, tmp);
-	if (XR_FAILED(enumResult)) {
-		OOVR_LOG_ONCE("GetActionOrigins: xrEnumerateBoundSourcesForAction failed");
-		count = 0;
+	if (!fromFiles && !isPose && info.action != XR_NULL_HANDLE) {
+		XrResult enumResult = xrEnumerateBoundSourcesForAction(xr_session.get(), &info, 0, &count, nullptr);
+		if (XR_SUCCEEDED(enumResult) && count > 0) {
+			tmp.resize(count);
+			enumResult = xrEnumerateBoundSourcesForAction(xr_session.get(), &info, count, &count, tmp.data());
+		}
+		if (XR_FAILED(enumResult)) {
+			OOVR_LOG_ONCE("GetActionOrigins: xrEnumerateBoundSourcesForAction failed");
+			count = 0;
+		}
+		count = std::min<uint32_t>(count, (uint32_t)tmp.size());
 	}
-	count = std::min<uint32_t>(count, (uint32_t)std::size(tmp));
 
 	// Now for each source its input (a vibration's is its hand)
 	char buff[XR_MAX_PATH_LENGTH + 1] = {};
