@@ -39,7 +39,7 @@ from list_games import pe_machine  # noqa: E402
 ARGSETS = ["valid", "edge", "null", "invalid"]
 APPTYPES_VALID_ONLY = [2, 3, 4, 0]  # Overlay, Background, Utility, Other
 CASES = ["init-matrix", "init-repeat", "init-other-thread", "lookup-before-init", "unknown-interface",
-         "overlay-lifecycle", "input-manifest", "frame-loop", "submit-edges", "applications"]
+         "overlay-lifecycle", "input-manifest", "frame-loop", "submit-edges", "applications", "app-type-answers"]
 TIMEOUT = 60
 CASE_TIMEOUT = 600  # init-repeat starts OpenLamina 200 times
 MAX_REPEAT = 100  # --repeat's bound: each round is a child process
@@ -97,15 +97,14 @@ def key_of(r):
 class Runner:
     def __init__(self, args):
         self.args = args
-        # Absolute: on Linux the children run in a folder of their own (self.work)
         self.out = Path(args.out).resolve()
-        # Where OpenLamina reads openlamina.ini from: next to the DLL on Windows; on Linux only the working directory,
-        # so there the children run in work/ under --out, which holds it
-        self.work = None if os.name == "nt" else self.out / "work"
         # OC_TEST_NO_STEAMVR: OpenLamina finds no SteamVR or Steam config (its settings, resources and legacy
         # binding files), so a run here answers as on CI's runner, which has none
         # Each child gets its own store (OC_STORE_DIR, see child), so one child's settings and events never reach another
         self.env = {"OC_NO_MESSAGE_BOX": "1", "OC_LOG_DIR": str(self.out / "logs"), "OC_TEST_NO_STEAMVR": "1"}
+        if os.name != "nt":
+            # An empty config folder, so the user's own openlamina.ini (~/.config/openlamina) isn't read
+            self.env["XDG_CONFIG_HOME"] = str(self.out / "xdg-config")
         # A store left by an earlier run into the same --out would carry its state into this one
         shutil.rmtree(self.out / "store", ignore_errors=True)
         self.monado = args.xr_runtime.startswith("monado:")
@@ -139,7 +138,7 @@ class Runner:
             raise SystemExit(f"--xr-runtime monado: no manifest {self.manifest}")
         self.out.mkdir(parents=True, exist_ok=True)
         (self.out / "raw").mkdir(exist_ok=True)
-        # The openlamina.ini OpenLamina reads (next to the DLL, or in the children's working directory):
+        # The openlamina.ini OpenLamina reads next to the library (ini_path):
         # ini/features_off.ini (the features that are on by default turned off, so that a case shows one feature at a
         # time), then --ini's keys, which win. --shipped-defaults leaves the first out. Not for SteamVR itself, whose
         # folder that would be.
@@ -149,9 +148,6 @@ class Runner:
         if self.args.ini:
             parts.append(Path(self.args.ini).read_text(encoding="utf-8"))
         self.wrote_ini = bool(parts)
-        if self.work:
-            shutil.rmtree(self.work, ignore_errors=True)
-            self.work.mkdir(parents=True)
         if parts:
             # Taken out again when the run ends (Runner.cleanup), with any file that was there put back
             target = self.ini_path()
@@ -167,7 +163,12 @@ class Runner:
                                 "/d", self.manifest, "/f", view], check=True, capture_output=True)
 
     def ini_path(self):
-        return (self.work or Path(self.runtime).parent) / "openlamina.ini"
+        # Next to the DLL on Windows; on Linux in the install's bin/: the library's folder, or its parent when that is
+        # linux64
+        folder = Path(self.runtime).parent
+        if os.name != "nt" and folder.name == "linux64":
+            folder = folder.parent
+        return folder / "openlamina.ini"
 
     def child(self, extra, raw, timeout=TIMEOUT, env_extra=None, store=None):
         """Runs oc_conformance with its store in store/<store> under --out: by default the child's own (named after its
@@ -181,7 +182,7 @@ class Runner:
         env.update(self.env)
         env["OC_STORE_DIR"] = str(self.out / "store" / (store or Path(raw).stem))
         env.update(env_extra or {})
-        cwd = str(self.work) if self.work else None
+        cwd = None
         if unelevated.integrity_above_medium() and not self.args.ci:
             return unelevated.run_medium(cmd, env, cwd, timeout)
         # In a memory-limited job (unelevated.py): a runaway child fails alone
@@ -518,8 +519,8 @@ def main():
     ap.add_argument("--cases")
     ap.add_argument("--cases-only", action="store_true", help="only the cases of --cases, no interfaces")
     ap.add_argument("--manifest", help="the action manifest for the input-manifest case")
-    ap.add_argument("--ini", help="an openlamina.ini whose keys go where OpenLamina reads them (next to the DLL; on Linux the children's "
-                    "working directory), after ini/features_off.ini's")
+    ap.add_argument("--ini", help="an openlamina.ini whose keys go where OpenLamina reads them (next to the DLL; on Linux the "
+                    "install's bin/), after ini/features_off.ini's")
     ap.add_argument("--shipped-defaults", action="store_true",
                     help="without ini/features_off.ini: OpenLamina's defaults as they ship, but for --ini's keys")
     ap.add_argument("--jobs", type=int, default=4)

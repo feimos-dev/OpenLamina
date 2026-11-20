@@ -36,7 +36,7 @@ target_include_directories(oc_callers PUBLIC
 	${CMAKE_SOURCE_DIR}/OpenVRHeaders
 	${CMAKE_BINARY_DIR}
 )
-target_link_libraries(oc_callers PUBLIC jsoncpp)
+target_link_libraries(oc_callers PUBLIC ${jsoncppLib})
 if (WIN32)
 	target_link_libraries(oc_callers PUBLIC d3d11)
 	# The generated file is one large translation unit
@@ -179,5 +179,9 @@ else ()
 endif ()
 add_test(NAME unit COMMAND oc_unit_tests)
 set_tests_properties(unit PROPERTIES LABELS unit)
+if (NOT WIN32)
+	# An empty config folder of its own, so the user's own openlamina.ini (~/.config/openlamina) isn't read
+	set_tests_properties(unit PROPERTIES ENVIRONMENT XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/unit_config)
+endif ()
 
 add_subdirectory(runtime)
