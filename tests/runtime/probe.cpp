@@ -125,7 +125,8 @@ void RtNoteReadbackTimeout()
 	d.root["readback_timeouts"] = d.root["readback_timeouts"].asInt() + 1;
 }
 
-bool ProbeSamples(SwapchainImage& image, XrRect2Di rect, uint32_t arrayIndex, Samples& out, std::string* why)
+bool ProbeSamples(SwapchainImage& image, XrRect2Di rect, uint32_t arrayIndex, Samples& out, std::string* why,
+    const std::vector<std::pair<float, float>>* extra, std::vector<uint32_t>* extraOut)
 {
 	std::string ignored;
 	if (!why)
@@ -172,12 +173,26 @@ bool ProbeSamples(SwapchainImage& image, XrRect2Di rect, uint32_t arrayIndex, Sa
 	std::vector<XrOffset2Di> points = {
 		{ left, top }, { right, top }, { left, bottom }, { right, bottom }, { (x0 + x1) / 2, centreY },
 	};
+	if (extra) {
+		for (const auto& [fx, fy] : *extra) {
+			int32_t x = std::min(x0 + (int32_t)(fx * (float)(x1 - x0)), x1 - 1);
+			int32_t y = std::min(y0 + (int32_t)(fy * (float)(y1 - y0)), y1 - 1);
+			if (gfx->bottomUp)
+				y = y1 - 1 - (y - y0);
+			points.push_back({ x, y });
+		}
+	}
 	std::vector<uint8_t> texels;
 	if (!gfx->read(image.session, sc, image.index, arrayIndex, points, bytes, texels, why))
 		return false;
-	if (texels.size() < 5 * bytes) {
+	if (texels.size() < points.size() * bytes) {
 		*why = "the readback returned too little";
 		return false;
+	}
+	if (extra && extraOut) {
+		extraOut->clear();
+		for (size_t i = 5; i < points.size(); i++)
+			extraOut->push_back(ToRgba8(layout, &texels[i * bytes]));
 	}
 	out.tl = ToRgba8(layout, &texels[0 * bytes]);
 	out.tr = ToRgba8(layout, &texels[1 * bytes]);
