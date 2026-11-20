@@ -3,6 +3,7 @@
 
 #include "plat.h"
 
+#include "Reimpl/BaseApplications.h"
 #include "Reimpl/BaseSystem.h"
 #include "Reimpl/Interfaces.h"
 
@@ -10,6 +11,7 @@
 #include "generated/GVRClientCore.gen.h"
 #include "generated/version.h"
 
+#include "Misc/SharedStore.h"
 #include "Misc/SteamClient.h"
 #include "Misc/backtrace.h"
 #include "logging.h"
@@ -316,6 +318,7 @@ VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(EVRInitError* peError, EVRApp
 			NewInitToken();
 		}
 		BaseClientCore::appType = eApplicationType;
+		BaseApplications::AddThisProcess(SharedStore::Get());
 		return current_init_token;
 	}
 
@@ -371,6 +374,8 @@ VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(EVRInitError* peError, EVRApp
 	// A refused Init of an older SDK that never shut down doesn't hold this session's Shutdown back
 	refused_init_count = 0;
 	NewInitToken();
+	// Other programs know this one from now on
+	BaseApplications::AddThisProcess(SharedStore::Get());
 
 	return current_init_token;
 }

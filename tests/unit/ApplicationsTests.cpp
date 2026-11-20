@@ -700,3 +700,236 @@ TEST_CASE("Autolaunch_starts_only_flagged_dashboard_overlays")
 	CHECK(apps.SetApplicationAutoLaunch("oc.test.overlay", false) == VRApplicationError_None);
 	CHECK(StartAutolaunchOverlays(apps).empty());
 }
+
+namespace {
+// A manifest for one scene application that writes marker.txt in folder when it runs
+fs::path WriteEchoManifest(const fs::path& folder, const char* key)
+{
+	fs::path manifest = folder / (std::string(key) + ".vrmanifest");
+	Json::Value app(Json::objectValue);
+	app["app_key"] = key;
+	app["launch_type"] = "binary";
+	app["binary_path"] = OC_ECHO_APP;
+	app["arguments"] = "marker.txt started";
+	app["working_directory"] = PathToUtf8(folder);
+	Json::Value root(Json::objectValue);
+	root["applications"].append(app);
+	std::ofstream(manifest) << root.toStyledString();
+	return manifest;
+}
+
+// The events another program posted to the store for the program with process id pid
+std::vector<vr::VREvent_t> EventsFor(SharedStore& reader, uint64_t& cursor, uint32_t pid)
+{
+	std::vector<vr::VREvent_t> out;
+	for (const StoreEvent& s : reader.PollEvents(cursor))
+		if (std::optional<vr::VREvent_t> e = OcEventForProgram(s, pid))
+			out.push_back(*e);
+	return out;
+}
+
+struct AppType {
+	vr::EVRApplicationType saved = BaseClientCore::appType;
+	explicit AppType(vr::EVRApplicationType type) { BaseClientCore::appType = type; }
+	~AppType() { BaseClientCore::appType = saved; }
+};
+} // namespace
+
+TEST_CASE("Event_for_one_program_reaches_only_it")
+{
+	TempDir dir;
+	SharedStore a(dir.path), b(dir.path);
+	uint64_t cursor = 0;
+	b.PollEvents(cursor);
+	vr::VREvent_Data_t data{};
+	data.process.pid = 1234;
+	data.process.oldPid = 99;
+	REQUIRE(OcPostEventTo(a, 1234, vr::VREvent_Quit, 5, data));
+	OcPostEvent(vr::VREvent_ApplicationListUpdated, 0, vr::VREvent_Data_t{}, false); // never in the store
+
+	std::vector<StoreEvent> got = b.PollEvents(cursor);
+	REQUIRE(got.size() == 1);
+	CHECK(OcIsPrivateEvent(got[0].eventType)); // older programs leave it alone
+	CHECK_FALSE(OcEventForProgram(got[0], 4321));
+	std::optional<vr::VREvent_t> e = OcEventForProgram(got[0], 1234);
+	REQUIRE(e);
+	CHECK(e->eventType == vr::VREvent_Quit);
+	CHECK(e->trackedDeviceIndex == 5);
+	CHECK(e->data.process.pid == 1234);
+	CHECK(e->data.process.oldPid == 99);
+
+	// A public event is every program's
+	StoreEvent pub{};
+	pub.eventType = vr::VREvent_ApplicationListUpdated;
+	CHECK(OcEventForProgram(pub, 4321));
+
+	// This program's own: its own queue, never the store
+	EventRecorder recorder;
+	REQUIRE(OcPostEventTo(a, oc_current_pid(), vr::VREvent_Quit, 0, data));
+	CHECK(CountEvents(vr::VREvent_Quit) == 1);
+	CHECK(b.PollEvents(cursor).empty());
+}
+
+TEST_CASE("Prelaunch_check_asks_only_the_scene_application_to_quit")
+{
+	TempDir dir;
+	SharedStore store(dir.path), other(dir.path);
+	BaseApplications apps(store);
+	AppType type(vr::VRApplication_Utility);
+	EventRecorder recorder;
+	REQUIRE(apps.AddApplicationManifest(PathToUtf8(WriteEchoManifest(dir.path, "oc.test.next")).c_str()) == VRApplicationError_None);
+	REQUIRE(apps.AddApplicationManifest(PathToUtf8(WriteEchoManifest(dir.path, "oc.test.third")).c_str()) == VRApplicationError_None);
+	uint64_t cursor = 0;
+	other.PollEvents(cursor);
+
+	// No scene application: nothing to wait for
+	CHECK(apps.PerformApplicationPrelaunchCheck("oc.test.next") == VRApplicationError_None);
+	CHECK(apps.GetTransitionState() == VRApplicationTransition_None);
+
+#ifdef _WIN32
+	uint32_t scene = 4; // System, always there
+#else
+	uint32_t scene = (uint32_t)getppid();
+#endif
+	store.Update(StoreDoc::Scene, [&](Json::Value& doc) {
+		doc["pid"] = scene;
+		doc["start"] = (Json::UInt64)SharedStore::ProcessStartTime(scene);
+		doc["app_key"] = "oc.other";
+	});
+	CHECK(apps.PerformApplicationPrelaunchCheck("oc.test.next") == VRApplicationError_OldApplicationQuitting);
+	std::vector<vr::VREvent_t> sent = EventsFor(other, cursor, scene);
+	REQUIRE(sent.size() == 1);
+	CHECK(sent[0].eventType == vr::VREvent_Quit);
+	CHECK(sent[0].data.process.pid == scene);
+	CHECK(EventsFor(other, cursor, scene + 1).empty()); // nobody else's
+	CHECK(CountEvents(vr::VREvent_Quit) == 0); // not this program's either
+	CHECK(CountEvents((vr::EVREventType)1300) == 1); // the transition started
+
+	CHECK(apps.GetTransitionState() == VRApplicationTransition_OldAppQuitSent);
+	char key[64];
+	CHECK(apps.GetStartingApplication(key, sizeof(key)) == VRApplicationError_None);
+	CHECK(std::string(key) == "oc.test.next");
+
+	// Asked again while it quits: no second request; another application waits its turn
+	CHECK(apps.PerformApplicationPrelaunchCheck("oc.test.next") == VRApplicationError_OldApplicationQuitting);
+	CHECK(EventsFor(other, cursor, scene).empty());
+	CHECK(apps.PerformApplicationPrelaunchCheck("oc.test.third") == VRApplicationError_LaunchInProgress);
+
+	// Once it has gone, the transition is over
+	store.Update(StoreDoc::Scene, [&](Json::Value& doc) { doc["transition"]["old_pid"] = ExitedProcessId(); });
+	CHECK(apps.GetTransitionState() == VRApplicationTransition_None);
+	CHECK(apps.GetStartingApplication(key, sizeof(key)) == VRApplicationError_NoApplication);
+}
+
+TEST_CASE("Launch_waits_for_the_scene_application_to_quit")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	BaseApplications apps(store);
+	AppType type(vr::VRApplication_Scene);
+	EventRecorder recorder;
+	REQUIRE(apps.AddApplicationManifest(PathToUtf8(WriteEchoManifest(dir.path, "oc.test.next")).c_str()) == VRApplicationError_None);
+
+	// A scene application without a session yet isn't waited for
+	fs::create_directories(dir.path / "first");
+	REQUIRE(apps.AddApplicationManifest(PathToUtf8(WriteEchoManifest(dir.path / "first", "oc.test.first")).c_str()) == VRApplicationError_None);
+	CHECK(apps.LaunchApplication("oc.test.first") == VRApplicationError_None);
+	CHECK(CountEvents(vr::VREvent_Quit) == 0);
+	CHECK(apps.GetTransitionState() == VRApplicationTransition_None);
+
+	// This program is the scene application, and launches another
+	BaseApplications::SetSceneProcess(store, true);
+	postedEvents.clear();
+	CHECK(apps.LaunchApplication("oc.test.next") == VRApplicationError_None);
+	REQUIRE(CountEvents(vr::VREvent_Quit) == 1);
+	CHECK(postedEvents.front().data.process.pid == oc_current_pid());
+	CHECK(apps.GetTransitionState() == VRApplicationTransition_OldAppQuitSent);
+	CHECK_FALSE(fs::exists(dir.path / "marker.txt")); // not before this one has gone
+
+	// It quits: the new one starts
+	BaseApplications::SetSceneProcess(store, false);
+	CHECK(CountEvents(vr::VREvent_ProcessQuit) == 1);
+	CHECK(CountEvents((vr::EVREventType)1302) == 1);
+	CHECK(apps.GetTransitionState() == VRApplicationTransition_NewAppLaunched);
+	bool started = false;
+	for (int i = 0; i < 50 && !started; i++) {
+		started = fs::exists(dir.path / "marker.txt");
+		if (!started)
+			std::this_thread::sleep_for(std::chrono::milliseconds(100));
+	}
+	CHECK(started);
+
+	// And the transition ends when it becomes the scene application
+	REQUIRE(apps.IdentifyApplication(0, "oc.test.next") == VRApplicationError_None);
+	BaseApplications::SetSceneProcess(store, true);
+	CHECK(CountEvents((vr::EVREventType)1305) == 1);
+	CHECK(apps.GetTransitionState() == VRApplicationTransition_None);
+	BaseApplications::SetSceneProcess(store, false);
+}
+
+TEST_CASE("Mime_launch_of_a_running_application_hands_it_the_arguments")
+{
+	TempDir dir;
+	SharedStore store(dir.path), other(dir.path);
+	BaseApplications apps(store);
+	EventRecorder recorder;
+	REQUIRE(apps.AddApplicationManifest(PathToUtf8(Data("echo.vrmanifest")).c_str()) == VRApplicationError_None);
+
+	// This program is the application: the event is its own
+	REQUIRE(apps.IdentifyApplication(0, "oc.test.echo") == VRApplicationError_None);
+	CHECK(apps.LaunchApplicationFromMimeType("vr/oc-echo", "file.oc --open") == VRApplicationError_None);
+	REQUIRE(CountEvents(vr::VREvent_ApplicationMimeTypeLoad) == 1);
+	const vr::VREvent_t load = postedEvents.back();
+	CHECK(load.data.applicationLaunch.pid == oc_current_pid());
+	char args[64];
+	CHECK(apps.GetApplicationLaunchArguments(load.data.applicationLaunch.unArgsHandle, args, sizeof(args)) == strlen("file.oc --open") + 1);
+	CHECK(std::string(args) == "file.oc --open");
+	CHECK(apps.GetApplicationLaunchArguments(load.data.applicationLaunch.unArgsHandle + 1, args, sizeof(args)) == 0);
+	CHECK(std::string(args).empty());
+
+	// Another program's: to it alone, by the store, and only it reads the arguments
+#ifdef _WIN32
+	uint32_t running = 4; // System, always there
+#else
+	uint32_t running = (uint32_t)getppid();
+#endif
+	REQUIRE(apps.IdentifyApplication(0, "oc.self") == VRApplicationError_None);
+	REQUIRE(apps.IdentifyApplication(running, "oc.test.echo") == VRApplicationError_None);
+	uint64_t cursor = 0;
+	other.PollEvents(cursor);
+	CHECK(apps.LaunchApplicationFromMimeType("vr/oc-echo", "second") == VRApplicationError_None);
+	std::vector<vr::VREvent_t> got = EventsFor(other, cursor, running);
+	REQUIRE(got.size() == 1);
+	CHECK(got[0].eventType == vr::VREvent_ApplicationMimeTypeLoad);
+	CHECK(got[0].data.applicationLaunch.pid == running);
+	CHECK(got[0].data.applicationLaunch.unArgsHandle != load.data.applicationLaunch.unArgsHandle);
+	CHECK(apps.GetApplicationLaunchArguments(got[0].data.applicationLaunch.unArgsHandle, args, sizeof(args)) == 0);
+	Json::Value entry = store.Read(StoreDoc::Applications)["launch_args"][std::to_string(got[0].data.applicationLaunch.unArgsHandle)];
+	CHECK(entry["args"].asString() == "second");
+}
+
+TEST_CASE("Process_lists_itself_at_init")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	BaseApplications apps(store);
+	const std::string self = std::to_string(oc_current_pid());
+
+	BaseApplications::AddThisProcess(store);
+	Json::Value doc = store.Read(StoreDoc::Applications);
+	CHECK(doc["pids"][self].asString() == CurrentProcessAppKey(store));
+	char key[128];
+	CHECK(apps.GetApplicationKeyByProcessId(oc_current_pid(), key, sizeof(key)) == VRApplicationError_None);
+
+	{
+		// Its own entry doesn't hide what it's known by later
+		AppId id("4242");
+		CHECK(CurrentProcessAppKey(store) == "steam.app.4242");
+	}
+
+	// IdentifyApplication's entry is kept at a later init
+	REQUIRE(apps.IdentifyApplication(0, "oc.named") == VRApplicationError_None);
+	BaseApplications::AddThisProcess(store);
+	CHECK(store.Read(StoreDoc::Applications)["pids"][self].asString() == "oc.named");
+	CHECK(CurrentProcessAppKey(store) == "oc.named");
+}

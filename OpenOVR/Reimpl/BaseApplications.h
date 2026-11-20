@@ -101,6 +101,10 @@ public:
 	static void SetSceneProcess(bool running);
 	static void SetSceneProcess(SharedStore& store, bool running);
 
+	/** Lists this process in the Applications document with its application key, so other programs know it (at init).
+	 * An entry IdentifyApplication made stays. */
+	static void AddThisProcess(SharedStore& store);
+
 	typedef OOVR_EVRApplicationError EVRApplicationError;
 	typedef OOVR_EVRApplicationProperty EVRApplicationProperty;
 	typedef OOVR_EVRApplicationTransitionState EVRApplicationTransitionState;
@@ -245,6 +249,10 @@ private:
 	SharedStore& Store();
 	std::optional<AppManifestEntry> Find(const char* pchAppKey);
 	EVRApplicationError Launch(const AppManifestEntry& app, const std::string& extraArguments, uint32_t* startedPid = nullptr);
+	/** Asks the scene application, if there is one other than appKey's, to quit (with an event for it alone) for
+	 * appKey, which starts once it has gone if launchAfter. VRApplicationError_OldApplicationQuitting if it was asked
+	 * (now or before), None if there's none to ask, or why appKey can't start now. */
+	EVRApplicationError AskSceneApplicationToQuit(const std::string& appKey, bool launchAfter);
 
 	SharedStore* store = nullptr;
 };
