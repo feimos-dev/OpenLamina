@@ -684,13 +684,10 @@ bool SharedStore::WriteUpdate(StoreDoc doc, const std::function<void(Json::Value
 	if (!Usable())
 		return false;
 	// Not the cache's lock: Read and PollEvents mustn't wait while this waits for another process
-	std::unique_lock<std::mutex> writing(writeLock, std::defer_lock);
-	if (wait == Wait::Never) {
-		if (!writing.try_lock())
-			return false;
-	} else {
-		writing.lock();
-	}
+	std::unique_lock<std::timed_mutex> writing(writeLock, std::defer_lock);
+	// Bounded: a writer thread ended mid-write at exit doesn't hold the others up for ever
+	if (wait == Wait::Never ? !writing.try_lock() : !writing.try_lock_for(std::chrono::seconds(2)))
+		return false;
 	StoreFileLock fileLock(*platform, wait != Wait::Never);
 	if (!fileLock.held)
 		return false;
@@ -797,13 +794,10 @@ bool SharedStore::PostEvent(uint32_t eventType, const std::array<uint64_t, 4>& d
 {
 	if (!Usable())
 		return false;
-	std::unique_lock<std::mutex> writing(writeLock, std::defer_lock);
-	if (wait == Wait::Never) {
-		if (!writing.try_lock())
-			return false;
-	} else {
-		writing.lock();
-	}
+	std::unique_lock<std::timed_mutex> writing(writeLock, std::defer_lock);
+	// Bounded: a writer thread ended mid-write at exit doesn't hold the others up for ever
+	if (wait == Wait::Never ? !writing.try_lock() : !writing.try_lock_for(std::chrono::seconds(2)))
+		return false;
 	StoreFileLock fileLock(*platform, wait != Wait::Never);
 	if (!fileLock.held)
 		return false;

@@ -126,7 +126,7 @@ private:
 	std::unique_ptr<Platform> platform;
 	uint8_t* state = nullptr; // state.bin, mapped
 
-	std::mutex writeLock; // this store's writers, which share its lock file handle
+	std::timed_mutex writeLock; // this store's writers, which share its lock file handle
 	std::mutex lock; // the cache and ownEvents
 	struct Cached {
 		uint64_t generation = 0;

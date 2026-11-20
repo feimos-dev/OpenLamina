@@ -1939,11 +1939,12 @@ bool XrBackend::GetPlayAreaPoints(vr::HmdVector3_t* points, int* count)
 		std::lock_guard<std::mutex> lock(playAreaLock);
 		if (playAreaSession != xr_session.get()) {
 			XrExtent2Df asked{};
+			const XrTime askedAt = xr_time_now();
 			XrResult res = xrGetReferenceSpaceBoundsRect(xr_session.get(), XR_REFERENCE_SPACE_TYPE_STAGE, &asked);
 			playAreaKnown = XR_SUCCEEDED(res) && res != XR_SPACE_BOUNDS_UNAVAILABLE && asked.width > 0 && asked.height > 0;
 			playAreaRect = playAreaKnown ? asked : XrExtent2Df{};
 			// A failed call is asked again next time; an answer (bounds, or none) is kept once the stage's change is in
-			if (XR_SUCCEEDED(res) && (!playAreaChangeTime || xr_time_now() >= playAreaChangeTime)) {
+			if (XR_SUCCEEDED(res) && (!playAreaChangeTime || askedAt >= playAreaChangeTime)) {
 				playAreaSession = xr_session.get();
 				playAreaChangeTime = 0;
 			}
