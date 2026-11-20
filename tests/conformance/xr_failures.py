@@ -96,6 +96,12 @@ def check(name, want, out):
                 misses.append(f"overlay-app-loss: {key.removesuffix('_min')} {r.get(key.removesuffix('_min'))}, expected at least {value}")
             elif key in ("sessions_lost", "instances_lost", "manifest") and r.get(key) != value:
                 misses.append(f"overlay-app-loss: {key} {r.get(key)}, expected {value}")
+    if "action_attaches_min" in want:
+        # Case input-frames through a loss: the game's actions are attached to the session made again too
+        path = out / "raw" / "case-input-frames.dump.json"
+        dump = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        if dump.get("sessions_lost") != 1 or dump.get("action_attaches", 0) < want["action_attaches_min"]:
+            misses.append(f"input-frames: {dump.get('sessions_lost')} sessions lost and {dump.get('action_attaches')} action attaches, expected 1 and at least {want['action_attaches_min']}")
     if "old_event_quits" in want:
         # IVRSystem_009's events (case old-events): the quit arrives, and nothing is written past the 32-byte event
         olds = [r for r in records if r.get("case") == "old-events" and str(r.get("method", "")).startswith("frame ")]

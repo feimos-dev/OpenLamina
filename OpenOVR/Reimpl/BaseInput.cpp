@@ -849,8 +849,8 @@ void BaseInput::BindInputsForSession()
 	// If we didn't request the restart but we also haven't even loaded actions yet, there's nothing to bind yet.
 	if (restartingSession || !hasLoadedActions)
 		return;
-	// No session to bind to (it was lost): the one made again binds them
-	if (XrBackend::CurrentSessionGone())
+	// No session to bind to (a lost one was destroyed): the one made again binds them
+	if (!xr_gbl || !xr_session.get())
 		return;
 
 	// Since the session has changed, any actionspaces we previously created are now invalid
