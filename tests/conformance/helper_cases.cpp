@@ -4,6 +4,7 @@
 #include "conformance.h"
 
 #include "IVRChaperoneSetup_006.h"
+#include "IVRChaperone_004.h"
 #include "IVRCompositor_029.h"
 #include "IVRInput_011.h"
 #include "IVROverlay_028.h"
@@ -676,9 +677,26 @@ void BoundsCase(CaseContext& c, bool commitRoom)
 	callers::Texture tex(ArgSet::Valid, *c.call);
 	for (int frame = 1; frame <= 30; frame++)
 		SceneFrame(app, tex.get());
+	// The play area the chaperone getters answer: the same one the walls are drawn for
+	Json::Value area;
+	{
+		vr::EVRInitError le = vr::VRInitError_None;
+		auto* chaperone = (vr::IVRChaperone_004::IVRChaperone*)c.core->GetGenericInterface("IVRChaperone_004", &le);
+		if (chaperone) {
+			float x = 0, z = 0;
+			area["ret"] = chaperone->GetPlayAreaSize(&x, &z);
+			area["size"] = Json::Value(Json::arrayValue);
+			area["size"].append(std::round(x * 1000) / 1000);
+			area["size"].append(std::round(z * 1000) / 1000);
+			area["calibration"] = (int)chaperone->GetCalibrationState();
+		}
+	}
 	c.core->Cleanup();
 	Json::Value r;
 	Json::Value dump = ReadStandInDump();
+	// Asked of the runtime once for the session, not every frame
+	area["bounds_rect_calls"] = dump["bounds_rect_calls"];
+	c.Record("play area", area);
 	const Json::Value& layers = dump["layers"];
 	const Json::Value lastFrame = layers.size() ? layers[layers.size() - 1]["frame"] : Json::Value();
 	int walls = 0;
@@ -694,6 +712,28 @@ void BoundsCase(CaseContext& c, bool commitRoom)
 	r["walls"] = walls;
 	r["positions"] = positions;
 	c.Record("walls", r);
+}
+
+// A game with legacy input looking for its controllers in its first frames: the frame the right hand's controller
+// is first connected on (scripts/controllers_early.json gives the profile)
+void ControllersEarlyCase(CaseContext& c)
+{
+	SceneApp app;
+	if (!OpenSceneApp(c, app))
+		return;
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	Json::Value r;
+	r["first_frame"] = Json::Value();
+	for (int frame = 1; frame <= 20; frame++) {
+		SceneFrame(app, tex.get());
+		const vr::TrackedDeviceIndex_t right = app.sys->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_RightHand);
+		if (right != vr::k_unTrackedDeviceIndexInvalid && app.sys->IsTrackedDeviceConnected(right)) {
+			r["first_frame"] = frame;
+			break;
+		}
+	}
+	c.core->Cleanup();
+	c.Record("connected", r);
 }
 
 // An overlay application with one overlay from memory and nothing else: no WaitGetPoses, so every frame is
@@ -1045,6 +1085,7 @@ const std::map<std::string, CaseFn>& conformance::HelperCases()
 {
 	static const std::map<std::string, CaseFn> cases = {
 		{ "overlay-app", OverlayAppCase },
+		{ "controllers-early", ControllersEarlyCase },
 		{ "overlay-app-two-apis", [](CaseContext& c) {
 			 OverlayAppTexturesCase(c, "textures", { { GfxKind::D3D11, 29, "d3d11" }, { GfxKind::D3D12, 29, "d3d12" } });
 		 } },

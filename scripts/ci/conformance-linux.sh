@@ -91,6 +91,8 @@ run --cases remote-pointer-peer-dies,remote-pointer-dying-overlay --jobs 2 --scr
 run --cases dashboard,dashboard-overlay --jobs 2 --script tests/conformance/scripts/dashboard.json --ini tests/conformance/ini/dashboard.ini --manifest tests/unit/data/manifest_basic.json --expect tests/conformance/expect/dashboard.json --out "$out"/dashboard
 # A controller's system button held recentres and opens no dashboard; pressed, it opens and closes the dashboard
 run --cases recentre --script tests/conformance/scripts/recentre.json --ini tests/conformance/ini/recentre.ini --expect tests/conformance/expect/recentre.json --out "$out"/recentre
+# Controllers found from the game's first frames
+run --cases controllers-early --script tests/conformance/scripts/controllers_early.json --expect tests/conformance/expect/controllers_early.json --out "$out"/controllers-early
 # The play area's walls near its edge with drawBounds, and none without
 run --cases bounds --script tests/conformance/scripts/bounds.json --ini tests/conformance/ini/draw_bounds.ini --expect tests/conformance/expect/bounds.json --out "$out"/bounds
 run --cases bounds-room-setup --script tests/conformance/scripts/bounds_room_setup.json --ini tests/conformance/ini/draw_bounds.ini --expect tests/conformance/expect/bounds_room_setup.json --out "$out"/bounds-room-setup
