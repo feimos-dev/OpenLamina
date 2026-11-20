@@ -1,8 +1,8 @@
 #include "HolographicInteractionProfile.h"
 #include "generated/interfaces/vrtypes.h"
 
-HolographicInteractionProfile::HolographicInteractionProfile(bool odyssey)
-    : odyssey(odyssey)
+HolographicInteractionProfile::HolographicInteractionProfile(Model model)
+    : model(model)
 {
 	std::string paths[] = {
 		"/input/menu/click",
@@ -44,7 +44,7 @@ const std::string& HolographicInteractionProfile::GetPath() const
 {
 	static const std::string motionController = "/interaction_profiles/microsoft/motion_controller";
 	static const std::string odysseyController = "/interaction_profiles/samsung/odyssey_controller";
-	return odyssey ? odysseyController : motionController;
+	return model == Model::Odyssey ? odysseyController : motionController;
 }
 
 std::optional<const char*> HolographicInteractionProfile::GetLeftHandRenderModelName() const

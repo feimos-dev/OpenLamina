@@ -134,7 +134,7 @@ InteractionProfile::ProfileList InteractionProfile::CreateProfiles(XrExt& ext)
 
 	profiles.emplace_back(std::make_unique<HolographicInteractionProfile>());
 	if (ext.ExtensionEnabled(XR_EXT_SAMSUNG_ODYSSEY_CONTROLLER_EXTENSION_NAME))
-		profiles.emplace_back(std::make_unique<HolographicInteractionProfile>(true));
+		profiles.emplace_back(std::make_unique<HolographicInteractionProfile>(HolographicInteractionProfile::Model::Odyssey));
 	profiles.emplace_back(std::make_unique<IndexControllerInteractionProfile>());
 	profiles.emplace_back(std::make_unique<ViveWandInteractionProfile>());
 	using Touch = OculusTouchInteractionProfile;

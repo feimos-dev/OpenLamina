@@ -207,7 +207,7 @@ TEST_CASE("Touch_profiles_share_the_OpenVR_name_and_add_their_inputs")
 
 TEST_CASE("Odyssey_and_hand_profiles")
 {
-	HolographicInteractionProfile wmr, odyssey(true);
+	HolographicInteractionProfile wmr, odyssey(HolographicInteractionProfile::Model::Odyssey);
 	CHECK(odyssey.GetPath() == "/interaction_profiles/samsung/odyssey_controller");
 	CHECK(std::string(*odyssey.GetOpenVRName()) == "holographic_controller");
 	CHECK(odyssey.GetValidInputPaths() == wmr.GetValidInputPaths());
@@ -216,6 +216,8 @@ TEST_CASE("Odyssey_and_hand_profiles")
 	MsftHandInteractionProfile hands;
 	CHECK_FALSE(hands.GetOpenVRName().has_value());
 	CHECK(hands.BindingConversionType() == "hand_interaction");
+	// Its skeleton is estimated from the pinch and grasp, as the controllers' are
+	CHECK(hands.GetOpenVRTrackinglevel() == vr::VRSkeletalTracking_Estimated);
 	CHECK(hands.IsInputPathValid("/user/hand/left/input/select/value"));
 	CHECK(hands.IsInputPathValid("/user/hand/right/input/squeeze/value"));
 	CHECK_FALSE(hands.IsInputPathValid("/user/hand/right/output/haptic"));

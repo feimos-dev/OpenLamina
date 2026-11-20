@@ -42,7 +42,7 @@ std::optional<const char*> MsftHandInteractionProfile::GetOpenVRName() const
 
 std::optional<vr::EVRSkeletalTrackingLevel> MsftHandInteractionProfile::GetOpenVRTrackinglevel() const
 {
-	return vr::VRSkeletalTracking_Full;
+	return vr::VRSkeletalTracking_Estimated;
 }
 
 std::string MsftHandInteractionProfile::BindingConversionType() const

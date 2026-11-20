@@ -6,7 +6,10 @@
 
 class HolographicInteractionProfile : public InteractionProfile {
 public:
-	explicit HolographicInteractionProfile(bool odyssey = false);
+	enum class Model { MotionController,
+		Odyssey };
+
+	explicit HolographicInteractionProfile(Model model = Model::MotionController);
 
 	const std::string& GetPath() const override;
 	std::optional<const char*> GetLeftHandRenderModelName() const override;
@@ -18,5 +21,5 @@ protected:
 	const LegacyBindings* GetLegacyBindings(const std::string& handPath) const override;
 
 private:
-	bool odyssey;
+	Model model;
 };
