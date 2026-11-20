@@ -261,6 +261,16 @@ copy_files() {
 	for file in bin/linux64/vrclient.so bin/vrclient.so bin/version.txt SOURCE.txt install.sh; do
 		put "$here/$file" "$copy/$file"
 	done
+	# The controller models: the new folder beside the old, then in its place
+	if [ -d "$here/bin/rendermodels" ]; then
+		rm -rf "$copy/bin/rendermodels.install-tmp" "$copy/bin/rendermodels.old"
+		cp -R "$here/bin/rendermodels" "$copy/bin/rendermodels.install-tmp"
+		if [ -d "$copy/bin/rendermodels" ]; then
+			mv "$copy/bin/rendermodels" "$copy/bin/rendermodels.old"
+		fi
+		mv "$copy/bin/rendermodels.install-tmp" "$copy/bin/rendermodels"
+		rm -rf "$copy/bin/rendermodels.old"
+	fi
 	for file in "$here"/LICENSE*.txt "$here"/LICENCE*.txt "$here"/NOTES*.txt; do
 		if [ -f "$file" ]; then
 			put "$file" "$copy/${file##*/}"
