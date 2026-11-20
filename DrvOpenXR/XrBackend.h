@@ -195,6 +195,9 @@ public:
 	static void VkGetPhysicalDevice(VkInstance instance, VkPhysicalDevice* out);
 #endif
 
+	/** The tracker action is attached: the trackers by role again */
+	void OnTrackerActionAttached() { CreateGenericTrackers(); }
+
 private:
 	std::shared_ptr<XrHMD> hmd = std::make_shared<XrHMD>();
 	// Replaced when a hand's interaction profile changes, while other threads read input: copied and replaced only
@@ -301,6 +304,10 @@ private:
 	int64_t handsCheckedMs = 0;
 	// The checks in a row each hand without a controller wasn't tracked in, and how many it may miss
 	int handMisses[2] = { 0, 0 };
+	// Whether each hand's controller is the hand itself, shown because hand tracking tracks it
+	bool handFromTracking[2] = { false, false };
+	// The Vive trackers the runtime listed, to notice one going (no event says so)
+	uint32_t viveTrackersListed = 0;
 	static constexpr int kHandMissesAllowed = 3;
 	/** The xdevs that are trackers, in a list it makes (null if it can't), each passed to add; those whose lower-case
 	 * serial is in one of byRole (the lower-case persistent paths of the Vive trackers listed by role) are left out */

@@ -2280,7 +2280,7 @@ bool XrBackend::HandsWithoutControllersChanged()
 		if (tracked && !current)
 			changed = true;
 		// Gone only after a few checks without it
-		if (!tracked && current && current->GetInteractionProfile() == handProfile && handMisses[hand] >= kHandMissesAllowed)
+		if (!tracked && current && handFromTracking[hand] && handMisses[hand] >= kHandMissesAllowed)
 			changed = true;
 	}
 	return changed;
@@ -2857,11 +2857,13 @@ void XrBackend::UpdateInteractionProfile()
 			const InteractionProfile* profile = HandWithoutController(hand);
 			// A hand lost for a moment keeps its controller
 			std::shared_ptr<XrController> current = Hand(info.hand);
-			const InteractionProfile* handProfile = InteractionProfile::GetProfileByPath("/interaction_profiles/ext/hand_interaction_ext");
-			if (!profile && current && current->GetInteractionProfile() == handProfile && handMisses[hand] < kHandMissesAllowed)
-				profile = handProfile;
+			if (!profile && current && handFromTracking[hand] && handMisses[hand] < kHandMissesAllowed)
+				profile = current->GetInteractionProfile();
 			if (profile)
 				OC_XR_LOG(xrStringToPath(xr_instance, profile->GetPath().c_str(), &state.interactionProfile));
+			handFromTracking[hand] = profile != nullptr;
+		} else {
+			handFromTracking[info.hand == XrController::XCT_LEFT ? 0 : 1] = false;
 		}
 
 		// interaction profile detected
@@ -3098,6 +3100,7 @@ void XrBackend::CreateGenericTrackers()
 				count = 0;
 			paths.resize(std::min<size_t>(count, paths.size()));
 		}
+		viveTrackersListed = (uint32_t)paths.size();
 		for (const OcXrViveTrackerPathsHTCX& p : paths) {
 			std::string persistent = XrPathText(p.persistentPath);
 			// A tracker without a role has no pose to read here (an xdev may still give it)
@@ -3236,7 +3239,8 @@ void XrBackend::CreateGenericTrackers()
 
 void XrBackend::PollGenericTrackers()
 {
-	if (sessionLost || !xr_ext || !xr_ext->xrMndxXdevSpace_Available())
+	const bool htcx = xr_ext && xr_ext->ViveTrackersHTCX_Available();
+	if (sessionLost || !xr_ext || (!xr_ext->xrMndxXdevSpace_Available() && !htcx))
 		return;
 
 	const int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
@@ -3246,6 +3250,15 @@ void XrBackend::PollGenericTrackers()
 
 	auto sessionLock = xr_session.lock_shared();
 	if (!xr_session.get())
+		return;
+
+	// A Vive tracker gone: the runtime lists fewer
+	uint32_t listed = 0;
+	if (htcx && XR_SUCCEEDED(xr_ext->xrEnumerateViveTrackerPathsHTCX(xr_instance, 0, &listed, nullptr)) && listed != viveTrackersListed) {
+		CreateGenericTrackers();
+		return;
+	}
+	if (!xr_ext->xrMndxXdevSpace_Available())
 		return;
 
 	XrCreateXDevListInfoMNDX create_info = { .type = XR_TYPE_CREATE_XDEV_LIST_INFO_MNDX };
@@ -3345,11 +3358,9 @@ void XrBackend::BindInfoSet()
 			    [&path_name](std::string s) -> bool {
 				    return s.find("/click") != s.npos && s.find(path_name) != s.npos;
 			    });
-			// A profile with no click (the hands') has a value to read as one
-			if (click_path == profile->GetValidInputPaths().end())
-				click_path = std::ranges::find_if(profile->GetValidInputPaths(), [&path_name](const std::string& s) {
-					return s.ends_with("/value") && s.starts_with(path_name + "/");
-				});
+			// The hands have no click: the pinch is read as one
+			if (profile->GetPath() == "/interaction_profiles/ext/hand_interaction_ext")
+				click_path = profile->GetValidInputPaths().find(path_name + "/input/pinch_ext/value");
 			// A profile with no click input for this hand binds nothing for it
 			if (click_path == profile->GetValidInputPaths().end())
 				continue;

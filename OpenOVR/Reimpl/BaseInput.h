@@ -3,8 +3,8 @@
 // Make this usable from DrvOpenXR to refresh the inputs after swapping sessions
 // FIXME don't do that, it's ugly and slows down the build when modifying headers
 
-#include "Misc/Input/ViveTrackerRoles.h"
 #include "Drivers/Backend.h"
+#include "Misc/Input/ViveTrackerRoles.h"
 #include <algorithm>
 #include <array>
 #include <atomic>

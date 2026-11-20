@@ -9,12 +9,12 @@
 #include <set>
 #include <utility>
 
+#include "ExtHandInteractionProfile.h"
 #include "HolographicInteractionProfile.h"
 #include "IndexControllerInteractionProfile.h"
 #include "InteractionProfile.h"
 #include "KhrSimpleInteractionProfile.h"
 #include "MsftHandInteractionProfile.h"
-#include "ExtHandInteractionProfile.h"
 #include "OculusInteractionProfile.h"
 #include "ReverbG2InteractionProfile.h"
 #include "ViveCosmosInteractionProfile.h"

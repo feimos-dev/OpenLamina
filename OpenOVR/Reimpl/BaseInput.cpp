@@ -908,6 +908,10 @@ void BaseInput::BindInputsForSession()
 	const XrResult attached = xrAttachSessionActionSets(xr_session.get(), &attachInfo);
 	OC_XR_LOG(attached);
 	trackerPoseActionAttached = XR_SUCCEEDED(attached) && trackerPoseAction != XR_NULL_HANDLE;
+	// The trackers by role connected before the attach get their spaces now
+	if (trackerPoseActionAttached)
+		if (auto* backend = dynamic_cast<XrBackend*>(BackendManager::Instance().GetBackendInstance()))
+			backend->OnTrackerActionAttached();
 
 	// Setup hand tracking if supported
 	if (xr_gbl->handTrackingProperties.supportsHandTracking) {
