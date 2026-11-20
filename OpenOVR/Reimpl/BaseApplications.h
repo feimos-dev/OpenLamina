@@ -105,6 +105,9 @@ public:
 	 * An entry IdentifyApplication made stays. */
 	static void AddThisProcess(SharedStore& store);
 
+	/** Stops the change of scene application under way, if there is one (IVRControlPanel::AbortTransition) */
+	void AbortTransition();
+
 	typedef OOVR_EVRApplicationError EVRApplicationError;
 	typedef OOVR_EVRApplicationProperty EVRApplicationProperty;
 	typedef OOVR_EVRApplicationTransitionState EVRApplicationTransitionState;

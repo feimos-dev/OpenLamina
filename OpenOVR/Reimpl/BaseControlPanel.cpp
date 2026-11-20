@@ -180,5 +180,6 @@ void BaseControlPanel::StartAutolaunchOverlays()
 
 void BaseControlPanel::AbortTransition()
 {
-	// No transition between scene apps is in progress (each runs on its own)
+	// A change of scene application under way stops: the new one isn't started when the old one has gone
+	BaseApplications().AbortTransition();
 }

@@ -818,6 +818,12 @@ TEST_CASE("Prelaunch_check_asks_only_the_scene_application_to_quit")
 	CHECK(EventsFor(other, cursor, scene).empty());
 	CHECK(apps.PerformApplicationPrelaunchCheck("oc.test.third") == VRApplicationError_LaunchInProgress);
 
+	// Stopped: over, and another application may start
+	apps.AbortTransition();
+	CHECK(CountEvents((vr::EVREventType)1301) == 1);
+	CHECK(apps.GetTransitionState() == VRApplicationTransition_None);
+	CHECK(apps.PerformApplicationPrelaunchCheck("oc.test.third") == VRApplicationError_OldApplicationQuitting);
+
 	// Once it has gone, the transition is over
 	store.Update(StoreDoc::Scene, [&](Json::Value& doc) { doc["transition"]["old_pid"] = ExitedProcessId(); });
 	CHECK(apps.GetTransitionState() == VRApplicationTransition_None);

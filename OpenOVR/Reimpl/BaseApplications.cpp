@@ -77,6 +77,7 @@ uint64_t NowMs()
 // A process id kept as a document key; 0 for anything else
 // Events of older OpenVR versions, which programs built with them still wait for
 constexpr vr::EVREventType kTransitionStarted = (vr::EVREventType)1300;
+constexpr vr::EVREventType kTransitionAborted = (vr::EVREventType)1301;
 constexpr vr::EVREventType kTransitionNewAppStarted = (vr::EVREventType)1302;
 constexpr vr::EVREventType kTransitionNewAppLaunchComplete = (vr::EVREventType)1305;
 
@@ -394,6 +395,19 @@ void BaseApplications::AddThisProcess(SharedStore& store)
 		RecordProcess(doc, pid, key);
 		doc["pid_auto"][name] = true;
 	});
+}
+
+void BaseApplications::AbortTransition()
+{
+	bool aborted = false;
+	Store().Update(StoreDoc::Scene, [&](Json::Value& scene) {
+		if (scene.isObject() && scene.isMember("transition")) {
+			aborted = LiveTransition(scene).state != VRApplicationTransition_None;
+			scene.removeMember("transition");
+		}
+	});
+	if (aborted)
+		OcPostEvent(kTransitionAborted, vr::k_unTrackedDeviceIndexInvalid, vr::VREvent_Data_t{}, true);
 }
 
 EVRApplicationError BaseApplications::AskSceneApplicationToQuit(const std::string& appKey, bool launchAfter)
