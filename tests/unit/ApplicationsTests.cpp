@@ -4,6 +4,7 @@
 #include "stdafx.h"
 
 #include "Misc/AppManifest.h"
+#include "Misc/Config.h"
 #include "Misc/Dashboard.h"
 #include "Misc/ProgramEvents.h"
 #include "Misc/Process.h"
@@ -408,7 +409,7 @@ TEST_CASE("Ended_programs_dropped_on_every_update")
 	});
 
 	// Any change to the document
-	CHECK(apps.SetApplicationAutoLaunch("oc.test.echo", true) == VRApplicationError_None);
+	CHECK(apps.SetDefaultApplicationForMimeType("oc.test.echo", "vr/oc-change") == VRApplicationError_None);
 	Json::Value doc = store.Read(StoreDoc::Applications);
 	CHECK_FALSE(doc["pids"].isMember(std::to_string(dead)));
 	CHECK_FALSE(doc["manifests"].isMember("template:oc.gone"));
@@ -422,7 +423,7 @@ TEST_CASE("Ended_programs_dropped_on_every_update")
 		}
 	});
 	CHECK(apps.IsApplicationInstalled("oc.test.echo"));
-	CHECK(apps.SetApplicationAutoLaunch("oc.test.echo", false) == VRApplicationError_None);
+	CHECK(apps.SetDefaultApplicationForMimeType("oc.test.echo", "vr/oc-change") == VRApplicationError_None);
 }
 
 TEST_CASE("Manifest_whose_file_is_gone_is_replaced")
@@ -617,7 +618,7 @@ TEST_CASE("Process_id_taken_over_by_another_program_is_not_the_application")
 	CHECK(apps.GetApplicationProcessId("oc.test.echo") == 0);
 
 	// Dropped at the next change to the document
-	CHECK(apps.SetApplicationAutoLaunch("oc.test.echo", true) == VRApplicationError_None);
+	CHECK(apps.SetDefaultApplicationForMimeType("oc.test.echo", "vr/oc-change") == VRApplicationError_None);
 	Json::Value doc = store.Read(StoreDoc::Applications);
 	CHECK_FALSE(doc["pids"].isMember(std::to_string(other)));
 	CHECK_FALSE(doc["pid_starts"].isMember(std::to_string(other)));
@@ -688,8 +689,10 @@ TEST_CASE("Autolaunch_starts_only_flagged_dashboard_overlays")
 	apps.AddApplicationManifest(PathToUtf8(Data("overlay_apps.vrmanifest")).c_str());
 	CHECK(StartAutolaunchOverlays(apps).empty());
 
-	// A flag on a program that isn't a dashboard overlay starts nothing
-	CHECK(apps.SetApplicationAutoLaunch("oc.test.echo", true) == VRApplicationError_None);
+	// A program that isn't a dashboard overlay takes no flag, and one set by hand starts nothing
+	CHECK(apps.SetApplicationAutoLaunch("oc.test.echo", true) == VRApplicationError_InvalidApplication);
+	CHECK_FALSE(apps.GetApplicationAutoLaunch("oc.test.echo"));
+	store.Update(StoreDoc::Applications, [](Json::Value& doc) { doc["autolaunch"]["oc.test.echo"] = true; });
 	CHECK(StartAutolaunchOverlays(apps).empty());
 
 	CHECK(apps.SetApplicationAutoLaunch("oc.test.overlay", true) == VRApplicationError_None);
@@ -932,4 +935,29 @@ TEST_CASE("Process_lists_itself_at_init")
 	BaseApplications::AddThisProcess(store);
 	CHECK(store.Read(StoreDoc::Applications)["pids"][self].asString() == "oc.named");
 	CHECK(CurrentProcessAppKey(store) == "oc.named");
+}
+
+TEST_CASE("Other_programs_see_whether_the_scene_application_has_a_dashboard")
+{
+	const ProcessAlive alive = [](uint32_t pid, uint64_t) { return pid == 10; };
+	Json::Value scene(Json::objectValue);
+	CHECK(SceneDocHasDashboard(scene, alive)); // none running
+	scene["pid"] = 10;
+	CHECK(SceneDocHasDashboard(scene, alive)); // one that doesn't say
+	scene["dashboard"] = false;
+	CHECK_FALSE(SceneDocHasDashboard(scene, alive));
+	scene["pid"] = 11; // one that ended
+	CHECK(SceneDocHasDashboard(scene, alive));
+
+	// What a scene application's session writes
+	TempDir dir;
+	SharedStore store(dir.path);
+	BaseApplications::SetSceneProcess(store, true);
+	Json::Value written = store.Read(StoreDoc::Scene);
+	REQUIRE(written["dashboard"].isBool());
+	CHECK(written["dashboard"].asBool() == (DashboardButtonFromSetting(oovr_global_configuration.DashboardButton()) != Dashboard::Button::Off));
+	BaseApplications::SetSceneProcess(store, false);
+	CHECK(DashboardButtonFromSetting("menu_long") == Dashboard::Button::MenuLong);
+	CHECK(DashboardButtonFromSetting("off") == Dashboard::Button::Off);
+	CHECK(DashboardButtonFromSetting("") == Dashboard::Button::Off);
 }

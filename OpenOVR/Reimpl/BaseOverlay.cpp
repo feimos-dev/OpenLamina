@@ -400,12 +400,7 @@ bool PoseFromJson(const Json::Value& v, XrPosef& out)
 
 Dashboard::Button DashboardButtonSetting()
 {
-	const std::string& b = oovr_global_configuration.DashboardButton();
-	if (b == "menu_long" || b == "system_long")
-		return Dashboard::Button::MenuLong;
-	if (b == "system")
-		return Dashboard::Button::PressOrHold;
-	return b == "menu" ? Dashboard::Button::Menu : Dashboard::Button::Off;
+	return DashboardButtonFromSetting(oovr_global_configuration.DashboardButton());
 }
 
 // A game, which runs the dashboard where dashboardButton is on
@@ -3607,6 +3602,9 @@ EVROverlayError BaseOverlay::CreateDashboardOverlay(const char* pchOverlayKey, c
 	// A game's dashboard overlay is shown in its own dashboard: with dashboardButton off there's none to show it in
 	if (IsSceneApp() && !SceneDashboard())
 		OC_UNSUPPORTED(VROverlayError_RequestFailed, "CreateDashboardOverlay: there's no dashboard (dashboardButton is off)");
+	// Another program's: the running game's dashboard shows it, which it has only with its dashboardButton on
+	if (!IsSceneApp() && !SceneDocHasDashboard(SharedStore::Get().Read(StoreDoc::Scene), SharedStore::IsSameProcessAlive))
+		OC_UNSUPPORTED(VROverlayError_RequestFailed, "CreateDashboardOverlay: the running game has no dashboard (its dashboardButton is off)");
 	if (!pchOverlayKey || !pchOverlayFriendlyName || !pMainHandle || !pThumbnailHandle)
 		return VROverlayError_InvalidParameter;
 	// A pair: the overlay shown in the dashboard, and its thumbnail (OpenLamina's dashboard has name tabs instead)

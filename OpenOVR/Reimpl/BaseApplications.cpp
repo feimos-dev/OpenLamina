@@ -6,6 +6,7 @@
 #include "Misc/ProgramEvents.h"
 #include "Misc/AppManifest.h"
 #include "Misc/Config.h"
+#include "Misc/Dashboard.h"
 #include "Misc/Process.h"
 #include "Misc/SharedStore.h"
 
@@ -294,6 +295,8 @@ void BaseApplications::SetSceneProcess(SharedStore& store, bool running)
 			scene["start"] = (Json::UInt64)SharedStore::OwnStartTime();
 			// Whether its lasers reach other programs' overlays (laserMouse): they then don't point themselves
 			scene["points"] = oovr_global_configuration.LaserMouse();
+			// Whether it has a dashboard to show other programs' dashboard overlays in
+			scene["dashboard"] = DashboardButtonFromSetting(oovr_global_configuration.DashboardButton()) != Dashboard::Button::Off;
 			scene["app_key"] = key;
 			scene["since_ms"] = (Json::UInt64)NowMs();
 			if (t.state != VRApplicationTransition_None && t.appKey == key)
@@ -359,6 +362,12 @@ void BaseApplications::SetSceneProcess(SharedStore& store, bool running)
 					scene.removeMember("transition");
 			});
 		}
+	}
+	// A new scene application's session starts the dashboard overlays flagged to start with the dashboard, where it
+	// has one
+	if (running && changed && DashboardButtonFromSetting(oovr_global_configuration.DashboardButton()) != Dashboard::Button::Off) {
+		BaseApplications apps(store);
+		StartAutolaunchOverlays(apps);
 	}
 	if (arrived) {
 		vr::VREvent_Data_t data{};
@@ -841,8 +850,12 @@ uint64_t BaseApplications::GetApplicationPropertyUint64(const char* pchAppKey, E
 }
 EVRApplicationError BaseApplications::SetApplicationAutoLaunch(const char* pchAppKey, bool bAutoLaunch)
 {
-	if (!Find(pchAppKey))
+	std::optional<AppManifestEntry> app = Find(pchAppKey);
+	if (!app)
 		return VRApplicationError_UnknownApplication;
+	// Only a dashboard overlay is started with the dashboard
+	if (!app->isDashboardOverlay)
+		return VRApplicationError_InvalidApplication;
 	std::string key = pchAppKey;
 	bool written = UpdateApplications(Store(), [&](Json::Value& doc) { doc["autolaunch"][key] = bAutoLaunch; });
 	return written ? VRApplicationError_None : VRApplicationError_IPCFailed;
