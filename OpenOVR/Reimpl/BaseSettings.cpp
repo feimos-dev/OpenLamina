@@ -36,21 +36,12 @@ void UnsetSetting(const char* pchSection, const char* pchSettingsKey)
 	oc_soft_fail(&oc_soft_site_, "Setting %s.%s isn't set", pchSection, pchSettingsKey);
 }
 
-const Json::Value* Member(const Json::Value& object, const std::string& name)
-{
-	if (!object.isObject())
-		return nullptr;
-	return object.find(name.data(), name.data() + name.size());
-}
-
 std::optional<Json::Value> StoredValue(SharedStore& store, const std::string& section, const std::string& key)
 {
-	Json::Value settings = store.Read(StoreDoc::Settings);
-	const Json::Value* s = Member(settings, section);
-	const Json::Value* v = s ? Member(*s, key) : nullptr;
-	if (!v || v->isNull())
+	Json::Value v = store.ReadAt(StoreDoc::Settings, { section, key });
+	if (v.isNull())
 		return std::nullopt;
-	return *v;
+	return v;
 }
 
 // The OpenXR system's name, which picks the HMD's identity row; empty before a session (and in the unit tests)

@@ -483,13 +483,37 @@ Json::Value SharedStore::Read(StoreDoc doc)
 {
 	if (!Usable())
 		return Json::Value(Json::objectValue);
+	Refresh(doc);
+	std::lock_guard<std::mutex> guard(lock);
+	return cache[doc].data;
+}
+
+Json::Value SharedStore::ReadAt(StoreDoc doc, const std::vector<std::string>& path)
+{
+	if (!Usable())
+		return Json::Value();
+	Refresh(doc);
+	std::lock_guard<std::mutex> guard(lock);
+	const Json::Value* v = &cache[doc].data;
+	for (const std::string& name : path) {
+		if (!v->isObject())
+			return Json::Value();
+		v = v->find(name.data(), name.data() + name.size());
+		if (!v)
+			return Json::Value();
+	}
+	return *v;
+}
+
+void SharedStore::Refresh(StoreDoc doc)
+{
 	uint64_t generation;
 	{
 		std::lock_guard<std::mutex> guard(lock);
 		generation = Load(header()->generations[(int)doc]);
 		Cached& cached = cache[doc];
 		if (cached.loaded && cached.generation == generation)
-			return cached.data;
+			return;
 	}
 
 	Json::Value data(Json::objectValue);
@@ -513,10 +537,9 @@ Json::Value SharedStore::Read(StoreDoc doc)
 	std::lock_guard<std::mutex> guard(lock);
 	Cached& cached = cache[doc];
 	if (result == ReadResult::Failed)
-		return cached.data; // what was read last; read again next time
+		return; // what was read last stays; read again next time
 	if (!cached.loaded || cached.generation <= generation)
-		cached = { generation, data, true };
-	return data;
+		cached = { generation, std::move(data), true };
 }
 
 bool SharedStore::Update(StoreDoc doc, const std::function<void(Json::Value& data)>& edit, Wait wait)
