@@ -32,11 +32,16 @@ namespace {
 // Waits for the fence to reach the value (at most 5 s): false if it didn't, with the work still running
 bool WaitForFence(ID3D12Fence* fence, UINT64 completionValue, HANDLE waitEvent)
 {
-	if (fence->GetCompletedValue() >= completionValue)
-		return true;
-	if (FAILED(fence->SetEventOnCompletion(completionValue, waitEvent)) || WaitForSingleObject(waitEvent, 5000) != WAIT_OBJECT_0) {
-		OOVR_LOG_ONCE("A D3D12 copy didn't finish in time");
-		return false;
+	// The value is checked again after every wake: an event an earlier wait timed out on may still fire for its value
+	const ULONGLONG until = GetTickCount64() + 5000;
+	while (fence->GetCompletedValue() < completionValue) {
+		const ULONGLONG now = GetTickCount64();
+		ResetEvent(waitEvent);
+		if (now >= until || FAILED(fence->SetEventOnCompletion(completionValue, waitEvent))
+		    || WaitForSingleObject(waitEvent, (DWORD)(until - now)) == WAIT_FAILED) {
+			OOVR_LOG_ONCE("A D3D12 copy didn't finish in time");
+			return false;
+		}
 	}
 	return true;
 }

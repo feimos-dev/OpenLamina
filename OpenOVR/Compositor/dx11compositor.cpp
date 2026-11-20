@@ -12,6 +12,7 @@
 
 #include <algorithm>
 #include <d3dcompiler.h> // For compiling shaders! D3DCompile
+#include <mutex>
 
 #pragma comment(lib, "d3dcompiler.lib")
 // D3D11CreateDevice, for the D3D10 bridge, the OpenGL and Vulkan interop and the temporary device
@@ -854,9 +855,21 @@ void DX11Compositor::MirrorUpdate(const vr::Texture_t* texture, const vr::VRText
 		if (made.Width == desc.Width && made.Height == desc.Height) {
 			ctx->ResolveSubresource(*mirror, 0, src.Get(), 0, typed);
 		} else {
-			// Resolved whole into a texture of the frame's size, of which the mirror takes its part
-			ComPtr<ID3D11Texture2D> resolved;
-			resolved.Attach(MakeMirrorTexture(device.Get(), desc.Width, desc.Height, typed));
+			// Resolved whole into a texture of the frame's size, of which the mirror takes its part. It is kept for the next
+			// frame of the same size, format and device (it is made again otherwise; the last one lives to the end).
+			static std::mutex resolvedLock;
+			static ComPtr<ID3D11Texture2D>& resolved = *new ComPtr<ID3D11Texture2D>(); // never released at exit
+			std::lock_guard<std::mutex> resolvedGuard(resolvedLock);
+			D3D11_TEXTURE2D_DESC have{};
+			ComPtr<ID3D11Device> haveDevice;
+			if (resolved) {
+				resolved->GetDesc(&have);
+				resolved->GetDevice(&haveDevice);
+			}
+			if (!resolved || have.Width != desc.Width || have.Height != desc.Height || have.Format != typed || haveDevice != device) {
+				resolved.Reset();
+				resolved.Attach(MakeMirrorTexture(device.Get(), desc.Width, desc.Height, typed));
+			}
 			if (!resolved)
 				return;
 			ctx->ResolveSubresource(resolved.Get(), 0, src.Get(), 0, typed);

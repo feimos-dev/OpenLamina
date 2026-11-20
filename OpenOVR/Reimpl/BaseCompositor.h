@@ -174,8 +174,6 @@ private:
 	std::atomic<int> trackingUniverse{ vr::TrackingUniverseStanding };
 
 public:
-	// Whether the second eye's Submit ends the frame: not for a game that ends its frames with PostPresentHandoff,
-	// whether it says so in its timing mode or has called it
 	// Submitted bounds with a NaN in them are no bounds at all
 	static bool BoundsAreNumbers(const vr::VRTextureBounds_t* bounds)
 	{
@@ -208,6 +206,8 @@ public:
 		}
 		return needed;
 	}
+	// Whether the second eye's Submit ends the frame: not for a game that ends its frames with PostPresentHandoff,
+	// whether it says so in its timing mode or has called it
 	static bool SubmitEndsFrame(int32_t timingMode, bool calledHandoff)
 	{
 		return timingMode != (int32_t)VRCompositorTimingMode_Explicit_ApplicationPerformsPostPresentHandoff && !calledHandoff;

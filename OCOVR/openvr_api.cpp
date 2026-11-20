@@ -359,18 +359,18 @@ VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(EVRInitError* peError, EVRApp
 	EVRInitError backendError = VRInitError_None;
 	IBackend* backend = DrvOpenXR::CreateOpenXRBackend(pStartupInfo, &backendError, eApplicationType);
 	if (!backend) {
-		if (peError)
-			*peError = backendError != VRInitError_None ? backendError : VRInitError_Init_Internal;
 		running = false;
 		running_ovr = false;
 		BaseClientCore::appType = utility_init ? VRApplication_Utility : VRApplication_Max;
-		return 0;
+		return RefuseInit(peError, backendError != VRInitError_None ? backendError : VRInitError_Init_Internal);
 	}
 	BackendManager::Create(backend);
 	DrvOpenXR::KeepOverlaysInstance();
 	// An earlier Utility Init not yet shut down is matched by a Shutdown too
 	scene_init_count = utility_init ? 2 : 1;
 	utility_init = false;
+	// A refused Init of an older SDK that never shut down doesn't hold this session's Shutdown back
+	refused_init_count = 0;
 	NewInitToken();
 
 	return current_init_token;
@@ -440,25 +440,14 @@ VR_INTERFACE bool VR_CALLTYPE VR_IsInterfaceVersionValid(const char* pchInterfac
 	if (!strncmp(fnTablePrefix, pchInterfaceVersion, strlen(fnTablePrefix)))
 		pchInterfaceVersion += strlen(fnTablePrefix);
 
-	bool known = false;
-	GetInterfaceFlagsByName(pchInterfaceVersion, "APPTYPE", &known);
-	if (known)
-		return true;
-
-	// GetInterfaceFlagsByName only knows the interfaces with flags: making the interface tells the rest
-	void* probe = CreateInterfaceByName(pchInterfaceVersion);
-	if (!probe)
-		return false;
-	((CVRCorrectLayout*)probe)->Delete();
-	return true;
+	return InterfaceExists(pchInterfaceVersion);
 }
 
 VR_INTERFACE bool VR_CALLTYPE VR_IsRuntimeInstalled()
 {
-	// An OpenXR runtime is registered (or named by XR_RUNTIME_JSON) and its manifest is there
-	std::optional<std::filesystem::path> manifest = LibMonado::ActiveRuntimeManifest();
-	std::error_code ec;
-	return manifest && std::filesystem::exists(*manifest, ec);
+	// Whether an OpenXR runtime is there is only known at Init: one chosen other than through the registry (Wine and
+	// Proton, a loader setting) would otherwise stop games that work
+	return true;
 }
 
 VR_INTERFACE const char* VR_CALLTYPE VR_RuntimePath()
