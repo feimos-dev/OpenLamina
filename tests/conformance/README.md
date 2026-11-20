@@ -53,6 +53,14 @@ reaches: the C exports of `openvr_api` (`c-api-exports`), the client core's othe
 (`app-type-interfaces`), `IVRMailbox_001` (`mailbox`), `IVRNotifications_002` (`notifications`) and the interfaces
 that keep state across a Shutdown and Init, with SteamVR's resource files (`state-and-resources`).
 
+`app-type-answers` starts each application type in turn (scene, overlay, background, utility, other) and records the
+answers that depend on the session and the controllers: device roles and properties, the compositor's, overlays',
+applications' and chaperone's state. Run it with both controllers on (`scripts/controllers_on.json` on the stand-in;
+switched on with SteamVR), so a SteamVR recording gives the answers to compare with. `steamvr_run_cases.cpp` has more
+of those, run the same way: device properties and roles, a second Init, chaperone bounds and colours, refused submits,
+skeletal input (`manifest_skeleton.json`), legacy controller state, render model components, a new overlay's defaults
+and events, settings defaults, the application list and IVRIOBuffer.
+
 `out/summary.txt` has the counts per status (`ok`, `ended`: OpenLamina ended the program, `crashed`, `timeout`) and
 every record that wasn't ok; `out/results.json` has every record. When a child ends early the runner starts it again
 after the call that ended it, so one bad call doesn't hide the rest. When a child crashes, `crash_report.cpp` writes

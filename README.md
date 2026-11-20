@@ -119,21 +119,37 @@ Unpack `OpenLamina-Windows-Portable.zip` or `OpenLamina-Linux.tar.gz` and put th
 For one Windows game only, replace its `openvr_api.dll` with `vrclient_x64.dll` (or `vrclient.dll` for 32-bit games)
 renamed to `openvr_api.dll`. Keep a backup; verifying the game's files in Steam undoes it.
 
+<a id="linux-notes"></a>
 ### Linux notes
 
-Most VR games are Windows games running in Proton, inside the Steam Runtime, which needs a few paths made visible:
+`install.sh` puts OpenLamina in `~/.local/share/OpenLamina` (`~/.var/app/com.valvesoftware.Steam/.local/share/OpenLamina`
+for Flatpak Steam), with the libraries in `bin/linux64/vrclient.so` and `bin/vrclient.so`. Use that folder wherever a
+runtime folder is asked for.
 
-- Your home folder is visible as it is.
-- `/usr` is at `/run/host/usr`, for example `/run/host/usr/share/openxr/1/openxr_monado.json`.
-- Anything else can be added with `PRESSURE_VESSEL_FILESYSTEMS_RW`.
-
-To use OpenLamina for one game only, set `VR_OVERRIDE` in its launch options. With Monado installed system-wide:
+Most VR games are Windows games running in Proton, inside the Steam Runtime. To let them reach your OpenXR runtime
+(Monado, WiVRn, ...), add this to their launch options (the game's Properties, General, Launch options);
+`install.sh --launch-options` prints it. Flatpak Steam needs it too, and the runtime visible inside the Flatpak:
 
 ```
-VR_OVERRIDE=~/OpenLamina XR_RUNTIME_JSON=/run/host/usr/share/openxr/1/openxr_monado.json PRESSURE_VESSEL_FILESYSTEMS_RW=$XDG_RUNTIME_DIR/monado_comp_ipc %command%
+PRESSURE_VESSEL_IMPORT_OPENXR_1_RUNTIMES=1 %command%
 ```
 
-For a native Linux game, copy `bin/linux64/vrclient.so` over the game's `libopenvr_api.so`.
+To choose the OpenVR runtime for one game only, whatever `openvrpaths.vrpath` names first, set `VR_OVERRIDE` to the
+runtime's folder in its launch options:
+
+```
+VR_OVERRIDE=$HOME/.local/share/OpenLamina PRESSURE_VESSEL_IMPORT_OPENXR_1_RUNTIMES=1 %command%
+```
+
+Proton needs an `openvrpaths.vrpath` to exist (`~/.config/openvr/`) even then. Running `install.sh` once, or SteamVR
+once, makes it.
+
+WiVRn and Envision write `openvrpaths.vrpath` themselves when they start, with their own OpenVR runtime first. Point
+them at OpenLamina instead: WiVRn's `openvr-compat-path` in its `config.json`, Envision's profile setting for the
+OpenVR runtime path. `install.sh` says so when it finds them.
+
+For a native Linux game, copy `bin/linux64/vrclient.so` over the game's `libopenvr_api.so`. A Windows game's `.exe`
+started without Proton (through Wine alone) isn't supported: OpenLamina refuses it and logs why.
 
 ## Coming from OpenComposite
 
@@ -149,7 +165,12 @@ The Windows installer installs next to OpenComposite's. Uninstall OpenComposite 
 ## Configuration
 
 Options go in `openlamina.ini`, one `name=value` per line (`;` or `#` for comments, names are case sensitive). It is
-read next to the game's `openvr_api.dll` (Windows only), then from the game's working directory, which overrides it.
+read from, in order, each file overriding the keys it sets of the ones before it (the log says which were read):
+
+- Windows: next to the DLL, then the game's working directory.
+- Linux: the install's `bin/` (next to `bin/vrclient.so`, so both word sizes read it), then
+  `$XDG_CONFIG_HOME/openlamina/openlamina.ini` (`~/.config/openlamina/` by default), then the game's working directory.
+
 On Windows the app's *Settings* window edits the common options. An unknown option or bad value is logged and ignored.
 
 | Option | Default | What it does |

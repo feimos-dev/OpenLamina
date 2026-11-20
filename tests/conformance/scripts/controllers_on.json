@@ -1,0 +1,10 @@
+{
+  "#": "Both controllers on (Index controllers), held in front at waist height: for app-type-answers",
+  "interaction_profile": "/interaction_profiles/valve/index_controller",
+  "poses": {
+    "/user/hand/left/input/grip/pose": { "p": [-0.2, 1.0, -0.3], "q": [0, 0, 0, 1] },
+    "/user/hand/left/input/aim/pose": { "p": [-0.2, 1.0, -0.3], "q": [0, 0, 0, 1] },
+    "/user/hand/right/input/grip/pose": { "p": [0.2, 1.0, -0.3], "q": [0, 0, 0, 1] },
+    "/user/hand/right/input/aim/pose": { "p": [0.2, 1.0, -0.3], "q": [0, 0, 0, 1] }
+  }
+}

@@ -62,10 +62,13 @@ BOOL APIENTRY DllMain(HMODULE hModule,
 	case DLL_THREAD_DETACH:
 		break;
 	case DLL_PROCESS_DETACH:
-		// At process exit (lpReserved set) nothing needs freeing, and the loader lock is held anyway
-		if (chainedImplementation && !lpReserved) {
+		// At process exit (lpReserved set) nothing needs freeing, and the loader lock is held anyway. A session still
+		// up isn't shut down: the OpenXR runtime's DLL may be detached already, and the static destructors that
+		// follow would call into it.
+		if (lpReserved)
+			oc_abandon_at_exit();
+		else if (chainedImplementation)
 			FreeLibrary(chainedImplementation);
-		}
 		break;
 	}
 	return TRUE;

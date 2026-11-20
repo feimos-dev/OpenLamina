@@ -33,6 +33,11 @@ BackendManager* BackendManager::InstancePtr()
 
 bool BackendManager::resetting = false;
 
+void BackendManager::Abandon()
+{
+	(void)instance.release();
+}
+
 void BackendManager::Reset()
 {
 	resetting = true;

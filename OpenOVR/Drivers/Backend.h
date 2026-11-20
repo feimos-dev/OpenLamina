@@ -278,6 +278,8 @@ public:
 	static BackendManager& Instance();
 	static BackendManager* InstancePtr();
 	static void Reset();
+	// Leaves the backend undestroyed, for a process that is ending
+	static void Abandon();
 
 	// main methods
 

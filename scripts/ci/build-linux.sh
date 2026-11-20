@@ -5,7 +5,8 @@
 #
 #   scripts/ci/build-linux.sh [--tests] x64|x86 [build-dir] [version]
 #
-# --tests also builds the tests (OC_BUILD_TESTS) and runs the unit tests.
+# --tests also builds the tests (OC_BUILD_TESTS) and runs the unit tests. OC_CMAKE_ARGS adds CMake options (split at
+# spaces), as CI's variants do: -DUSE_SYSTEM_OPENXR=ON -DUSE_SYSTEM_GLM=ON, say. CXXFLAGS is CMake's own.
 #
 # x64 makes <build-dir>/bin/linux64/vrclient.so; x86 (scripts/ci/x86-toolchain.cmake) makes <build-dir>/bin/vrclient.so.
 set -eu
@@ -39,6 +40,8 @@ set -- -S "$root" -B "$out" -G "Unix Makefiles" -DCMAKE_BUILD_TYPE=Release -DERR
 if [ "$arch" = x86 ]; then
 	set -- "$@" "-DCMAKE_TOOLCHAIN_FILE=$root/scripts/ci/x86-toolchain.cmake"
 fi
+# shellcheck disable=SC2086 # split on purpose
+set -- "$@" ${OC_CMAKE_ARGS:-}
 
 rm -rf "$out"
 cmake "$@"

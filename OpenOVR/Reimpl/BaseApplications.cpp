@@ -11,6 +11,7 @@
 #include "Misc/SharedStore.h"
 
 #include <atomic>
+#include <cctype>
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
@@ -284,6 +285,26 @@ std::optional<AppManifestEntry> BaseApplications::Find(const char* pchAppKey)
 }
 
 namespace {
+// On Linux, an application whose binary is a Windows program can't be started: there's no Proton or Wine to start it
+// with. Refused (logged) before anything else is done for the launch.
+bool WindowsBinaryRefused(const AppManifestEntry& app)
+{
+#ifdef _WIN32
+	(void)app;
+	return false;
+#else
+	if (app.launchType == "url")
+		return false;
+	std::string ext = app.ResolvedBinary().extension().string();
+	std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+	if (ext != ".exe")
+		return false;
+	OOVR_LOGF("Not launching application %s: its binary (%s) is a Windows program, which can't be started on Linux",
+	    app.appKey.c_str(), app.ResolvedBinary().string().c_str());
+	return true;
+#endif
+}
+
 // Whether this process has drawn since it became the scene application, and whether the store has that
 std::atomic<bool> sceneDrawn{ false }, sceneDrawnStored{ false };
 } // namespace
@@ -711,6 +732,8 @@ EVRApplicationError BaseApplications::Launch(const AppManifestEntry& app, const 
 {
 	if (app.isTemplate)
 		return VRApplicationError_IsTemplate;
+	if (WindowsBinaryRefused(app))
+		return VRApplicationError_LaunchFailed;
 
 	std::optional<uint32_t> pid;
 	if (app.launchType == "url") {
@@ -747,6 +770,8 @@ EVRApplicationError BaseApplications::LaunchApplication(const char* pchAppKey)
 	// One copy of an application at a time
 	if (app->launchType != "url" && GetApplicationProcessId(pchAppKey) != 0)
 		return VRApplicationError_ApplicationAlreadyRunning;
+	if (!app->isTemplate && WindowsBinaryRefused(*app))
+		return VRApplicationError_LaunchFailed;
 	// Another scene application is asked to quit, and this one starts when it has
 	if (IsSceneApplication(*app)) {
 		EVRApplicationError error = AskSceneApplicationToQuit(app->appKey, true);

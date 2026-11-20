@@ -2479,6 +2479,11 @@ void XrBackend::OnSessionCreated()
 		return;
 	}
 
+	if (BaseClientCore::appType == vr::VRApplication_Background) {
+		StartBackgroundFrames();
+		return;
+	}
+
 	// A scene application's session makes it the scene application for every program
 	if (BaseClientCore::appType == vr::VRApplication_Scene)
 		BaseApplications::SetSceneProcess(true);
@@ -2576,6 +2581,26 @@ void XrBackend::StartHelperLoop()
 			    // A room setup tool's preview of its play area
 			    WithStoreDocuments([&] { overlay->_UpdateBounds(); });
 		    }
+		    return RunOwnFrame(source, wanted);
+	    });
+}
+
+// A background app on a scene session (Linux, where Proton's helper uses one) runs no frames, so the session would
+// never be focused and give it no input: empty frames of OpenLamina's (no layers, no device needed), with the events
+// pumped, until the program runs a frame of its own
+void XrBackend::StartBackgroundFrames()
+{
+	StopOwnFrames();
+	if (ownFramesStopped)
+		return;
+	ownFrames = std::make_unique<OwnFrameLoop>(
+	    OwnFrameLoop::Mode::UntilAppFrame, [](XrTime, std::vector<const XrCompositionLayerBaseHeader*>&) {},
+	    std::chrono::milliseconds(0),
+	    [this](const OwnFrameLoop::LayerSource& source, const std::function<bool()>& wanted) -> XrDuration {
+		    SessionLock lock(xr_session, SessionLock::TryShared{});
+		    if (!lock.IsHeld())
+			    return 0;
+		    PumpEvents();
 		    return RunOwnFrame(source, wanted);
 	    });
 }
