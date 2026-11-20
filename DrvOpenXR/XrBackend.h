@@ -73,12 +73,9 @@ public:
 	// The game has been told the devices are deactivated (a loss), and not yet that they're back
 	std::atomic<bool> devicesDeactivated{ false };
 	// The last try to find the system again (RecoverLostSession), and whether the lost session is destroyed yet
-	std::chrono::steady_clock::time_point lastRecoveryTry{};
+	std::atomic<std::chrono::steady_clock::rep> lastRecoveryTry{ 0 }; // 0 before the first
 	bool lostSessionDestroyed = false;
 	std::mutex recoveryLock;
-	// A helper program's loop makes its lost session again itself, between its passes: its loop and thread are kept
-	// through the rebuild (not stopped, nor started again)
-	std::atomic<bool> recoveringInHelperLoop{ false };
 	// What the game has been told of the session, as SteamVR tells it: whether it lost input focus (sessionEvents), and
 	// the IPD (NaN until the session's first)
 	std::atomic<bool> inputFocusLost{ false };
@@ -159,9 +156,10 @@ public:
 	/**
 	 * After a loss, on a thread that holds no session lock and no frame: destroys the lost session (once), then about
 	 * once a second asks for the system (xrGetSystem) and, once it's there, makes the session again (RebuildSession);
-	 * the devices are activated again. Retried for as long as it takes; nothing after the user quit.
+	 * the devices are activated again. Retried for as long as it takes; nothing after the user quit. passLock is the
+	 * helper loop's pass lock, taken after the session lock.
 	 */
-	void RecoverLostSession();
+	void RecoverLostSession(std::mutex* passLock = nullptr);
 	bool IsSessionLost() const { return sessionLost; }
 	/** The session is lost, not running, or stopping, exiting or about to be lost: nothing can be shown in it any more */
 	bool IsSessionEnded() const
@@ -372,16 +370,13 @@ private:
 
 	// Whether we've restarted the session to use the application's rendering API yet
 	std::atomic<bool> usingApplicationGraphicsAPI{ false };
-	// The game's frames begun on its own device: the info set is attached only after a while of them without the
-	// game's actions, so that a game that loads its manifest early needs no restart for it
-	std::atomic<uint32_t> framesOnGameDevice{ 0 };
-	static constexpr uint32_t kFramesBeforeInfoSet = 90;
 
 public:
 	/**
-	 * Whether the game's actions (its manifest's, or legacy input's) may be attached now: once the session is on the
-	 * game's device (or will stay where it is: a helper program's, or a game whose device can't be used). Before that
-	 * a session restart would come anyway, so attaching them would only add another.
+	 * Whether the game's actions (its manifest's, or legacy input's) and the info set may be attached now: once the
+	 * session is on the game's device (or will stay where it is: a helper program's, or a game whose device can't be
+	 * used), or the game has had input focus without submitting a frame. Before that the session restart for its first
+	 * Submit would follow, and one more for a manifest it loads by then.
 	 */
 	static bool InputsMayAttach();
 
