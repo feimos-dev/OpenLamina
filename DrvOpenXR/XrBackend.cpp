@@ -2064,10 +2064,9 @@ bool XrBackend::InputsMayAttach()
 		return true;
 	// No Submit yet: a game that never submits (or takes a long time to) gets its inputs after a while
 	using clock = std::chrono::steady_clock;
-	static std::atomic<clock::rep> firstAsked{ 0 };
 	const clock::rep now = clock::now().time_since_epoch().count();
 	clock::rep expected = 0;
-	if (firstAsked.compare_exchange_strong(expected, now))
+	if (backend->inputsFirstAsked.compare_exchange_strong(expected, now))
 		return false;
 	return clock::duration(now - expected) >= kInputsWithoutSubmit;
 }
@@ -2409,10 +2408,18 @@ void XrBackend::RecoverLostSession(std::mutex* passLock)
 	const auto now = clock::now();
 	if (!RecoveryDue(clock::time_point(clock::duration(lastRecoveryTry.load())), now))
 		return;
-	lastRecoveryTry = now.time_since_epoch().count();
 
-	// The session lock, then the helper loop's pass (the order its passes take them in)
-	auto lock = xr_session.lock();
+	// The session lock, then the helper loop's pass (the order its passes take them in). The helper loop never waits
+	// for the session lock: a thread holding it may be stopping the loop. Not a conditional expression: MSVC wants a
+	// copy constructor for one, which SessionLock lacks.
+	auto lock = [passLock] {
+		if (passLock)
+			return xr_session.try_lock();
+		return xr_session.lock();
+	}();
+	if (!lock.IsHeld())
+		return; // the next pass tries again
+	lastRecoveryTry = now.time_since_epoch().count();
 	std::unique_lock<std::mutex> pass;
 	if (passLock)
 		pass = std::unique_lock<std::mutex>(*passLock);
@@ -3294,7 +3301,8 @@ void XrBackend::MaybeRestartForInputs()
 		return;
 
 	auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
-	if (!backend)
+	// A lost session isn't restarted: the one made again has the game's actions bound
+	if (!backend || backend->IsSessionLost())
 		return;
 	if (XR_FAILED(backend->RebuildSession(RebuildReason::Inputs))) {
 		// No session to put the actions on: lost until one can be made

@@ -70,7 +70,8 @@
    ],
    "sessions_lost": 1,
    "sessions_created_min": 2,
-   "frames_ended_min": 20
+   "frames_ended_min": 20,
+   "manifest": 0
   }
  },
  "exiting": {
