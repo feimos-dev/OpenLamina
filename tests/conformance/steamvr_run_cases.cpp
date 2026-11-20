@@ -3,6 +3,7 @@
 // cases.cpp's do, and needs nothing that isn't there to stay ok without a runtime.
 
 #include "conformance.h"
+#include "gfx/GfxApi.h"
 
 #include "IVRApplications_007.h"
 #include "IVRChaperoneSetup_006.h"
@@ -16,6 +17,7 @@
 #include "IVRSystem_022.h"
 
 #include <chrono>
+#include <memory>
 #include <cmath>
 #include <cstring>
 #include <string>
@@ -58,15 +60,37 @@ bool InitScene(CaseContext& c)
 	return true;
 }
 
-// A few frames, so the session has started and the controllers are seen
+// A few frames of a game's: poses, then both eyes submitted (the platform's own API: D3D11 on Windows, Vulkan
+// elsewhere), and the events, so the session has started and the controllers are seen
 void Frames(CaseContext& c, int n)
 {
+	static std::unique_ptr<GfxApi> gfx;
+	static GfxTexture eyes[2];
+	if (!gfx) {
+		std::string why;
+#ifdef _WIN32
+		gfx = GfxApi::Create(GfxKind::D3D11, &why);
+		const int64_t format = 29; // DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
+#else
+		gfx = GfxApi::Create(GfxKind::Vulkan, &why);
+		const int64_t format = 43; // VK_FORMAT_R8G8B8A8_SRGB
+#endif
+		if (gfx) {
+			for (int eye = 0; eye < 2; eye++)
+				eyes[eye] = gfx->Pattern(256, 256, format, eye);
+			gfx->Flush();
+		}
+	}
 	auto* comp = (vr::IVRCompositor_029::IVRCompositor*)c.core->GetGenericInterface("IVRCompositor_029", nullptr);
 	auto* sys = (vr::IVRSystem_022::IVRSystem*)c.core->GetGenericInterface("IVRSystem_022", nullptr);
 	for (int i = 0; i < n; i++) {
 		if (comp) {
 			vr::TrackedDevicePose_t poses[vr::k_unMaxTrackedDeviceCount];
 			comp->WaitGetPoses(poses, vr::k_unMaxTrackedDeviceCount, nullptr, 0);
+			for (int eye = 0; gfx && eye < 2; eye++) {
+				if (eyes[eye].Made())
+					comp->Submit((vr::EVREye)eye, eyes[eye].Texture());
+			}
 		} else {
 			std::this_thread::sleep_for(std::chrono::milliseconds(11));
 		}
