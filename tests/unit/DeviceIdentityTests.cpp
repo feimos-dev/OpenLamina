@@ -7,6 +7,7 @@
 #include "Misc/Input/IndexControllerInteractionProfile.h"
 #include "Misc/Input/KhrSimpleInteractionProfile.h"
 #include "Misc/Input/OculusInteractionProfile.h"
+#include "Misc/Input/ViveTrackerInteractionProfile.h"
 #include "Misc/SoftFail.h"
 #include "XrController.h"
 #include "XrGenericTracker.h"
@@ -60,6 +61,13 @@ TEST_CASE("Controllers_and_headset_have_different_serials")
 	CHECK(ControllerIdentity(touch, vr::TrackedControllerRole_LeftHand, "SN1").serial == "SN1");
 	CHECK(TrackerIdentity("Some tracker", "").serial != "");
 	CHECK(TrackerIdentity("Some tracker", "T1").serial == "T1");
+}
+
+TEST_CASE("Trackers_name_the_tracking_system_their_profile_does")
+{
+	ViveTrackerInteractionProfile tracker;
+	CHECK(TrackerIdentity("Some tracker", "").trackingSystem
+	    == tracker.GetProperty<std::string>(vr::Prop_TrackingSystemName_String, ITrackedDevice::HAND_LEFT).value());
 }
 
 TEST_CASE("Axis_types_follow_the_controller")
