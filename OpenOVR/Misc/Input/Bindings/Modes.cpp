@@ -14,35 +14,35 @@
 // an estimate not yet measured against SteamVR.
 const std::vector<ModeParameter> kModeParameters = {
 	// button and complex_button
-	{ "button", "click_activate_threshold", 0.7f, "today's BaseInput (perProfileData's default)" },
-	{ "button", "click_deactivate_threshold", 0.55f, "today's BaseInput (perProfileData's default)" },
-	{ "button", "double_press_delay", 0.5f, "today's BaseInput (500 ms between the presses, from OpenOVR merge request !186)" },
+	{ "button", "click_activate_threshold", 0.7f, "OpenLamina's default" },
+	{ "button", "click_deactivate_threshold", 0.55f, "OpenLamina's default" },
+	{ "button", "double_press_delay", 0.5f, "OpenLamina's default: 500 ms between the presses" },
 	{ "button", "long_press_delay", 0.5f, "an estimate, not measured against SteamVR" },
-	{ "complex_button", "click_activate_threshold", 0.7f, "today's BaseInput (perProfileData's default)" },
-	{ "complex_button", "click_deactivate_threshold", 0.55f, "today's BaseInput (perProfileData's default)" },
-	{ "complex_button", "double_press_delay", 0.5f, "today's BaseInput (500 ms between the presses, from OpenOVR merge request !186)" },
+	{ "complex_button", "click_activate_threshold", 0.7f, "OpenLamina's default" },
+	{ "complex_button", "click_deactivate_threshold", 0.55f, "OpenLamina's default" },
+	{ "complex_button", "double_press_delay", 0.5f, "OpenLamina's default: 500 ms between the presses" },
 	{ "complex_button", "long_press_delay", 0.5f, "an estimate, not measured against SteamVR" },
 	// toggle_button
-	{ "toggle_button", "click_activate_threshold", 0.7f, "today's BaseInput (perProfileData's default)" },
-	{ "toggle_button", "click_deactivate_threshold", 0.55f, "today's BaseInput (perProfileData's default)" },
-	// trigger: click from the pull, as today's input does for every trigger
-	{ "trigger", "click_activate_threshold", 0.7f, "today's BaseInput (perProfileData's default)" },
-	{ "trigger", "click_deactivate_threshold", 0.55f, "today's BaseInput (perProfileData's default)" },
+	{ "toggle_button", "click_activate_threshold", 0.7f, "OpenLamina's default" },
+	{ "toggle_button", "click_deactivate_threshold", 0.55f, "OpenLamina's default" },
+	// trigger: click from the pull
+	{ "trigger", "click_activate_threshold", 0.7f, "OpenLamina's default" },
+	{ "trigger", "click_deactivate_threshold", 0.55f, "OpenLamina's default" },
 	{ "trigger", "touch_threshold", 0.01f, "an estimate, not measured against SteamVR: touched as soon as it moves" },
 	// grab
-	{ "grab", "value_hold_threshold", 0.7f, "today's BaseInput (SteamVR's defaults, BaseInput.cpp)" },
-	{ "grab", "value_release_threshold", 0.65f, "today's BaseInput (SteamVR's defaults, BaseInput.cpp)" },
+	{ "grab", "value_hold_threshold", 0.7f, "SteamVR's defaults" },
+	{ "grab", "value_release_threshold", 0.65f, "SteamVR's defaults" },
 	{ "grab", "force_hold_threshold", 0.6f, "an estimate, not measured against SteamVR" },
 	{ "grab", "force_release_threshold", 0.5f, "an estimate, not measured against SteamVR" },
 	// scalar_constant
 	{ "scalar_constant", "value", 1.0f, "an estimate, not measured against SteamVR" },
 	// trackpad and joystick: position, click, touch
-	{ "trackpad", "deadzone_pct", 0.0f, "today's BaseInput (perProfileData's default)" },
-	{ "joystick", "deadzone_pct", 0.0f, "today's BaseInput (perProfileData's default)" },
-	{ "joystick", "maxzone_pct", 100.0f, "today's BaseInput (perProfileData's default)" },
-	// dpad (the click and touch sub-modes of OpenOVR merge request !186)
-	{ "dpad", "deadzone_pct", 50.0f, "today's BaseInput (DpadBindingInfo::dpadDeadzoneRadius)" },
-	{ "dpad", "overlap_pct", 0.0f, "today's BaseInput (four 90 degree sectors)" },
+	{ "trackpad", "deadzone_pct", 0.0f, "no dead zone" },
+	{ "joystick", "deadzone_pct", 0.0f, "no dead zone" },
+	{ "joystick", "maxzone_pct", 100.0f, "the full range" },
+	// dpad (the click and touch sub-modes)
+	{ "dpad", "deadzone_pct", 50.0f, "half the pad's radius" },
+	{ "dpad", "overlap_pct", 0.0f, "four 90 degree sectors" },
 	// scroll
 	{ "scroll", "discrete_scroll_step", 0.2f, "an estimate, not measured against SteamVR: a fifth of the pad per step" },
 	{ "scroll", "smooth_scroll_multiplier", 1.0f, "an estimate, not measured against SteamVR" },
@@ -103,6 +103,14 @@ protected:
 	{
 		auto it = binding.parameters.find(name);
 		return it == binding.parameters.end() ? fallback : it->second;
+	}
+	// A source with a value (a trigger) presses through the click thresholds, the binding's or the mode's, even where it
+	// has a click of its own, as SteamVR does: an Index trigger's click is at the very end of its pull, and games fire
+	// at the resistance before it. Only force_input "click" asks for the click itself.
+	bool PressFromValue(bool hasValue) const
+	{
+		auto it = binding.parameters.find("force_input");
+		return hasValue && !(it != binding.parameters.end() && it->second == "click");
 	}
 	std::string Raw(const std::string& component) const { return binding.path + "/" + component; }
 
@@ -197,7 +205,7 @@ private:
 		}
 		std::optional<float> click = in.Get(Raw("click"));
 		std::optional<float> analog = force == "force" ? in.Get(Raw("force")) : in.Get(Raw("value"));
-		if (force == "click" && click)
+		if (force == "click" && click && !PressFromValue(in.Get(Raw("value")).has_value()))
 			state = *click >= 0.5f;
 		else if (analog)
 			state = Hysteresis(state, *analog, Param("click_activate_threshold"), Param("click_deactivate_threshold"));
@@ -226,7 +234,7 @@ public:
 		std::optional<float> click = in.Get(Raw("click"));
 		std::optional<float> value = in.Get(Raw("value"));
 		std::optional<float> force = in.Get(Raw("force"));
-		if (click)
+		if (click && !PressFromValue(value.has_value()))
 			pressed = *click >= 0.5f;
 		else if (value)
 			pressed = Hysteresis(pressed, *value, Param("click_activate_threshold"), Param("click_deactivate_threshold"));
@@ -525,6 +533,14 @@ const std::map<std::string, Factory>& Factories()
 
 std::unique_ptr<ModeBinding> CreateModeBinding(const SourceBinding& binding, std::vector<std::string>& warnings)
 {
+	// "none" binds nothing; SteamVR's files spell the radial menu "radial_menu"
+	if (binding.mode == "none")
+		return nullptr;
+	if (binding.mode == "radial_menu") {
+		SourceBinding radial = binding;
+		radial.mode = "radial";
+		return CreateModeBinding(radial, warnings);
+	}
 	auto it = Factories().find(binding.mode);
 	if (it == Factories().end()) {
 		warnings.push_back(binding.path + ": mode '" + binding.mode + "' isn't one OpenComposite evaluates, skipped");

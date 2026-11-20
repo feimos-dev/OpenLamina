@@ -29,6 +29,7 @@ struct DigitalOut {
 struct AnalogOut {
 	float x = 0, y = 0, z = 0, dx = 0, dy = 0, dz = 0;
 	std::string origin;
+	double changeTime = 0; // when the value last differed from the frame before; 0 for never
 };
 struct ActionOutputs {
 	std::unordered_map<std::string, DigitalOut> digital;

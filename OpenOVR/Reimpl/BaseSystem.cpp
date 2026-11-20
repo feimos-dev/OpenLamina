@@ -731,7 +731,6 @@ void BaseSystem::CheckControllerEvents(TrackedDeviceIndex_t hand, VRControllerSt
 
 	VREvent_t ev_base{};
 	ev_base.trackedDeviceIndex = hand;
-	ev_base.eventAgeSeconds = 0; // TODO
 	ev_base.data.controller = { 0 };
 
 	TrackedDevicePose_t pose{};
@@ -805,6 +804,7 @@ bool BaseSystem::PollNextEventWithPose(ETrackingUniverseOrigin eOrigin, VREvent_
 	event_info_t info = events.front();
 	VREvent_t e = info.ev;
 	events.pop();
+	e.eventAgeSeconds += std::chrono::duration<float>(std::chrono::steady_clock::now() - info.queuedAt).count();
 
 	memcpy(pEvent, &e, std::min((size_t)uncbVREvent, sizeof(e)));
 

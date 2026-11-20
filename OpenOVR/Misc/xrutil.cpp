@@ -47,6 +47,7 @@ XrExt::XrExt(XrGraphicsApiSupportedFlags apis, const std::vector<const char*>& e
 	bool xdevSpace = false;
 	bool refreshRate = false;
 	for (const char* ext : extensions) {
+		enabledExtensions.insert(ext);
 		if (strcmp(ext, XR_KHR_VISIBILITY_MASK_EXTENSION_NAME) == 0)
 			hasVisMask = true;
 		if (strcmp(ext, XR_EXT_HAND_TRACKING_EXTENSION_NAME) == 0)

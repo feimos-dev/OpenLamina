@@ -25,6 +25,8 @@
  * Implementing an interaction profile is fairly straightforward, view the other interaction profiles for examples.
  * Be sure to add any implemented profiles to the interactionProfiles vector in BaseInput.cpp. (This is done in the BaseInput constructor.)
  */
+class XrExt;
+
 class InteractionProfile {
 private:
 	// types of properties that can be retrieved
@@ -43,18 +45,6 @@ private:
 	struct in_variant<T, std::variant<Ts...>> : std::disjunction<std::is_same<T, Ts>...> {
 	};
 
-	// helper struct for ordering translationMap
-	struct translation_compare {
-		bool operator()(const std::string& lhs, const std::string& rhs) const
-		{
-			if (lhs.size() != rhs.size())
-				return lhs.size() > rhs.size();
-			else
-				// without this, strings that are the same length will be considered the same by the map
-				return lhs > rhs;
-		}
-	};
-
 public:
 	virtual ~InteractionProfile() = default;
 
@@ -64,6 +54,12 @@ public:
 	 * If implementing a new profile, be sure to add it here!
 	 */
 	static const ProfileList& GetProfileList();
+
+	/**
+	 * The profiles for an instance created with the extensions of ext: a profile that comes with an extension is in it
+	 * only when the extension is enabled, as a runtime refuses suggestions for a profile it doesn't have.
+	 */
+	static ProfileList CreateProfiles(XrExt& ext);
 
 	/**
 	 * Lookup an interaction profile from it's path, as returned by GetPath.
@@ -106,12 +102,6 @@ public:
 	 * Returns true if the given path is present in GetValidInputsPaths.
 	 */
 	bool IsInputPathValid(const std::string& inputPath) const;
-
-	/**
-	 * Translate an unsupported path to a supported one using the pathTranslationMap.
-	 * For example, for the simple controller, this will translate any trigger paths to select paths.
-	 */
-	std::string TranslateAction(const std::string& inputPath) const;
 
 	/**
 	 * The raw inputs the SteamVR binding evaluator reads: each of this profile's button and axis components as
@@ -172,6 +162,9 @@ public:
 	 */
 	std::optional<std::array<vr::VRBoneTransform_t, 31>> GetSkeletalReferencePose(ITrackedDevice::TrackedDeviceType hand, int) const;
 
+	/** The poses used for a hand when no profile is known, or the profile defines none. */
+	static std::optional<std::array<vr::VRBoneTransform_t, 31>> GetDefaultSkeletalReferencePose(ITrackedDevice::TrackedDeviceType hand, int pose);
+
 	/**
 	 * Build a list of suggested bindings for attaching the legacy actions to this profile.
 	 */
@@ -226,10 +219,6 @@ protected:
 
 	// The set of valid input paths for an interaction profile. An interaction profile should fill this in its constructor.
 	std::unordered_set<std::string> validInputPaths;
-
-	// A map with OpenVR action name parts as keys and OpenXR equivalents as values.
-	// For example, one common key, value pair might be "application_menu", "menu"
-	std::map<std::string, std::string, translation_compare> pathTranslationMap;
 
 	// OpenXR input source names SteamVR calls otherwise on this controller (RawComponents), for example
 	// { "squeeze", "grip" }; a source not in it keeps its name

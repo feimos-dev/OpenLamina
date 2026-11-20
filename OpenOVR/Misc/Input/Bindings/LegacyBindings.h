@@ -1,6 +1,6 @@
 #pragma once
 
-// The old input as SteamVR maps it, for inputEvaluator=steamvr: a game reading GetControllerState gets what
+// The old input as SteamVR maps it: a game reading GetControllerState gets what
 // SteamVR's legacy binding file for the controller makes of its raw inputs. Their action set is /actions/legacy; their
 // outputs are named <hand>_<button>_<press|touch|value|value1|value2> (right_axis0_value, left_system_press...), and
 // land on VRControllerState_t's ulButtonPressed, ulButtonTouched and rAxis[0..4].
@@ -40,3 +40,14 @@ uint64_t LegacySupportedButtons(const BindingFile& file, const std::string& hand
 
 /** An axis's type (as Prop_Axis0Type_Int32...) from the mode of the first source writing it in a legacy binding file */
 vr::EVRControllerAxisType LegacyAxisType(const BindingFile& file, const std::string& hand, int axis);
+
+/** Whether two controller states differ in anything but their packet number */
+bool LegacyStateChanged(const vr::VRControllerState_t& a, const vr::VRControllerState_t& b);
+
+/** The finger curls (thumb to little, 0 open to 1 closed) from hand tracking on axes 3 and 4, for the axes the legacy
+ * file leaves alone: axis 3 is the index and middle fingers, axis 4 the ring and little */
+void ApplyLegacyFingerCurls(const float curl[5], bool axis3Free, bool axis4Free, vr::VRControllerState_t& state);
+
+/** The strength of a legacy haptic pulse of this many microseconds: the longest (3999) is full strength, shorter ones
+ * are weaker */
+float LegacyHapticStrength(unsigned long long microseconds);

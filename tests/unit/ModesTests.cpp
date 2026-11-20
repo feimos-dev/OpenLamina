@@ -67,6 +67,43 @@ TEST_CASE("Button_click_follows_raw_click")
 	CHECK_FALSE(r.mode->DigitalInput("north").has_value());
 }
 
+// A trigger presses a button binding through the click thresholds on its pull, the binding's or the default 0.7,
+// before the trigger's own click (an Index trigger clicks only at the end of its pull); force_input "click" asks for
+// the click itself
+TEST_CASE("Button_on_a_trigger_presses_from_its_pull")
+{
+	const std::string t = "/user/hand/right/input/trigger";
+	Runner given(Source("button", { { "click", "/use" } }, { { "click_activate_threshold", "0.8" }, { "click_deactivate_threshold", "0.75" } }, t));
+	given.Step({ { t + "/value", 0.85f }, { t + "/click", 0 } });
+	CHECK(given.Digital("/use"));
+	given.Step({ { t + "/value", 0.77f }, { t + "/click", 0 } });
+	CHECK(given.Digital("/use")); // above the release threshold
+	given.Step({ { t + "/value", 0.7f }, { t + "/click", 0 } });
+	CHECK_FALSE(given.Digital("/use"));
+
+	Runner plain(Source("button", { { "click", "/fire" } }, {}, t));
+	plain.Step({ { t + "/value", 0.6f }, { t + "/click", 0 } });
+	CHECK_FALSE(plain.Digital("/fire"));
+	plain.Step({ { t + "/value", 0.75f }, { t + "/click", 0 } });
+	CHECK(plain.Digital("/fire"));
+
+	Runner clickOnly(Source("button", { { "click", "/fire" } }, { { "force_input", "click" } }, t));
+	clickOnly.Step({ { t + "/value", 0.95f }, { t + "/click", 0 } });
+	CHECK_FALSE(clickOnly.Digital("/fire"));
+	clickOnly.Step({ { t + "/value", 1.0f }, { t + "/click", 1 } });
+	CHECK(clickOnly.Digital("/fire"));
+
+	Runner toggle(Source("toggle_button", { { "click", "/flip" } }, {}, t));
+	toggle.Step({ { t + "/value", 0.8f }, { t + "/click", 0 } });
+	CHECK(toggle.Digital("/flip"));
+
+	// A button without a value still follows its click
+	const std::string a = "/user/hand/right/input/a";
+	Runner button(Source("button", { { "click", "/a" } }, {}, a));
+	button.Step({ { a + "/click", 1 } });
+	CHECK(button.Digital("/a"));
+}
+
 TEST_CASE("Button_double_press_counted_once")
 {
 	const std::string a = "/user/hand/right/input/a/click";
@@ -327,6 +364,20 @@ TEST_CASE("Scroll_smooth_delta")
 	r.Step(At(kPad, 0.1f, 0.25f));
 	CHECK(r.out.analog["/scroll"].y == doctest::Approx(0.5f));
 	CHECK(r.out.analog["/scroll"].x == doctest::Approx(0.2f));
+}
+
+TEST_CASE("Radial_menu_is_the_radial_mode")
+{
+	Runner r(Source("radial_menu", { { "0", "/top" }, { "1", "/right" } }, { { "segments", "4" } }, kPad));
+	r.Step(At(kPad, 0.9f, 0));
+	CHECK(r.Digital("/right"));
+}
+
+TEST_CASE("Mode_none_binds_nothing_without_a_warning")
+{
+	std::vector<std::string> warnings;
+	CHECK(CreateModeBinding(Source("none", {}), warnings) == nullptr);
+	CHECK(warnings.empty());
 }
 
 TEST_CASE("Radial_segments")

@@ -105,7 +105,6 @@
  {"interface": "IVRInput_\\d+", "method": "IsUsingLegacyInput", "field": "ret", "reason": "input (skeleton, binding UI, origins, no manifest loaded)"},
  {"interface": "IVRInput_\\d+", "method": "OpenBindingUI", "field": "ret", "reason": "input (skeleton, binding UI, origins, no manifest loaded)"},
  {"interface": "IVRInput_\\d+", "method": "GetActionBindingInfo", "field": "ret", "reason": "input (skeleton, binding UI, origins, no manifest loaded)"},
- {"interface": "IVRInput_\\d+", "method": "GetDominantHand", "field": "ret", "reason": "input (skeleton, binding UI, origins, no manifest loaded)"},
  {"interface": "IVRInput_\\d+", "method": "GetComponentStateForBinding", "field": "ret", "reason": "input (skeleton, binding UI, origins, no manifest loaded)"},
  {"interface": "IVRInput_\\d+", "method": "GetComponentStateForBinding", "field": "out", "reason": "input (skeleton, binding UI, origins, no manifest loaded)"},
  {"interface": "IVRInput_\\d+", "method": "GetEyeTrackingDataRelativeToNow", "field": "ret", "reason": "input (skeleton, binding UI, origins, no manifest loaded)"},

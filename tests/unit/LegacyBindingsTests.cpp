@@ -128,3 +128,46 @@ TEST_CASE("Legacy_thumbstick_push_presses_axis0")
 	CHECK(pressed(0.75, 0.3));
 	CHECK_FALSE(pressed(0.6, 0.4));
 }
+
+TEST_CASE("Legacy_state_changes_ignore_the_packet_number")
+{
+	vr::VRControllerState_t a{}, b{};
+	a.unPacketNum = 3;
+	b.unPacketNum = 9;
+	CHECK_FALSE(LegacyStateChanged(a, b));
+	b.rAxis[4].y = 0.1f;
+	CHECK(LegacyStateChanged(a, b));
+	b = a;
+	b.ulButtonTouched = 1;
+	CHECK(LegacyStateChanged(a, b));
+}
+
+TEST_CASE("Legacy_finger_curls_fill_only_the_free_axes")
+{
+	const float curl[5] = { 0.1f, 0.2f, 0.3f, 0.4f, 0.5f };
+	vr::VRControllerState_t s{};
+	s.rAxis[3].x = 7;
+	ApplyLegacyFingerCurls(curl, false, true, s);
+	CHECK(s.rAxis[3].x == 7);
+	CHECK(s.rAxis[4].x == doctest::Approx(0.4f * 1.66f));
+	CHECK(s.rAxis[4].y == doctest::Approx(0.5f * 1.66f));
+	ApplyLegacyFingerCurls(curl, true, false, s);
+	CHECK(s.rAxis[3].x == doctest::Approx(0.2f * 1.66f * 1.33f));
+	CHECK(s.rAxis[3].y == doctest::Approx(0.3f * 1.66f));
+
+	// A closed fist reads 1, not past it
+	const float fist[5] = { 1, 1, 0.9f, 1, 1 };
+	ApplyLegacyFingerCurls(fist, true, true, s);
+	CHECK(s.rAxis[3].x == 1.0f);
+	CHECK(s.rAxis[3].y == 1.0f);
+	CHECK(s.rAxis[4].x == 1.0f);
+	CHECK(s.rAxis[4].y == 1.0f);
+}
+
+TEST_CASE("Legacy_haptic_strength_follows_the_duration")
+{
+	CHECK(LegacyHapticStrength(3999) == doctest::Approx(1.0f));
+	CHECK(LegacyHapticStrength(5000) == doctest::Approx(1.0f));
+	CHECK(LegacyHapticStrength(100) == doctest::Approx(100.0f / 3999.0f));
+	CHECK(LegacyHapticStrength(0) == 0.0f);
+}

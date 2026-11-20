@@ -61,9 +61,9 @@ int32_t XrController::GetInt32TrackedDeviceProperty(vr::ETrackedDeviceProperty p
 
 	TRY_PROFILE_PROP(int32_t);
 
-	// inputEvaluator=steamvr: the axis types SteamVR's legacy binding file for the controller gives it
+	// The axis types SteamVR's legacy binding file for the controller gives it
 	const bool isAxis = prop >= vr::Prop_Axis0Type_Int32 && prop <= vr::Prop_Axis4Type_Int32;
-	if (isAxis && oovr_global_configuration.InputEvaluator() == "steamvr") {
+	if (isAxis && (type == XCT_LEFT || type == XCT_RIGHT)) {
 		if (const BindingFile* legacy = LoadLegacyBindings(profile.GetOpenVRName().value_or("generic")))
 			return LegacyAxisType(*legacy, type == XCT_LEFT ? "left" : "right", prop - vr::Prop_Axis0Type_Int32);
 	}
@@ -96,10 +96,10 @@ uint64_t XrController::GetUint64TrackedDeviceProperty(vr::ETrackedDeviceProperty
 
 	TRY_PROFILE_PROP(uint64_t);
 
-	// The old input system's buttons: those the controller's interaction profile has (DeviceIdentity); under
-	// inputEvaluator=steamvr those SteamVR's legacy binding file for the controller gives it
+	// The old input system's buttons: those SteamVR's legacy binding file for the controller gives it, else those the
+	// controller's interaction profile has (DeviceIdentity)
 	if (prop == vr::Prop_SupportedButtons_Uint64) {
-		if (oovr_global_configuration.InputEvaluator() == "steamvr") {
+		if (type == XCT_LEFT || type == XCT_RIGHT) {
 			if (const BindingFile* legacy = LoadLegacyBindings(profile.GetOpenVRName().value_or("generic")))
 				return LegacySupportedButtons(*legacy, type == XCT_LEFT ? "left" : "right");
 		}

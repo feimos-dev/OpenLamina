@@ -1821,8 +1821,8 @@ void BindingInfoCase(CaseContext& c)
 	vr::VRInputValueHandle_t origins[4]{};
 	in->GetActionOrigins(set, toggle, origins, 4);
 	vr::VRInputValueHandle_t right = 0;
-	in->GetInputSourceHandle("/user/hand/right", &right);
-	r["origin_is_the_right_hand"] = origins[0] == right && origins[1] == vr::k_ulInvalidInputValueHandle;
+	in->GetInputSourceHandle("/user/hand/right/input/trigger", &right);
+	r["origin_is_the_right_trigger"] = origins[0] == right && origins[1] == vr::k_ulInvalidInputValueHandle;
 	c.Record("odd source", r);
 	c.core->Cleanup();
 }
@@ -1891,7 +1891,7 @@ void InputFramesCase(CaseContext& c)
 	toggle3["active_every_frame"] = activeFrames == 70;
 	toggle3["origin_every_frame"] = originFrames == 70;
 	out["checks"] = toggle3;
-	// The checks at the top for --expect; all of it as "out", which --expected compares (baseline/input-direct.json)
+	// The checks at the top for --expect; all of it as "out", which --expected compares
 	Json::Value record = toggle3;
 	record["out"] = out;
 	c.Record("toggle", record);

@@ -45,33 +45,13 @@ IndexControllerInteractionProfile::IndexControllerInteractionProfile()
 	// SteamVR's names for the raw inputs the binding evaluator reads (RawComponents)
 	this->rawSourceNames = { { "squeeze", "grip" } };
 
-	this->pathTranslationMap = {
-		{ "thumbstick/position", "thumbstick" },
-		{ "trackpad/position", "trackpad" },
-		{ "trackpad/click", "trackpad/touch" },
-
-		{ "pull", "value" },
-		{ "application_menu", "system" },
-
-		// All of these are "value" and not "force", because to activate "force" all the way
-		// you have to pull really hard which is nerve racking
-		// If you look at the bindings_knuckles.json you can see some more compliated thresholds, which I believe OC ignores.
-		// If we add support for respecting those, change these to more reasonable replacements.
-		{ "grip/force", "squeeze/force" },
-		{ "grip/click", "squeeze/value" },
-		{ "grip/touch", "squeeze/value" },
-		{ "grip/value", "squeeze/value" },
-		{ "grip/grab", "squeeze/value" },
-		{ "grip/pull", "squeeze/value" },
-	};
-
 	this->hmdPropertiesMap = {
-		// { vr::Prop_TrackingSystemName_String, "lighthouse" },
+		{ vr::Prop_TrackingSystemName_String, "lighthouse" },
 		{ vr::Prop_ManufacturerName_String, "Valve" },
 	};
 
 	this->propertiesMap = {
-		// { vr::Prop_TrackingSystemName_String, { "lighthouse" } },
+		{ vr::Prop_TrackingSystemName_String, { "lighthouse" } },
 		{ vr::Prop_ModelNumber_String, { "Knuckles Left", "Knuckles Right" } },
 		{ vr::Prop_ControllerType_String, { GetOpenVRName().value() } }
 	};
