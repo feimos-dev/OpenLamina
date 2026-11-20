@@ -295,6 +295,10 @@ std::string CurrentProcessAppKey(SharedStore& store)
 	uint64_t listedStart = starts.isObject() && starts[pidKey].isUInt64() ? starts[pidKey].asUInt64() : 0;
 	// Not an earlier process's entry, if this one took over its id
 	bool ours = !listedStart || listedStart == SharedStore::OwnStartTime();
+	// Not the entry this process made for itself at init from what's below, which is worked out again
+	const Json::Value& automatic = doc["pid_auto"];
+	if (automatic.isObject() && automatic[pidKey].isBool() && automatic[pidKey].asBool())
+		ours = false;
 	if (ours && pids.isObject() && pids[pidKey].isString() && !pids[pidKey].asString().empty())
 		return pids[pidKey].asString();
 

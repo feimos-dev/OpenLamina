@@ -23,6 +23,7 @@ constexpr uint32_t kLabelLit = 0x000000ff;
 constexpr uint32_t kTextBox = 0xffffffff;
 constexpr uint32_t kText = 0x000000ff;
 constexpr uint32_t kHint = 0x808080ff;
+constexpr uint32_t kSelection = 0x9ec5f8ff;
 constexpr uint32_t kClose = 0xb04040ff;
 constexpr uint32_t kCloseHovered = 0xd05a5aff;
 
@@ -147,7 +148,7 @@ VRKeyboard::VRKeyboard(Mode mode, bool multiline, uint32_t flags, std::string in
 		if (maxChars && chars.size() > maxChars)
 			chars.resize(maxChars);
 		SetText();
-		caret = chars.size();
+		caret = anchor = chars.size();
 	}
 	Send(vr::VREvent_KeyboardOpened_Global);
 }
@@ -198,9 +199,12 @@ void VRKeyboard::Type(char32_t c)
 	if (c == U'\t' && !multiline)
 		return;
 	if (c == U'\b') {
+		if (DeleteSelection())
+			return;
 		if (mode != Mode::Minimal && caret > 0) {
 			chars.erase(caret - 1, 1);
 			caret--;
+			anchor = caret;
 			SetText();
 		}
 		Send(vr::VREvent_KeyboardCharInput, "\b");
@@ -210,10 +214,13 @@ void VRKeyboard::Type(char32_t c)
 	if (c < 0x20 && c != U'\n' && c != U'\t')
 		return; // the layout's other controls type nothing
 	if (mode != Mode::Minimal) {
+		// What's typed replaces the selection
+		DeleteSelection();
 		if (maxChars && chars.size() >= maxChars)
 			return;
 		chars.insert(caret, 1, c);
 		caret++;
+		anchor = caret;
 		SetText();
 	}
 	Send(vr::VREvent_KeyboardCharInput, Utf8(c));
@@ -222,6 +229,7 @@ void VRKeyboard::Type(char32_t c)
 
 void VRKeyboard::Close()
 {
+	selecting = false;
 	if (closed)
 		return;
 	Finish(false);
@@ -236,32 +244,24 @@ void VRKeyboard::PressArrow(int arrow)
 		return;
 	}
 	// Up and down move by lines in a multiline text; in a single line they go to its start and end
-	auto lineStart = [&](size_t at) {
-		while (at > 0 && chars[at - 1] != U'\n')
-			at--;
-		return at;
-	};
-	auto lineEnd = [&](size_t at) {
-		while (at < chars.size() && chars[at] != U'\n')
-			at++;
-		return at;
-	};
 	size_t to = caret;
+	const auto [selFrom, selTo] = Selection();
 	switch (arrow) {
 	case Left:
-		to = caret > 0 ? caret - 1 : 0;
+		// A selection collapses to its start
+		to = selFrom != selTo ? selFrom : caret > 0 ? caret - 1 : 0;
 		break;
 	case Right:
-		to = caret < chars.size() ? caret + 1 : caret;
+		to = selFrom != selTo ? selTo : caret < chars.size() ? caret + 1 : caret;
 		break;
 	case Up:
 		if (!multiline) {
 			to = 0;
 		} else {
-			const size_t start = lineStart(caret);
+			const size_t start = LineStart(caret);
 			if (start > 0) {
 				const size_t column = caret - start;
-				const size_t previousStart = lineStart(start - 1);
+				const size_t previousStart = LineStart(start - 1);
 				to = previousStart + std::min(column, start - 1 - previousStart);
 			}
 		}
@@ -270,19 +270,86 @@ void VRKeyboard::PressArrow(int arrow)
 		if (!multiline) {
 			to = chars.size();
 		} else {
-			const size_t end = lineEnd(caret);
+			const size_t end = LineEnd(caret);
 			if (end < chars.size()) {
-				const size_t column = caret - lineStart(caret);
+				const size_t column = caret - LineStart(caret);
 				const size_t nextStart = end + 1;
-				to = nextStart + std::min(column, lineEnd(nextStart) - nextStart);
+				to = nextStart + std::min(column, LineEnd(nextStart) - nextStart);
 			}
 		}
 		break;
 	}
-	if (to != caret) {
+	if (to != caret || anchor != caret) {
+		caret = anchor = to;
+		dirty = true;
+	}
+}
+
+size_t VRKeyboard::LineStart(size_t at) const
+{
+	while (at > 0 && chars[at - 1] != U'\n')
+		at--;
+	return at;
+}
+
+size_t VRKeyboard::LineEnd(size_t at) const
+{
+	while (at < chars.size() && chars[at] != U'\n')
+		at++;
+	return at;
+}
+
+void VRKeyboard::Select(size_t from, size_t to)
+{
+	from = std::min(from, chars.size());
+	to = std::min(to, chars.size());
+	if (anchor != from || caret != to) {
+		anchor = from;
 		caret = to;
 		dirty = true;
 	}
+}
+
+bool VRKeyboard::DeleteSelection()
+{
+	const auto [from, to] = Selection();
+	if (mode == Mode::Minimal || from == to)
+		return false;
+	chars.erase(from, to - from);
+	caret = anchor = from;
+	SetText();
+	for (size_t i = from; i < to; i++)
+		Send(vr::VREvent_KeyboardCharInput, "\b");
+	dirty = true;
+	return true;
+}
+
+std::wstring VRKeyboard::Shown(size_t& from) const
+{
+	// A multiline text shows the caret's line, scrolled to as the caret moves between lines
+	from = multiline ? LineStart(caret) : 0;
+	const size_t to = multiline ? LineEnd(caret) : chars.size();
+	const std::u32string part = chars.substr(from, to - from);
+	return mode == Mode::Password ? std::wstring(part.size(), L'*') : Wide(part);
+}
+
+size_t VRKeyboard::CharAt(int x) const
+{
+	size_t from = 0;
+	const std::wstring shown = Shown(from);
+	const Rect box = TextRect();
+	Canvas measure(1, 1);
+	size_t at = std::clamp(viewStart, from, from + shown.size()) - from;
+	int left = box.x + kPadding;
+	while (at < shown.size()) {
+		const int advance = measure.TextWidth(std::wstring_view(shown).substr(at, 1));
+		// Past the character's middle: after it
+		if (x < left + advance / 2)
+			break;
+		left += advance;
+		at++;
+	}
+	return from + at;
 }
 
 void VRKeyboard::Press(const KeyboardLayout::Key& key)
@@ -386,6 +453,14 @@ void VRKeyboard::OnPointer(const LaserMouse& mouse, const std::vector<PointerEve
 			for (int a = 0; a < 4 && ShowsArrows(); a++)
 				if (ArrowRect(a).Contains(x, y))
 					arrow = a;
+			if (selecting && mode != Mode::Minimal) {
+				// Dragging across the text selects; the view follows the caret
+				const size_t to = CharAt(x);
+				if (to != caret) {
+					caret = to;
+					dirty = true;
+				}
+			}
 			if (key != hovered || onClose != closeHovered || arrow != hoveredArrow) {
 				hovered = key;
 				closeHovered = onClose;
@@ -395,6 +470,7 @@ void VRKeyboard::OnPointer(const LaserMouse& mouse, const std::vector<PointerEve
 			break;
 		}
 		case vr::VREvent_FocusLeave:
+			selecting = false;
 			if (hovered != -1 || closeHovered || hoveredArrow != -1) {
 				hovered = -1;
 				closeHovered = false;
@@ -405,6 +481,13 @@ void VRKeyboard::OnPointer(const LaserMouse& mouse, const std::vector<PointerEve
 		case vr::VREvent_MouseButtonDown: {
 			if (mode != Mode::Minimal && CloseRect().Contains(x, y)) {
 				Close();
+				break;
+			}
+			if (mode != Mode::Minimal && TextRect().Contains(x, y)) {
+				// The caret goes where the text box is clicked, and a drag from there selects
+				const size_t at = CharAt(x);
+				Select(at, at);
+				selecting = true;
 				break;
 			}
 			bool arrowPressed = false;
@@ -419,6 +502,9 @@ void VRKeyboard::OnPointer(const LaserMouse& mouse, const std::vector<PointerEve
 				Press(layout->GetKeymap()[key]);
 			break;
 		}
+		case vr::VREvent_MouseButtonUp:
+			selecting = false;
+			break;
 		default:
 			break;
 		}
@@ -455,35 +541,40 @@ void VRKeyboard::Draw(Canvas& canvas) const
 
 	const Rect box = TextRect();
 	canvas.FillRect(box.x, box.y, box.w, box.h, kTextBox, 4);
-	// A password as stars; a long text shows the part around the caret
-	std::wstring shown = mode == Mode::Password ? std::wstring(chars.size(), L'*') : Wide(chars);
+	// A password as stars; a long text shows a part, which scrolls only as far as keeps the caret in view
+	size_t from = 0;
+	const std::wstring shown = Shown(from);
+	const size_t at = caret - from; // the caret in shown
 	const int room = box.w - 2 * kPadding;
-	size_t start = std::min(caret, shown.size()), end = start;
-	{
-		int used = 0;
-		// Back from the caret, then forward, adding each advance
-		while (start > 0) {
-			const int advance = canvas.TextWidth(std::wstring_view(shown).substr(start - 1, 1));
-			if (used + advance > room)
-				break;
-			used += advance;
-			start--;
-		}
-		while (end < shown.size()) {
-			const int advance = canvas.TextWidth(std::wstring_view(shown).substr(end, 1));
-			if (used + advance > room)
-				break;
-			used += advance;
-			end++;
-		}
-	}
+	auto width = [&](size_t a, size_t b) { return canvas.TextWidth(std::wstring_view(shown).substr(a, b - a)); };
+	size_t start = std::clamp(viewStart, from, from + shown.size()) - from;
+	if (start > at)
+		start = at;
+	while (start < at && width(start, at) > room)
+		start++;
+	// Room left after the end: the view goes back to fill it
+	while (start > 0 && width(start - 1, shown.size()) <= room)
+		start--;
+	viewStart = from + start;
+	size_t end = start;
+	while (end < shown.size() && width(start, end + 1) <= room)
+		end++;
 	const std::wstring visible = shown.substr(start, end - start);
 	const int textY = box.y + (box.h - line) / 2;
+	const int textX = box.x + kPadding;
+	// The selection, behind the text, where it's in view
+	const auto [selFrom, selTo] = Selection();
+	if (selFrom != selTo) {
+		const size_t a = std::clamp(selFrom, from + start, from + end) - from;
+		const size_t b = std::clamp(selTo, from + start, from + end) - from;
+		if (a < b)
+			canvas.FillRect(textX + width(start, a), box.y + 4, width(a, b), box.h - 8, kSelection);
+	}
 	if (chars.empty() && !description.empty())
-		canvas.Text(box.x + kPadding, textY, Wide(description), kHint);
-	canvas.Text(box.x + kPadding, textY, visible, kText);
+		canvas.Text(textX, textY, Wide(description), kHint);
+	canvas.Text(textX, textY, visible, kText);
 	if (!closed) {
-		const int caretX = box.x + kPadding + canvas.TextWidth(std::wstring_view(shown).substr(start, std::min(caret, shown.size()) - start));
+		const int caretX = textX + width(start, at);
 		canvas.FillRect(caretX, box.y + 4, 2, box.h - 8, kText);
 	}
 

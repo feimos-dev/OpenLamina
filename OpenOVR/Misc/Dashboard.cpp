@@ -184,6 +184,25 @@ std::optional<std::string> Dashboard::OnClick(float u, float v)
 	return std::nullopt;
 }
 
+Dashboard::Button DashboardButtonFromSetting(const std::string& b)
+{
+	if (b == "menu_long" || b == "system_long")
+		return Dashboard::Button::MenuLong;
+	if (b == "system")
+		return Dashboard::Button::PressOrHold;
+	return b == "menu" ? Dashboard::Button::Menu : Dashboard::Button::Off;
+}
+
+bool SceneDocHasDashboard(const Json::Value& scene, const ProcessAlive& alive)
+{
+	if (!scene.isObject() || !scene["dashboard"].isBool())
+		return true;
+	const uint32_t pid = PidOf(scene["pid"]);
+	if (!pid || !alive(pid, StartOf(scene["start"])))
+		return true;
+	return scene["dashboard"].asBool();
+}
+
 std::vector<std::string> StartAutolaunchOverlays(BaseApplications& apps)
 {
 	std::vector<std::string> tried;

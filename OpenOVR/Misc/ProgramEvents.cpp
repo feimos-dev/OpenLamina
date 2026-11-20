@@ -2,6 +2,7 @@
 
 #include "ProgramEvents.h"
 
+#include "Misc/Process.h"
 #include "Misc/SharedStore.h"
 
 #include <atomic>
@@ -47,4 +48,40 @@ void OcPostEvent(vr::EVREventType type, vr::TrackedDeviceIndex_t device, const v
 	}
 	if (alsoToOtherPrograms)
 		SharedStore::Get().PostEvent((uint32_t)type, OcPackEvent(device, data));
+}
+
+bool OcPostEventTo(SharedStore& store, uint32_t pid, vr::EVREventType type, vr::TrackedDeviceIndex_t device, const vr::VREvent_Data_t& data)
+{
+	if (OcIsPrivateEvent(type))
+		return false;
+	if (pid == oc_current_pid()) {
+		OcLocalEventSink sink = localSink.load();
+		if (!sink)
+			return false;
+		vr::VREvent_t e{};
+		e.eventType = type;
+		e.trackedDeviceIndex = device;
+		e.data = data;
+		sink(e);
+		return true;
+	}
+	std::array<uint64_t, 4> packed = OcPackEvent(device, data);
+	packed[2] = (uint64_t)(uint32_t)type | ((uint64_t)pid << 32);
+	return store.PostEvent(OcEvent_ToProgram, packed);
+}
+
+std::optional<vr::VREvent_t> OcEventForProgram(const StoreEvent& s, uint32_t selfPid)
+{
+	if (s.eventType == OcEvent_ToProgram) {
+		if ((uint32_t)(s.data[2] >> 32) != selfPid)
+			return std::nullopt;
+		const uint32_t type = (uint32_t)s.data[2];
+		if (OcIsPrivateEvent(type))
+			return std::nullopt;
+		uint64_t packed[4] = { s.data[0], s.data[1], 0, s.data[3] };
+		return OcUnpackEvent(type, packed);
+	}
+	if (OcIsPrivateEvent(s.eventType))
+		return std::nullopt;
+	return OcUnpackEvent(s.eventType, s.data);
 }

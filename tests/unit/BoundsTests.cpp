@@ -4,6 +4,7 @@
 #include "stdafx.h"
 
 #include "Misc/Bounds.h"
+#include "Reimpl/BaseChaperoneSetup.h"
 
 TEST_CASE("Bounds_alpha_linear")
 {
@@ -55,4 +56,34 @@ TEST_CASE("Bounds_play_area_falls_back_to_the_room_setup")
 	area = BoundsPlayArea(nullptr, Json::Value());
 	CHECK(area.width == 0.0f);
 	CHECK(area.height == 0.0f);
+}
+
+TEST_CASE("Bounds_preview_shows_every_wall_whole")
+{
+	// Nobody near any edge: no walls, unless previewed
+	const std::vector<XrVector3f> centre = { { 0, 1.7f, 0 } };
+	CHECK(BoundsWalls(4, 3, centre).empty());
+	const std::vector<BoundsWall> walls = BoundsWalls(4, 3, centre, true);
+	REQUIRE(walls.size() == 4);
+	for (const BoundsWall& w : walls)
+		CHECK(w.alpha == 1.0f);
+	CHECK(walls[0].width == 3.0f); // the X edges are as long as the area is deep
+	CHECK(walls[2].width == 4.0f);
+	CHECK(BoundsWalls(0, 3, centre, true).empty()); // no play area set yet
+}
+
+TEST_CASE("Working_set_preview_is_shown_until_hidden")
+{
+	BaseChaperoneSetup setup;
+	CHECK_FALSE(setup.PreviewedPlayArea());
+	setup.SetWorkingPlayAreaSize(3.5f, 2.5f);
+	setup.ShowWorkingSetPreview();
+	REQUIRE(setup.PreviewedPlayArea());
+	CHECK(setup.PreviewedPlayArea()->first == 3.5f);
+	CHECK(setup.PreviewedPlayArea()->second == 2.5f);
+	// It follows the working copy
+	setup.SetWorkingPlayAreaSize(4.0f, 2.5f);
+	CHECK(setup.PreviewedPlayArea()->first == 4.0f);
+	setup.HideWorkingSetPreview();
+	CHECK_FALSE(setup.PreviewedPlayArea());
 }

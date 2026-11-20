@@ -5,8 +5,10 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <queue>
 #include <set>
+#include <string>
 #include <vector>
 
 namespace Json {
@@ -145,6 +147,18 @@ class CpuSwapchain;
 // Avoid importing LibOVR just for this
 struct ovrLayerHeader_;
 
+/** Whether a running program other than self has an overlay with that key, as the store's Overlays document lists them */
+bool KeyOfAnotherProgram(const Json::Value& overlaysDoc, const std::string& key, uint32_t self);
+
+/** A texture's size as the texture says it (a Vulkan texture's data, a D3D11 texture's description); nothing where it
+ * doesn't (an OpenGL texture) */
+std::optional<std::pair<uint32_t, uint32_t>> OverlayTextureSize(const vr::Texture_t& texture);
+
+class Canvas;
+/** Text in lines no wider than width on the canvas, broken between words (a word wider than a line, anywhere), at most
+ * maxLines of them */
+std::vector<std::wstring> WrapText(const Canvas& canvas, const std::wstring& text, int width, size_t maxLines);
+
 class BaseOverlay {
 private:
 	// These enums are ints
@@ -161,10 +175,9 @@ private:
 	// Name-to-overlay mapping
 	std::map<std::string, OverlayData*> overlays;
 
-	// Set of overlay pointers - use these to ensure the overlays are valid, and
-	// if games pass in some random value (*COUGH* Boneworks *COUGH) we can deal
-	// with it, rather than crashing everything.
-	std::set<OverlayData*> validOverlays;
+	// The overlays by handle. A handle is an id, never handed out twice, so a destroyed overlay's handle or a made-up
+	// value (*COUGH* Boneworks *COUGH) finds nothing, even once another overlay has the memory the old one had.
+	std::map<vr::VROverlayHandle_t, OverlayData*> validOverlays;
 
 	// This doesn't do a whole lot, since OOVR does this for every overlay
 	vr::VROverlayHandle_t highQualityOverlay = vr::k_ulOverlayHandleInvalid;
@@ -173,8 +186,15 @@ private:
 	// The overlay that loses gamepad focus is told, and the one that gains it. A live handle or none; under the layers' lock.
 	void ChangeGamepadFocus(vr::VROverlayHandle_t to);
 
-	// Whether a handle is an overlay that exists
-	bool IsLiveOverlay(const OverlayData* overlay);
+	// The overlay a handle is, or nullptr: under the layers' lock (OverlayAt), or taking it for the look-up (LiveOverlay)
+	OverlayData* OverlayAt(vr::VROverlayHandle_t handle) const;
+	OverlayData* LiveOverlay(vr::VROverlayHandle_t handle);
+	// Destroys a live overlay, under the session's and the layers' locks
+	void DestroyLocked(OverlayData* overlay);
+	// Whether the overlay is shown by itself (ShowOverlay, or the dashboard's), and whether every parent it's placed
+	// relative to is. Under the layers' lock.
+	bool ShownOnItsOwn(const OverlayData& o) const;
+	bool ParentsShown(const OverlayData& child) const;
 
 	// List of layers, with the first being reserved for the main scene
 	std::vector<XrCompositionLayerBaseHeader*> layerHeaders;
@@ -259,6 +279,9 @@ public:
 	// keyboard, while the session is focused: their events, the cursor, and the keyboard's typing and drawing. On the
 	// game's thread before its frame's layers are built (it fills swapchains from memory), not holding _LayersLock().
 	void _UpdatePointer();
+	// The notification shown now (IVRNotifications): its panel drawn, and its events queued on its overlay; on the
+	// frames' thread, from _UpdatePointer
+	void UpdateNotifications();
 
 	// Whether the handle is one of this program's overlays
 	bool _IsOwnOverlay(vr::VROverlayHandle_t handle);
