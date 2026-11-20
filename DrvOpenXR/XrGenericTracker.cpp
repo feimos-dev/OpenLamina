@@ -34,7 +34,8 @@ void XrGenericTracker::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDe
 		return;
 	}
 
-	xr_utils::PoseFromSpace(pose, genericTrackerSpace, origin, glm::identity<glm::mat4>(), xrTime);
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
+	xr_utils::PoseFromSpace(pose, genericTrackerSpace, origin, glm::identity<glm::mat4>(), PoseTime(trackingState, xrTime));
 }
 
 // Properties

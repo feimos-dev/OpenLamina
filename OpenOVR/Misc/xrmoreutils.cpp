@@ -26,6 +26,19 @@ XrTime xr_utils::PoseTimeForPrediction(float secondsFromNow, XrTime now, XrTime 
 	return target;
 }
 
+XrTime xr_utils::PoseTimeForState(bool latest, XrTime requested, XrTime now, XrTime frameTime)
+{
+	if (requested > 0)
+		return requested;
+	const XrTime first = latest ? now : frameTime;
+	const XrTime second = latest ? frameTime : now;
+	if (first > 1)
+		return first;
+	if (second > 1)
+		return second;
+	return 0;
+}
+
 XrQuaternionf xr_utils::YawOnly(const XrQuaternionf& orientation)
 {
 	glm::vec3 forward = X2G_quat(orientation) * glm::vec3(0.0f, 0.0f, -1.0f);

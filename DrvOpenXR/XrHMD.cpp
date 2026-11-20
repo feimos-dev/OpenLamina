@@ -367,8 +367,6 @@ vr::HiddenAreaMesh_t XrHMD::GetHiddenAreaMesh(vr::EVREye eEye, vr::EHiddenAreaMe
 
 void XrHMD::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDevicePose_t* pose, ETrackingStateType trackingState, int64_t xrTime)
 {
-	// TODO use ETrackingStateType
-
 	// Held to the end: a session restart on another thread replaces xr_gbl and its spaces, and waits for this to end
 	auto lock = xr_session.lock_shared();
 	if (!xr_gbl) {
@@ -386,7 +384,7 @@ void XrHMD::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDevicePose_t*
 	*pose = {};
 	pose->bDeviceIsConnected = true;
 	pose->eTrackingResult = vr::TrackingResult_Running_OutOfRange;
-	xr_utils::PoseFromSpace(pose, xr_gbl->viewSpace, origin, {}, xrTime);
+	xr_utils::PoseFromSpace(pose, xr_gbl->viewSpace, origin, {}, PoseTime(trackingState, xrTime));
 }
 
 std::optional<float> XrHMD::ViewsIpd()

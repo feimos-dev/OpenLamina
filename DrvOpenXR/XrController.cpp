@@ -159,7 +159,7 @@ void XrController::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDevice
 		pose->mDeviceToAbsoluteTracking = G2S_m34(glm::identity<glm::mat4>());
 	}
 
-	// TODO do something with TrackingState
+	xrTime = PoseTime(trackingState, xrTime);
 	XrSpace space = XR_NULL_HANDLE;
 
 	// Specifically use grip pose, since that's what InteractionProfile::GetGripToSteamVRTransform uses

@@ -196,6 +196,21 @@ TEST_CASE("Poses are located as far ahead as asked")
 	CHECK(std::llabs(xr_utils::PoseTimeForPrediction(std::nanf(""), now, 0) - (now - 100000000)) < 10);
 }
 
+TEST_CASE("The latest tracking data is located now, a frame's poses at its display time")
+{
+	const XrTime now = 1000000000, frame = 1016000000, asked = 1020000000;
+	CHECK(xr_utils::PoseTimeForState(true, 0, now, frame) == now);
+	CHECK(xr_utils::PoseTimeForState(false, 0, now, frame) == frame);
+	// A time the caller names
+	CHECK(xr_utils::PoseTimeForState(true, asked, now, frame) == asked);
+	CHECK(xr_utils::PoseTimeForState(false, asked, now, frame) == asked);
+	// Without one of them, the other; without either, none (one is the frame time before the first frame)
+	CHECK(xr_utils::PoseTimeForState(true, 0, 0, frame) == frame);
+	CHECK(xr_utils::PoseTimeForState(false, 0, now, 1) == now);
+	CHECK(xr_utils::PoseTimeForState(true, 0, 0, 1) == 0);
+	CHECK(xr_utils::PoseTimeForState(false, 0, 0, 0) == 0);
+}
+
 namespace {
 std::vector<vr::VREvent_t> Drain(BaseSystem& system)
 {
