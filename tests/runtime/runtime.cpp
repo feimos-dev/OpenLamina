@@ -453,7 +453,7 @@ XrResult XRAPI_CALL EnumerateViewConfigurationViews(XrInstance, XrSystemId, XrVi
 		views[i].maxImageRectWidth = 8192;
 		views[i].maxImageRectHeight = 8192;
 		views[i].recommendedSwapchainSampleCount = 1;
-		views[i].maxSwapchainSampleCount = 4;
+		views[i].maxSwapchainSampleCount = GetScript().maxSwapchainSamples;
 	}
 	return XR_SUCCESS;
 }

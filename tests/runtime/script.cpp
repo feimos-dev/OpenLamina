@@ -51,6 +51,8 @@ static Script LoadScript()
 		s.viewWidth = root["view_size"][0].asUInt();
 		s.viewHeight = root["view_size"][1].asUInt();
 	}
+	if (root.isMember("max_swapchain_samples"))
+		s.maxSwapchainSamples = root["max_swapchain_samples"].asUInt();
 	if (root.isMember("fov_deg"))
 		s.fovDeg = root["fov_deg"].asFloat();
 	if (root.isMember("ipd"))
