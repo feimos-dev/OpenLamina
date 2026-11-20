@@ -781,12 +781,12 @@ void BaseInput::LoadEmptyManifestIfRequired()
 {
 	if (hasLoadedActions)
 		return;
+	// Asked for, legacy input comes in place of the info set (which would cost a session restart)
+	legacyInputAsked = true;
 	// Not before the game's first frame on its own device: the session restart for it would come anyway, and a
-	// manifest the game loads by then would need another. Asked for, it comes in place of the info set.
-	if (!XrBackend::InputsMayAttach()) {
-		legacyInputAsked = true;
+	// manifest the game loads by then would need another
+	if (!XrBackend::InputsMayAttach())
 		return;
-	}
 
 	// As in SetActionManifestPath, exclusive to the end; another thread may have loaded the actions while this waited
 	auto sessionLock = xr_session.lock();
