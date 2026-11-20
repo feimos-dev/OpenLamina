@@ -946,6 +946,7 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 	// An OpenGL or Vulkan texture copied through D3D11: from here on, its D3D11 copy. The game's own texture stays
 	// what the pose and depth are read from.
 	const vr::Texture_t* submitted = texture;
+	const vr::VRTextureBounds_t* submittedBounds = bounds;
 #if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX11)
 	vr::Texture_t copied;
 	vr::VRTextureBounds_t copiedBounds;
@@ -1005,7 +1006,7 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 		if (result == kCompositorNone) {
 			KeepForMirror(eye, texture, bounds);
 #if defined(SUPPORT_GL)
-			GLMirrorFrame((int)eye, submitted, bounds, submitFlags); // the game's GL texture, also under the D3D11 interop
+			GLMirrorFrame((int)eye, submitted, submittedBounds, submitFlags); // the game's GL texture, also under the D3D11 interop
 #endif
 			// The mirror window shows the left eye, read back while it's open
 			Image mirror;

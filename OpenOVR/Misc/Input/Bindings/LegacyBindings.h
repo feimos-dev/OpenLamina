@@ -1,6 +1,6 @@
 #pragma once
 
-// The old input as SteamVR maps it, for inputEvaluator=steamvr: a game reading GetControllerState gets what
+// The old input as SteamVR maps it: a game reading GetControllerState gets what
 // SteamVR's legacy binding file for the controller makes of its raw inputs. Their action set is /actions/legacy; their
 // outputs are named <hand>_<button>_<press|touch|value|value1|value2> (right_axis0_value, left_system_press...), and
 // land on VRControllerState_t's ulButtonPressed, ulButtonTouched and rAxis[0..4].
