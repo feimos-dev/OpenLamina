@@ -52,9 +52,11 @@ vr::EVRNotificationError BaseNotifications::Add(OOVR_EVRNotificationType type, u
 	uint32_t next = nextId++;
 	if (next == 0)
 		next = nextId++;
-	// The panel shows three lines at most
-	constexpr size_t kMaxText = 1024;
-	live[next] = { type == kTypeSystemWithUserValue, type == kTypePersistent, userValue, overlay, text.substr(0, kMaxText) };
+	// The panel shows three lines at most; cut between UTF-8 characters
+	size_t length = (std::min)(text.size(), (size_t)1024);
+	while (length < text.size() && length > 0 && ((unsigned char)text[length] & 0xC0) == 0x80)
+		length--;
+	live[next] = { type == kTypeSystemWithUserValue, type == kTypePersistent, userValue, overlay, text.substr(0, length) };
 	waiting.push_back(next);
 	*id = next;
 	return vr::VRNotificationError_OK;

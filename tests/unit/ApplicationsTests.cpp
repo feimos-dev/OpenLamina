@@ -1048,6 +1048,7 @@ TEST_CASE("Asking_about_a_transition_whose_old_application_runs_writes_nothing")
 		doc["transition"]["old_pid"] = scene;
 		doc["transition"]["old_start"] = (Json::UInt64)SharedStore::ProcessStartTime(scene);
 		doc["transition"]["launch"] = true;
+		doc["transition"]["since_ms"] = (Json::UInt64)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 	});
 	const uint64_t generation = store.Generation(StoreDoc::Scene);
 	CHECK(apps.GetTransitionState() == VRApplicationTransition_OldAppQuitSent);
@@ -1094,7 +1095,43 @@ TEST_CASE("A_taken_over_launch_starts_no_second_copy")
 		doc["transition"]["launch"] = true;
 		doc["transition"]["since_ms"] = (Json::UInt64)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 	});
-	CHECK(apps.GetTransitionState() == VRApplicationTransition_None);
+	// Left for its own session's start to end
+	CHECK(apps.GetTransitionState() == VRApplicationTransition_NewAppLaunched);
 	std::this_thread::sleep_for(std::chrono::milliseconds(300));
 	CHECK_FALSE(fs::exists(dir.path / "marker.txt"));
+}
+
+TEST_CASE("A_quit_request_holds_other_launches_off_for_a_time_only")
+{
+	TempDir dir;
+	SharedStore store(dir.path), other(dir.path);
+	BaseApplications apps(store);
+	AppType type(vr::VRApplication_Utility);
+	REQUIRE(apps.AddApplicationManifest(PathToUtf8(WriteEchoManifest(dir.path, "oc.test.next")).c_str()) == VRApplicationError_None);
+	REQUIRE(apps.AddApplicationManifest(PathToUtf8(WriteEchoManifest(dir.path, "oc.test.third")).c_str()) == VRApplicationError_None);
+#ifdef _WIN32
+	uint32_t scene = 4; // System, always there
+#else
+	uint32_t scene = (uint32_t)getppid();
+#endif
+	store.Update(StoreDoc::Scene, [&](Json::Value& doc) {
+		doc["pid"] = scene;
+		doc["start"] = (Json::UInt64)SharedStore::ProcessStartTime(scene);
+		doc["app_key"] = "oc.other";
+	});
+	uint64_t cursor = 0;
+	other.PollEvents(cursor);
+	CHECK(apps.PerformApplicationPrelaunchCheck("oc.test.next") == VRApplicationError_OldApplicationQuitting);
+	const uint64_t first = store.Read(StoreDoc::Scene)["transition"]["since_ms"].asUInt64();
+	// Asked again: the first ask's time is kept
+	std::this_thread::sleep_for(std::chrono::milliseconds(20));
+	CHECK(apps.PerformApplicationPrelaunchCheck("oc.test.next") == VRApplicationError_OldApplicationQuitting);
+	CHECK(store.Read(StoreDoc::Scene)["transition"]["since_ms"].asUInt64() == first);
+	CHECK(EventsFor(other, cursor, scene).size() == 1);
+
+	// The old application never quit: the request lapses, and the next ask sends it again
+	store.Update(StoreDoc::Scene, [&](Json::Value& doc) { doc["transition"]["since_ms"] = (Json::UInt64)1; });
+	CHECK(apps.GetTransitionState() == VRApplicationTransition_None);
+	CHECK(apps.PerformApplicationPrelaunchCheck("oc.test.third") == VRApplicationError_OldApplicationQuitting);
+	CHECK(EventsFor(other, cursor, scene).size() == 1);
 }

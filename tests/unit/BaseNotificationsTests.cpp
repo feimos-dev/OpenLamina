@@ -127,3 +127,19 @@ TEST_CASE("Notification_events_never_taken_are_kept_to_a_bound")
 	CHECK(events.size() <= 256);
 	CHECK_FALSE(events.empty());
 }
+
+TEST_CASE("Long_notification_text_is_cut_between_characters")
+{
+	BaseNotifications n;
+	std::string text = "a";
+	for (int i = 0; i < 600; i++)
+		text += "\xc3\xa9"; // two bytes each
+	uint32_t id = 0;
+	REQUIRE(n.Add(0, 0, &id, 5, text) == vr::VRNotificationError_OK);
+	std::vector<BaseNotifications::Event> events;
+	n.Update(1.0, events);
+	REQUIRE(n.Current());
+	const std::string kept = n.Current()->text;
+	CHECK(kept.size() <= 1024);
+	CHECK(kept.size() % 2 == 1); // the "a", then whole characters
+}
