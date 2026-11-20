@@ -259,6 +259,32 @@ TEST_CASE("Settings_shared_between_instances")
 	CHECK(error == VRSettingsError_None);
 }
 
+TEST_CASE("Settings_preferred_refresh_rate")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	BaseSettings settings(store);
+	{
+		// None set
+		SteamVRFiles files(false);
+		CHECK(BaseSettings::PreferredRefreshRate(store) == 0.0f);
+	}
+	{
+		// The user's SteamVR file, then the store over it
+		TempDir other;
+		fs::path user = other.path / "steamvr.vrsettings";
+		std::ofstream(user) << "{ \"steamvr\": { \"preferredRefreshRate\": 90 } }";
+		SteamVRSettingsUseFiles(user, other.path / "none");
+		CHECK(BaseSettings::PreferredRefreshRate(store) == 90.0f);
+		settings.SetFloat("steamvr", "preferredRefreshRate", 120.0f);
+		CHECK(BaseSettings::PreferredRefreshRate(store) == 120.0f);
+		// A rate no display has isn't one
+		settings.SetFloat("steamvr", "preferredRefreshRate", -5.0f);
+		CHECK(BaseSettings::PreferredRefreshRate(store) == 90.0f);
+		SteamVRSettingsUseFiles();
+	}
+}
+
 TEST_CASE("Settings_supersample_store_beats_ini")
 {
 	TempDir dir;

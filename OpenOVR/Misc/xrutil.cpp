@@ -78,9 +78,13 @@ XrExt::XrExt(XrGraphicsApiSupportedFlags apis, const std::vector<const char*>& e
 	if (hasVisMask)
 		XR_BIND_OPT(xrGetVisibilityMaskKHR, pfnXrGetVisibilityMaskKHR);
 
-	// Only the current rate is asked for (Prop_DisplayFrequency_Float); without it, the measured display period
-	if (refreshRate)
+	// The current rate (Prop_DisplayFrequency_Float; without it, the measured display period), the rates the display
+	// has (Prop_DisplayAvailableFrameRates_Float_Array) and the user's preferred one asked for
+	if (refreshRate) {
 		XR_BIND_OPT(xrGetDisplayRefreshRateFB, pfnXrGetDisplayRefreshRateFB);
+		XR_BIND_OPT(xrEnumerateDisplayRefreshRatesFB, pfnXrEnumerateDisplayRefreshRatesFB);
+		XR_BIND_OPT(xrRequestDisplayRefreshRateFB, pfnXrRequestDisplayRefreshRateFB);
+	}
 
 	if (hasHandTracking) {
 		XR_BIND(xrCreateHandTrackerEXT, pfnXrCreateHandTrackerExt);

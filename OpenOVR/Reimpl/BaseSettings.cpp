@@ -284,6 +284,18 @@ float BaseSettings::GlobalRenderScale(SharedStore& store, float iniRatio)
 	return scale;
 }
 
+float BaseSettings::PreferredRefreshRate(SharedStore& store)
+{
+	// A rate no display could have isn't one
+	auto rateOf = [](const std::optional<Json::Value>& v) {
+		std::optional<double> rate = v ? AsNumber(*v) : std::nullopt;
+		return rate && *rate > 0.0 && *rate <= 1000.0 ? (float)*rate : 0.0f;
+	};
+	if (float stored = rateOf(StoredValue(store, kk::k_pch_SteamVR_Section, kk::k_pch_SteamVR_PreferredRefreshRate)))
+		return stored;
+	return rateOf(SteamVRUserSettingValue(kk::k_pch_SteamVR_Section, kk::k_pch_SteamVR_PreferredRefreshRate));
+}
+
 float BaseSettings::RenderScale(SharedStore& store, float iniRatio)
 {
 	float scale = GlobalRenderScale(store, iniRatio);

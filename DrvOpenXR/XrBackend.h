@@ -316,6 +316,13 @@ private:
 	// Between the game's frames: a render scale another program set reaches the game, as SteamVR tells it, with
 	// VREvent_SteamVRSectionSettingChanged; its next textures at the new recommended size get swapchains of that size
 	void NoticeRenderScale();
+	// Between the game's frames, at the session's start and when the settings change: the display rate nearest the
+	// user's preferred one (steamvr.preferredRefreshRate) asked of the runtime, where it takes requests. Without a
+	// preference the runtime's own choice stays.
+	void ApplyPreferredRefreshRate();
+	bool refreshRateChecked = false;
+	uint64_t refreshRateGeneration = 0;
+	float requestedRefreshRate = 0;
 
 	// The views for the two main eye layers
 	XrCompositionLayerProjectionView projectionViews[XruEyeCount];

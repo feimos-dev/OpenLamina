@@ -134,6 +134,13 @@ public:
 	uint32_t GetStringTrackedDeviceProperty(vr::ETrackedDeviceProperty prop, char* pchValue,
 	    uint32_t unBufferSize, vr::ETrackedPropertyError* pErrorL) override;
 	int32_t GetInt32TrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::ETrackedPropertyError* pErrorL) override;
+	uint32_t GetArrayTrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::PropertyTypeTag_t propType, void* pBuffer,
+	    uint32_t unBufferSize, vr::ETrackedPropertyError* pError) override;
+
+	/** The refresh rates the display has (XR_FB_display_refresh_rate); none where the runtime can't say */
+	static std::vector<float> RefreshRates();
+	/** Of rates, the one nearest to wanted; 0 if there are none or nothing is wanted */
+	static float NearestRate(const std::vector<float>& rates, float wanted);
 
 	void SetInteractionProfile(const InteractionProfile* profile);
 };

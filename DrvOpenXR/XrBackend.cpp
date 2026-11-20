@@ -1309,6 +1309,7 @@ void XrBackend::SubmitFrames(bool showSkybox)
 		WithStoreDocuments([&] { overlay->_RecentreIfAsked(); });
 	}
 	NoticeRenderScale();
+	ApplyPreferredRefreshRate();
 
 	BaseSystem* sys = GetUnsafeBaseSystem();
 	if (sys) {
@@ -2242,6 +2243,9 @@ void XrBackend::OnSessionCreated()
 	toldIpd = NAN; // the new session's first IPD is the one the game has
 	// The gap from the old session's last frame isn't dropped frames
 	RestartFrameTiming();
+	// The preferred display rate is asked of the new session
+	refreshRateChecked = false;
+	requestedRefreshRate = 0;
 
 	sessionState = XR_SESSION_STATE_UNKNOWN;
 	inputFocusHad = false;
@@ -2513,6 +2517,30 @@ void XrBackend::NoticeRenderScale()
 	notifiedRenderScale = scale;
 	OOVR_LOGF("The render scale is now %.3f: telling the game", scale);
 	OcPostEvent(vr::VREvent_SteamVRSectionSettingChanged, vr::k_unTrackedDeviceIndexInvalid, vr::VREvent_Data_t{}, false);
+}
+
+void XrBackend::ApplyPreferredRefreshRate()
+{
+	if (!xr_ext || !xr_ext->RequestDisplayRefreshRateFB_Available())
+		return;
+	SharedStore& store = SharedStore::Get();
+	const uint64_t generation = store.Generation(StoreDoc::Settings);
+	if (refreshRateChecked && generation == refreshRateGeneration)
+		return;
+	refreshRateChecked = true;
+	refreshRateGeneration = generation;
+	const float rate = XrHMD::NearestRate(XrHMD::RefreshRates(), BaseSettings::PreferredRefreshRate(store));
+	if (rate <= 0.0f || rate == requestedRefreshRate)
+		return;
+	auto lock = xr_session.lock_shared();
+	if (!xr_session.get())
+		return;
+	if (XrResult res = xr_ext->xrRequestDisplayRefreshRateFB(xr_session.get(), rate); XR_FAILED(res)) {
+		OOVR_LOGF("The runtime refused the display rate of %.2f Hz: %d", rate, (int)res);
+		return;
+	}
+	requestedRefreshRate = rate;
+	OOVR_LOGF("Asked the runtime for the preferred display rate, %.2f Hz", rate);
 }
 
 void XrBackend::KeepOverlaysInstance()

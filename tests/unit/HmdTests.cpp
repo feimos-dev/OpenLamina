@@ -450,3 +450,29 @@ TEST_CASE("The OpenXR instance asks for the newest version the loader and runtim
 	CHECK(asked.size() == 1);
 	CHECK(version == 0);
 }
+
+TEST_CASE("The preferred refresh rate asks for the display's nearest one")
+{
+	const std::vector<float> rates = { 72.0f, 90.0f, 120.0f };
+	CHECK(XrHMD::NearestRate(rates, 90.0f) == 90.0f);
+	CHECK(XrHMD::NearestRate(rates, 100.0f) == 90.0f);
+	CHECK(XrHMD::NearestRate(rates, 144.0f) == 120.0f);
+	CHECK(XrHMD::NearestRate(rates, 60.0f) == 72.0f);
+	// No preference, or no rates: nothing to ask for
+	CHECK(XrHMD::NearestRate(rates, 0.0f) == 0.0f);
+	CHECK(XrHMD::NearestRate(rates, NAN) == 0.0f);
+	CHECK(XrHMD::NearestRate({}, 90.0f) == 0.0f);
+	CHECK(XrHMD::NearestRate({ 0.0f, 80.0f }, 10.0f) == 80.0f);
+}
+
+TEST_CASE("Without a runtime the display's rates are unknown")
+{
+	XrHMD hmd;
+	CHECK(XrHMD::RefreshRates().empty());
+	vr::ETrackedPropertyError err = vr::TrackedProp_Success;
+	float rates[4] = {};
+	CHECK(hmd.GetArrayTrackedDeviceProperty(vr::Prop_DisplayAvailableFrameRates_Float_Array, vr::k_unFloatPropertyTag, rates, sizeof(rates), &err) == 0);
+	CHECK(err == vr::TrackedProp_UnknownProperty);
+	CHECK_FALSE(hmd.GetBoolTrackedDeviceProperty(vr::Prop_DisplaySupportsMultipleFramerates_Bool, &err));
+	CHECK(err == vr::TrackedProp_Success);
+}

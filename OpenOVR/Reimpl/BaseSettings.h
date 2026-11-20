@@ -53,6 +53,8 @@ public:
 	static float RenderScale(SharedStore& store, float iniRatio);
 	/** RenderScale without the app's own resolutionScale */
 	static float GlobalRenderScale(SharedStore& store, float iniRatio);
+	/** steamvr.preferredRefreshRate from the store, else from the user's steamvr.vrsettings; 0 if neither has one */
+	static float PreferredRefreshRate(SharedStore& store);
 
 	/** A setting's value as Get* look it up: the store, OpenComposite's live answers, SteamVR's files, then
 	 * OpenComposite's own table of defaults; nothing if none has it. Only the render scale keys

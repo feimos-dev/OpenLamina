@@ -458,6 +458,11 @@ bool XrHMD::GetBoolTrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::ET
 	TRY_PROFILE_PROP(bool);
 
 	switch (prop) {
+	case vr::Prop_DisplaySupportsMultipleFramerates_Bool:
+		return RefreshRates().size() > 1;
+	case vr::Prop_DisplaySupportsRuntimeFramerateChange_Bool:
+		// The preferred rate (steamvr.preferredRefreshRate) is asked for while the game runs
+		return xr_ext && xr_ext->RequestDisplayRefreshRateFB_Available() && RefreshRates().size() > 1;
 	case vr::Prop_DeviceProvidesBatteryStatus_Bool: {
 		// From libmonado when Monado offers it
 		std::optional<LibMonado::Battery> battery = LibMonado::Get().BatteryForRole("head");
@@ -514,6 +519,60 @@ bool XrHMD::GetBoolTrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::ET
 	}
 
 	return XrTrackedDevice::GetBoolTrackedDeviceProperty(prop, pErrorL);
+}
+
+std::vector<float> XrHMD::RefreshRates()
+{
+	std::vector<float> rates;
+	if (!xr_ext)
+		return rates;
+	auto lock = xr_session.lock_shared(); // held while asking: a session restart waits for it
+	if (!xr_session.get())
+		return rates;
+	uint32_t count = 0;
+	if (XR_FAILED(xr_ext->xrEnumerateDisplayRefreshRatesFB(xr_session.get(), 0, &count, nullptr)) || count == 0)
+		return rates;
+	rates.resize(count);
+	if (XR_FAILED(xr_ext->xrEnumerateDisplayRefreshRatesFB(xr_session.get(), count, &count, rates.data())))
+		return {};
+	rates.resize(count);
+	return rates;
+}
+
+float XrHMD::NearestRate(const std::vector<float>& rates, float wanted)
+{
+	if (!(wanted > 0.0f))
+		return 0.0f;
+	float best = 0.0f;
+	for (float rate : rates) {
+		if (!(rate > 0.0f))
+			continue;
+		if (best == 0.0f || std::fabs(rate - wanted) < std::fabs(best - wanted))
+			best = rate;
+	}
+	return best;
+}
+
+uint32_t XrHMD::GetArrayTrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::PropertyTypeTag_t propType, void* pBuffer,
+    uint32_t unBufferSize, vr::ETrackedPropertyError* pError)
+{
+	if (prop != vr::Prop_DisplayAvailableFrameRates_Float_Array)
+		return XrTrackedDevice::GetArrayTrackedDeviceProperty(prop, propType, pBuffer, unBufferSize, pError);
+	if (propType != vr::k_unFloatPropertyTag) {
+		if (pError)
+			*pError = vr::TrackedProp_WrongDataType;
+		return 0;
+	}
+	// The display's rates as the runtime lists them; the size they need where the buffer is too small
+	const std::vector<float> rates = RefreshRates();
+	if (rates.empty())
+		return XrTrackedDevice::GetArrayTrackedDeviceProperty(prop, propType, pBuffer, unBufferSize, pError);
+	const uint32_t needed = (uint32_t)(rates.size() * sizeof(float));
+	if (pError)
+		*pError = needed > unBufferSize ? vr::TrackedProp_BufferTooSmall : vr::TrackedProp_Success;
+	if (pBuffer && needed && needed <= unBufferSize)
+		std::memcpy(pBuffer, rates.data(), needed);
+	return needed;
 }
 
 // The runtime's refresh rate where it says (XR_FB_display_refresh_rate), else the measured display period's, else 90

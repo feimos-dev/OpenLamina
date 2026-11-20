@@ -61,6 +61,8 @@ struct OcXrEventDataDisplayRefreshRateChangedFB {
 	float toDisplayRefreshRate;
 };
 typedef XrResult(XRAPI_PTR* OcPFN_xrGetDisplayRefreshRateFB)(XrSession session, float* displayRefreshRate);
+typedef XrResult(XRAPI_PTR* OcPFN_xrEnumerateDisplayRefreshRatesFB)(XrSession session, uint32_t capacity, uint32_t* count, float* rates);
+typedef XrResult(XRAPI_PTR* OcPFN_xrRequestDisplayRefreshRateFB)(XrSession session, float displayRefreshRate);
 // XR_EXT_user_presence, newer than the bundled OpenXR headers: whether the user wears the headset
 #define OC_XR_EXT_USER_PRESENCE_EXTENSION_NAME "XR_EXT_user_presence"
 static const XrStructureType OC_XR_TYPE_EVENT_DATA_USER_PRESENCE_CHANGED_EXT = (XrStructureType)1000470000;
@@ -132,6 +134,20 @@ public:
 		if (!pfnXrGetDisplayRefreshRateFB)
 			return XR_ERROR_FUNCTION_UNSUPPORTED; // the runtime lacks the extension; callers check the result
 		return pfnXrGetDisplayRefreshRateFB(session, displayRefreshRate);
+	}
+
+	XrResult xrEnumerateDisplayRefreshRatesFB(XrSession session, uint32_t capacity, uint32_t* count, float* rates)
+	{
+		if (!pfnXrEnumerateDisplayRefreshRatesFB)
+			return XR_ERROR_FUNCTION_UNSUPPORTED;
+		return pfnXrEnumerateDisplayRefreshRatesFB(session, capacity, count, rates);
+	}
+	bool RequestDisplayRefreshRateFB_Available() { return pfnXrRequestDisplayRefreshRateFB != nullptr; }
+	XrResult xrRequestDisplayRefreshRateFB(XrSession session, float displayRefreshRate)
+	{
+		if (!pfnXrRequestDisplayRefreshRateFB)
+			return XR_ERROR_FUNCTION_UNSUPPORTED;
+		return pfnXrRequestDisplayRefreshRateFB(session, displayRefreshRate);
 	}
 
 	bool handTrackingExtensionAvailable() { return pfnXrCreateHandTrackerExt != nullptr; }
@@ -292,6 +308,8 @@ private:
 	PFN_xrCreateXDevSpaceMNDX pfnxrCreateXDevSpaceMNDX = nullptr;
 
 	OcPFN_xrGetDisplayRefreshRateFB pfnXrGetDisplayRefreshRateFB = nullptr;
+	OcPFN_xrEnumerateDisplayRefreshRatesFB pfnXrEnumerateDisplayRefreshRatesFB = nullptr;
+	OcPFN_xrRequestDisplayRefreshRateFB pfnXrRequestDisplayRefreshRateFB = nullptr;
 
 	std::set<std::string> enabledExtensions;
 	bool supportsG2Controller = false;
