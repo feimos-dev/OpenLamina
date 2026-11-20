@@ -2356,6 +2356,12 @@ void ViveTrackersCase(CaseContext& c)
 	in->GetInputSourceHandle("/user/waist", &waistPath);
 	in->GetInputSourceHandle("/user/foot/left", &footPath);
 	r["origin_is_the_waist"] = data.activeOrigin == waistPath && waistPath != vr::k_ulInvalidInputValueHandle;
+	// The origin's device is the waist tracker
+	InputOriginInfo_t origin{};
+	r["origin_info_err"] = (int)in->GetOriginTrackedDeviceInfo(data.activeOrigin, &origin, sizeof(origin));
+	char type[256] = {};
+	f.sys->GetStringTrackedDeviceProperty(origin.trackedDeviceIndex, vr::Prop_ControllerType_String, type, sizeof(type), nullptr);
+	r["origin_device"] = type;
 	// Restricted to the waist it's the same; to the left foot, which the file doesn't bind it on, nothing
 	InputPoseActionData_t restricted{};
 	in->GetPoseActionDataForNextFrame(waist, vr::TrackingUniverseStanding, &restricted, sizeof(restricted), waistPath);

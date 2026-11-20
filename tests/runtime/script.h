@@ -35,9 +35,7 @@
 //   "vive_trackers": [{ "persistent": "/devices/htc/vive_trackerLHR-1", "role": "/user/vive_tracker_htcx/role/waist",
 //               "frame": 0 }]   (XR_HTCX_vive_tracker_interaction's trackers, listed from their frame on and announced
 //               with XrEventDataViveTrackerConnectedHTCX at it (from frame 1); an empty role is a tracker without one;
-//               a tracker's pose is the script's pose of <role>/input/grip/pose),
-//   "hand_data_source": 1   (XR_EXT_hand_tracking_data_source's source of the joints: 1 the hand's own, 2 (without
-//               it) a controller's)
+//               a tracker's pose is the script's pose of <role>/input/grip/pose)
 //
 // The dump (only when OC_TEST_RUNTIME_DUMP is set: without it nothing is recorded or read back) keeps whole layer
 // records for frames 1-64, every 32nd frame after, and the last frame ended, at most kDumpLayerCap records; the
@@ -134,7 +132,6 @@ struct Script {
 	std::vector<float> refreshRates; // empty: displayHz alone
 	std::vector<ScriptIpd> ipdChanges;
 	std::vector<ScriptViveTracker> viveTrackers;
-	int32_t handDataSource = 2;
 };
 
 // The scripted pose of a path at a frame (the last entry whose from_frame has been reached), nullptr if none

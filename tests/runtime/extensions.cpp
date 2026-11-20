@@ -24,16 +24,12 @@ struct HandTrackingDataSourceState {
 
 struct RtHandTracker {
 	XrHandEXT hand = XR_HAND_RIGHT_EXT;
-	bool withDataSource = false; // created with XrHandTrackingDataSourceInfoEXT
 };
 
 XrResult XRAPI_CALL CreateHandTracker(XrSession, const XrHandTrackerCreateInfoEXT* info, XrHandTrackerEXT* out)
 {
 	auto* t = new RtHandTracker;
 	t->hand = info->hand;
-	for (auto* n = (const XrBaseInStructure*)info->next; n; n = n->next)
-		if (n->type == (XrStructureType)1000428000) // XR_TYPE_HAND_TRACKING_DATA_SOURCE_INFO_EXT
-			t->withDataSource = true;
 	*out = (XrHandTrackerEXT)t;
 	return XR_SUCCESS;
 }
@@ -51,10 +47,6 @@ XrResult XRAPI_CALL LocateHandJoints(XrHandTrackerEXT tracker, const XrHandJoint
 	if (base == St().spaces.end())
 		return XR_ERROR_HANDLE_INVALID;
 	int hand = ((RtHandTracker*)tracker)->hand == XR_HAND_LEFT_EXT ? 0 : 1;
-	// The data source's state only for a tracker created asking for data sources, as the extension says
-	for (auto* n = (XrBaseOutStructure*)locations->next; n; n = n->next)
-		if (n->type == kTypeHandTrackingDataSourceState && !((RtHandTracker*)tracker)->withDataSource)
-			return XR_ERROR_VALIDATION_FAILURE;
 	XrPosef palm = HandPose(hand);
 	XrPosef baseInStage = base->second->isAction ? base->second->actionPose
 	                                             : (base->second->type == XR_REFERENCE_SPACE_TYPE_VIEW ? RtHeadPose() : kIdentity);
@@ -75,7 +67,7 @@ XrResult XRAPI_CALL LocateHandJoints(XrHandTrackerEXT tracker, const XrHandJoint
 		if (n->type == kTypeHandTrackingDataSourceState) {
 			auto* state = (HandTrackingDataSourceState*)n;
 			state->isActive = XR_TRUE;
-			state->dataSource = GetScript().handDataSource;
+			state->dataSource = 2;
 		}
 	}
 	return XR_SUCCESS;

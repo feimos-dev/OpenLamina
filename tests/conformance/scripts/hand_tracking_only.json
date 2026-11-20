@@ -1,5 +1,4 @@
 {
-  "#": "No controller, the hands tracked by their own joints (XR_EXT_hand_tracking_data_source) (hand-controllers)",
-  "extensions": ["XR_KHR_D3D11_enable", "XR_EXT_hand_tracking", "XR_EXT_hand_tracking_data_source"],
-  "hand_data_source": 1
+  "#": "No controller, the hands tracked (hand-controllers)",
+  "extensions": ["XR_KHR_D3D11_enable", "XR_EXT_hand_tracking"]
 }

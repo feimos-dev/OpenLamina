@@ -2251,14 +2251,7 @@ const InteractionProfile* XrBackend::HandWithoutController(int hand)
 	XrHandJointLocationsEXT locations = { XR_TYPE_HAND_JOINT_LOCATIONS_EXT };
 	locations.jointCount = (uint32_t)joints.size();
 	locations.jointLocations = joints.data();
-	// Joints inferred from a controller aren't the hand's own
-	const bool withSource = xr_ext->ExtensionEnabled(OC_XR_EXT_HAND_TRACKING_DATA_SOURCE_EXTENSION_NAME);
-	OcXrHandTrackingDataSourceStateEXT source = { OC_XR_TYPE_HAND_TRACKING_DATA_SOURCE_STATE_EXT };
-	if (withSource)
-		locations.next = &source;
 	if (XR_FAILED(xr_ext->xrLocateHandJointsEXT(input->handTrackers[hand], &locateInfo, &locations)) || !locations.isActive)
-		return nullptr;
-	if (withSource && (!source.isActive || source.dataSource != OC_XR_HAND_TRACKING_DATA_SOURCE_UNOBSTRUCTED_EXT))
 		return nullptr;
 	return profile;
 }
@@ -3057,7 +3050,7 @@ bool XrBackend::FindXDevTrackers(XrXDevListMNDX& generic_tracker_list, const std
 		OC_XR_LOG(xr_ext->xrGetXDevPropertiesMNDX(generic_tracker_list, &cur_info, &cur_properties));
 		// A Vive tracker the runtime also lists by its role is that one
 		const std::string serial = LowerCase(cur_properties.serial);
-		if (!serial.empty() && std::any_of(byRole.begin(), byRole.end(), [&](const std::string& path) { return path.find(serial) != std::string::npos; }))
+		if (!serial.empty() && std::any_of(byRole.begin(), byRole.end(), [&](const std::string& path) { return path.ends_with(serial); }))
 			continue;
 		add(id, cur_properties);
 	}

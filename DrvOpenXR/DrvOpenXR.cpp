@@ -235,12 +235,8 @@ InstancePlan PlanInstance(const std::set<std::string>& available, SessionKind ki
 	if (available.count(XR_KHR_VISIBILITY_MASK_EXTENSION_NAME))
 		plan.extensions.push_back(XR_KHR_VISIBILITY_MASK_EXTENSION_NAME);
 
-	if (available.count(XR_EXT_HAND_TRACKING_EXTENSION_NAME)) {
+	if (available.count(XR_EXT_HAND_TRACKING_EXTENSION_NAME))
 		plan.extensions.push_back(XR_EXT_HAND_TRACKING_EXTENSION_NAME);
-		// Whether a hand's joints are the hand's own or inferred from a controller
-		if (available.contains(OC_XR_EXT_HAND_TRACKING_DATA_SOURCE_EXTENSION_NAME))
-			plan.extensions.push_back(OC_XR_EXT_HAND_TRACKING_DATA_SOURCE_EXTENSION_NAME);
-	}
 
 	// Vive trackers by their role (/user/vive_tracker_htcx/role/waist), poses only
 	if (available.contains(OC_XR_HTCX_VIVE_TRACKER_INTERACTION_EXTENSION_NAME))

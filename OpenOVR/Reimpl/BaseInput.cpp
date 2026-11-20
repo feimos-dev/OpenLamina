@@ -427,7 +427,7 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 		eyeGazeAction = XR_NULL_HANDLE;
 		eyeGazeSpace = XR_NULL_HANDLE;
 		trackerPoseAction = XR_NULL_HANDLE;
-		trackerPoseActionAttached = false;
+		trackerPoseSession = XR_NULL_HANDLE;
 		if (rawInputsSet != XR_NULL_HANDLE)
 			OC_XR_LOG(xrDestroyActionSet(rawInputsSet));
 		rawInputsSet = XR_NULL_HANDLE;
@@ -855,6 +855,9 @@ void BaseInput::LoadEmptyManifestIfRequired()
 
 void BaseInput::BindInputsForSession()
 {
+	// Not attached to this session (yet)
+	trackerPoseSession = XR_NULL_HANDLE;
+
 	// This is called from DrvOpenXR::SetupSession. If we requested a session restart ourselves, we're also
 	// going to bind the inputs ourselves anyway, so we don't want to do that twice.
 	// If we didn't request the restart but we also haven't even loaded actions yet, there's nothing to bind yet.
@@ -909,20 +912,16 @@ void BaseInput::BindInputsForSession()
 	attachInfo.countActionSets = sets.size();
 	const XrResult attached = xrAttachSessionActionSets(xr_session.get(), &attachInfo);
 	OC_XR_LOG(attached);
-	trackerPoseActionAttached = XR_SUCCEEDED(attached) && trackerPoseAction != XR_NULL_HANDLE;
+	if (XR_SUCCEEDED(attached) && trackerPoseAction != XR_NULL_HANDLE)
+		trackerPoseSession = xr_session.get();
 	// The trackers by role connected before the attach get their spaces now
-	if (trackerPoseActionAttached)
+	if (TrackerPoseAction() != XR_NULL_HANDLE)
 		if (auto* backend = dynamic_cast<XrBackend*>(BackendManager::Instance().GetBackendInstance()))
 			backend->OnTrackerActionAttached();
 
 	// Setup hand tracking if supported
 	if (xr_gbl->handTrackingProperties.supportsHandTracking) {
 		XrHandTrackerCreateInfoEXT createInfo = { XR_TYPE_HAND_TRACKER_CREATE_INFO_EXT };
-		// Joints from the hand itself and from a controller, each told apart (XR_EXT_hand_tracking_data_source)
-		int32_t sources[] = { OC_XR_HAND_TRACKING_DATA_SOURCE_UNOBSTRUCTED_EXT, OC_XR_HAND_TRACKING_DATA_SOURCE_CONTROLLER_EXT };
-		OcXrHandTrackingDataSourceInfoEXT sourceInfo = { OC_XR_TYPE_HAND_TRACKING_DATA_SOURCE_INFO_EXT, nullptr, 2, sources };
-		if (xr_ext->ExtensionEnabled(OC_XR_EXT_HAND_TRACKING_DATA_SOURCE_EXTENSION_NAME))
-			createInfo.next = &sourceInfo;
 		for (int i = 0; i < 2; i++) {
 			createInfo.hand = i == 0 ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT;
 			createInfo.handJointSet = XR_HAND_JOINT_SET_DEFAULT_EXT;
@@ -1258,7 +1257,7 @@ void BaseInput::CreateLegacyActions()
 		OC_XR_LOG(xr_suggest_bindings_logged(suggested));
 	}
 
-	trackerPoseActionAttached = false;
+	trackerPoseSession = XR_NULL_HANDLE;
 	trackerPoseAction = CreateTrackerPoseAction(legacyInputsSet);
 	trackerPoseActionGeneration++;
 }
@@ -2015,25 +2014,33 @@ bool BaseInput::TrackerPoseData(const std::string& action, vr::ETrackingUniverse
 				role = r;
 		if (!role || (restrictToDevice && restrictToDevice->devicePathString != role->steamvrPath))
 			continue;
-		// The tracker with that role: its controller type names it
-		const std::string type = ViveTrackerControllerType(*role);
-		for (vr::TrackedDeviceIndex_t i = 0; i < vr::k_unMaxTrackedDeviceCount; i++) {
-			std::shared_ptr<ITrackedDevice> dev = BackendManager::Instance().GetDevice(i);
-			if (!dev || dev->GetTrackedDeviceClass() != vr::TrackedDeviceClass_GenericTracker)
-				continue;
-			char buffer[vr::k_unMaxPropertyStringSize] = {};
-			vr::ETrackedPropertyError err = vr::TrackedProp_Success;
-			dev->GetStringTrackedDeviceProperty(vr::Prop_ControllerType_String, buffer, sizeof(buffer), &err);
-			if (err != vr::TrackedProp_Success || type != buffer)
-				continue;
-			data->bActive = true;
-			data->activeOrigin = vr::k_ulInvalidInputValueHandle;
-			GetInputSourceHandle(role->steamvrPath, &data->activeOrigin);
-			dev->GetPose(origin, &data->pose, TrackingStateType_Now);
-			return true;
-		}
+		std::shared_ptr<ITrackedDevice> dev = TrackerForRole(*role);
+		if (!dev)
+			continue;
+		data->bActive = true;
+		data->activeOrigin = vr::k_ulInvalidInputValueHandle;
+		GetInputSourceHandle(role->steamvrPath, &data->activeOrigin);
+		dev->GetPose(origin, &data->pose, TrackingStateType_Now);
+		return true;
 	}
 	return false;
+}
+
+std::shared_ptr<ITrackedDevice> BaseInput::TrackerForRole(const ViveTrackerRole& role)
+{
+	// The tracker with that role: its controller type names it
+	const std::string type = ViveTrackerControllerType(role);
+	for (vr::TrackedDeviceIndex_t i = 0; i < vr::k_unMaxTrackedDeviceCount; i++) {
+		std::shared_ptr<ITrackedDevice> dev = BackendManager::Instance().GetDevice(i);
+		if (!dev || dev->GetTrackedDeviceClass() != vr::TrackedDeviceClass_GenericTracker)
+			continue;
+		char buffer[vr::k_unMaxPropertyStringSize] = {};
+		vr::ETrackedPropertyError err = vr::TrackedProp_Success;
+		dev->GetStringTrackedDeviceProperty(vr::Prop_ControllerType_String, buffer, sizeof(buffer), &err);
+		if (err == vr::TrackedProp_Success && type == buffer)
+			return dev;
+	}
+	return nullptr;
 }
 
 EVRInputError BaseInput::GetPoseActionDataRelativeToNow(VRActionHandle_t action, ETrackingUniverseOrigin eOrigin, float fPredictedSecondsFromNow, InputPoseActionData_t* pActionData, uint32_t unActionDataSize, VRInputValueHandle_t ulRestrictToDevice)
@@ -2975,6 +2982,9 @@ std::shared_ptr<ITrackedDevice> BaseInput::ivhToDev(VRInputValueHandle_t handle)
 		hand = ITrackedDevice::HAND_RIGHT;
 		break;
 	default:
+		// A tracker by the path SteamVR binds its pose on
+		if (std::optional<ViveTrackerRole> role = ViveTrackerRoleForSteamVRPath(ivh->devicePathString))
+			return TrackerForRole(*role);
 		OOVR_SOFT_ABORTF("Cannot get invalid device from handle '%s'", ivh->path.c_str());
 		return nullptr;
 	}

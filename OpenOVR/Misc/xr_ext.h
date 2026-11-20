@@ -104,25 +104,6 @@ typedef XrResult(XRAPI_PTR* OcPFN_xrEnumerateViveTrackerPathsHTCX)(XrInstance in
 // XR_EXT_hand_interaction, newer than the bundled OpenXR headers: the hands as controllers (a profile only)
 #define OC_XR_EXT_HAND_INTERACTION_EXTENSION_NAME "XR_EXT_hand_interaction"
 
-// XR_EXT_hand_tracking_data_source, newer than the bundled OpenXR headers: whether a hand's joints are the hand's own
-#define OC_XR_EXT_HAND_TRACKING_DATA_SOURCE_EXTENSION_NAME "XR_EXT_hand_tracking_data_source"
-static const XrStructureType OC_XR_TYPE_HAND_TRACKING_DATA_SOURCE_INFO_EXT = (XrStructureType)1000428000;
-static const XrStructureType OC_XR_TYPE_HAND_TRACKING_DATA_SOURCE_STATE_EXT = (XrStructureType)1000428001;
-static const int32_t OC_XR_HAND_TRACKING_DATA_SOURCE_UNOBSTRUCTED_EXT = 1;
-static const int32_t OC_XR_HAND_TRACKING_DATA_SOURCE_CONTROLLER_EXT = 2;
-struct OcXrHandTrackingDataSourceInfoEXT {
-	XrStructureType type;
-	const void* next;
-	uint32_t requestedDataSourceCount;
-	int32_t* requestedDataSources;
-};
-struct OcXrHandTrackingDataSourceStateEXT {
-	XrStructureType type;
-	void* next;
-	XrBool32 isActive;
-	int32_t dataSource;
-};
-
 // Flag bits for supported graphics apis
 static const XrGraphicsApiSupportedFlags XR_SUPPORTED_GRAPHICS_API_D3D11 = 0x0001;
 static const XrGraphicsApiSupportedFlags XR_SUPPORTED_GRAPHICS_API_D3D12 = 0x0002;

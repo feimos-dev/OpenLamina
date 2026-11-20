@@ -98,8 +98,6 @@ static Script LoadScript()
 		tracker.role = t["role"].asString();
 		s.viveTrackers.push_back(tracker);
 	}
-	if (root.isMember("hand_data_source"))
-		s.handDataSource = root["hand_data_source"].asInt();
 	for (const Json::Value& p : root["presence"]) {
 		ScriptPresence pr;
 		pr.frame = p["frame"].asUInt64();
