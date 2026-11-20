@@ -428,8 +428,9 @@ uint32_t PidOf(const Json::Value& v)
 } // namespace
 
 namespace {
-// Overlay handles, for this program's overlays and the others' it finds: ids that are never handed out twice
-std::atomic<uint64_t> nextOverlayHandle{ 1 };
+// Overlay handles, for this program's overlays and the others' it finds: ids that are never handed out twice. Not
+// small numbers, which a program may pass as made-up handles, and within 32 bits, as a 32-bit program's pointers were.
+std::atomic<uint64_t> nextOverlayHandle{ 0x10000 };
 } // namespace
 
 std::optional<std::pair<uint32_t, uint32_t>> OverlayTextureSize(const vr::Texture_t& texture)
