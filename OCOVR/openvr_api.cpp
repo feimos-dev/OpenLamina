@@ -19,12 +19,10 @@
 #include <map>
 #include <memory>
 #include <mutex>
-#include <optional>
 #include <set>
 
 #include "Misc/Config.h"
 #include "Misc/EnumNames.h"
-#include "Misc/LibMonado.h"
 
 // Specific to OCOVR
 #include "Drivers/Backend.h"
@@ -63,6 +61,7 @@ static uint32_t RefuseInit(EVRInitError* peError, EVRInitError error)
 		refused_init_count++;
 	return 0;
 }
+
 // Unknown interface names already logged (games ask from several threads)
 static std::set<std::string> logged_unknown_interfaces;
 static std::mutex logged_unknown_interfaces_mutex;
@@ -445,8 +444,7 @@ VR_INTERFACE bool VR_CALLTYPE VR_IsInterfaceVersionValid(const char* pchInterfac
 
 VR_INTERFACE bool VR_CALLTYPE VR_IsRuntimeInstalled()
 {
-	// Whether an OpenXR runtime is there is only known at Init: one chosen other than through the registry (Wine and
-	// Proton, a loader setting) would otherwise stop games that work
+	// TODO in future check that the Oculus Runtime is installed
 	return true;
 }
 
