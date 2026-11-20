@@ -41,6 +41,7 @@ void FrameStats::OnAppPresent()
 {
 	std::lock_guard<std::mutex> g(lock);
 	presents++;
+	appPresents++;
 }
 
 void FrameStats::OnOwnFrame()
@@ -59,7 +60,9 @@ void FrameStats::Cumulative(uint32_t pid, OOVR_Compositor_CumulativeStats* out, 
 		std::lock_guard<std::mutex> g(lock);
 		stats.m_nNumFramePresents = presents;
 		stats.m_nNumDroppedFrames = dropped;
+		stats.m_nNumFrameSubmits = appPresents;
 	}
+	memset(out, 0, size);
 	memcpy(out, &stats, std::min<size_t>(size, sizeof(stats)));
 }
 
@@ -76,7 +79,7 @@ uint32_t FrameStats::Timings(OOVR_Compositor_FrameTiming* out, uint32_t count) c
 	for (uint32_t i = 0; i < n; i++) {
 		uint8_t* dst = bytes + i * element;
 		memset(dst, 0, element);
-		memcpy(dst, &history[i], std::min(element, sizeof(OOVR_Compositor_FrameTiming)));
+		memcpy(dst, &history[n - 1 - i], std::min(element, sizeof(OOVR_Compositor_FrameTiming)));
 		reinterpret_cast<OOVR_Compositor_FrameTiming*>(dst)->m_nSize = (uint32_t)element;
 	}
 	return n;

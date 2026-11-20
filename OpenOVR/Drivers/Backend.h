@@ -190,7 +190,13 @@ public:
 	    vr::EVRSubmitFlags submitFlags,                                                                                                            \
 	    bool isFirstEye) APPEND;                                                                                                                   \
                                                                                                                                                    \
-	PREPEND void SubmitFrames(bool showSkybox, bool postPresent) APPEND;                                                                           \
+	PREPEND void SubmitFrames(bool showSkybox) APPEND;                                                                                             \
+                                                                                                                                                   \
+	/* Show nothing of the game's eye textures until it submits again */                                                                           \
+	PREPEND void ClearSubmittedFrame() APPEND;                                                                                                     \
+                                                                                                                                                   \
+	/* While suspended the game's eye textures are not shown */                                                                                    \
+	PREPEND void SetRenderingSuspended(bool suspended) APPEND;                                                                                     \
                                                                                                                                                    \
 	PREPEND IBackend::openvr_enum_t SetSkyboxOverride(const vr::Texture_t* pTextures, uint32_t unTextureCount) APPEND;                             \
                                                                                                                                                    \

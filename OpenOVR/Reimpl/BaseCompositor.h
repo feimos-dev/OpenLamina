@@ -1,4 +1,9 @@
 #pragma once
+
+#include <atomic>
+#include <cmath>
+#include <cstring>
+#include <cstdint>
 #include "../BaseCommon.h" // TODO don't import from OCOVR, and remove the "../"
 #include "generated/interfaces/IVRCompositor_022.h"
 
@@ -46,6 +51,11 @@ struct OOVR_Compositor_FrameTiming {
 	float m_flCompositorRenderStartMs;
 
 	vr::TrackedDevicePose_t m_HmdPose; // pose used by app to render this frame
+
+	uint32_t m_nNumVSyncsReadyForUse;
+	uint32_t m_nNumVSyncsToFirstView;
+
+	float m_flTransferLatencyMs;
 };
 
 struct OOVR_Compositor_CumulativeStats {
@@ -73,6 +83,16 @@ struct OOVR_Compositor_CumulativeStats {
 	uint32_t m_nNumFramePresentsTimedOut;
 	uint32_t m_nNumDroppedFramesTimedOut;
 	uint32_t m_nNumReprojectedFramesTimedOut;
+
+	/** For items in this section, divide all the values by m_nNumFrameSubmits. */
+	uint32_t m_nNumFrameSubmits;
+	alignas(8) double m_flSumCompositorCPUTimeMS;
+	alignas(8) double m_flSumCompositorGPUTimeMS;
+	alignas(8) double m_flSumTargetFrameTimes;
+	alignas(8) double m_flSumApplicationCPUTimeMS;
+	alignas(8) double m_flSumApplicationGPUTimeMS;
+
+	uint32_t m_nNumFramesWithDepth; // total frames submitted with depth by the current application
 };
 
 enum OOVR_EVRCompositorTextureUsage {
@@ -125,17 +145,14 @@ enum OOVR_Compositor_DeviceType {
 
 class BaseCompositor {
 private:
-	bool leftEyeSubmitted = false, rightEyeSubmitted = false;
+	std::atomic<bool> leftEyeSubmitted{ false }, rightEyeSubmitted{ false };
 
 	// The old compositor window calls (IVRCompositor_005-008) and SetGraphicsDevice (005, 006)
 	bool oldVSync = true;
 	float oldGamma = 1.0f;
 	OOVR_Compositor_DeviceType oldDeviceType = OOVR_Compositor_DeviceType_None;
 
-	vr::HmdColor_t fadeColour = { 0, 0, 0, 0 };
-	float fadeTime = 0;
-
-	bool isInSkybox = false;
+	std::atomic<bool> isInSkybox{ false };
 
 	// The poses WaitGetPoses gave the last few frames, by pose prediction id (GetPosesForFrame); under posesLock, as
 	// games ask for them from other threads
@@ -143,14 +160,59 @@ private:
 		uint32_t id = 0;
 		std::vector<vr::TrackedDevicePose_t> poses;
 	};
-	FramePoses recentPoses[4];
+	// About 100 ms of frames at the fastest display rates
+	FramePoses recentPoses[16];
 	uint32_t lastPoseId = 0;
 	std::mutex posesLock;
 
 	// True if the current frame has only nullptr textures supplied, and should be ignored
-	bool isNullRender = false;
+	std::atomic<bool> isNullRender{ false };
+	std::atomic<int32_t> explicitTimingMode{ 0 };
+	// The game has called PostPresentHandoff: it ends its frames there, not at its second Submit
+	std::atomic<bool> usesPostPresentHandoff{ false };
+	// What the game last set with SetTrackingSpace
+	std::atomic<int> trackingUniverse{ vr::TrackingUniverseStanding };
 
 public:
+	// Submitted bounds with a NaN in them are no bounds at all
+	static bool BoundsAreNumbers(const vr::VRTextureBounds_t* bounds)
+	{
+		return !bounds || (!std::isnan(bounds->uMin) && !std::isnan(bounds->vMin) && !std::isnan(bounds->uMax) && !std::isnan(bounds->vMax));
+	}
+	// The tracking universe to answer after the game set `set`, when the space in use is `space`: the stage space
+	// holds both the standing and the raw universes
+	static vr::ETrackingUniverseOrigin UniverseAnswer(vr::ETrackingUniverseOrigin set, XrReferenceSpaceType space)
+	{
+		if (space == XR_REFERENCE_SPACE_TYPE_LOCAL)
+			return vr::TrackingUniverseSeated;
+		return set == vr::TrackingUniverseRawAndUncalibrated ? vr::TrackingUniverseRawAndUncalibrated : vr::TrackingUniverseStanding;
+	}
+	// The Vulkan extensions a game needs for its frames to be copied through D3D11 when the runtime has no Vulkan
+	// support (space separated, as the runtime lists its own)
+	static const char* InteropVulkanExtensions(bool device)
+	{
+		return device ? "VK_KHR_external_memory VK_KHR_external_memory_win32 VK_KHR_dedicated_allocation VK_KHR_get_memory_requirements2"
+		              : "VK_KHR_external_memory_capabilities VK_KHR_get_physical_device_properties2";
+	}
+	// Copies a list into the game's buffer (as much as fits, always ended) and answers the size it needs, as with the
+	// runtime's own lists
+	static uint32_t ExtensionListSize(const char* list, char* buffer, uint32_t bufferSize)
+	{
+		const uint32_t needed = (uint32_t)strlen(list) + 1;
+		if (buffer && bufferSize) {
+			const uint32_t count = needed < bufferSize ? needed : bufferSize;
+			memcpy(buffer, list, count);
+			buffer[count - 1] = 0;
+		}
+		return needed;
+	}
+	// Whether the second eye's Submit ends the frame: not for a game that ends its frames with PostPresentHandoff,
+	// whether it says so in its timing mode or has called it
+	static bool SubmitEndsFrame(int32_t timingMode, bool calledHandoff)
+	{
+		return timingMode != (int32_t)VRCompositorTimingMode_Explicit_ApplicationPerformsPostPresentHandoff && !calledHandoff;
+	}
+
 	typedef int ovr_enum_t;
 
 	BaseCompositor();
@@ -164,11 +226,6 @@ public:
 
 	/** Creates API specific Compositor */
 	static std::unique_ptr<Compositor> CreateCompositorAPI(const vr::Texture_t* texture);
-
-#if defined(SUPPORT_DX) && defined(SUPPORT_DX11) && !defined(OC_XR_PORT)
-	// TODO clean this up, and make the keyboard work with OpenGL and Vulkan too
-	static DX11Compositor* dxcomp;
-#endif
 
 public:
 	// OpenVR interface methods from here on:
@@ -341,6 +398,12 @@ public:
 	 * return 0. Otherwise it returns the length of the number of bytes necessary to hold this string including the trailing
 	 * null.  The string will be a space separated list of required device extensions to enable in VkCreateDevice */
 	uint32_t GetVulkanDeviceExtensionsRequired(VkPhysicalDevice_T* pPhysicalDevice, char* pchValue, uint32_t unBufferSize);
+
+	/** The pixels per second, in millions, that a display of this render target size and refresh rate needs */
+	static float MegaPixelsPerSecond(uint32_t width, uint32_t height, float hz)
+	{
+		return hz > 0.0f ? (float)((double)width * height * hz / 1e6) : 0.0f;
+	}
 
 	/** What the two above answer for OpenXR's answer: the size OpenXR says is needed, also when the buffer was too
 	 * small (as SteamVR answers); 0 for any other failure */

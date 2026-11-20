@@ -114,6 +114,7 @@ add_executable(oc_unit_tests
 	unit/NumbersTests.cpp
 	unit/ImageTests.cpp
 	unit/EquirectTests.cpp
+	unit/FadeTests.cpp
 	unit/CanvasTests.cpp
 	unit/FrameStatsTests.cpp
 	unit/FormatTableTests.cpp

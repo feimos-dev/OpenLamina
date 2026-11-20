@@ -299,6 +299,15 @@ void DX10Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 		return;
 	}
 
+	// The slice shown: SubmitWithArrayIndex's, else (as for D3D11) an array texture's eye slice
+	const UINT slice = submitSlice ? *submitSlice : (s->gameDesc.ArraySize > 1 && eye.has_value()) ? (UINT)*eye : 0;
+	if (slice >= s->gameDesc.ArraySize) {
+		lastResult = XR_ERROR_VALIDATION_FAILURE;
+		OC_UNSUPPORTED_VOID("A D3D10 array texture of %u slices submitted with slice %u", s->gameDesc.ArraySize, slice);
+	}
+	// Mip 0 of the slice
+	const UINT subresource = D3D10CalcSubresource(0, slice, s->gameDesc.MipLevels);
+
 	// The D3D10 side: the game's texture into the shared one (key 0 to 1)
 	ComPtr<ID3D10Device> device10;
 	game->GetDevice(&device10);
@@ -309,11 +318,11 @@ void DX10Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 		return;
 	}
 	if (s->gameDesc.SampleDesc.Count > 1)
-		device10->ResolveSubresource(s->tex10.Get(), 0, game, 0, ResolveFormat(s->gameDesc.Format));
+		device10->ResolveSubresource(s->tex10.Get(), 0, game, subresource, ResolveFormat(s->gameDesc.Format));
 	else if (s->gameDesc.MipLevels == 1 && s->gameDesc.ArraySize == 1)
 		device10->CopyResource(s->tex10.Get(), game);
 	else
-		device10->CopySubresourceRegion(s->tex10.Get(), 0, 0, 0, 0, game, 0, nullptr);
+		device10->CopySubresourceRegion(s->tex10.Get(), 0, 0, 0, 0, game, subresource, nullptr);
 	if (s->mutex10) {
 		s->mutex10->ReleaseSync(1);
 	} else if (!WaitForGpu10(device10.Get())) {
@@ -331,6 +340,8 @@ void DX10Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 	}
 	vr::Texture_t copy = *texture;
 	copy.handle = s->tex11.Get();
+	// The shared copy is the slice itself
+	submitSlice.reset();
 	DX11Compositor::CopyToSwapchain(&copy, bounds, eye, submitFlags);
 	if (s->mutex11)
 		s->mutex11->ReleaseSync(0);

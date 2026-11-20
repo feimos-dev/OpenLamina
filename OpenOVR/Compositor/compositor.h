@@ -31,6 +31,12 @@ struct TextureRegion {
 	uint32_t Height() const { return y1 - y0; }
 };
 bool RegionFromBounds(const vr::VRTextureBounds_t* bounds, uint32_t width, uint32_t height, TextureRegion& out);
+// The frames to skip before a texture is tried again after a failure, which `failuresInARow` counts: none after a
+// failure that may pass at once (a timed-out wait), or the first on a texture; then 1, 3, 7, ... up to 90
+int RetryDelayAfterFailure(bool transient, bool sameTextureAsLastFailure, int& failuresInARow);
+// Whose image each eye of a projection layer shows: `submitted` are the eyes the game submitted this frame and `usable`
+// those whose image is there. An eye not submitted shows the other's; -1 is no image at all, which leaves out the layer.
+void EyeImageSources(const bool submitted[2], const bool usable[2], int source[2]);
 // The bounds, or the whole texture's for none
 inline vr::VRTextureBounds_t Bounds(const vr::VRTextureBounds_t* bounds)
 {
@@ -56,9 +62,6 @@ public:
 	virtual ~Compositor();
 
 	void Invoke(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, XrSwapchainSubImage& subImage, std::optional<XruEye> eye = std::nullopt, vr::EVRSubmitFlags submitFlags = vr::Submit_Default);
-
-	virtual void InvokeCubemap(const vr::Texture_t* textures) = 0;
-	virtual bool SupportsCubemap() { return false; }
 
 	virtual XrSwapchain GetSwapChain() { return chain; };
 
@@ -135,6 +138,9 @@ private:
 	int failuresInARow = 0;
 	int retryDelay = 0;
 	XrResult lastFailure = XR_SUCCESS;
+	const void* lastFailedHandle = nullptr;
+	// The failure of this Invoke may pass at once (a wait that timed out)
+	bool transientFailure = false;
 
 protected:
 

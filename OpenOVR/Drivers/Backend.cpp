@@ -129,9 +129,19 @@ IBackend::openvr_enum_t BackendManager::StoreEyeTexture(
 	return backend->StoreEyeTexture(eye, texture, bounds, submitFlags, isFirstEye);
 }
 
-void BackendManager::SubmitFrames(bool showSkybox, bool postPresent)
+void BackendManager::SubmitFrames(bool showSkybox)
 {
-	return backend->SubmitFrames(showSkybox, postPresent);
+	return backend->SubmitFrames(showSkybox);
+}
+
+void BackendManager::ClearSubmittedFrame()
+{
+	return backend->ClearSubmittedFrame();
+}
+
+void BackendManager::SetRenderingSuspended(bool suspended)
+{
+	return backend->SetRenderingSuspended(suspended);
 }
 
 IBackend::openvr_enum_t BackendManager::SetSkyboxOverride(const vr::Texture_t* pTextures, uint32_t unTextureCount)

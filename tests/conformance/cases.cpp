@@ -2324,11 +2324,11 @@ void CompositorStatsCase(CaseContext& c)
 	timings[0].m_nSize = sizeof(vr::Compositor_FrameTiming);
 	uint32_t got = f.comp->GetFrameTimings(timings, 5);
 	r["timings"] = got;
-	r["timings_newest_first"] = got == 5 && timings[0].m_nFrameIndex > timings[1].m_nFrameIndex;
+	r["timings_oldest_first"] = got == 5 && timings[0].m_nFrameIndex < timings[1].m_nFrameIndex;
 	r["timing_sizes"] = got == 5 && timings[4].m_nSize == sizeof(vr::Compositor_FrameTiming);
 	vr::Compositor_FrameTiming ago{};
 	ago.m_nSize = sizeof(ago);
-	r["frame_timing_3_ago"] = f.comp->GetFrameTiming(&ago, 3) && got == 5 && ago.m_nFrameIndex == timings[3].m_nFrameIndex;
+	r["frame_timing_3_ago"] = f.comp->GetFrameTiming(&ago, 3) && got == 5 && ago.m_nFrameIndex == timings[1].m_nFrameIndex;
 
 	// Within a frame: never negative, and well under a second (the real clock, on a runner that may be busy)
 	float left = f.comp->GetFrameTimeRemaining();
@@ -2339,7 +2339,7 @@ void CompositorStatsCase(CaseContext& c)
 	r["prediction_ids_match"] = render != 0 && render == game;
 	vr::TrackedDevicePose_t poses[16]{};
 	r["poses_for_last_frame"] = (int)f.comp->GetPosesForFrame(render, poses, 16);
-	r["poses_for_old_frame"] = (int)f.comp->GetPosesForFrame(render - 10, poses, 16);
+	r["poses_for_old_frame"] = (int)f.comp->GetPosesForFrame(render - 40, poses, 16);
 
 	r["fullscreen"] = f.comp->IsFullscreen();
 	r["motion_smoothing_supported"] = f.comp->IsMotionSmoothingSupported();

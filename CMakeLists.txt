@@ -357,6 +357,8 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/Bounds.cpp
 	OpenOVR/Misc/Bounds.h
 	OpenOVR/Misc/Equirect.cpp
+	OpenOVR/Misc/Fade.cpp
+	OpenOVR/Misc/Fade.h
 	OpenOVR/Misc/FrameStats.cpp
 	OpenOVR/Misc/FrameStats.h
 	OpenOVR/Misc/MirrorWindow.cpp

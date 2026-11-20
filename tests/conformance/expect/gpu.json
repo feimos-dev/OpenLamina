@@ -1,5 +1,5 @@
 {
- "#": "The runtime's GPU (run.py --cases gpu-answers,gpu-other-adapter --script scripts/gfx_all_apis.json --expect expect/gpu.json --allow-skip \"gpu-.*\"): the stand-in's D3D requirements name the last DXGI adapter, and GetDXGIOutputInfo (IVRSystem and IVRExtendedDisplay), GetD3D9AdapterIndex and GetOutputDevice for D3D11 and D3D12 answer it; GetOutputDevice for Vulkan answers the physical device the runtime wants for the game's instance. A game on another adapter has its session tried, which the stand-in refuses (as Monado does), and then gets SharedTexturesNotSupported from Submit (skipped with one adapter, and the Vulkan record without a Vulkan driver).",
+ "#": "The runtime's GPU (run.py --cases gpu-answers,gpu-other-adapter --script scripts/gfx_all_apis.json --expect expect/gpu.json --allow-skip \"gpu-.*\"): the stand-in's D3D requirements name the last DXGI adapter, and GetDXGIOutputInfo (IVRSystem and IVRExtendedDisplay), GetD3D9AdapterIndex and GetOutputDevice for D3D11 and D3D12 answer it; GetOutputDevice for Vulkan answers the physical device the runtime wants for the game's instance. A game on another adapter has its session tried, which the stand-in refuses (as Monado does), and then gets TextureIsOnWrongDevice from Submit (skipped with one adapter, and the Vulkan record without a Vulkan driver).",
  "gpu-answers/answers/-/-": {
   "dxgi_is_runtime_adapter": true,
   "d3d9_is_runtime_adapter": true,
@@ -12,7 +12,7 @@
   "output_device_is_runtime_device": true
  },
  "gpu-other-adapter/submit/-/-": {
-  "left": 106,
-  "right": 106
+  "left": 104,
+  "right": 104
  }
 }

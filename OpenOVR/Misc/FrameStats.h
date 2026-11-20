@@ -29,7 +29,7 @@ public:
 
 	// The counts, zeroed within size bytes (older SDKs have a shorter struct), with pid
 	void Cumulative(uint32_t pid, OOVR_Compositor_CumulativeStats* out, uint32_t size) const;
-	// Up to count of the game's recent frames, newest first, into an array of elements of out->m_nSize bytes each (an
+	// Up to count of the game's recent frames, oldest first (the last is the newest), into an array of elements of out->m_nSize bytes each (an
 	// element size under the struct's first fields, or count 0, gives 0); the number written
 	uint32_t Timings(OOVR_Compositor_FrameTiming* out, uint32_t count) const;
 	// Seconds left until the current frame is due: one display period after the last xrWaitFrame returned, less the
@@ -44,7 +44,7 @@ private:
 	mutable std::mutex lock;
 	std::condition_variable frameStarted;
 	uint64_t framesStarted = 0;
-	uint32_t presents = 0, dropped = 0;
+	uint32_t presents = 0, dropped = 0, appPresents = 0;
 	std::deque<OOVR_Compositor_FrameTiming> history; // newest first
 	Clock::time_point lastWaitReturned{};
 	double periodMs = 0;

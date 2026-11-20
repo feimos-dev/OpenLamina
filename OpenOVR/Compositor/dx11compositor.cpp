@@ -10,7 +10,9 @@
 #include "../Misc/SoftFail.h"
 #include "../Misc/xr_ext.h"
 
+#include <algorithm>
 #include <d3dcompiler.h> // For compiling shaders! D3DCompile
+#include <mutex>
 
 #pragma comment(lib, "d3dcompiler.lib")
 // D3D11CreateDevice, for the D3D10 bridge, the OpenGL and Vulkan interop and the temporary device
@@ -648,52 +650,6 @@ void DX11Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 	SwapchainCallFailed(xrReleaseSwapchainImage(chain, &releaseInfo), "xrReleaseSwapchainImage");
 }
 
-void DX11Compositor::InvokeCubemap(const vr::Texture_t* textures)
-{
-	CheckCreateSwapChain(&textures[0], 0, 0, true);
-
-#ifdef OC_XR_PORT
-	// Not yet: SetSkyboxOverride answers RequestFailed
-	OOVR_LOG_ONCE("Cube map skyboxes aren't supported yet");
-	lastResult = XR_ERROR_RUNTIME_FAILURE;
-	return;
-	ID3D11Texture2D* tex = nullptr;
-#else
-	int currentIndex = 0;
-	OOVR_FAILED_OVR_ABORT(ovr_GetTextureSwapChainCurrentIndex(OVSS, chain, &currentIndex));
-
-	OOVR_FAILED_OVR_ABORT(ovr_GetTextureSwapChainBufferDX(OVSS, chain, currentIndex, IID_PPV_ARGS(&tex)));
-#endif
-
-	ID3D11Texture2D* faceSrc;
-
-	// Front
-	faceSrc = (ID3D11Texture2D*)textures[0].handle;
-	context->CopySubresourceRegion(tex, 5, 0, 0, 0, faceSrc, 0, nullptr);
-
-	// Back
-	faceSrc = (ID3D11Texture2D*)textures[1].handle;
-	context->CopySubresourceRegion(tex, 4, 0, 0, 0, faceSrc, 0, nullptr);
-
-	// Left
-	faceSrc = (ID3D11Texture2D*)textures[2].handle;
-	context->CopySubresourceRegion(tex, 0, 0, 0, 0, faceSrc, 0, nullptr);
-
-	// Right
-	faceSrc = (ID3D11Texture2D*)textures[3].handle;
-	context->CopySubresourceRegion(tex, 1, 0, 0, 0, faceSrc, 0, nullptr);
-
-	// Top
-	faceSrc = (ID3D11Texture2D*)textures[4].handle;
-	context->CopySubresourceRegion(tex, 2, 0, 0, 0, faceSrc, 0, nullptr);
-
-	// Bottom
-	faceSrc = (ID3D11Texture2D*)textures[5].handle;
-	context->CopySubresourceRegion(tex, 3, 0, 0, 0, faceSrc, 0, nullptr);
-
-	tex->Release();
-}
-
 bool DX11Compositor::CopyDepth(const vr::Texture_t* depth)
 {
 	auto* src = (ID3D11Texture2D*)depth->handle;
@@ -843,6 +799,16 @@ static ID3D11Texture2D* MakeMirrorTexture(ID3D11Device* device, uint32_t width, 
 	return SUCCEEDED(device->CreateTexture2D(&desc, nullptr, &texture)) ? texture : nullptr;
 }
 
+DXGI_FORMAT DX11Compositor::MirrorFormat(const vr::Texture_t* texture)
+{
+	ComPtr<ID3D11Texture2D> src;
+	if (!texture || !texture->handle || FAILED(((IUnknown*)texture->handle)->QueryInterface(IID_PPV_ARGS(&src))))
+		return DXGI_FORMAT_UNKNOWN;
+	D3D11_TEXTURE2D_DESC desc;
+	src->GetDesc(&desc);
+	return (DXGI_FORMAT)FormatWithSrgb(GfxApiKind::D3D11, desc.Format, WantsSrgb(GfxApiKind::D3D11, desc.Format, texture->eColorSpace));
+}
+
 void DX11Compositor::MirrorUpdate(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, ID3D11Texture2D** mirror)
 {
 	ComPtr<ID3D11Texture2D> src;
@@ -855,38 +821,68 @@ void DX11Compositor::MirrorUpdate(const vr::Texture_t* texture, const vr::VRText
 	// The bounds' area, as it lies in the texture (bounds that run backwards aren't turned round here)
 	const bool multisampled = desc.SampleDesc.Count > 1;
 	TextureRegion area;
-	if (!RegionFromBounds(multisampled ? nullptr : bounds, desc.Width, desc.Height, area))
+	if (!RegionFromBounds(bounds, desc.Width, desc.Height, area))
 		return;
 	const DXGI_FORMAT typed = (DXGI_FORMAT)FormatWithSrgb(GfxApiKind::D3D11, desc.Format, WantsSrgb(GfxApiKind::D3D11, desc.Format, texture->eColorSpace));
 
-	bool fits = false;
+	// A mirror of another device can't be copied into; the views handed out keep it
 	if (*mirror) {
 		ComPtr<ID3D11Device> mirrorDevice;
 		(*mirror)->GetDevice(&mirrorDevice);
-		D3D11_TEXTURE2D_DESC made;
-		(*mirror)->GetDesc(&made);
-		fits = mirrorDevice == device && made.Width == area.Width() && made.Height == area.Height() && made.Format == typed;
-	}
-	if (!fits) {
-		if (*mirror) {
-			OOVR_LOG_ONCE("The game's frames aren't of its mirror texture's device, size or format: a new mirror texture is made, which the views handed out so far don't show");
+		if (mirrorDevice != device) {
+			OOVR_LOG_ONCE("The game's frames aren't on its mirror texture's device: a new mirror texture is made, which the views handed out so far don't show");
 			(*mirror)->Release();
+			*mirror = nullptr;
 		}
+	}
+	if (!*mirror) {
 		*mirror = MakeMirrorTexture(device.Get(), area.Width(), area.Height(), typed);
 		if (!*mirror)
 			return;
 	}
+	D3D11_TEXTURE2D_DESC made;
+	(*mirror)->GetDesc(&made);
+	// The same family of formats copies as it is, sRGB or not; any other can't be copied
+	if (FormatWithSrgb(GfxApiKind::D3D11, made.Format, false) != FormatWithSrgb(GfxApiKind::D3D11, typed, false)) {
+		OOVR_LOG_ONCE("The game's frames are of another format than its mirror texture: not copied into it");
+		return;
+	}
 	ComPtr<ID3D11DeviceContext> ctx;
 	device->GetImmediateContext(&ctx);
+	// What fits in the mirror, from the area's origin
+	const UINT width = (std::min)(area.Width(), made.Width), height = (std::min)(area.Height(), made.Height);
 	if (multisampled) {
-		ctx->ResolveSubresource(*mirror, 0, src.Get(), 0, typed);
+		if (made.Width == desc.Width && made.Height == desc.Height) {
+			ctx->ResolveSubresource(*mirror, 0, src.Get(), 0, typed);
+		} else {
+			// Resolved whole into a texture of the frame's size, of which the mirror takes its part. It is kept for the next
+			// frame of the same size, format and device (it is made again otherwise; the last one lives to the end).
+			static std::mutex resolvedLock;
+			static ComPtr<ID3D11Texture2D>& resolved = *new ComPtr<ID3D11Texture2D>(); // never released at exit
+			std::lock_guard<std::mutex> resolvedGuard(resolvedLock);
+			D3D11_TEXTURE2D_DESC have{};
+			ComPtr<ID3D11Device> haveDevice;
+			if (resolved) {
+				resolved->GetDesc(&have);
+				resolved->GetDevice(&haveDevice);
+			}
+			if (!resolved || have.Width != desc.Width || have.Height != desc.Height || have.Format != typed || haveDevice != device) {
+				resolved.Reset();
+				resolved.Attach(MakeMirrorTexture(device.Get(), desc.Width, desc.Height, typed));
+			}
+			if (!resolved)
+				return;
+			ctx->ResolveSubresource(resolved.Get(), 0, src.Get(), 0, typed);
+			const D3D11_BOX box{ area.x0, area.y0, 0, area.x0 + width, area.y0 + height, 1 };
+			ctx->CopySubresourceRegion(*mirror, 0, 0, 0, 0, resolved.Get(), 0, &box);
+		}
 	} else {
-		const D3D11_BOX box{ area.x0, area.y0, 0, area.x1, area.y1, 1 };
+		const D3D11_BOX box{ area.x0, area.y0, 0, area.x0 + width, area.y0 + height, 1 };
 		ctx->CopySubresourceRegion(*mirror, 0, 0, 0, 0, src.Get(), 0, &box);
 	}
 }
 
-int DX11Compositor::MirrorView(ID3D11Texture2D** mirror, IUnknown* deviceOrResource, uint32_t width, uint32_t height, ID3D11ShaderResourceView** view)
+int DX11Compositor::MirrorView(ID3D11Texture2D** mirror, IUnknown* deviceOrResource, uint32_t width, uint32_t height, DXGI_FORMAT format, ID3D11ShaderResourceView** view)
 {
 	constexpr int kNone = 0, kRequestFailed = 1, kSharedTexturesNotSupported = 106;
 	if (!view)
@@ -911,7 +907,7 @@ int DX11Compositor::MirrorView(ID3D11Texture2D** mirror, IUnknown* deviceOrResou
 	} else {
 		if (!width || !height)
 			return kRequestFailed;
-		*mirror = MakeMirrorTexture(device.Get(), width, height, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB);
+		*mirror = MakeMirrorTexture(device.Get(), width, height, format == DXGI_FORMAT_UNKNOWN ? DXGI_FORMAT_R8G8B8A8_UNORM_SRGB : format);
 		if (!*mirror)
 			return kRequestFailed;
 	}

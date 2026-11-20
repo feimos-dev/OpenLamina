@@ -29,23 +29,36 @@ using namespace std;
 using glm::min;
 
 namespace {
-void WaitForFence(ID3D12Fence* fence, UINT64 completionValue, HANDLE waitEvent)
+// Waits for the fence to reach the value (at most 5 s): false if it didn't, with the work still running
+bool WaitForFence(ID3D12Fence* fence, UINT64 completionValue, HANDLE waitEvent)
 {
-	if (fence->GetCompletedValue() < completionValue) {
-		fence->SetEventOnCompletion(completionValue, waitEvent);
-		WaitForSingleObject(waitEvent, INFINITE);
+	// The value is checked again after every wake: an event an earlier wait timed out on may still fire for its value
+	const ULONGLONG until = GetTickCount64() + 5000;
+	while (fence->GetCompletedValue() < completionValue) {
+		const ULONGLONG now = GetTickCount64();
+		ResetEvent(waitEvent);
+		if (now >= until || FAILED(fence->SetEventOnCompletion(completionValue, waitEvent))
+		    || WaitForSingleObject(waitEvent, (DWORD)(until - now)) == WAIT_FAILED) {
+			OOVR_LOG_ONCE("A D3D12 copy didn't finish in time");
+			return false;
+		}
 	}
+	return true;
 }
 } // namespace
 
 DX12Compositor::DX12Compositor(D3D12TextureData_t* td)
 {
-	queue = td->m_pCommandQueue;
-	queue->GetDevice(IID_PPV_ARGS(&device));
+	// Without a queue there's no device: CopyToSwapchain answers InvalidTexture
+	queue = td ? td->m_pCommandQueue : nullptr;
+	if (queue)
+		queue->GetDevice(IID_PPV_ARGS(&device));
 }
 
 DX12Compositor::~DX12Compositor()
 {
+	// Nothing of ours may still be running on the lists and fences
+	WaitForAllFrames();
 	for (auto event : frameFenceEvents) {
 		CloseHandle(event);
 	}
@@ -313,7 +326,13 @@ void DX12Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, uint32_t
 			return;
 		}
 
-		MakeFrameLists(imageCount);
+		if (!MakeFrameLists(imageCount)) {
+			lastResult = XR_ERROR_RUNTIME_FAILURE;
+			imagesHandles.clear();
+			xrDestroySwapchain(chain);
+			chain = XR_NULL_HANDLE; // tried again at the next Submit
+			return;
+		}
 
 		// The shader pass's descriptors: one slot per image (it's made here for a format it converts, and at the first
 		// flipped bounds otherwise)
@@ -332,31 +351,45 @@ void DX12Compositor::CheckCreateSwapChain(const vr::Texture_t* texture, uint32_t
 	}
 }
 
-void DX12Compositor::MakeFrameLists(uint32_t imageCount)
+bool DX12Compositor::MakeFrameLists(uint32_t imageCount)
 {
 	for (auto event : frameFenceEvents) {
-		CloseHandle(event);
+		if (event)
+			CloseHandle(event);
 	}
-
+	frameFenceEvents.assign(imageCount, nullptr);
+	commandLists.clear();
+	commandAllocators.clear();
+	frameFences.clear();
+	fenceValues.clear();
 	commandLists.resize(imageCount);
 	commandAllocators.resize(imageCount);
-	frameFenceEvents.resize(imageCount);
 	frameFences.resize(imageCount);
-	fenceValues.resize(imageCount);
+	fenceValues.assign(imageCount, 0);
 
-	for (uint32_t i = 0; i < imageCount; i++) {
+	bool made = true;
+	for (uint32_t i = 0; i < imageCount && made; i++) {
 		frameFenceEvents[i] = CreateEvent(nullptr, FALSE, FALSE, nullptr);
-		fenceValues[i] = 0;
-		device->CreateFence(0, D3D12_FENCE_FLAG_NONE,
-		    IID_PPV_ARGS(&frameFences[i]));
-
-		device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT,
-		    IID_PPV_ARGS(&commandAllocators[i]));
-		device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT,
-		    commandAllocators[i].Get(), nullptr,
-		    IID_PPV_ARGS(&commandLists[i]));
-		commandLists[i]->Close();
+		made = frameFenceEvents[i] != nullptr
+		    && SUCCEEDED(device->CreateFence(0, D3D12_FENCE_FLAG_NONE, IID_PPV_ARGS(&frameFences[i])))
+		    && SUCCEEDED(device->CreateCommandAllocator(D3D12_COMMAND_LIST_TYPE_DIRECT, IID_PPV_ARGS(&commandAllocators[i])))
+		    && SUCCEEDED(device->CreateCommandList(0, D3D12_COMMAND_LIST_TYPE_DIRECT, commandAllocators[i].Get(), nullptr, IID_PPV_ARGS(&commandLists[i])));
+		if (made)
+			commandLists[i]->Close();
 	}
+	if (!made) {
+		OOVR_LOG("D3D12 command lists or fences for the swapchain couldn't be made: this eye is left out");
+		for (auto event : frameFenceEvents) {
+			if (event)
+				CloseHandle(event);
+		}
+		frameFenceEvents.clear();
+		commandLists.clear();
+		commandAllocators.clear();
+		frameFences.clear();
+		fenceValues.clear();
+	}
+	return made;
 }
 
 bool DX12Compositor::CopyDepth(const vr::Texture_t* depth)
@@ -394,12 +427,23 @@ bool DX12Compositor::CopyDepth(const vr::Texture_t* depth)
 			createInfo = {};
 			return false;
 		}
-		MakeFrameLists(count);
+		if (!MakeFrameLists(count)) {
+			imagesHandles.clear();
+			xrDestroySwapchain(chain);
+			chain = XR_NULL_HANDLE;
+			createInfo = {};
+			return false;
+		}
 	}
 	uint32_t index = 0;
 	if (!AcquireAndWait((uint32_t)std::min(imagesHandles.size(), frameFences.size()), index))
 		return false;
-	WaitForFence(frameFences[index].Get(), fenceValues[index], frameFenceEvents[index]);
+	if (!WaitForFence(frameFences[index].Get(), fenceValues[index], frameFenceEvents[index])) {
+		// The image goes back unwritten
+		XrSwapchainImageReleaseInfo unused{ XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
+		xrReleaseSwapchainImage(chain, &unused);
+		return false;
+	}
 	commandAllocators[index]->Reset();
 	ID3D12GraphicsCommandList* list = commandLists[index].Get();
 	list->Reset(commandAllocators[index].Get(), nullptr);
@@ -458,12 +502,17 @@ void DX12Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 	// The game's texture is in PIXEL_SHADER_RESOURCE (as OpenVR's D3D12 textures are given) and is put back there; the
 	// runtime's images are in RENDER_TARGET whenever it has them
 	D3D12TextureData_t* input = (D3D12TextureData_t*)texture->handle;
+	if (!input->m_pResource || !device || !queue) {
+		// Submit answers InvalidTexture; the eye is left out
+		lastResult = XR_ERROR_VALIDATION_FAILURE;
+		OC_UNSUPPORTED_VOID("D3D12 texture data without a resource or a command queue");
+	}
 
 	D3D12_RESOURCE_DESC srcDesc;
 	srcDesc = input->m_pResource->GetDesc();
 
-	// The slice shown: SubmitWithArrayIndex's, else the first
-	const UINT arrayIndex = submitSlice ? *submitSlice : 0;
+	// The slice shown: SubmitWithArrayIndex's, else (as for D3D11) the eye's of an array texture
+	const UINT arrayIndex = submitSlice ? *submitSlice : (srcDesc.DepthOrArraySize > 1 && eye.has_value()) ? (UINT)*eye : 0;
 	if (arrayIndex >= srcDesc.DepthOrArraySize) {
 		// Submit answers InvalidTexture; the eye is left out
 		lastResult = XR_ERROR_VALIDATION_FAILURE;
@@ -504,8 +553,13 @@ void DX12Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 	if (!AcquireAndWait((uint32_t)std::min(imagesHandles.size(), frameFences.size()), currentIndex))
 		return;
 
-	WaitForFence(frameFences[currentIndex].Get(),
-	    fenceValues[currentIndex], frameFenceEvents[currentIndex]);
+	if (!WaitForFence(frameFences[currentIndex].Get(), fenceValues[currentIndex], frameFenceEvents[currentIndex])) {
+		// The image goes back unwritten, and this eye is left out of the frame
+		XrSwapchainImageReleaseInfo unused{ XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
+		xrReleaseSwapchainImage(chain, &unused);
+		lastResult = XR_ERROR_RUNTIME_FAILURE;
+		return;
+	}
 
 	commandAllocators[currentIndex]->Reset();
 	auto commandList = commandLists[currentIndex].Get();
@@ -599,13 +653,6 @@ void DX12Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 	const auto fenceValue = ++currentFenceValue;
 	queue->Signal(frameFences[currentIndex].Get(), fenceValue);
 	fenceValues[currentIndex] = fenceValue;
-}
-
-void DX12Compositor::InvokeCubemap(const vr::Texture_t* textures)
-{
-	CheckCreateSwapChain(&textures[0], 0, 0, true);
-
-	OOVR_SOFT_ABORT("TODO cubemap");
 }
 
 bool DX12Compositor::CheckChainCompatible(D3D12_RESOURCE_DESC& inputDesc, vr::EColorSpace colourSpace)
