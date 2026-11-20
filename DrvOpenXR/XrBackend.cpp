@@ -2037,17 +2037,21 @@ const char* XrBackend::RebuildReasonName(RebuildReason reason)
 	return "?";
 }
 
-bool XrBackend::CurrentSessionGone()
+static XrBackend* CurrentBackend()
 {
 	BackendManager* manager = BackendManager::InstancePtr();
-	auto* backend = manager ? (XrBackend*)manager->GetBackendInstance() : nullptr;
+	return manager ? (XrBackend*)manager->GetBackendInstance() : nullptr;
+}
+
+bool XrBackend::CurrentSessionGone()
+{
+	XrBackend* backend = CurrentBackend();
 	return !xr_gbl || (backend && backend->IsSessionLost());
 }
 
 bool XrBackend::CurrentSessionLost()
 {
-	BackendManager* manager = BackendManager::InstancePtr();
-	auto* backend = manager ? (XrBackend*)manager->GetBackendInstance() : nullptr;
+	XrBackend* backend = CurrentBackend();
 	return backend && backend->IsSessionLost() && !backend->IsQuitting();
 }
 
@@ -2055,9 +2059,17 @@ bool XrBackend::InputsMayAttach()
 {
 	if (IsHelperSession() || BaseClientCore::appType != vr::VRApplication_Scene)
 		return true;
-	BackendManager* manager = BackendManager::InstancePtr();
-	auto* backend = manager ? (XrBackend*)manager->GetBackendInstance() : nullptr;
-	return !backend || backend->usingApplicationGraphicsAPI || backend->appGraphicsUnusable || backend->inputFocusHad;
+	XrBackend* backend = CurrentBackend();
+	if (!backend || backend->usingApplicationGraphicsAPI || backend->appGraphicsUnusable || backend->inputFocusHad)
+		return true;
+	// No Submit yet: a game that never submits (or takes a long time to) gets its inputs after a while
+	using clock = std::chrono::steady_clock;
+	static std::atomic<clock::rep> firstAsked{ 0 };
+	const clock::rep now = clock::now().time_since_epoch().count();
+	clock::rep expected = 0;
+	if (firstAsked.compare_exchange_strong(expected, now))
+		return false;
+	return clock::duration(now - expected) >= kInputsWithoutSubmit;
 }
 
 // The devices the game knows of now: the headset, the hands that have a controller, and the trackers
@@ -2659,8 +2671,8 @@ void XrBackend::StartHelperLoop()
 		    if (sessionLost) {
 			    if (!quitting) {
 				    recoveringInHelperLoop = true;
+				    ScopeGuard done([] { recoveringInHelperLoop = false; });
 				    RecoverLostSession(&helperPassLock);
-				    recoveringInHelperLoop = false;
 			    }
 			    PumpEvents();
 			    return 0;

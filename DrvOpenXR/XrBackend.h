@@ -132,6 +132,16 @@ public:
 	 * no session is made again
 	 */
 	void OnRuntimeQuit();
+	/**
+	 * Whether the game's actions (its manifest's, or legacy input's) and the info set may be attached now: once the
+	 * session is on the game's device (or will stay where it is: a helper program's, or a game whose device can't be
+	 * used), or the game has had input focus without submitting a frame. Before that the session restart for its first
+	 * Submit would follow, and one more for a manifest it loads by then. A game that hasn't submitted within
+	 * kInputsWithoutSubmit of first being asked about gets them all the same.
+	 */
+	static bool InputsMayAttach();
+	static constexpr std::chrono::seconds kInputsWithoutSubmit{ 2 };
+
 	/** Whether the current backend's session is gone (lost, or not made again yet): the devices have no poses */
 	static bool CurrentSessionGone();
 	/** Whether the current backend's session is lost and is to be made again (not the user quitting) */
@@ -375,16 +385,6 @@ private:
 	// Whether we've restarted the session to use the application's rendering API yet
 	std::atomic<bool> usingApplicationGraphicsAPI{ false };
 
-public:
-	/**
-	 * Whether the game's actions (its manifest's, or legacy input's) and the info set may be attached now: once the
-	 * session is on the game's device (or will stay where it is: a helper program's, or a game whose device can't be
-	 * used), or the game has had input focus without submitting a frame. Before that the session restart for its first
-	 * Submit would follow, and one more for a manifest it loads by then.
-	 */
-	static bool InputsMayAttach();
-
-private:
 	// An overlay application's textures, copied onto its session's device
 	std::unique_ptr<class OverlayTextureCopy> overlayCopy;
 
