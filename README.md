@@ -127,8 +127,8 @@ for Flatpak Steam), with the libraries in `bin/linux64/vrclient.so` and `bin/vrc
 runtime folder is asked for.
 
 Most VR games are Windows games running in Proton, inside the Steam Runtime. To let them reach your OpenXR runtime
-(Monado, WiVRn, ...), add this to their launch options (the game's Properties, General, Launch options), with native
-and Flatpak Steam alike; `install.sh --launch-options` prints it:
+(Monado, WiVRn, ...), add this to their launch options (the game's Properties, General, Launch options);
+`install.sh --launch-options` prints it. Flatpak Steam needs it too, and the runtime visible inside the Flatpak:
 
 ```
 PRESSURE_VESSEL_IMPORT_OPENXR_1_RUNTIMES=1 %command%
