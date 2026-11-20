@@ -19,7 +19,6 @@ public:
 
 	void CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, std::optional<XruEye> eye, vr::EVRSubmitFlags submitFlags) override;
 
-
 	bool ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTextureBounds_t* bounds, Image& out) override;
 
 protected:
@@ -61,4 +60,5 @@ private:
 	void FreeImageBuffers();
 	// Waits for the image's last submission and readies its fence for the next: false if it didn't finish
 	bool WaitForImageBuffer(uint32_t index);
+	bool SubmitWithImageFence(VkQueue queue, const VkSubmitInfo& submitInfo, uint32_t index);
 };

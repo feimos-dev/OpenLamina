@@ -829,7 +829,7 @@ private:
 	};
 
 	// See GetSyncSerial
-	uint64_t syncSerial = 0;
+	std::atomic<uint64_t> syncSerial = 0;
 
 	// What each hand's legacy controller state was when it last changed, and its packet number then
 	struct LegacyPacket {

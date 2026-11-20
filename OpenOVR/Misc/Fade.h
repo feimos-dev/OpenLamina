@@ -63,8 +63,8 @@ bool FadeVisible(const vr::HmdColor_t& colour);
 // The colour as 8-bit texels, un-premultiplied, rounded and clamped
 void FadeTexel(const vr::HmdColor_t& colour, uint8_t out[4]);
 
-// The skybox's textures as asked for, kept to be shown later. The Texture_t values are copied, with what a Vulkan one's
-// handle points to; the textures themselves stay the program's.
+// The skybox's textures as asked for, kept to be shown later. The Texture_t values are copied, with what a Vulkan or
+// D3D12 one's handle points to; the textures themselves stay the program's.
 class SkyboxRequest {
 public:
 	// False if the textures can't be a skybox (SkyboxTexturesValid)
@@ -88,6 +88,7 @@ private:
 	void Fix();
 	std::vector<vr::Texture_t> textures;
 	std::vector<vr::VRVulkanTextureData_t> vulkan; // one for each texture, used by the Vulkan ones
+	std::vector<vr::D3D12TextureData_t> d3d12; // the same for the D3D12 ones
 };
 
 // One texture (lat-long), two (a stereo pair) or six (cube faces), each with a handle

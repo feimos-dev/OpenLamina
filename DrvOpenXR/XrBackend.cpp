@@ -1005,7 +1005,7 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 		if (result == kCompositorNone) {
 			KeepForMirror(eye, texture, bounds);
 #if defined(SUPPORT_GL)
-			GLMirrorFrame((int)eye, texture, bounds, submitFlags);
+			GLMirrorFrame((int)eye, submitted, bounds, submitFlags); // the game's GL texture, also under the D3D11 interop
 #endif
 			// The mirror window shows the left eye, read back while it's open
 			Image mirror;
@@ -1830,6 +1830,13 @@ void XrBackend::OnRuntimeQuit()
 
 void XrBackend::PumpEvents()
 {
+	// One thread pumps at a time (the frame loop, the render thread waiting for poses, session start and end): another
+	// that finds it pumping leaves the events to it
+	static std::mutex pumping;
+	std::unique_lock<std::mutex> pumpLock(pumping, std::try_to_lock);
+	if (!pumpLock.owns_lock())
+		return;
+
 	// Poll for OpenXR events
 	while (true) {
 		XrEventDataBuffer ev = { XR_TYPE_EVENT_DATA_BUFFER };
@@ -2802,6 +2809,7 @@ void XrBackend::CreateGenericTrackers()
 
 		if (XR_FAILED(xr_ext->xrCreateXDevSpaceMNDX(xr_session.get(), &create_space_info, &space))) {
 			OOVR_LOGF("xrCreateXDevSpaceMNDX failed: no tracker for serial %s", want.properties.serial);
+			generic_trackers_generation = UINT64_MAX; // so the next poll tries again
 			return nullptr;
 		}
 		return std::make_shared<XrGenericTracker>(*profile, want.properties, index, space);

@@ -315,7 +315,6 @@ def split_header(headerfile: TextIO, interface_checker: Callable = None,
         write_interface(targetfile, outbuff.getvalue(), usingiface, interface_checker, out_dir)
 
 
-
 (output_dir / "interfaces").mkdir(parents=True, exist_ok=True)
 shutil.copyfile(input_dir / "deleted_types.h", output_dir / "interfaces" / "deleted_types.h")
 

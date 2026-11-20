@@ -123,9 +123,13 @@ bool SkyboxRequest::Set(const vr::Texture_t* in, uint32_t count)
 		return false;
 	textures.assign(in, in + count);
 	vulkan.assign(count, vr::VRVulkanTextureData_t{});
-	for (uint32_t i = 0; i < count; i++)
+	d3d12.assign(count, vr::D3D12TextureData_t{});
+	for (uint32_t i = 0; i < count; i++) {
 		if (in[i].eType == vr::TextureType_Vulkan)
 			vulkan[i] = *(const vr::VRVulkanTextureData_t*)in[i].handle;
+		else if (in[i].eType == vr::TextureType_DirectX12)
+			d3d12[i] = *(const vr::D3D12TextureData_t*)in[i].handle;
+	}
 	Fix();
 	return true;
 }
@@ -134,19 +138,25 @@ void SkyboxRequest::Clear()
 {
 	textures.clear();
 	vulkan.clear();
+	d3d12.clear();
 }
 
 void SkyboxRequest::Copy(const SkyboxRequest& other)
 {
 	textures = other.textures;
 	vulkan = other.vulkan;
+	d3d12 = other.d3d12;
 	Fix();
 }
 
-// The copied Vulkan textures' handles point to the copies of what they pointed to
+// The copied Vulkan and D3D12 textures' handles point to the copies of what they pointed to (the game's structs are
+// often on its stack). The images themselves are the game's: it keeps them alive while they are its skybox.
 void SkyboxRequest::Fix()
 {
-	for (size_t i = 0; i < textures.size(); i++)
+	for (size_t i = 0; i < textures.size(); i++) {
 		if (textures[i].eType == vr::TextureType_Vulkan)
 			textures[i].handle = &vulkan[i];
+		else if (textures[i].eType == vr::TextureType_DirectX12)
+			textures[i].handle = &d3d12[i];
+	}
 }

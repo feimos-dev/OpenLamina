@@ -32,8 +32,8 @@ void Compositor::Invoke(const vr::Texture_t* texture, const vr::VRTextureBounds_
 	if (bounds && bounds->vMin == 0.0f && bounds->vMax == 1.0f && bounds->uMin == 0.0f && bounds->uMax == 1.0f)
 		bounds = nullptr;
 	// After a failure the next tries come further apart (1, 3, 7, ... frames, at most 90), so a swapchain that can't be
-	// made isn't remade (and logged) at every Submit; one that fails once is tried again at the next. Another texture
-	// than the one that failed is tried at once.
+	// made isn't remade (and logged) at every Submit; one that fails once is tried again at the next. A texture handle
+	// other than the one that failed is tried at once.
 	if (retryDelay > 0 && texture->handle != lastFailedHandle)
 		retryDelay = 0;
 	if (retryDelay > 0) {
