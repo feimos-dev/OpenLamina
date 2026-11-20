@@ -311,6 +311,7 @@ private:
 
 	// A helper program's frame loop (overlay sessions) or event loop (headless ones), made with each session
 	void StartHelperLoop();
+	void StartBackgroundFrames();
 	// Held through each of its passes
 	std::mutex helperPassLock;
 
