@@ -1286,8 +1286,10 @@ void XrBackend::SubmitFrames(bool showSkybox)
 	OOVR_FAILED_XR_SOFT_ABORT(endResult);
 	// A present: the game's eye textures shown
 	const bool presented = XR_SUCCEEDED(endResult) && app_layer && sceneShown && frameShouldRender;
-	if (presented)
+	if (presented) {
 		FrameStats::Get().OnAppPresent();
+		BaseApplications::SetSceneDrawn();
+	}
 	FrameStats::Get().OnAppFrameEnd(nFrameIndex, frameSubmitMs, presentMs, frameNewFrameReadyMs, hadEyeTextures, presented);
 	lastSubmitMs = frameSubmitMs;
 	lastPresentMs = presentMs;
@@ -1450,13 +1452,18 @@ IBackend::openvr_enum_t XrBackend::SetSkyboxOverride(const vr::Texture_t* pTextu
 		// the game's frames begin
 		std::lock_guard<std::mutex> pending(pendingSkyboxLock);
 		pendingSkybox.Set(pTextures, unTextureCount);
+		BaseApplications::SetSceneDrawn();
 		return 0;
 	}
 	{
 		std::lock_guard<std::mutex> pending(pendingSkyboxLock);
 		pendingSkybox.Clear();
 	}
-	return ShowSkybox(pTextures, unTextureCount);
+	const openvr_enum_t shown = ShowSkybox(pTextures, unTextureCount);
+	// A skybox set is the scene application drawing (its scene application state is Running)
+	if (shown == 0)
+		BaseApplications::SetSceneDrawn();
+	return shown;
 }
 
 void XrBackend::ShowPendingSkybox()

@@ -562,6 +562,38 @@ TEST_CASE("Scene_process_changes_are_announced")
 	CHECK(changed.data.process.oldPid == oc_current_pid());
 }
 
+TEST_CASE("Scene_application_waits_until_it_has_drawn")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	EventRecorder recorder;
+	BaseApplications apps(store);
+
+	BaseApplications::SetSceneProcess(store, true);
+	CHECK(apps.GetSceneApplicationState() == EVRSceneApplicationState_Waiting);
+	size_t before = CountEvents(vr::VREvent_SceneApplicationStateChanged);
+
+	// Its first frame: running, and announced once
+	BaseApplications::SetSceneDrawn(store);
+	CHECK(apps.GetSceneApplicationState() == EVRSceneApplicationState_Running);
+	CHECK(store.Read(StoreDoc::Scene)["drawn"].asBool());
+	CHECK(CountEvents(vr::VREvent_SceneApplicationStateChanged) == before + 1);
+	BaseApplications::SetSceneDrawn(store);
+	CHECK(CountEvents(vr::VREvent_SceneApplicationStateChanged) == before + 1);
+
+	// A new session of the same program keeps it
+	BaseApplications::SetSceneProcess(store, true);
+	CHECK(store.Read(StoreDoc::Scene)["drawn"].asBool());
+	CHECK(apps.GetSceneApplicationState() == EVRSceneApplicationState_Running);
+
+	// No longer the scene application, then the scene application again: waiting for its next frame
+	BaseApplications::SetSceneProcess(store, false);
+	BaseApplications::SetSceneProcess(store, true);
+	CHECK(apps.GetSceneApplicationState() == EVRSceneApplicationState_Waiting);
+	CHECK_FALSE(store.Read(StoreDoc::Scene)["drawn"].asBool());
+	BaseApplications::SetSceneProcess(store, false);
+}
+
 TEST_CASE("Capsule_image_and_hidden_flag_are_properties")
 {
 	TempDir dir;

@@ -9,6 +9,7 @@
 #include "Misc/Process.h"
 #include "Misc/SharedStore.h"
 
+#include <atomic>
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
@@ -194,6 +195,11 @@ std::optional<AppManifestEntry> BaseApplications::Find(const char* pchAppKey)
 	return std::nullopt;
 }
 
+namespace {
+// Whether this process has drawn since it became the scene application, and whether the store has that
+std::atomic<bool> sceneDrawn{ false }, sceneDrawnStored{ false };
+} // namespace
+
 void BaseApplications::SetSceneProcess(bool running)
 {
 	SetSceneProcess(SharedStore::Get(), running);
@@ -216,6 +222,9 @@ void BaseApplications::SetSceneProcess(SharedStore& store, bool running)
 			scene["points"] = oovr_global_configuration.LaserMouse();
 			scene["app_key"] = key;
 			scene["since_ms"] = (Json::UInt64)NowMs();
+			// A new session of the same program: what it has drawn still counts
+			if (!changed && sceneDrawn)
+				scene["drawn"] = true;
 		} else if (scene.isObject() && PidOf(scene["pid"]) == pid) {
 			// Only our own: another program may have become the scene application since
 			scene = Json::Value(Json::objectValue);
@@ -223,6 +232,9 @@ void BaseApplications::SetSceneProcess(SharedStore& store, bool running)
 			changed = true;
 		}
 	});
+
+	if (changed)
+		sceneDrawn = sceneDrawnStored = false;
 
 	// For this program and every other one
 	if (changed) {
@@ -239,6 +251,32 @@ void BaseApplications::SetSceneProcess(SharedStore& store, bool running)
 		data.process.pid = pid;
 		OcPostEvent(vr::VREvent_SceneApplicationStateChanged, vr::k_unTrackedDeviceIndexInvalid, data, true);
 	}
+}
+
+void BaseApplications::SetSceneDrawn()
+{
+	SetSceneDrawn(SharedStore::Get());
+}
+
+void BaseApplications::SetSceneDrawn(SharedStore& store)
+{
+	const uint32_t pid = oc_current_pid();
+	vr::VREvent_Data_t data{};
+	data.process.pid = pid;
+	if (!sceneDrawn.exchange(true))
+		OcPostEvent(vr::VREvent_SceneApplicationStateChanged, vr::k_unTrackedDeviceIndexInvalid, data, false);
+	// Recorded and told to the other programs, if this one is still the scene application. Called in the game's frame:
+	// the store isn't waited for, and what doesn't get its lock is tried again at the next call.
+	if (sceneDrawnStored)
+		return;
+	const bool written = store.Update(
+	    StoreDoc::Scene, [&](Json::Value& scene) {
+		    if (scene.isObject() && PidOf(scene["pid"]) == pid)
+			    scene["drawn"] = true;
+	    },
+	    SharedStore::Wait::Never);
+	if (written && store.PostEvent(vr::VREvent_SceneApplicationStateChanged, OcPackEvent(vr::k_unTrackedDeviceIndexInvalid, data), SharedStore::Wait::Never))
+		sceneDrawnStored = true;
 }
 
 // Used by Viveport
@@ -709,8 +747,17 @@ BaseApplications::EVRApplicationTransitionState BaseApplications::GetTransitionS
 }
 BaseApplications::EVRSceneApplicationState BaseApplications::GetSceneApplicationState()
 {
-	// A scene application with a session, in this program or another
-	return GetCurrentSceneProcessId() != 0 ? EVRSceneApplicationState_Running : EVRSceneApplicationState_None;
+	// A scene application, in this program or another: Running once it has drawn, Waiting until then
+	const uint32_t pid = GetCurrentSceneProcessId();
+	if (pid == 0)
+		return EVRSceneApplicationState_None;
+	bool drawn = sceneDrawn;
+	if (pid != oc_current_pid()) {
+		Json::Value scene = Store().Read(StoreDoc::Scene);
+		const Json::Value& stored = scene["drawn"];
+		drawn = PidOf(scene["pid"]) == pid && stored.isBool() && stored.asBool();
+	}
+	return drawn ? EVRSceneApplicationState_Running : EVRSceneApplicationState_Waiting;
 }
 EVRApplicationError BaseApplications::PerformApplicationPrelaunchCheck(const char* pchAppKey)
 {
