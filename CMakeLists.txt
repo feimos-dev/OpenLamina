@@ -543,7 +543,7 @@ target_include_directories(OCCore PUBLIC OpenOVR ${CMAKE_BINARY_DIR})  # TODO ma
 target_include_directories(OCCore PRIVATE BundledLibs OpenVRHeaders)
 target_compile_definitions(OCCore PRIVATE ${GRAPHICS_API_SUPPORT_FLAGS})
 
-target_link_libraries(OCCore PRIVATE OpenVR Vulkan ${XrLib} ${glmLib})
+target_link_libraries(OCCore PRIVATE OpenVR Vulkan ${XrLib} ${jsoncppLib} ${glmLib})
 
 if (NOT WIN32 AND NOT ANDROID)
 	find_package(OpenGL REQUIRED) # for glGetError()

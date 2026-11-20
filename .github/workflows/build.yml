@@ -370,6 +370,66 @@ jobs:
           path: build/bin/${{ matrix.lib }}
           if-no-files-found: error
 
+  # Build variants, x64: the C++ library's assertions on (-D_GLIBCXX_ASSERTIONS: bounds and preconditions checked, a
+  # failure aborts), with the stand-in runtime's tests and every conformance run; and the system's OpenXR loader,
+  # jsoncpp and glm (USE_SYSTEM_OPENXR, USE_SYSTEM_GLM), as a distribution would build it, with the unit and stand-in
+  # runtime tests
+  linux-variants:
+    name: Linux x64, ${{ matrix.variant }}
+    runs-on: ubuntu-24.04
+    container: ubuntu:24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: assertions
+            cxxflags: -D_GLIBCXX_ASSERTIONS
+            cmake: ''
+            packages: ''
+            conformance: true
+          - variant: system libraries
+            cxxflags: ''
+            cmake: -DUSE_SYSTEM_OPENXR=ON -DUSE_SYSTEM_GLM=ON
+            packages: libopenxr-dev libjsoncpp-dev libglm-dev
+            conformance: false
+    steps:
+      - name: Build tools
+        env:
+          PACKAGES: ${{ matrix.packages }}
+        run: |
+          apt-get update
+          # shellcheck disable=SC2086 # PACKAGES is a list
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates git g++ cmake make automake autoconf libtool python3 libgl-dev libvulkan-dev \
+            xvfb xauth mesa-vulkan-drivers libgl1-mesa-dri libglx-mesa0 $PACKAGES
+
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Build
+        env:
+          CXXFLAGS: ${{ matrix.cxxflags }}
+          OC_CMAKE_ARGS: ${{ matrix.cmake }}
+        run: sh scripts/ci/build-linux.sh --tests x64 build "$GITHUB_SHA ($GITHUB_REF_NAME)"
+
+      - name: Stand-in runtime
+        run: xvfb-run -a ctest --test-dir build -L runtime --output-on-failure
+
+      - name: Conformance
+        if: matrix.conformance
+        run: xvfb-run -a sh scripts/ci/conformance-linux.sh x64 build conformance
+
+      - uses: actions/upload-artifact@v7
+        if: always() && matrix.conformance
+        with:
+          name: conformance-linux-x64-${{ matrix.variant }}
+          path: |
+            conformance/*/summary.txt
+            conformance/*/results.json
+            conformance/**/logs/
+
   # OpenLamina on Monado's simulated headset (built from source, at MONADO_REF), headless: monado-service with the
   # simulated driver and the null compositor, on Mesa's lavapipe
   monado:
@@ -413,6 +473,10 @@ jobs:
       # Nothing may end, crash or hang on Monado (no baseline: its answers are its own). On lavapipe no session starts:
       # Monado asks for VK_KHR_external_semaphore_fd and VK_KHR_external_fence_fd, which lavapipe lacks, so OpenLamina's
       # own Vulkan device can't be made and every Init answers as without a headset. The notice says how many started.
+      # There's no way round it on a runner without a GPU: lavapipe is the only software Vulkan driver in Mesa, and the
+      # Mesa of Ubuntu 24.04's updates (25.2) offers VK_KHR_external_semaphore and VK_KHR_external_fence but neither
+      # of the _fd ones (checked with vulkaninfo); Monado's compositor needs them to share its swapchain
+      # images and their fences with the client, so relaxing that in Monado isn't a correct change.
       - name: Conformance
         run: |
           export XDG_RUNTIME_DIR="$RUNNER_TEMP/xdg"

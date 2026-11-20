@@ -19,57 +19,73 @@ inline uint32_t Crc(const uint8_t* data, size_t size, uint32_t crc = 0xffffffffu
 	return crc;
 }
 
-inline void Put32(std::vector<uint8_t>& out, uint32_t v)
+// Each buffer is sized first and written at offsets: GCC's -Wstringop-overflow takes growing vectors for overflows
+// when the standard library's assertions are on (-D_GLIBCXX_ASSERTIONS)
+inline void Set32(uint8_t* at, uint32_t v)
 {
-	for (int s = 24; s >= 0; s -= 8)
-		out.push_back((uint8_t)(v >> s));
+	at[0] = (uint8_t)(v >> 24);
+	at[1] = (uint8_t)(v >> 16);
+	at[2] = (uint8_t)(v >> 8);
+	at[3] = (uint8_t)v;
 }
 
-inline void Chunk(std::vector<uint8_t>& out, const char* type, const std::vector<uint8_t>& data)
+// Appends a chunk (length, type, data, CRC) to out
+inline void Chunk(std::vector<uint8_t>& out, const char* type, const uint8_t* data, size_t size)
 {
-	Put32(out, (uint32_t)data.size());
 	size_t start = out.size();
-	out.insert(out.end(), type, type + 4);
-	out.insert(out.end(), data.begin(), data.end());
-	Put32(out, Crc(&out[start], out.size() - start) ^ 0xffffffffu);
+	out.resize(start + 12 + size);
+	uint8_t* p = out.data() + start;
+	Set32(p, (uint32_t)size);
+	memcpy(p + 4, type, 4);
+	if (size)
+		memcpy(p + 8, data, size);
+	Set32(p + 8 + size, Crc(p + 4, 4 + size) ^ 0xffffffffu);
 }
 
 inline std::vector<uint8_t> Encode(const uint8_t* rgba, uint32_t width, uint32_t height)
 {
-	std::vector<uint8_t> raw;
+	const size_t row = (size_t)width * 4;
+	std::vector<uint8_t> raw((row + 1) * height);
 	for (uint32_t y = 0; y < height; y++) {
-		raw.push_back(0); // no filter
-		raw.insert(raw.end(), rgba + (size_t)y * width * 4, rgba + (size_t)(y + 1) * width * 4);
+		raw[y * (row + 1)] = 0; // no filter
+		if (row)
+			memcpy(raw.data() + y * (row + 1) + 1, rgba + y * row, row);
 	}
-	std::vector<uint8_t> z = { 0x78, 0x01 };
-	for (size_t at = 0; at < raw.size() || at == 0;) {
+	// Stored blocks of at most 65535 bytes (one, empty, for no data), then the Adler-32
+	const size_t blocks = std::max<size_t>(1, (raw.size() + 65534) / 65535);
+	std::vector<uint8_t> z(2 + blocks * 5 + raw.size() + 4);
+	z[0] = 0x78;
+	z[1] = 0x01;
+	size_t w = 2;
+	for (size_t at = 0, i = 0; i < blocks; i++) {
 		size_t n = std::min<size_t>(65535, raw.size() - at);
-		bool last = at + n >= raw.size();
-		z.push_back(last ? 1 : 0);
-		z.push_back((uint8_t)n);
-		z.push_back((uint8_t)(n >> 8));
-		z.push_back((uint8_t)~n);
-		z.push_back((uint8_t)(~n >> 8));
-		z.insert(z.end(), raw.begin() + at, raw.begin() + at + n);
+		z[w++] = i + 1 == blocks ? 1 : 0;
+		z[w++] = (uint8_t)n;
+		z[w++] = (uint8_t)(n >> 8);
+		z[w++] = (uint8_t)~n;
+		z[w++] = (uint8_t)(~n >> 8);
+		if (n)
+			memcpy(z.data() + w, raw.data() + at, n);
+		w += n;
 		at += n;
-		if (last)
-			break;
 	}
 	uint32_t a = 1, b = 0;
 	for (uint8_t v : raw) {
 		a = (a + v) % 65521;
 		b = (b + a) % 65521;
 	}
-	Put32(z, (b << 16) | a);
+	Set32(z.data() + w, (b << 16) | a);
 
-	std::vector<uint8_t> png = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n' };
-	std::vector<uint8_t> header;
-	Put32(header, width);
-	Put32(header, height);
-	header.insert(header.end(), { 8, 6, 0, 0, 0 }); // 8-bit RGBA
-	Chunk(png, "IHDR", header);
-	Chunk(png, "IDAT", z);
-	Chunk(png, "IEND", {});
+	static const uint8_t signature[8] = { 0x89, 'P', 'N', 'G', '\r', '\n', 0x1a, '\n' };
+	std::vector<uint8_t> png(signature, signature + 8);
+	uint8_t header[13] = {};
+	Set32(header, width);
+	Set32(header + 4, height);
+	header[8] = 8; // 8-bit RGBA
+	header[9] = 6;
+	Chunk(png, "IHDR", header, sizeof(header));
+	Chunk(png, "IDAT", z.data(), z.size());
+	Chunk(png, "IEND", nullptr, 0);
 	return png;
 }
 
