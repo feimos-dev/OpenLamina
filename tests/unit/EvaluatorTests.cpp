@@ -286,3 +286,43 @@ TEST_CASE("Simulated_action_fires")
 	CHECK(e.Outputs().digital.at("/actions/main/in/text").state); // not a boolean: as if no value
 	CHECK(e.Outputs().analog.at("/actions/main/in/half").x == 0.5f);
 }
+
+TEST_CASE("Bindings_on_the_primary_hand_follow_the_dominant_hand")
+{
+	BindingFile f = ParseBindingFile(R"({ "bindings": { "/actions/main": {
+		"sources": [
+			{ "path": "/user/hand/primary/input/a", "mode": "button", "inputs": { "click": { "output": "/actions/main/in/fire" } } },
+			{ "path": "/user/hand/secondary/input/a", "mode": "button", "inputs": { "click": { "output": "/actions/main/in/reload" } } } ],
+		"haptics": [ { "path": "/user/hand/primary/output/haptic", "output": "/actions/main/out/buzz" } ],
+		"poses": [ { "path": "/user/hand/secondary/pose/raw", "output": "/actions/main/in/offhand" } ],
+		"chords": [ { "output": "/actions/main/in/both", "inputs": [ [ "/user/hand/primary/input/a", "click" ], [ "/user/hand/secondary/input/a", "click" ] ] } ] } } })");
+	CHECK(HasHandAliases(f));
+
+	// The right hand dominant: the right hand's A fires, the left's reloads
+	BindingFile right = ResolveDominantHandPaths(f, "/user/hand/right");
+	CHECK_FALSE(HasHandAliases(right));
+	const ActionSetBindings& set = right.sets.at("/actions/main");
+	CHECK(set.haptics.at(0).path == "/user/hand/right/output/haptic");
+	CHECK(set.poses.at(0).path == "/user/hand/left/pose/raw");
+	CHECK(set.chords.at(0).inputs.at(1).first == "/user/hand/left/input/a");
+	BindingEvaluator e(right);
+	e.SetActiveActionSets({ { "/actions/main", 0 } });
+	e.Update(Raw({ { kA + "/click", 1 }, { kLeftA + "/click", 0 } }));
+	CHECK(e.Outputs().digital.at("/actions/main/in/fire").state);
+	CHECK_FALSE(e.Outputs().digital.at("/actions/main/in/reload").state);
+	CHECK(e.OutputsOn("/user/hand/right") != nullptr);
+
+	// The left hand dominant: the same press reloads
+	BindingEvaluator left(ResolveDominantHandPaths(f, "/user/hand/left"));
+	left.SetActiveActionSets({ { "/actions/main", 0 } });
+	left.Update(Raw({ { kA + "/click", 1 }, { kLeftA + "/click", 0 } }));
+	CHECK_FALSE(left.Outputs().digital.at("/actions/main/in/fire").state);
+	CHECK(left.Outputs().digital.at("/actions/main/in/reload").state);
+	CHECK(left.HapticsFor("/actions/main/out/buzz").at(0).path == "/user/hand/left/output/haptic");
+
+	// A file naming no hand by dominance is left as it is
+	BindingFile plain = ParseBindingFile(R"({ "bindings": { "/actions/main": { "sources": [
+		{ "path": "/user/hand/primaryish/input/a", "mode": "button", "inputs": { "click": { "output": "/actions/main/in/fire" } } } ] } } })");
+	CHECK_FALSE(HasHandAliases(plain));
+	CHECK(ResolveDominantHandPaths(plain, "/user/hand/left").sets.at("/actions/main").sources.at(0).path == "/user/hand/primaryish/input/a");
+}

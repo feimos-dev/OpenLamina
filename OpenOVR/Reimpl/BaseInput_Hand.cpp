@@ -297,7 +297,23 @@ static void InterpolateBone(VRBoneTransform_t& bone, const VRBoneTransform_t& ta
 	bone.orientation = { resRot.w, resRot.x, resRot.y, resRot.z };
 }
 
-static auto GetInterpolatedControllerState(const ITrackedDevice::TrackedDeviceType hand, const LegacyControllerActions controller) {
+HandTouchEase::Eased HandTouchEase::Step(bool thumbTouch, bool triggerTouch, Clock::time_point now)
+{
+	// Games may read the skeleton from several threads
+	std::lock_guard<std::mutex> guard(lock);
+	float seconds = last ? std::chrono::duration<float>(now - *last).count() : 0.0f;
+	if (!(seconds > 0.0f)) // the clock didn't move, or this is the first step
+		seconds = 0.0f;
+	last = now;
+	auto ease = [&](float value, bool touched) {
+		return glm::clamp(value + (touched ? seconds : -seconds) * kSpeed, 0.0f, 1.0f);
+	};
+	eased.thumb = ease(eased.thumb, thumbTouch);
+	eased.trigger = ease(eased.trigger, triggerTouch);
+	return eased;
+}
+
+static auto GetInterpolatedControllerState(const LegacyControllerActions& controller, HandTouchEase& touches) {
 	struct ControllerState {
 		float triggerPct;
 		float gripPct;
@@ -340,6 +356,17 @@ static auto GetInterpolatedControllerState(const ITrackedDevice::TrackedDeviceTy
 	actionRes = xrGetActionStateBoolean(xr_session.get(), &info, &stateBool);
 	bool triggerTouch = XR_SUCCEEDED(actionRes) && stateBool.currentState;
 
+	// Where the controller tells it: the index finger's curl on the trigger, and the finger near the trigger, which
+	// keeps it from pointing until it's lifted away
+	info.action = controller.triggerCurl;
+	if (info.action != XR_NULL_HANDLE && XR_SUCCEEDED(xrGetActionStateFloat(xr_session.get(), &info, &state)) && state.isActive
+	    && state.currentState >= simulateCurlThreshold)
+		output.triggerPct = (std::max)(output.triggerPct, state.currentState);
+	info.action = controller.triggerProximity;
+	if (info.action != XR_NULL_HANDLE && XR_SUCCEEDED(xrGetActionStateBoolean(xr_session.get(), &info, &stateBool)) && stateBool.isActive
+	    && stateBool.currentState)
+		triggerTouch = true;
+
 	// Force touch to true when trigger is being pressed
 	if (output.triggerPct != 0.0f)
 		triggerTouch = true;
@@ -361,38 +388,21 @@ static auto GetInterpolatedControllerState(const ITrackedDevice::TrackedDeviceTy
 		}
 	}
 
+	// The thumb near its buttons keeps it down
+	info.action = controller.thumbProximity;
+	if (info.action != XR_NULL_HANDLE && XR_SUCCEEDED(xrGetActionStateBoolean(xr_session.get(), &info, &stateBool)) && stateBool.isActive
+	    && stateBool.currentState)
+		thumbTouch = true;
+
 	// Allow for straightening the thumb on controllers with no touch inputs
 	if (!hasThumbInput) {
 		thumbTouch = output.gripPct != 1.0f || output.triggerPct == 1.0f;
 	}
 
-	// Games may read the skeleton from several threads
-	static std::mutex stateLock;
-	std::lock_guard<std::mutex> stateGuard(stateLock);
-
-	static std::array<std::chrono::high_resolution_clock::time_point, 2> lastTime{
-		std::chrono::high_resolution_clock::now(),
-		std::chrono::high_resolution_clock::now()
-	};
-
-	// Calculate per-hand deltaTime for binary input interpolation
-	auto currentTime = std::chrono::high_resolution_clock::now();
-	std::chrono::duration<float> deltaTimeDuration = currentTime - lastTime[hand];
-	float deltaTime = deltaTimeDuration.count();
-	lastTime[hand] = currentTime;
-
-	// Interpolated states
-	static std::array<float, 2> thumbTouchPcts = {0.0f, 0.0f};
-	static std::array<float, 2> triggerTouchPcts = {0.0f, 0.0f};
-
-	constexpr float touchTransitionSpeed = 8.0f;
-
-	// Update interpolated values
-	thumbTouchPcts[hand] = glm::clamp(thumbTouchPcts[hand] + (thumbTouch ? deltaTime * touchTransitionSpeed : -deltaTime * touchTransitionSpeed), 0.0f, 1.0f);
-	triggerTouchPcts[hand] = glm::clamp(triggerTouchPcts[hand] + (triggerTouch ? deltaTime * touchTransitionSpeed : -deltaTime * touchTransitionSpeed), 0.0f, 1.0f);
-
-	output.thumbTouchPct = thumbTouchPcts[hand];
-	output.triggerTouchPct = triggerTouchPcts[hand];
+	// Each hand's touches ease in and out on their own
+	HandTouchEase::Eased eased = touches.Step(thumbTouch, triggerTouch, HandTouchEase::Clock::now());
+	output.thumbTouchPct = eased.thumb;
+	output.triggerTouchPct = eased.trigger;
 
 	return output;
 }
@@ -465,7 +475,7 @@ EVRInputError BaseInput::getEstimatedBoneData(
 	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	auto& controller = legacyControllers[hand];
 
-	auto state = GetInterpolatedControllerState(hand, controller);
+	auto state = GetInterpolatedControllerState(controller, handTouches[hand]);
 
 	auto boneDataGen = [state](const BoneArray& openPose, const BoneArray& closedPose) {
 		return std::ranges::iota_view(0, static_cast<int>(eBone_Count)) | std::views::transform([=](int bone_index) {
@@ -547,7 +557,7 @@ EVRInputError BaseInput::getEstimatedSkeletalSummary(ITrackedDevice::TrackedDevi
 
 	LegacyControllerActions& controller = legacyControllers[hand];
 
-	auto state = GetInterpolatedControllerState(hand, controller);
+	auto state = GetInterpolatedControllerState(controller, handTouches[hand]);
 
 	// Replicate what getEstimatedBoneData is doing
 

@@ -1,0 +1,9 @@
+{
+  "default_bindings": [{ "controller_type": "knuckles", "binding_url": "bindings_primary_hand_knuckles.json" }],
+  "supports_dominant_hand_setting": true,
+  "actions": [
+    { "name": "/actions/main/in/fire", "type": "boolean" },
+    { "name": "/actions/main/in/aim", "type": "pose" }
+  ],
+  "action_sets": [{ "name": "/actions/main", "usage": "leftright" }]
+}

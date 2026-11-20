@@ -1907,6 +1907,69 @@ void InputFramesCase(CaseContext& c)
 	c.core->Cleanup();
 }
 
+// Bindings on a hand named by dominance (expect/input_primary_hand.json), on the stand-in with
+// scripts/right_trigger_held.json and --manifest manifest_primary_hand.json: a button and a pose on /user/hand/primary,
+// read with the right hand dominant for 40 frames, then with the left for 20
+void InputPrimaryHandCase(CaseContext& c)
+{
+	using namespace vr::IVRInput_010;
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	vr::EVRInitError le;
+	auto* in = (IVRInput*)c.core->GetGenericInterface("IVRInput_010", &le);
+	if (!in) {
+		c.Record("no IVRInput_010", Err(le));
+		c.core->Cleanup();
+		return;
+	}
+	in->SetActionManifestPath(c.manifest.c_str());
+	vr::VRActionSetHandle_t set = vr::k_ulInvalidActionSetHandle;
+	vr::VRActionHandle_t fire = 0, aim = 0;
+	in->GetActionSetHandle("/actions/main", &set);
+	in->GetActionHandle("/actions/main/in/fire", &fire);
+	in->GetActionHandle("/actions/main/in/aim", &aim);
+	vr::VRInputValueHandle_t left = 0, right = 0;
+	in->GetInputSourceHandle("/user/hand/left", &left);
+	in->GetInputSourceHandle("/user/hand/right", &right);
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	auto frames = [&](int count) {
+		for (int frame = 0; frame < count; frame++) {
+			vr::TrackedDevicePose_t poses[16];
+			f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+			VRActiveActionSet_t active{};
+			active.ulActionSet = set;
+			in->UpdateActionState(&active, sizeof(active), 1);
+			f.comp->Submit(vr::Eye_Left, tex.get(), nullptr, vr::Submit_Default);
+			f.comp->Submit(vr::Eye_Right, tex.get(), nullptr, vr::Submit_Default);
+		}
+	};
+	auto read = [&](Json::Value& r, vr::VRInputValueHandle_t poseHand, const char* poseKey) {
+		InputDigitalActionData_t d{};
+		in->GetDigitalActionData(fire, &d, sizeof(d), vr::k_ulInvalidInputValueHandle);
+		r["fire"] = (bool)d.bState;
+		r["fire_active"] = (bool)d.bActive;
+		InputPoseActionData_t p{};
+		in->GetPoseActionDataForNextFrame(aim, vr::TrackingUniverseStanding, &p, sizeof(p), vr::k_ulInvalidInputValueHandle);
+		r[poseKey] = (bool)p.bActive && p.activeOrigin == poseHand;
+	};
+	frames(40);
+	Json::Value r;
+	read(r, right, "pose_on_right");
+	c.Record("right dominant", r);
+
+	r = Json::Value();
+	r["set_err"] = (int)in->SetDominantHand(vr::TrackedControllerRole_LeftHand);
+	frames(20);
+	vr::ETrackedControllerRole dominant = vr::TrackedControllerRole_Invalid;
+	in->GetDominantHand(&dominant);
+	r["dominant_is_left"] = dominant == vr::TrackedControllerRole_LeftHand;
+	read(r, left, "pose_on_left");
+	r.removeMember("fire_active");
+	c.Record("left dominant", r);
+	c.core->Cleanup();
+}
+
 // The eye-tracked foveation calls (expect/eye_gaze*.json), on the stand-in with scripts/eye_gaze*.json: the gaze 10
 // degrees right (and 5 up, unless canted), tracked until frame 40 of the session, valid but not tracked until frame
 // 60, then not valid. Loads --manifest and updates its actions each frame if given, else reads the legacy input. Asks
@@ -3296,6 +3359,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "events", EventsCase },
 		{ "recentre", RecentreCase },
 		{ "input-frames", InputFramesCase },
+		{ "input-primary-hand", InputPrimaryHandCase },
 		{ "binding-info", BindingInfoCase },
 		{ "eye-gaze", EyeGazeCase },
 		{ "eye-tracking", EyeTrackingInputCase },

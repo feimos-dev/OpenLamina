@@ -253,6 +253,13 @@ InstancePlan PlanInstance(const std::set<std::string>& available, SessionKind ki
 	if (available.contains(OC_XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME))
 		plan.extensions.push_back(OC_XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME);
 
+	// More controllers' profiles: the Quest Pro's and Quest 3's, the Touch's finger proximity, Samsung's Odyssey, and
+	// the hands as controllers
+	for (const char* profileExtension : { OC_XR_FB_TOUCH_CONTROLLER_PRO_EXTENSION_NAME, OC_XR_META_TOUCH_CONTROLLER_PLUS_EXTENSION_NAME,
+	         OC_XR_FB_TOUCH_CONTROLLER_PROXIMITY_EXTENSION_NAME, XR_EXT_SAMSUNG_ODYSSEY_CONTROLLER_EXTENSION_NAME, XR_MSFT_HAND_INTERACTION_EXTENSION_NAME })
+		if (available.contains(profileExtension))
+			plan.extensions.push_back(profileExtension);
+
 	if (available.contains(XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME))
 		plan.extensions.push_back(XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME);
 

@@ -6,6 +6,7 @@
  { "interface": "IVRCompositor_\\d+", "method": "GetCurrentSceneFocusProcess|GetLastFrameRenderer", "field": "ret", "reason": "a process id" },
  { "interface": "IVRCompositor_\\d+", "method": "GetCumulativeStats", "field": "out", "reason": "its first field is the scene process id" },
  { "interface": "IVRCompositor_\\d+", "method": "GetCurrentFadeColor|GetCurrentGridAlpha", "field": "ret", "reason": "read while a fade is running: how far it has got depends on when the call lands" },
+ { "interface": "IVRRenderModels_\\d+", "method": "LoadRenderModel_Async", "field": "ret", "reason": "a model loads on a thread of its own: a call answers Loading until the load of its name has finished, which a later call in the same run may or may not find done" },
  { "interface": "IVRInput_\\d+", "method": "GetActionHandle|GetActionSetHandle|GetInputSourceHandle", "field": "out", "reason": "handles are pointers" },
  { "interface": "IVROverlay_\\d+", "method": "CreateOverlay|CreateDashboardOverlay|FindOverlay", "field": "out", "reason": "overlay handles are pointers" },
  { "interface": "IVRSystem_\\d+", "method": "GetHiddenAreaMesh", "field": "ret", "reason": "the struct's padding bytes are uninitialised (a minor finding: zero them)" },

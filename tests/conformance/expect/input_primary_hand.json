@@ -1,0 +1,5 @@
+{
+ "#": "Input-primary-hand on the stand-in with scripts/right_trigger_held.json and --manifest tests/unit/data/manifest_primary_hand.json, whose binding file binds the primary hand's trigger and pose. With the right hand dominant the held right trigger fires and the pose is the right hand's; with the left hand dominant the same trigger doesn't fire and the pose is the left hand's.",
+ "input-primary-hand/right dominant/-/-": { "fire": true, "fire_active": true, "pose_on_right": true },
+ "input-primary-hand/left dominant/-/-": { "set_err": 0, "dominant_is_left": true, "fire": false, "pose_on_left": true }
+}
