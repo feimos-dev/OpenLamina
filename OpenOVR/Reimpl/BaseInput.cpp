@@ -1295,7 +1295,7 @@ bool BaseInput::SuggestRawBindings(const InteractionProfile& profile, const std:
 
 std::optional<std::vector<ActionBinding>> BaseInput::BindingsFromFiles(const Action& action, bool allTypes)
 {
-	// The files bind inputs; for its origins a pose, a skeleton and a vibration keep OpenXR's bound sources
+	// The files bind inputs, so a pose, a skeleton and a vibration are answered only when allTypes
 	if (!allTypes && (action.type == ActionType::Pose || action.type == ActionType::Skeleton || action.type == ActionType::Vibration))
 		return std::nullopt;
 	std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
@@ -2484,14 +2484,16 @@ EVRInputError BaseInput::GetActionOrigins(VRActionSetHandle_t actionSetHandle, V
     VR_ARRAY_COUNT(originOutCount) VRInputValueHandle_t* originsOut, uint32_t originOutCount)
 {
 	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
+	GET_ACTION_FROM_HANDLE(act, digitalActionHandle);
+	if (!originsOut && originOutCount)
+		return VRInputError_InvalidParam;
 	// No set: no origins, and no error, as SteamVR answers
 	if (actionSetHandle == vr::k_ulInvalidActionSetHandle) {
-		if (originsOut && originOutCount)
+		if (originsOut)
 			ZeroMemory(originsOut, originOutCount * sizeof(*originsOut));
 		return VRInputError_None;
 	}
 	GET_ACTION_SET_FROM_HANDLE(set, actionSetHandle);
-	GET_ACTION_FROM_HANDLE(act, digitalActionHandle);
 
 	if (act->set != set) {
 		// The action isn't in that set: no origins for it there
@@ -2706,29 +2708,17 @@ EVRInputError BaseInput::GetActionBindingInfo(VRActionHandle_t actionHandle, OOV
 
 	// TODO should we return an error if there are no sources bound?
 
-	// The bindings written, in order, without the sources left out; a vibration's with no device or input path
+	// A vibration's binding is told with every field empty, as SteamVR answers: one per bound output (a source that
+	// isn't one is left out)
 	uint32_t written = 0;
 	for (size_t i = 0; i < boundActionPaths.size() && written < unBindingInfoCount; i++) {
-		XrPath path = boundActionPaths[i];
-
-		uint32_t pathLen = 0;
-		OC_XR_LOG(xrPathToString(xr_instance, path, 0, &pathLen, nullptr));
-		if (pathLen == 0)
-			continue; // the path couldn't be read: this binding is left out
-		std::vector<char> chars(pathLen);
-		OC_XR_LOG(xrPathToString(xr_instance, path, chars.size(), &pathLen, chars.data()));
-		std::string pathStr(chars.data(), chars.size());
-
-		std::vector<std::string> parts;
-		stringSplit(pathStr, parts);
-		if (parts.size() < 5) {
-			// Not a /user/<a>/<b>/output/<c> path: this binding is left out
-			OOVR_LOG_ONCEF("A bound source path with fewer than five parts, left out: %s", pathStr.c_str());
+		char chars[XR_MAX_PATH_LENGTH] = {};
+		uint32_t len = 0;
+		if (XR_FAILED(xrPathToString(xr_instance, boundActionPaths[i], sizeof(chars), &len, chars)))
 			continue;
-		}
-
-		// A vibration's binding is told with every field empty, as SteamVR answers
-		written++;
+		const std::string path(chars, strnlen(chars, sizeof(chars)));
+		if (path.starts_with("/user/") && path.find("/output/") != std::string::npos)
+			written++;
 	}
 	if (punReturnedBindingInfoCount)
 		*punReturnedBindingInfoCount = written;

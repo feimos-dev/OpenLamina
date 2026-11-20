@@ -1800,12 +1800,9 @@ void BindingInfoCase(CaseContext& c)
 	in->GetActionHandle("/actions/main/out/haptic", &haptic);
 	r["err"] = (int)in->GetActionBindingInfo(haptic, info, sizeof(info[0]), 4, &returned);
 	r["haptic_bindings"] = returned;
-	bool oddShown = false, allEmpty = true;
-	for (uint32_t i = 0; i < returned && i < 4; i++) {
-		oddShown = oddShown || std::string(info[i].rchDevicePathName).find("mnd") != std::string::npos || std::string(info[i].rchModeName).find("1419") != std::string::npos;
+	bool allEmpty = true;
+	for (uint32_t i = 0; i < returned && i < 4; i++)
 		allEmpty = allEmpty && !info[i].rchDevicePathName[0] && !info[i].rchInputPathName[0] && !info[i].rchModeName[0];
-	}
-	r["odd_source_left_out"] = !oddShown;
 	r["haptic_paths_empty"] = allEmpty;
 	// The pose: the right hand's raw pose
 	vr::VRActionHandle_t pose = 0;

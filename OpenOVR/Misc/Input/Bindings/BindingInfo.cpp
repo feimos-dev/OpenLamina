@@ -52,7 +52,7 @@ std::vector<ActionBinding> BindingsForAction(const BindingFile& file, const std:
 	// A pose and a skeleton are told by where they're read (/pose/raw, /input/skeleton/left), with no mode
 	auto addPose = [&](const std::string& path) {
 		ActionBinding b;
-		size_t at = path.find("/pose/");
+		size_t at = path.find("/pose");
 		if (at == std::string::npos)
 			at = path.find("/input/");
 		if (at == std::string::npos || at == 0)

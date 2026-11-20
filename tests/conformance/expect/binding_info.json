@@ -2,7 +2,6 @@
  "binding-info/odd source/-/-": {
   "err": 0,
   "haptic_bindings": 1,
-  "odd_source_left_out": true,
   "haptic_paths_empty": true,
   "pose_err": 0,
   "pose_bindings": 1,

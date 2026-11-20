@@ -1053,9 +1053,9 @@ std::string HandBoneName(vr::BoneIndex_t bone, bool rightHand);
 /** The inverse of BaseInput::ParentSpaceSkeletonToModelSpace */
 void ModelSpaceSkeletonToParentSpace(vr::VRBoneTransform_t* joints);
 
-/** Compressed bone data, OpenLamina's own format: a 2-byte header { uint8_t tag = 0xB1; uint8_t space | range << 4; }
- * then the 31 transforms, little-endian: the most the OpenVR header lets a game size its buffer for
- * (sizeof(VRBoneTransform_t) * boneCount + 2). The older layout, { char magic[4] = "OCSK"; uint16_t version = 1;
+/** Compressed bone data, OpenComposite's own format: a 2-byte header { uint8_t tag = 0xB1; uint8_t space | range << 4; }
+ * then the 31 transforms, little-endian (sizeof(VRBoneTransform_t) * boneCount + 2, the OpenVR header's limit). The
+ * older layout, { char magic[4] = "OCSK"; uint16_t version = 1;
  * uint8_t space; uint8_t range; uint32_t count = 31; } then the transforms (1004 bytes), is still read. */
 constexpr uint32_t kCompressedBonesSize = 2 + 31 * sizeof(vr::VRBoneTransform_t);
 /** Writes the bones into out if outSize is big enough; the size needed (kCompressedBonesSize) */

@@ -645,9 +645,9 @@ struct CompressedHeader {
 static_assert(sizeof(CompressedHeader) == 12, "the compressed header is 12 bytes");
 // The first byte of the 2-byte header; the second has the space in its low four bits and the range in its high four
 constexpr uint8_t kCompressedTag = 0xB1;
-// The older layout's size: CompressedHeader then the bones, still read
-constexpr uint32_t kOldCompressedBonesSize = sizeof(CompressedHeader) + 31 * 32;
 static_assert(sizeof(VRBoneTransform_t) == 32, "a bone is 32 bytes");
+// The older layout's size: CompressedHeader then the bones, still read
+constexpr uint32_t kOldCompressedBonesSize = sizeof(CompressedHeader) + eBone_Count * sizeof(VRBoneTransform_t);
 
 } // namespace
 
@@ -691,7 +691,7 @@ uint32_t CompressBones(OOVR_EVRSkeletalTransformSpace space, EVRSkeletalMotionRa
 {
 	if (!out || outSize < kCompressedBonesSize || !bones31)
 		return kCompressedBonesSize;
-	// Every platform OpenLamina builds for is little-endian, so the bones go as they are
+	// Every platform OpenComposite builds for is little-endian, so the bones go as they are
 	uint8_t header[2] = { kCompressedTag, (uint8_t)(((uint8_t)space & 0xF) | (((uint8_t)range & 0xF) << 4)) };
 	memcpy(out, header, sizeof(header));
 	memcpy((uint8_t*)out + sizeof(header), bones31, sizeof(VRBoneTransform_t) * eBone_Count);
