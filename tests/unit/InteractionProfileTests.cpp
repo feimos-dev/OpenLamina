@@ -119,15 +119,19 @@ TEST_CASE("Pico_profiles_have_their_own_paths_and_types")
 	CHECK(std::string(*neo3.GetOpenVRName()) == "pico_controller");
 	CHECK(std::string(*pico4.GetOpenVRName()) == "pico_controller");
 
-	// The menu button is on both hands, the face buttons have a touch, the squeeze a value and a click
+	// The menu button is on both of the Neo 3's hands and on the PICO 4's left; the face buttons have a touch, the
+	// squeeze a value and a click
+	CHECK(neo3.IsInputPathValid("/user/hand/right/input/menu/click"));
 	CHECK(pico4.IsInputPathValid("/user/hand/left/input/menu/click"));
-	CHECK(pico4.IsInputPathValid("/user/hand/right/input/menu/click"));
+	CHECK_FALSE(pico4.IsInputPathValid("/user/hand/right/input/menu/click"));
 	CHECK(pico4.IsInputPathValid("/user/hand/right/input/a/touch"));
 	CHECK_FALSE(pico4.IsInputPathValid("/user/hand/left/input/a/touch"));
 	CHECK(pico4.IsInputPathValid("/user/hand/left/input/squeeze/click"));
 	CHECK(pico4.IsInputPathValid("/user/hand/left/input/squeeze/value"));
 	CHECK_FALSE(pico4.IsInputPathValid("/user/hand/left/input/thumbrest/touch"));
-	CHECK(neo3.GetValidInputPaths() == pico4.GetValidInputPaths());
+	std::unordered_set<std::string> neo3Paths = neo3.GetValidInputPaths();
+	neo3Paths.erase("/user/hand/right/input/menu/click");
+	CHECK(neo3Paths == pico4.GetValidInputPaths());
 }
 
 // Programs tell Lighthouse controllers from Oculus ones by the tracking system, as SteamVR names it (Skyrim VR loads
@@ -245,6 +249,9 @@ TEST_CASE("Pico_g3_profile_has_its_own_few_inputs")
 	CHECK(g3.IsInputPathValid("/user/hand/right/input/trigger/click"));
 	CHECK(g3.IsInputPathValid("/user/hand/left/input/menu/click"));
 	CHECK(g3.IsInputPathValid("/user/hand/left/input/thumbstick/click"));
+	CHECK(g3.IsInputPathValid("/user/hand/right/input/thumbstick/x"));
+	CHECK(g3.IsInputPathValid("/user/hand/right/input/thumbstick/y"));
+	CHECK_FALSE(g3.IsInputPathValid("/user/hand/right/input/thumbstick/touch"));
 	CHECK_FALSE(g3.IsInputPathValid("/user/hand/right/input/a/click"));
 	CHECK_FALSE(g3.IsInputPathValid("/user/hand/right/input/squeeze/value"));
 	CHECK_FALSE(g3.IsInputPathValid("/user/hand/right/output/haptic"));

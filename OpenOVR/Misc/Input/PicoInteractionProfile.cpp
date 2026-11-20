@@ -20,7 +20,6 @@ PicoInteractionProfile::PicoInteractionProfile(Model model)
 		"/user/hand/right/input/b/touch",
 	};
 	const char* perHandPaths[] = {
-		"/input/menu/click",
 		"/input/squeeze/click",
 		"/input/squeeze/value",
 		"/input/trigger/click",
@@ -42,6 +41,8 @@ PicoInteractionProfile::PicoInteractionProfile(Model model)
 		"/input/trigger/value",
 		"/input/menu/click",
 		"/input/thumbstick",
+		"/input/thumbstick/x",
+		"/input/thumbstick/y",
 		"/input/thumbstick/click",
 		"/input/grip/pose",
 		"/input/aim/pose",
@@ -58,6 +59,10 @@ PicoInteractionProfile::PicoInteractionProfile(Model model)
 
 	for (const char* str : leftPaths)
 		validInputPaths.insert(str);
+	// The menu button: on both of the Neo 3's controllers, only on the left one of the PICO 4's
+	validInputPaths.insert("/user/hand/left/input/menu/click");
+	if (model == Model::Neo3)
+		validInputPaths.insert("/user/hand/right/input/menu/click");
 	for (const char* str : rightPaths)
 		validInputPaths.insert(str);
 	for (const char* str : perHandPaths) {
@@ -104,11 +109,13 @@ std::optional<vr::EVRSkeletalTrackingLevel> PicoInteractionProfile::GetOpenVRTra
 const InteractionProfile::LegacyBindings* PicoInteractionProfile::GetLegacyBindings(const std::string& handPath) const
 {
 	if (model == Model::G3) {
-		// The trigger, and the menu button as SteamVR's menu
+		// The trigger, the touchpad as a stick, and the menu button as SteamVR's menu
 		static LegacyBindings g3 = {};
 		if (!g3.system) {
 			g3.trigger = "input/trigger/value";
 			g3.triggerClick = "input/trigger/click";
+			g3.stickX = "input/thumbstick/x";
+			g3.stickY = "input/thumbstick/y";
 			g3.stickBtn = "input/thumbstick/click";
 			g3.gripPoseAction = "input/grip/pose";
 			g3.aimPoseAction = "input/aim/pose";
