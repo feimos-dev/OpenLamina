@@ -2360,7 +2360,10 @@ void XrBackend::PumpEvents()
 	// Not before the game's device is known (InputsMayAttach): another session restart for it would follow
 	if (input && !exitExpected && !input->AreActionsLoaded() && !input->LegacyInputAsked() && sessionState == XR_SESSION_STATE_FOCUSED
 	    && !Hand(XrController::XCT_LEFT) && !Hand(XrController::XCT_RIGHT) && InputsMayAttach()) {
-		QueryForInteractionProfile();
+		// Under the session lock (shared, if it's free): not while another thread makes and binds the game's actions
+		SessionLock sessionLock(xr_session, SessionLock::TryShared{});
+		if (sessionLock.IsHeld() && !input->AreActionsLoaded())
+			QueryForInteractionProfile();
 	}
 }
 

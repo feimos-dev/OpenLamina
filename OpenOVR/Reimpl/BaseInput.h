@@ -514,8 +514,8 @@ public: // INTERNAL FUNCTIONS
 	void GetHandSpace(ITrackedDevice::TrackedDeviceType hand, XrSpace& space, bool aimPose);
 
 	bool AreActionsLoaded();
-	// The game asked for legacy input before it could be attached: it's loaded at its next call, with no info set
-	// before it (which would cost a session restart)
+	// The game asked for legacy input: it's loaded (at once, or at its next call once it may be attached), with no info
+	// set before it
 	bool LegacyInputAsked() const { return legacyInputAsked; }
 
 private:
