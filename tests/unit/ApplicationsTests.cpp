@@ -1092,6 +1092,49 @@ TEST_CASE("Asking_about_a_transition_whose_old_application_runs_writes_nothing")
 	CHECK(store.Generation(StoreDoc::Scene) == generation);
 }
 
+TEST_CASE("Scene_application_state_follows_a_transition")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	BaseApplications apps(store);
+	AppType type(vr::VRApplication_Utility);
+#ifdef _WIN32
+	uint32_t scene = 4; // System, always there
+#else
+	uint32_t scene = (uint32_t)getppid();
+#endif
+	// Another program is the scene application, has drawn, and is asked to quit for the next
+	store.Update(StoreDoc::Scene, [&](Json::Value& doc) {
+		doc["pid"] = scene;
+		doc["start"] = (Json::UInt64)SharedStore::ProcessStartTime(scene);
+		doc["drawn"] = true;
+	});
+	CHECK(apps.GetSceneApplicationState() == EVRSceneApplicationState_Running);
+	store.Update(StoreDoc::Scene, [&](Json::Value& doc) {
+		doc["transition"]["state"] = VRApplicationTransition_OldAppQuitSent;
+		doc["transition"]["app_key"] = "oc.test.next";
+		doc["transition"]["old_pid"] = scene;
+		doc["transition"]["old_start"] = (Json::UInt64)SharedStore::ProcessStartTime(scene);
+		doc["transition"]["since_ms"] = NowMs();
+	});
+	CHECK(apps.GetSceneApplicationState() == EVRSceneApplicationState_Quitting);
+
+	// It has gone and the next is launched: starting, until its session starts
+	store.Update(StoreDoc::Scene, [&](Json::Value& doc) {
+		doc = Json::Value(Json::objectValue);
+		doc["transition"]["state"] = VRApplicationTransition_NewAppLaunched;
+		doc["transition"]["app_key"] = "oc.test.next";
+		doc["transition"]["since_ms"] = NowMs();
+	});
+	CHECK(apps.GetSceneApplicationState() == EVRSceneApplicationState_Starting);
+
+	// Aborted: no scene application, and the state change is announced
+	EventRecorder recorder;
+	apps.AbortTransition();
+	CHECK(apps.GetSceneApplicationState() == EVRSceneApplicationState_None);
+	CHECK(CountEvents(vr::VREvent_SceneApplicationStateChanged) == 1);
+}
+
 TEST_CASE("A_launch_asked_for_long_ago_is_dropped_not_taken_over")
 {
 	TempDir dir;
