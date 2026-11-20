@@ -58,7 +58,7 @@ private:
 	bool AllocateImageBuffers(uint32_t count);
 	// Frees them once their submissions are over
 	void FreeImageBuffers();
-	// Waits for the image's last submission and readies its fence for the next: false if it didn't finish
+	// Waits for the image's last submission: false if it didn't finish
 	bool WaitForImageBuffer(uint32_t index);
 	bool SubmitWithImageFence(VkQueue queue, const VkSubmitInfo& submitInfo, uint32_t index);
 };
