@@ -50,6 +50,8 @@ UKN_FUNC(28);
 UKN_FUNC(29);
 
 #include "BaseClientCore.h"
+#include "BaseDriverManager.h"
+#include "BaseResources.h"
 #include "Misc/Process.h"
 #include "BaseSystem.h"
 #include "generated/static_bases.gen.h"
@@ -61,14 +63,24 @@ static uint32_t EmptyString(char* pchBuffer, uint32_t unBufferLen)
 	return 0;
 }
 
+// The one driver BaseDriverManager lists
 uint32_t BaseControlPanel::GetDriverCount()
 {
-	return 0;
+	return 1;
 }
 
 uint32_t BaseControlPanel::GetDriverId(uint32_t unDriverIndex, char* pchBuffer, uint32_t unBufferLen)
 {
-	return EmptyString(pchBuffer, unBufferLen);
+	if (unDriverIndex != 0)
+		return EmptyString(pchBuffer, unBufferLen);
+	// As BaseDriverManager::GetDriverName: the size the name needs, with its terminator; copied when it fits
+	const std::string name = BaseDriverManager::DriverName();
+	const uint32_t needed = (uint32_t)name.size() + 1;
+	if (pchBuffer && unBufferLen >= needed)
+		memcpy(pchBuffer, name.c_str(), needed);
+	else if (pchBuffer && unBufferLen)
+		pchBuffer[0] = '\0';
+	return needed;
 }
 
 uint32_t BaseControlPanel::GetDriverDisplayCount(const char* pchDriverId)
@@ -107,8 +119,8 @@ void* BaseControlPanel::GetCurrentCompositorInterface(const char* pchInterfaceVe
 
 uint32_t BaseControlPanel::LoadSharedResource(const char* pchResourceName, char* pchBuffer, uint32_t unBufferLen)
 {
-	// SteamVR's shared resources (its own images and sounds) aren't here: not found
-	return 0;
+	// BaseResources keeps no state, so the same reading as IVRResources
+	return BaseResources().LoadSharedResource(pchResourceName, pchBuffer, unBufferLen);
 }
 
 float BaseControlPanel::GetIPD()

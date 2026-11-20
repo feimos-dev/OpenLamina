@@ -27,6 +27,8 @@ import re
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -53,7 +55,8 @@ SHARED_STORES = {"events-listen": "events", "events-commit": "events", "chaperon
                  "background-app": "background", "background-app-game": "background"}
 # Cases that read files of SteamVR's install get a fixture of our own as SteamVR (OC_TEST_STEAMVR_DIR, which wins over
 # OC_TEST_NO_STEAMVR); everything else runs without SteamVR
-CASE_ENV = {"render-models": {"OC_TEST_STEAMVR_DIR": str(HERE.parent / "unit" / "data" / "steamvr")}}
+STEAMVR_FIXTURE = {"OC_TEST_STEAMVR_DIR": str(HERE.parent / "unit" / "data" / "steamvr")}
+CASE_ENV = {"render-models": STEAMVR_FIXTURE, "state-and-resources": STEAMVR_FIXTURE}
 # SteamVR's answers while vrserver was starting or stopping between children (Retry, AnotherAppLaunching,
 # ShuttingDown): a recording keeps them, a comparison skips them
 STEAMVR_TRANSIENT = {115, 117, 119}
@@ -64,6 +67,11 @@ def load_versions():
     for line in (HERE / "interfaces.txt").read_text(encoding="utf-8").splitlines():
         parts = line.split()
         if parts and not line.startswith("#") and len(parts) > 1 and parts[1] == "app":
+            versions.append(parts[0])
+    # Our own interfaces (custom_interfaces.txt)
+    for line in (HERE / "custom_interfaces.txt").read_text(encoding="utf-8").splitlines():
+        parts = line.split()
+        if parts and not line.startswith("#"):
             versions.append(parts[0])
     return versions
 
@@ -156,6 +164,8 @@ class Runner:
         cmd = [self.conformance, "--runtime", self.runtime, "--out", str(raw)] + extra
         if self.args.real_runtime:
             cmd.append("--real-runtime")
+        if self.args.keep_running:
+            self.keep_running()
         env = dict(os.environ)
         env.update(self.env)
         env["OC_STORE_DIR"] = str(self.out / "store" / (store or Path(raw).stem))
@@ -164,6 +174,29 @@ class Runner:
             return unelevated.run_medium(cmd, env, None, timeout)
         # In a memory-limited job (unelevated.py): a runaway child fails alone
         return unelevated.run_limited(cmd, env, None, timeout, capture=True)[0]
+
+    keep_lock = threading.Lock()
+
+    def keep_running(self):
+        """--keep-running: SteamVR quits all of its programs when the scene application it counts as its first exits
+        without shutting down, and a SteamVR started by a test program loses its shared namespace once that program's
+        first clients are gone (a later Init waits forever). So before each child, start SteamVR on its own if its
+        server isn't running, unelevated through explorer.exe, and give it time to settle."""
+        exe, server = self.args.keep_running, "vrserver.exe"
+
+        def running():
+            out = subprocess.run(["tasklist", "/fi", f"imagename eq {server}", "/nh"], capture_output=True, text=True)
+            return server.lower() in out.stdout.lower()
+
+        with Runner.keep_lock:
+            if running():
+                return
+            subprocess.run(["explorer.exe", exe])
+            for _ in range(90):
+                if running():
+                    break
+                time.sleep(1)
+            time.sleep(8)
 
     @staticmethod
     def take_crash(raw, record):
@@ -480,6 +513,7 @@ def main():
     ap.add_argument("--ci", action="store_true")
     ap.add_argument("--allow-failures", action="store_true")
     ap.add_argument("--real-runtime", action="store_true")
+    ap.add_argument("--keep-running", metavar="EXE", help="with --real-runtime: start this (SteamVR's vrstartup.exe) before any child when its server isn't running")
     ap.add_argument("--repeat", type=int, default=1, help=f"run each case this many times (at most {MAX_REPEAT})")
     ap.add_argument("--case-arg", action="append", metavar="NAME=VALUE", help="passed to every case (repeatable)")
     ap.add_argument("--apptypes", help="the interfaces only under these app types (numbers, comma-separated), with valid arguments")

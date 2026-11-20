@@ -404,7 +404,6 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/Input/HolographicInteractionProfile.cpp
 	OpenOVR/Misc/Input/ReverbG2InteractionProfile.cpp
 	OpenOVR/Misc/Input/ViveTrackerInteractionProfile.cpp
-	OpenOVR/OpenOVR.cpp
 	OpenOVR/Reimpl/BaseApplications.cpp
 	OpenOVR/Reimpl/BaseChaperone.cpp
 	OpenOVR/Reimpl/BaseChaperoneSetup.cpp
@@ -546,7 +545,6 @@ target_precompile_headers(OCCore PRIVATE ${CMAKE_SOURCE_DIR}/OpenOVR/stdafx.h)
 set_source_files_properties(${OVR_PCH_EXCLUDED} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
 
 source_group(OpenVR REGULAR_EXPRESSION ${GENERATED_DIR}/interfaces)
-source_group(OpenVR\\Drivers REGULAR_EXPRESSION ${GENERATED_DIR}/interfaces/driver_*)
 source_group(OpenVR\\Custom REGULAR_EXPRESSION OpenVRHeaders/custom_interfaces/*)
 source_group(Interfaces REGULAR_EXPRESSION OpenOVR/Reimpl/Base*)
 source_group(Interfaces\\Declarations REGULAR_EXPRESSION OpenOVR/Reimpl/CVR*)

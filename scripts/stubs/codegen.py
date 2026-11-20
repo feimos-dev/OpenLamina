@@ -7,6 +7,11 @@ from stubs.interface_spec import InterfaceSpec
 cflag_spec = re.compile(r"\[(?P<name>\w+)\]\s*=\s*(?P<value>.*)")
 
 
+def _in_namespace(type_name: str, namespace: str) -> bool:
+    """True if type_name names something inside namespace (a `Namespace::` prefix, not just a substring)."""
+    return re.search(r"(?<![\w:])" + re.escape(namespace) + "::", type_name) is not None
+
+
 def write_header(header, iface):
     header.write("#pragma once\n")
     header.write('#include "BaseCommon.h"\n')
@@ -32,9 +37,6 @@ public:
     {cname}();
     // Interface methods:
 """.replace("    ", "\t").strip())
-    # Note we're doing this strip-then-write-newline dance to get the files to be exactly the same as the old
-    # ones as the easy way to make sure nothing breaks during the transition.
-    # Later on this can be pulled out, a little whitespace doesn't matter.
     fi.write("\n")
 
     for func in iface.functions:
@@ -91,7 +93,7 @@ std::shared_ptr<{cls}> GetCreate{getter_name}() {{
             for a in f.args:
                 # A type from the version's own namespace is cast to the Base class's copy of it (OOVR_Name), except
                 # those deleted_types.h puts there, which the Base class takes as they are
-                if namespace in a.type and not is_deleted_type(ver, a.type):
+                if _in_namespace(a.type, namespace) and not is_deleted_type(ver, a.type):
                     casttype = a.type.replace(namespace + "::", "OOVR_")
                     nargs.append("(%s) %s" % (casttype, a.name))
                 else:
@@ -101,7 +103,7 @@ std::shared_ptr<{cls}> GetCreate{getter_name}() {{
 
             # Generate the code for the return, with a cast if necessary
             return_str = "return"
-            if namespace in f.return_type:
+            if _in_namespace(f.return_type, namespace):
                 return_str += f" ({f.return_type})"
 
             const = " const" if f.const else ""
@@ -114,7 +116,9 @@ std::shared_ptr<{cls}> GetCreate{getter_name}() {{
         _build_fntable(fi, ver)
 
         # Generate the deleter (see BaseCommon.h for the rationale here)
-        fi.write(f"void {cname}::Delete() {{ delete this; }}\n")
+        # (a function table taken from this object must not keep calling into it)
+        inst_name = f"fntable_{ver.varname()}_{ver.version}_instance"
+        fi.write(f"void {cname}::Delete() {{ if ({inst_name} == this) {inst_name} = NULL; delete this; }}\n")
 
 
 def is_deleted_type(ver: InterfaceDef, arg_type: str) -> bool:
@@ -135,7 +139,14 @@ def _build_fntable(fi, ver: InterfaceDef):
 
     # Generate the stub functions
     for func in ver.functions:
-        call_stmt = f"return {inst_name}->{func.name}({func.args_names()});"
+        # After the object is deleted (VR_Shutdown) a table a game kept answers a zero value instead of calling it
+        if func.return_type.strip() == "void":
+            guard = f"if (!{inst_name}) return; "
+        elif func.return_type.strip().endswith("&"):
+            guard = ""
+        else:
+            guard = f"if (!{inst_name}) return {{}}; "
+        call_stmt = f"{guard}return {inst_name}->{func.name}({func.args_names()});"
 
         fi.write(
             f"static {func.return_type} OPENVR_FNTABLE_CALLTYPE {func_name_template % func.name}({func.args_str()}) {{ {call_stmt} }}\n")
@@ -163,6 +174,14 @@ def write_stub_footer(fi, interfaces: List[InterfaceSpec]):
                 f"\tif(strcmp({ver.version_variable()}, name) == 0) return new {ver.proxy_class_name()}();\n")
 
     fi.write("\treturn NULL;\n")
+    fi.write("}\n")
+
+    # Generate InterfaceExists: the same names, without making the interface
+    fi.write("bool InterfaceExists(const char *name) {\n")
+    for spec in interfaces:
+        for ver in spec.versions:
+            fi.write(f"\tif(strcmp({ver.version_variable()}, name) == 0) return true;\n")
+    fi.write("\treturn false;\n")
     fi.write("}\n")
 
     # Generate the flag stuff

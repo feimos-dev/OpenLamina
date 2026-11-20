@@ -3,9 +3,10 @@
 #include "custom_types.h"
 #include "generated/interfaces/IVRSystem_017.h"
 #include "openxr/openxr.h"
+#include <atomic>
 #include <memory>
-#include <queue>
 #include <mutex>
+#include <queue>
 
 class BaseSystem {
 	// Copied from IVRSystem, because MSVC made me.
@@ -31,8 +32,11 @@ private:
 
 	// The input subsystem. This is used for the old-style inputs and haptics.
 	std::shared_ptr<class BaseInput> inputSystem;
+	std::recursive_mutex inputSystemLock;
+	// The input system, looked for (and made, with create) the first time; under inputSystemLock
+	std::shared_ptr<class BaseInput> InputSystem(bool create);
 
-	uint64_t frameNumber = 0;
+	std::atomic<uint64_t> frameNumber{ 0 };
 
 public:
 	// To be called by other base classes

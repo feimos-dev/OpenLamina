@@ -1736,6 +1736,13 @@ bool BaseOverlay::_HandleOverlayInput(EVREye side, TrackedDeviceIndex_t index, V
 	return !keyboard;
 }
 
+bool BaseOverlay::_IsOwnOverlay(VROverlayHandle_t handle)
+{
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	OverlayData* o = (OverlayData*)handle;
+	return o && validOverlays.count(o) && overlays.count(o->key);
+}
+
 EVROverlayError BaseOverlay::FindOverlay(const char* pchOverlayKey, VROverlayHandle_t* pOverlayHandle)
 {
 	if (!pchOverlayKey || !pOverlayHandle)

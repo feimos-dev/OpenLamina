@@ -62,25 +62,6 @@ versions = [
     "2.15.6",
 ]
 
-driver_versions = [
-    "1.1.3b",
-]
-
-driver_files = [
-    "itrackeddevicedriverprovider",
-    "IVRServerDriverHost",
-    "ITrackedDeviceServerDriver",
-]
-
-interface_exceptions = [
-    "itrackeddevicedriverprovider",
-]
-
-patches = {
-    "driver_IVRServerDriverHost_005",
-    "driver_itrackeddevicedriverprovider",
-}
-
 #####################################################
 
 # input directory, headers should be located here
@@ -160,52 +141,6 @@ matcher = re.compile(r"^\/\/ ([\w_-]+)\.h$")
 # Matches a line giving the version for an interface.
 # Formatted like IVR<interface name>_<version number>
 versionmatcher = re.compile(r"_Version = \"([\w-]*)\";")
-
-
-def patch(text, patchfile):
-    """
-    Patches the provided text using the provided patch file.
-    """
-
-    lines = text.splitlines()
-
-    with open(patchfile, "r") as pat:
-        patchlines = pat.readlines()
-
-        linenum = 0
-        while linenum < len(patchlines):
-            line = patchlines[linenum]
-            linenum += 1
-            line = line.strip()
-            if not line:
-                continue
-
-            if line[0] == "#":
-                continue
-
-            parts = line.split()
-            mode = parts[0]
-            if mode == "ins":
-                start = int(parts[1]) - 1  # start at line 1
-                rlen = int(parts[2])
-                cpy_section = patchlines[linenum:linenum + rlen]
-                linenum += rlen
-                lines[start:start] = [s.rstrip('\n') for s in cpy_section]
-            elif mode == "del":
-                start = int(parts[1]) - 1  # start at line 1
-                rlen = int(parts[2])
-                del lines[start:start + rlen]
-            elif mode == "edit":
-                start = int(parts[1]) - 1  # start at line 1
-                olen = int(parts[2])
-                nlen = int(parts[3])
-                cpy_section = patchlines[linenum:linenum + nlen]
-                linenum += nlen
-                lines[start:start + olen] = [s.rstrip('\n') for s in cpy_section]
-            else:
-                raise Exception("Unknown patch mode '%s'" % mode)
-
-    return "\n".join(lines)
 
 
 def write_interface(target: str, result: str, usingiface: bool, interface_checker: Callable, out_dir: Path):
@@ -290,12 +225,8 @@ def write_interface(target: str, result: str, usingiface: bool, interface_checke
     else:
         result = result.replace("%%REPLACE%NS%START%%", "namespace vr")
 
-    # Apply any manual patches (their line numbers are the section's own, so before anything is inserted)
-    if target in patches:
-        result = patch(result, input_dir / f"patches/{target}.ipatch")
-
-    # Types the old versions use that the newest vrtypes.h no longer has (the driver interfaces need none)
-    if usingiface and not target.startswith("driver_"):
+    # Types the old versions use that the newest vrtypes.h no longer has
+    if usingiface:
         result = result.replace("#pragma once\n", "#pragma once\n#include \"deleted_types.h\"\n", 1)
 
     # if nooverwrite and os.path.isfile(outfile):
@@ -319,7 +250,7 @@ def write_interface(target: str, result: str, usingiface: bool, interface_checke
 
 
 def split_header(headerfile: TextIO, interface_checker: Callable = None,
-                 out_dir: Path = output_dir / "interfaces", imports=None):
+                 out_dir: Path = output_dir / "interfaces"):
     """
     Splits the provided headerfile into its interfaces.
     headerfile - The header file to read from. Should be a file object.
@@ -331,11 +262,9 @@ def split_header(headerfile: TextIO, interface_checker: Callable = None,
     outbuff = io.StringIO()
     targetfile = None
     usingiface = False
-    iface_excluded = False
 
-    if not imports:
-        imports = io.StringIO()
-        imports.write("#pragma once\n")
+    imports = io.StringIO()
+    imports.write("#pragma once\n")
 
     for line in headerfile:
         niceline = line.rstrip("\n")
@@ -360,7 +289,7 @@ def split_header(headerfile: TextIO, interface_checker: Callable = None,
                                            usingiface, interface_checker, out_dir)
 
                 # Add the import, unless it's a versioned interface
-                if not usingiface and not iface_excluded and not rejected:
+                if not usingiface and not rejected:
                     imports.write("#include \"" + targetfile + ".h\"\n")
 
                 outbuff = io.StringIO()
@@ -369,10 +298,9 @@ def split_header(headerfile: TextIO, interface_checker: Callable = None,
 
             # Grab the name of the next interface
             targetfile = match.group(1)
-            iface_excluded = targetfile in interface_exceptions
 
         # Found version info
-        if vmatch and not iface_excluded:
+        if vmatch:
             assert not usingiface, "Cannot have multiple interfaces in one file"
             targetfile = vmatch.group(1)
             usingiface = True
@@ -386,50 +314,19 @@ def split_header(headerfile: TextIO, interface_checker: Callable = None,
     if targetfile:
         write_interface(targetfile, outbuff.getvalue(), usingiface, interface_checker, out_dir)
 
-    return imports
-
-
-def driver_filter(fi, iface):
-    # Chop off the _xxx version suffix from interfaces for the purposes of comparing them
-    if re.match(r".*_\d\d\d", fi):
-        name = fi[:-4]
-    else:
-        name = fi
-    # print(fi)
-    if name in driver_files:
-        return "driver_" + fi
-
-    return False
-
 
 (output_dir / "interfaces").mkdir(parents=True, exist_ok=True)
 shutil.copyfile(input_dir / "deleted_types.h", output_dir / "interfaces" / "deleted_types.h")
 
 # Go through the list of interface versions backwards.
 # This allows us to build the newest version of each interface without overwriting them
-imports_by_version = {}
-DRIVER_IMPORTS_FROM = "0.9.12"
 for version in versions[::-1]:
     feed = f"openvr-{version}.h"
     print("Reading: " + feed)
     current_header = version
 
     with open(input_dir / feed, "r") as headerfile:
-        imports_by_version[version] = split_header(headerfile)
-# The driver header's interfaces include what the 0.9.12 header sets up; the 0.9.0–0.9.11 headers have fewer shared
-# sections, and would change the driver interfaces
-appapi_imports = imports_by_version[DRIVER_IMPORTS_FROM]
-
-# Does the same thing with driver versions.
-for version in driver_versions[::-1]:
-    feed = "openvr-%s-driver.h" % version
-    print("Reading: " + feed)
-    current_header = version + "-driver"
-
-    # Note we have to use Latin-1, since EVRSkeletalTrackingLevel's first comment includes
-    # a character outside of the plain ASCII range
-    with open(input_dir / feed, "r", encoding="latin-1") as headerfile:
-        split_header(headerfile, driver_filter, imports=appapi_imports)
+        split_header(headerfile)
 
 check_vtable_prefixes()
 

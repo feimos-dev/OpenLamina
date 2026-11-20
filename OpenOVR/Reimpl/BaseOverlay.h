@@ -254,6 +254,9 @@ public:
 	// game's thread before its frame's layers are built (it fills swapchains from memory), not holding _LayersLock().
 	void _UpdatePointer();
 
+	// Whether the handle is one of this program's overlays
+	bool _IsOwnOverlay(vr::VROverlayHandle_t handle);
+
 	// Whether the keyboard is shown
 	bool _KeyboardShown()
 	{
