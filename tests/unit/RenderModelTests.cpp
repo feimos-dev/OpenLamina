@@ -3,7 +3,10 @@
 
 #include "stdafx.h"
 
+#include "Misc/BuiltInResource.h"
 #include "Misc/SteamVRRenderModels.h"
+#include "Reimpl/BaseRenderModels.h"
+#include "resources.h"
 
 #include <chrono>
 #include <cmath>
@@ -12,6 +15,7 @@
 #include <fstream>
 #include <iterator>
 #include <string>
+#include <thread>
 
 namespace fs = std::filesystem;
 
@@ -432,4 +436,157 @@ TEST_CASE("Texture_mip_chain_halves_down_to_one_pixel")
 	CHECK(BuildMipChain(four, 0).back().rgba[0] == 139);
 	// An empty image is still one level
 	CHECK(BuildMipChain(Image{}, 0).size() == 1);
+}
+
+namespace {
+// A TGA file's bytes: its 18-byte header, then the pixels as given
+std::string Tga(uint8_t type, uint16_t width, uint16_t height, uint8_t bits, uint8_t descriptor, const std::string& pixels)
+{
+	std::string h(18, '\0');
+	h[2] = (char)type;
+	h[12] = (char)(width & 0xff);
+	h[13] = (char)(width >> 8);
+	h[14] = (char)(height & 0xff);
+	h[15] = (char)(height >> 8);
+	h[16] = (char)bits;
+	h[17] = (char)descriptor;
+	return h + pixels;
+}
+
+std::string Pixel(const Image& image, uint32_t x, uint32_t y)
+{
+	char hex[9];
+	const uint8_t* p = &image.rgba[((size_t)y * image.width + x) * 4];
+	std::snprintf(hex, sizeof(hex), "%02x%02x%02x%02x", p[0], p[1], p[2], p[3]);
+	return hex;
+}
+} // namespace
+
+TEST_CASE("Render_model_textures_can_be_TGA")
+{
+	TempDir tmp;
+	// Plain true colour, 24 bits (BGR), its rows from the bottom: the first row given is the image's last
+	WriteFile(tmp.path / "plain.tga", Tga(2, 2, 2, 24, 0, std::string("\x00\x00\xff" "\x00\xff\x00" "\xff\x00\x00" "\x10\x20\x30", 12)));
+	std::optional<Image> plain = LoadRenderModelTexture(tmp.path / "plain.tga");
+	REQUIRE(plain.has_value());
+	CHECK(plain->width == 2);
+	CHECK(plain->height == 2);
+	CHECK(Pixel(*plain, 0, 0) == "0000ffff");
+	CHECK(Pixel(*plain, 1, 0) == "302010ff");
+	CHECK(Pixel(*plain, 0, 1) == "ff0000ff");
+	CHECK(Pixel(*plain, 1, 1) == "00ff00ff");
+
+	// Run-length encoded, 32 bits from the top: a run of three, then one pixel on its own
+	WriteFile(tmp.path / "rle.tga", Tga(10, 4, 1, 32, 0x20, std::string("\x82" "\x01\x02\x03\x80" "\x00" "\x04\x05\x06\x07", 10)));
+	std::optional<Image> rle = LoadRenderModelTexture(tmp.path / "rle.tga");
+	REQUIRE(rle.has_value());
+	CHECK(Pixel(*rle, 0, 0) == "03020180");
+	CHECK(Pixel(*rle, 2, 0) == "03020180");
+	CHECK(Pixel(*rle, 3, 0) == "06050407");
+
+	// Greyscale
+	WriteFile(tmp.path / "grey.tga", Tga(3, 1, 1, 8, 0x20, std::string("\x7f", 1)));
+	std::optional<Image> grey = LoadRenderModelTexture(tmp.path / "grey.tga");
+	REQUIRE(grey.has_value());
+	CHECK(Pixel(*grey, 0, 0) == "7f7f7fff");
+
+	// Cut short, colour-mapped, or 16 bits: none
+	WriteFile(tmp.path / "short.tga", Tga(2, 2, 2, 24, 0, std::string("\x00\x00\xff", 3)));
+	CHECK_FALSE(LoadRenderModelTexture(tmp.path / "short.tga").has_value());
+	WriteFile(tmp.path / "mapped.tga", Tga(1, 1, 1, 8, 0, std::string("\x00", 1)));
+	CHECK_FALSE(LoadRenderModelTexture(tmp.path / "mapped.tga").has_value());
+	WriteFile(tmp.path / "sixteen.tga", Tga(2, 1, 1, 16, 0, std::string("\x00\x00", 2)));
+	CHECK_FALSE(LoadRenderModelTexture(tmp.path / "sixteen.tga").has_value());
+}
+
+TEST_CASE("Render_model_with_several_materials_gets_their_atlas")
+{
+	TempDir tmp;
+	fs::path dir = tmp.path / "two";
+	// Two textures: red 2x2 and blue 1x1 (TGA, from the top)
+	WriteFile(dir / "red.tga", Tga(2, 2, 2, 24, 0x20, std::string("\x00\x00\xff\x00\x00\xff\x00\x00\xff\x00\x00\xff", 12)));
+	WriteFile(dir / "blue.tga", Tga(2, 1, 1, 24, 0x20, std::string("\xff\x00\x00", 3)));
+	WriteFile(dir / "two.mtl", "newmtl red\nmap_Kd red.tga\nnewmtl blue\nmap_Kd blue.tga\n");
+	// Two triangles sharing a corner, one of each material
+	WriteFile(dir / "two.obj", "mtllib two.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nv 1 1 0\nvt 0 0\nvt 1 1\n"
+	                           "usemtl red\nf 1/1 2/2 3/1\nusemtl blue\nf 2/2 4/1 3/1\n");
+	std::optional<RmMesh> mesh = LoadObjMesh(dir / "two.obj");
+	REQUIRE(mesh.has_value());
+	REQUIRE(mesh->textures.size() == 2);
+	CHECK(mesh->textures[0].filename() == "red.tga");
+	CHECK(mesh->textures[1].filename() == "blue.tga");
+	CHECK(mesh->diffuse == mesh->textures[0]);
+	// The shared corners are a vertex for each material; each material's v in its half of the atlas
+	CHECK(mesh->vertices.size() == 6);
+	REQUIRE(mesh->indices.size() == 6);
+	for (size_t i = 0; i < 3; i++) {
+		float v = mesh->vertices[mesh->indices[i]].rfTextureCoord[1];
+		CHECK(v >= 0.0f);
+		CHECK(v <= 0.5f);
+	}
+	for (size_t i = 3; i < 6; i++) {
+		float v = mesh->vertices[mesh->indices[i]].rfTextureCoord[1];
+		CHECK(v >= 0.5f);
+		CHECK(v <= 1.0f);
+	}
+
+	// The atlas: both at the widest's size, red above blue
+	std::optional<Image> atlas = LoadRenderModelTextures(mesh->textures);
+	REQUIRE(atlas.has_value());
+	CHECK(atlas->width == 2);
+	CHECK(atlas->height == 4);
+	CHECK(Pixel(*atlas, 1, 1) == "ff0000ff");
+	CHECK(Pixel(*atlas, 0, 2) == "0000ffff");
+	CHECK(Pixel(*atlas, 1, 3) == "0000ffff");
+
+	// One material: its texture as it is, the UVs untouched; LoadObj tells the first material's texture
+	WriteFile(dir / "one.obj", "mtllib two.mtl\nv 0 0 0\nv 1 0 0\nv 0 1 0\nvt 0 0\nvt 1 1\nusemtl blue\nf 1/1 2/2 3/1\n");
+	std::optional<RmMesh> one = LoadObjMesh(dir / "one.obj");
+	REQUIRE(one.has_value());
+	CHECK(one->textures.size() == 1);
+	CHECK(one->vertices[0].rfTextureCoord[1] == 1.0f);
+	std::vector<RmVertex> verts;
+	std::vector<uint16_t> indices;
+	std::string diffuse;
+	CHECK(LoadObj(dir / "two.obj", verts, indices, &diffuse));
+	CHECK(diffuse == "red.tga");
+}
+
+TEST_CASE("Built_in_render_models_are_read_by_the_OBJ_reader")
+{
+	for (int id : { RES_O_HAND_LEFT, RES_O_HAND_RIGHT, RES_O_VIVE_TRACKER }) {
+		std::vector<char> text = ReadBuiltInResource(id, RES_T_OBJ);
+		REQUIRE_FALSE(text.empty());
+		std::vector<RmVertex> verts;
+		std::vector<uint16_t> indices;
+		REQUIRE(ParseObj(std::string_view(text.data(), text.size()), verts, indices, nullptr));
+		CHECK(indices.size() % 3 == 0);
+		CHECK(verts.size() <= indices.size());
+		// A corner the faces share is one vertex: the tracker's have
+		if (id == RES_O_VIVE_TRACKER)
+			CHECK(verts.size() < indices.size());
+	}
+}
+
+TEST_CASE("Render_models_load_asynchronously")
+{
+	BaseRenderModels rm;
+	OOVR_RenderModel_t* model = nullptr;
+	// The first call starts the load; it's answered once done, and at once after that
+	CHECK((int)rm.LoadRenderModel_Async("renderLeftHand", &model) == 100);
+	CHECK(model == nullptr);
+	BaseRenderModels::WaitForLoads();
+	CHECK((int)rm.LoadRenderModel_Async("renderLeftHand", &model) == 0);
+	REQUIRE(model != nullptr);
+	rm.FreeRenderModel(model);
+	model = nullptr;
+	CHECK((int)rm.LoadRenderModel_Async("renderLeftHand", &model) == 0);
+	rm.FreeRenderModel(model);
+
+	// A name with no model: loading, then not one
+	model = nullptr;
+	CHECK((int)rm.LoadRenderModel_Async("no_such_model_here", &model) == 100);
+	BaseRenderModels::WaitForLoads();
+	CHECK((int)rm.LoadRenderModel_Async("no_such_model_here", &model) == 301);
+	CHECK(model == nullptr);
 }

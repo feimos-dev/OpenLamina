@@ -6,7 +6,7 @@
 // A model's folder holds <name>.obj (the whole model) and, optionally, <name>.json, whose "components" name the parts
 // that move or that games attach things to: each with its own OBJ ("filename", in the model's coordinates), its local
 // frame ("component_local": "origin" and "rotate_xyz" in degrees) and how it moves ("motion"). An OBJ's material
-// library names its texture (map_Kd); textures are read as PNG.
+// library names each material's texture (map_Kd); textures are read as PNG or TGA.
 
 #include "Misc/Image.h"
 #include "generated/interfaces/deleted_types.h"
@@ -19,6 +19,7 @@
 #include <memory>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <vector>
 
 // The vertex OpenVR's render models use (position and normal in metres in the device's space, then UV)
@@ -44,7 +45,16 @@ struct RmModel {
 struct RmMesh {
 	std::vector<RmVertex> vertices;
 	std::vector<uint16_t> indices; // three per triangle
-	std::filesystem::path diffuse; // the texture file, empty for none
+	std::filesystem::path diffuse; // the texture file, empty for none; with several textures, the first
+	// Every texture its materials use, in the order first used. With more than one, the mesh's UVs are into their
+	// atlas (LoadRenderModelTextures): each texture a band of it from the top, in this order.
+	std::vector<std::filesystem::path> textures;
+};
+
+// What ParseObj tells of an OBJ's materials: its material libraries (mtllib), and each vertex's material (usemtl)
+struct ObjMaterials {
+	std::vector<std::string> libraries;
+	std::vector<std::string> vertexMaterials;
 };
 
 /** The model names under <steamvr>/resources/rendermodels (each folder), then each driver's as "{<driver>}<name>",
@@ -60,20 +70,34 @@ std::filesystem::path SteamVRRenderModelFolder(const std::filesystem::path& stea
  * Never throws. */
 std::optional<RmModel> LoadSteamVRRenderModel(const std::filesystem::path& steamvr, const std::string& name);
 
-/** Reads an OBJ file's triangles (faces of more than three corners as fans; negative indices count back), one vertex
- * for each distinct position/UV/normal corner. v is turned into 1 - v: OBJ's v starts at the texture's bottom row,
- * a RenderModel_TextureMap_t's first row is its top.
- * diffuse, if given, gets the map_Kd of the first material used, as a path relative to the OBJ's folder ("" for none).
- * False for a file that can't be read, has no triangles, has a corner that points nowhere, or needs more than
- * 65535 vertices; nothing is appended then. */
+/** Reads an OBJ's triangles from its text (faces of more than three corners as fans; negative indices count back), one
+ * vertex for each distinct position/UV/normal corner of a material. v is turned into 1 - v: OBJ's v starts at the
+ * texture's bottom row, a RenderModel_TextureMap_t's first row is its top. Positions and normals are as the text has
+ * them. materials, if given, gets the libraries and each appended vertex's material.
+ * False for text that has no triangles, has a corner that points nowhere, or needs more than 65535 vertices; nothing is
+ * appended then. */
+bool ParseObj(std::string_view text, std::vector<RmVertex>& verts, std::vector<uint16_t>& indices, ObjMaterials* materials);
+
+/** ParseObj on a file. diffuse, if given, gets the map_Kd of the first material used that has one, as a path relative
+ * to the OBJ's folder ("" for none). False also for a file that can't be read. */
 bool LoadObj(const std::filesystem::path& obj, std::vector<RmVertex>& verts, std::vector<uint16_t>& indices, std::string* diffuse);
 
+/** An OBJ file as a mesh, with every material's texture (RmMesh::textures). nullopt (logged) if LoadObj would fail. */
+std::optional<RmMesh> LoadObjMesh(const std::filesystem::path& obj);
+
 /** The triangles of a model: its component's OBJ, or with an empty component name <name>.obj, else (if there is
- * none) every component with an OBJ that's visible by default, together. nullopt if there's nothing to draw. */
+ * none) every component with an OBJ that's visible by default, together, with every material's texture.
+ * nullopt if there's nothing to draw. */
 std::optional<RmMesh> LoadRenderModelMesh(const RmModel& model, const std::string& component);
 
-/** A PNG file as RGBA8, through LoadImageFile. nullopt (logged) for a file it refuses. */
+/** A texture file as RGBA8: a TGA file (true-colour or greyscale, plain or run-length encoded) by its extension,
+ * anything else through LoadImageFile. nullopt (logged) for a file it refuses. */
 std::optional<Image> LoadRenderModelTexture(const std::filesystem::path& file);
+
+/** A mesh's textures (RmMesh::textures) as one image: the texture itself for one; for several their atlas, each
+ * resampled to the widest's width and a band of the same height, from the top in order, no taller in all than
+ * kMaxImageFileSide. nullopt if any can't be read. */
+std::optional<Image> LoadRenderModelTextures(const std::vector<std::filesystem::path>& files);
 
 /** The image at another size, each pixel the nearest of the original's. An empty image if either size is 0 or the
  * original is empty. */

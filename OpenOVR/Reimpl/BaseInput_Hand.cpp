@@ -362,7 +362,7 @@ static auto GetInterpolatedControllerState(const LegacyControllerActions& contro
 	info.action = controller.triggerCurl;
 	if (info.action != XR_NULL_HANDLE && XR_SUCCEEDED(xrGetActionStateFloat(xr_session.get(), &info, &state)) && state.isActive
 	    && state.currentState >= simulateCurlThreshold)
-		output.triggerPct = std::max(output.triggerPct, state.currentState);
+		output.triggerPct = (std::max)(output.triggerPct, state.currentState);
 	info.action = controller.triggerProximity;
 	if (info.action != XR_NULL_HANDLE && XR_SUCCEEDED(xrGetActionStateBoolean(xr_session.get(), &info, &stateBool)) && stateBool.isActive
 	    && stateBool.currentState)

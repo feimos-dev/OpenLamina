@@ -18,6 +18,8 @@
 #include "Misc/Input/InteractionProfile.h"
 
 #include <algorithm>
+#include <chrono>
+#include <future>
 #include <map>
 #include <mutex>
 #include <set>
@@ -194,8 +196,9 @@ namespace {
 constexpr size_t kMaxKeptTextureBytes = 128u * 1024 * 1024;
 struct SteamVRTextures {
 	std::mutex lock;
-	std::map<std::filesystem::path, TextureID_t> ids; // -1: couldn't be read
-	std::map<TextureID_t, std::filesystem::path> files;
+	// By a mesh's textures (several: their atlas); -1 couldn't be read
+	std::map<std::vector<std::filesystem::path>, TextureID_t> ids;
+	std::map<TextureID_t, std::vector<std::filesystem::path>> files;
 	std::map<TextureID_t, std::shared_ptr<const Image>> kept;
 	std::vector<TextureID_t> recent; // the kept ones, the most recently asked for last
 	size_t keptBytes = 0;
@@ -225,7 +228,7 @@ SteamVRTextures& Textures()
 }
 } // namespace
 
-static TextureID_t SteamVRTextureId(const std::filesystem::path& file)
+static TextureID_t SteamVRTextureId(const std::vector<std::filesystem::path>& file)
 {
 	if (file.empty())
 		return -1;
@@ -236,7 +239,7 @@ static TextureID_t SteamVRTextureId(const std::filesystem::path& file)
 		if (it != t.ids.end())
 			return it->second;
 	}
-	std::optional<Image> tex = LoadRenderModelTexture(file); // logged if it can't be read
+	std::optional<Image> tex = LoadRenderModelTextures(file); // logged if it can't be read
 	std::lock_guard<std::mutex> guard(t.lock);
 	auto it = t.ids.find(file);
 	if (it != t.ids.end())
@@ -256,7 +259,7 @@ static constexpr TextureID_t kOwnTextureId = 1000000;
 static std::shared_ptr<const Image> SteamVRTexture(TextureID_t id)
 {
 	SteamVRTextures& t = Textures();
-	std::filesystem::path file;
+	std::vector<std::filesystem::path> file;
 	{
 		std::lock_guard<std::mutex> guard(t.lock);
 		auto it = t.kept.find(id);
@@ -271,7 +274,7 @@ static std::shared_ptr<const Image> SteamVRTexture(TextureID_t id)
 		file = known->second;
 	}
 	// Let go since it was read: read again (gone or damaged meanwhile: no texture)
-	std::optional<Image> tex = LoadRenderModelTexture(file);
+	std::optional<Image> tex = LoadRenderModelTextures(file);
 	if (!tex)
 		return nullptr;
 	auto image = std::make_shared<const Image>(std::move(*tex));
@@ -313,15 +316,8 @@ static std::optional<RmMesh> SteamVRMesh(const string& name)
 	try {
 		std::filesystem::path file = PathFromUtf8(name);
 		std::error_code ec;
-		if (file.is_absolute() && file.extension() == ".obj" && std::filesystem::is_regular_file(file, ec)) {
-			RmMesh mesh;
-			std::string diffuse;
-			if (!LoadObj(file, mesh.vertices, mesh.indices, &diffuse))
-				return std::nullopt;
-			if (!diffuse.empty())
-				mesh.diffuse = file.parent_path() / PathFromUtf8(diffuse);
-			return mesh;
-		}
+		if (file.is_absolute() && file.extension() == ".obj" && std::filesystem::is_regular_file(file, ec))
+			return LoadObjMesh(file);
 	} catch (const std::exception&) {
 	}
 	return std::nullopt;
@@ -350,47 +346,10 @@ static const std::vector<string>& AllModelNames()
 	return names;
 }
 
-static OOVR_RenderModel_Vertex_t split_face(
-    const string& s,
-    const std::vector<vr::HmdVector3_t>& verts,
-    const std::vector<vr::HmdVector2_t>& uvs,
-    const std::vector<vr::HmdVector3_t>& normals)
-{
-
-	size_t slash1 = s.find('/');
-	size_t slash2 = s.find('/', slash1 + 1);
-
-	// The models are OpenComposite's own, so a bad face is a build problem: it becomes a zero vertex
-	OOVR_RenderModel_Vertex_t out{};
-	if (slash1 == string::npos || slash2 == string::npos) {
-		OOVR_LOGF("Bad face spec: %s", s.c_str());
-		return out;
-	}
-
-	int vert = atoi(s.substr(0, slash1).c_str());
-	int uv = atoi(s.substr(slash1 + 1, slash2 - slash1 - 1).c_str());
-	int norm = atoi(s.substr(slash2 + 1).c_str());
-
-	// OBJ references start at one
-	vert--;
-	uv--;
-	norm--;
-	if (vert < 0 || uv < 0 || norm < 0 || (size_t)vert >= verts.size() || (size_t)uv >= uvs.size() || (size_t)norm >= normals.size()) {
-		OOVR_LOGF("Face spec out of range: %s", s.c_str());
-		return out;
-	}
-
-	// Build the result
-	out.vPosition = verts[vert];
-	out.vNormal = normals[norm];
-	out.rfTextureCoord[0] = uvs[uv].v[0];
-	out.rfTextureCoord[1] = uvs[uv].v[1];
-	return out;
-}
-
 // The model built into the DLL as the game gets it, built once
 struct BuiltInMesh {
-	std::vector<OOVR_RenderModel_Vertex_t> vertices;
+	std::vector<RmVertex> vertices;
+	std::vector<uint16_t> indices;
 };
 
 static std::shared_ptr<const BuiltInMesh> BuildBuiltInMesh(int rid, float sided)
@@ -398,12 +357,12 @@ static std::shared_ptr<const BuiltInMesh> BuildBuiltInMesh(int rid, float sided)
 	std::vector<char> resource = ReadBuiltInResource(rid, RES_T_OBJ);
 	if (resource.empty())
 		return nullptr;
-	std::istringstream res(string(resource.data(), resource.size()));
-
-	std::vector<vr::HmdVector3_t> verts;
-	std::vector<vr::HmdVector2_t> uvs;
-	std::vector<vr::HmdVector3_t> normals;
-	std::vector<OOVR_RenderModel_Vertex_t> vertexData;
+	auto mesh = std::make_shared<BuiltInMesh>();
+	// The models are OpenLamina's own, so one that can't be read is a build problem: it has no model
+	if (!ParseObj(std::string_view(resource.data(), resource.size()), mesh->vertices, mesh->indices, nullptr)) {
+		OOVR_LOGF("Built-in render model %d can't be read", rid);
+		return nullptr;
+	}
 
 	// Transform to line up the model with the Touch controller
 	mat4 modelTransform = mat4(glm::rotate(sided * std::numbers::pi_v<float> / 2, vec3(0, 0, 1)));
@@ -414,104 +373,122 @@ static std::shared_ptr<const BuiltInMesh> BuildBuiltInMesh(int rid, float sided)
 
 	mat4 transform = glm::inverse(rid == RES_O_VIVE_TRACKER ? BaseCompositor::GetTrackerTransform() : BaseCompositor::GetHandTransform()) * modelTransform;
 
-	while (!res.eof()) {
-		string op;
-		res >> op;
-
-		if (op == "v") {
-			// Vertex
-			vec3 v;
-			res >> v.x >> v.y >> v.z;
-			// Maya exports in cm, so translate that to meters
-			v *= 0.01f;
-
-			verts.push_back(G2S_v3f(v));
-		} else if (op == "vt") {
-			// UV
-			float x, y;
-			res >> x >> y;
-			uvs.push_back(vr::HmdVector2_t{ x, y });
-		} else if (op == "vn") {
-			// Normal
-			vec3 v;
-			res >> v.x >> v.y >> v.z;
-
-			normals.push_back(G2S_v3f(v));
-		} else if (op == "f") {
-			// Face
-			string a, b, c;
-			res >> a >> b >> c;
-
-			vertexData.push_back(split_face(a, verts, uvs, normals));
-			vertexData.push_back(split_face(b, verts, uvs, normals));
-			vertexData.push_back(split_face(c, verts, uvs, normals));
-		}
-	}
-
-	auto mesh = std::make_shared<BuiltInMesh>();
-	mesh->vertices.resize(vertexData.size());
-	for (size_t i = 0; i < vertexData.size(); i++) {
-		vec4 vertex = transform * vec4(vertexData[i].vPosition.v[0], vertexData[i].vPosition.v[1], vertexData[i].vPosition.v[2], 1.0f);
-		OOVR_RenderModel_Vertex_t& out = mesh->vertices[i];
+	for (RmVertex& out : mesh->vertices) {
+		// Maya exports in cm, so translate that to meters
+		vec4 vertex = transform * vec4(out.vPosition.v[0] * 0.01f, out.vPosition.v[1] * 0.01f, out.vPosition.v[2] * 0.01f, 1.0f);
 		out.vPosition.v[0] = vertex.x;
 		out.vPosition.v[1] = vertex.y;
 		out.vPosition.v[2] = vertex.z;
-		out.vNormal = vertexData[i].vNormal;
-		out.rfTextureCoord[0] = vertexData[i].rfTextureCoord[0];
-		out.rfTextureCoord[1] = vertexData[i].rfTextureCoord[1];
 	}
 	return mesh;
 }
 
 // A model for the game from the built, as a copy it frees with FreeRenderModel
-static EVRRenderModelError MakeRenderModel(const BuiltInMesh& mesh, RenderModel_t** renderModel)
+static RenderModel_t* MakeRenderModel(const std::vector<RmVertex>& vertices, const std::vector<uint16_t>& indices, TextureID_t texture)
 {
 	auto* rm = new RenderModel_t();
-	rm->unVertexCount = (uint32_t)mesh.vertices.size();
-	auto* vertices = new OOVR_RenderModel_Vertex_t[mesh.vertices.size()];
-	memcpy(vertices, mesh.vertices.data(), mesh.vertices.size() * sizeof(OOVR_RenderModel_Vertex_t));
-	rm->rVertexData = vertices;
-	auto* indices = new uint16_t[mesh.vertices.size()];
-	for (size_t i = 0; i < mesh.vertices.size(); i++)
-		indices[i] = static_cast<uint16_t>(i);
-	rm->rIndexData = indices;
-	rm->unTriangleCount = rm->unVertexCount / 3;
-	rm->diffuseTextureId = kOwnTextureId;
+	rm->unVertexCount = (uint32_t)vertices.size();
+	auto* vertexData = new OOVR_RenderModel_Vertex_t[vertices.size()];
+	memcpy(vertexData, vertices.data(), vertices.size() * sizeof(OOVR_RenderModel_Vertex_t));
+	rm->rVertexData = vertexData;
+	auto* indexData = new uint16_t[indices.size()];
+	memcpy(indexData, indices.data(), indices.size() * sizeof(uint16_t));
+	rm->rIndexData = indexData;
+	rm->unTriangleCount = (uint32_t)(indices.size() / 3);
+	rm->diffuseTextureId = texture;
 	AddLive(LiveModels(), rm);
-	*renderModel = rm;
-	return VRRenderModelError_None;
+	return rm;
 }
+
+// A model as loaded, kept for the process: SteamVR's (with its texture's id) or the built-in one
+namespace {
+struct LoadedModel {
+	EVRRenderModelError error = VRRenderModelError_None; // None, NotSupported, or InvalidModel for a name with no model
+	std::vector<RmVertex> vertices;
+	std::vector<uint16_t> indices;
+	TextureID_t texture = -1;
+};
+
+// The models being loaded and loaded, by name. A load runs on a thread of its own; LoadRenderModel_Async answers
+// Loading until it's done. Never freed: a load can still be running when the program exits.
+struct ModelLoads {
+	std::mutex lock;
+	std::map<string, std::shared_future<std::shared_ptr<const LoadedModel>>> byName;
+};
+ModelLoads& Loads()
+{
+	static ModelLoads& loads = *new ModelLoads;
+	return loads;
+}
+} // namespace
+
+static std::shared_ptr<const LoadedModel> LoadModel(const string& name);
 
 EVRRenderModelError BaseRenderModels::LoadRenderModel_Async(const char* pchRenderModelName, RenderModel_t** renderModel)
 {
 	if (!pchRenderModelName || !renderModel)
 		return VRRenderModelError_InvalidArg;
 	*renderModel = nullptr;
-	{
-		// Games load models every frame: log each name once
-		static std::mutex loggedLock;
-		static std::set<string> logged;
-		std::lock_guard<std::mutex> guard(loggedLock);
-		if (logged.insert(pchRenderModelName).second)
-			OOVR_LOGF("LoadRenderModel_Async %s", pchRenderModelName);
-	}
 	string name = pchRenderModelName;
 
-	// SteamVR's model of that name, as SteamVR answers it; else (no SteamVR, or a model it can't load) OpenLamina's own
+	// Started on the first call for a name, answered once it's done, at once from then on
+	std::shared_future<std::shared_ptr<const LoadedModel>> load;
+	{
+		ModelLoads& loads = Loads();
+		std::lock_guard<std::mutex> guard(loads.lock);
+		auto it = loads.byName.find(name);
+		if (it == loads.byName.end()) {
+			OOVR_LOGF("LoadRenderModel_Async %s", pchRenderModelName);
+			loads.byName.emplace(name, std::async(std::launch::async, LoadModel, name).share());
+			return VRRenderModelError_Loading;
+		}
+		load = it->second;
+	}
+	if (load.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+		return VRRenderModelError_Loading;
+
+	std::shared_ptr<const LoadedModel> loaded = load.get();
+	if (!loaded)
+		return VRRenderModelError_InvalidModel;
+	if (loaded->error == VRRenderModelError_InvalidModel) {
+		// A model OpenLamina doesn't have: games then draw none, or their own
+		OC_UNSUPPORTED(VRRenderModelError_InvalidModel, "LoadRenderModel_Async: no render model '%s'", pchRenderModelName);
+	}
+	if (loaded->error != VRRenderModelError_None)
+		return loaded->error;
+	*renderModel = MakeRenderModel(loaded->vertices, loaded->indices, loaded->texture);
+	return VRRenderModelError_None;
+}
+
+void BaseRenderModels::WaitForLoads()
+{
+	std::vector<std::shared_future<std::shared_ptr<const LoadedModel>>> pending;
+	{
+		ModelLoads& loads = Loads();
+		std::lock_guard<std::mutex> guard(loads.lock);
+		for (auto& [name, load] : loads.byName)
+			pending.push_back(load);
+	}
+	for (auto& load : pending)
+		load.wait();
+}
+
+BaseRenderModels::~BaseRenderModels()
+{
+	// A load mustn't outlive the runtime it's running in
+	WaitForLoads();
+}
+
+// The model of a name, on a load's thread: SteamVR's of that name, as SteamVR answers it; else (no SteamVR, or a
+// model it can't load) OpenLamina's own
+static std::shared_ptr<const LoadedModel> LoadModel(const string& name)
+{
+	auto loaded = std::make_shared<LoadedModel>();
 	if (std::optional<RmMesh> mesh = SteamVRMesh(name)) {
-		auto* rm = new RenderModel_t();
-		rm->unVertexCount = (uint32_t)mesh->vertices.size();
-		auto* vertices = new OOVR_RenderModel_Vertex_t[mesh->vertices.size()];
-		memcpy(vertices, mesh->vertices.data(), mesh->vertices.size() * sizeof(OOVR_RenderModel_Vertex_t));
-		rm->rVertexData = vertices;
-		auto* indices = new uint16_t[mesh->indices.size()];
-		memcpy(indices, mesh->indices.data(), mesh->indices.size() * sizeof(uint16_t));
-		rm->rIndexData = indices;
-		rm->unTriangleCount = (uint32_t)(mesh->indices.size() / 3);
-		rm->diffuseTextureId = SteamVRTextureId(mesh->diffuse);
-		AddLive(LiveModels(), rm);
-		*renderModel = rm;
-		return VRRenderModelError_None;
+		loaded->vertices = std::move(mesh->vertices);
+		loaded->indices = std::move(mesh->indices);
+		loaded->texture = SteamVRTextureId(mesh->textures);
+		return loaded;
 	}
 
 	int rid;
@@ -541,26 +518,23 @@ EVRRenderModelError BaseRenderModels::LoadRenderModel_Async(const char* pchRende
 		sided = 1;
 	} else if (name == "oculusHmdRenderModel") {
 		// no model for the HMD
-		return VRRenderModelError_NotSupported;
+		loaded->error = VRRenderModelError_NotSupported;
+		return loaded;
 	} else {
-		// A model OpenComposite doesn't have: games then draw none, or their own
-		OC_UNSUPPORTED(VRRenderModelError_InvalidModel, "LoadRenderModel_Async: no render model '%s'", pchRenderModelName);
+		// A model OpenLamina doesn't have: games then draw none, or their own
+		loaded->error = VRRenderModelError_InvalidModel;
+		return loaded;
 	}
 
-	{
-		// Built once per model: the parse is the slow part
-		static std::mutex builtInLock;
-		static std::map<string, std::shared_ptr<const BuiltInMesh>> builtIn;
-		std::lock_guard<std::mutex> guard(builtInLock);
-		auto it = builtIn.find(name);
-		if (it == builtIn.end()) {
-			std::shared_ptr<const BuiltInMesh> mesh = BuildBuiltInMesh(rid, sided);
-			it = builtIn.emplace(name, mesh).first;
-		}
-		if (!it->second)
-			return VRRenderModelError_NotSupported;
-		return MakeRenderModel(*it->second, renderModel);
+	std::shared_ptr<const BuiltInMesh> mesh = BuildBuiltInMesh(rid, sided);
+	if (!mesh) {
+		loaded->error = VRRenderModelError_NotSupported;
+		return loaded;
 	}
+	loaded->vertices = mesh->vertices;
+	loaded->indices = mesh->indices;
+	loaded->texture = kOwnTextureId;
+	return loaded;
 }
 
 void BaseRenderModels::FreeRenderModel(RenderModel_t* renderModel)
@@ -599,8 +573,12 @@ bool BaseRenderModels::LoadRenderModelInline(const char* pchRenderModelName, vr:
 		return false;
 	*pRenderModel = {};
 
+	// One call answers the whole model: its load is waited for
 	RenderModel_t* model = nullptr;
-	if (LoadRenderModel_Async(pchRenderModelName, &model) != VRRenderModelError_None || !model)
+	EVRRenderModelError err;
+	while ((err = LoadRenderModel_Async(pchRenderModelName, &model)) == VRRenderModelError_Loading)
+		WaitForLoads();
+	if (err != VRRenderModelError_None || !model)
 		return false;
 	RenderModel_TextureMap_t* texture = nullptr;
 	if (LoadTexture_Async(model->diffuseTextureId >= 0 ? model->diffuseTextureId : kOwnTextureId, &texture) != VRRenderModelError_None || !texture) {
