@@ -1,6 +1,8 @@
 #include "stdafx.h"
 #define BASE_IMPL
+#include "BaseOverlay.h"
 #include "BaseOverlayView.h"
+#include "generated/static_bases.gen.h"
 
 /** Acquire an OverlayView_t from an overlay handle
  *
@@ -42,7 +44,8 @@ vr::EVROverlayError BaseOverlayView::ReleaseOverlayView(OOVR_VROverlayView_t* pO
 /** Posts an overlay event */
 void BaseOverlayView::PostOverlayEvent(vr::VROverlayHandle_t ulOverlayHandle, const vr::VREvent_t* pvrEvent)
 {
-	OC_UNSUPPORTED_VOID("PostOverlayEvent: other programs' overlays can't be reached");
+	if (BaseOverlay* overlay = GetUnsafeBaseOverlay())
+		overlay->_PostOverlayEvent(ulOverlayHandle, pvrEvent);
 }
 
 /** Determines whether this process is permitted to view an overlay's content. */

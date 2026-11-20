@@ -1229,3 +1229,54 @@ TEST_CASE("A_quit_request_that_cannot_be_sent_is_undone")
 	CHECK(apps.GetTransitionState() == VRApplicationTransition_None);
 	BaseApplications::SetSceneProcess(store, false);
 }
+
+TEST_CASE("Overlay_command_crosses_between_programs")
+{
+	OcOverlayCommand flag;
+	flag.pid = 4321;
+	flag.handle = 0x1234567890ull;
+	flag.kind = OcOverlayCommand::Flag;
+	flag.flag = 15;
+	flag.enabled = true;
+	std::optional<std::array<uint64_t, 4>> packed = OcPackOverlayCommand(flag);
+	REQUIRE(packed);
+	uint64_t raw[4] = { (*packed)[0], (*packed)[1], (*packed)[2], (*packed)[3] };
+	OcOverlayCommand back = OcUnpackOverlayCommand(raw);
+	CHECK(back.pid == 4321);
+	CHECK(back.handle == 0x1234567890ull);
+	CHECK(back.kind == OcOverlayCommand::Flag);
+	CHECK(back.flag == 15);
+	CHECK(back.enabled);
+
+	OcOverlayCommand alpha;
+	alpha.kind = OcOverlayCommand::Alpha;
+	alpha.number = 0.25f;
+	packed = OcPackOverlayCommand(alpha);
+	REQUIRE(packed);
+	uint64_t rawAlpha[4] = { (*packed)[0], (*packed)[1], (*packed)[2], (*packed)[3] };
+	CHECK(OcUnpackOverlayCommand(rawAlpha).number == 0.25f);
+
+	// An event's type and the first 16 bytes of its data
+	OcOverlayCommand event;
+	event.kind = OcOverlayCommand::Event;
+	event.eventType = vr::VREvent_MouseButtonDown;
+	vr::VREvent_Data_t data{};
+	data.mouse.x = 12.5f;
+	data.mouse.y = 7.0f;
+	data.mouse.button = vr::VRMouseButton_Left;
+	memcpy(event.data, &data, sizeof(event.data));
+	packed = OcPackOverlayCommand(event);
+	REQUIRE(packed);
+	uint64_t rawEvent[4] = { (*packed)[0], (*packed)[1], (*packed)[2], (*packed)[3] };
+	back = OcUnpackOverlayCommand(rawEvent);
+	CHECK(back.eventType == vr::VREvent_MouseButtonDown);
+	vr::VREvent_Data_t got{};
+	memcpy(&got, back.data, sizeof(back.data));
+	CHECK(got.mouse.x == 12.5f);
+	CHECK(got.mouse.y == 7.0f);
+	CHECK(got.mouse.button == vr::VRMouseButton_Left);
+
+	// A type too big to cross isn't packed
+	event.eventType = 1u << 24;
+	CHECK_FALSE(OcPackOverlayCommand(event));
+}

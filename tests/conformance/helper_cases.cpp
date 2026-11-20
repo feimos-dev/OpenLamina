@@ -6,6 +6,7 @@
 #include "IVRChaperoneSetup_006.h"
 #include "IVRCompositor_029.h"
 #include "IVRInput_011.h"
+#include "IVROverlayView_003.h"
 #include "IVROverlay_028.h"
 #include "IVRSettings_003.h"
 #include "IVRSystem_022.h"
@@ -444,12 +445,29 @@ void DashboardSceneCase(CaseContext& c)
 			} else {
 				r["helper_overlay_visible"] = Json::Value();
 			}
+			// The dashboard's panel itself, read through its key: shown, where the document has it
+			vr::VROverlayHandle_t systemUi = vr::k_ulOverlayHandleInvalid;
+			if (ov && ov->FindOverlay("system.systemui", &systemUi) == vr::VROverlayError_None) {
+				r["systemui_visible"] = ov->IsOverlayVisible(systemUi);
+				vr::HmdMatrix34_t centre{};
+				Json::Value pose;
+				if (ov->GetTransformForOverlayCoordinates(systemUi, vr::TrackingUniverseStanding, { { 0.5f, 0.5f } }, &centre) == vr::VROverlayError_None)
+					for (int i = 0; i < 3; i++)
+						pose["p"].append(centre.m[i][3]);
+				r["systemui_position"] = RoundedPosition(pose);
+				r["systemui_set_refused"] = ov->ShowOverlay(systemUi) != vr::VROverlayError_None;
+			}
 			if (in && trigger != vr::k_ulInvalidActionHandle) {
 				vr::IVRInput_011::InputAnalogActionData_t data{};
 				in->GetAnalogActionData(trigger, &data, sizeof(data), vr::k_ulInvalidInputValueHandle);
 				r["action_active_while_open"] = data.bActive;
 			}
 		}
+		// The overlay app's event for the game's dashboard overlay (PostOverlayEvent through its handle)
+		vr::VREvent_t posted{};
+		while (ov && ownDashboard != vr::k_ulOverlayHandleInvalid && ov->PollNextOverlayEvent(ownDashboard, &posted, sizeof(posted)))
+			if (posted.eventType == vr::VREvent_ButtonPress && posted.data.controller.button == 7)
+				r["own_dashboard_posted_event"] = true;
 		app.comp->Submit(vr::Eye_Left, tex.get(), nullptr, vr::Submit_Default);
 		app.comp->Submit(vr::Eye_Right, tex.get(), nullptr, vr::Submit_Default);
 		// At about the display's rate (the stand-in doesn't wait), so the overlay app has time to show the panel
@@ -460,6 +478,10 @@ void DashboardSceneCase(CaseContext& c)
 	r["deactivated"] = deactivated;
 	r["open_at_end"] = StoreDocument("dashboard")["open"];
 	if (ov) {
+		// The width the overlay app set on it, applied here
+		float width = 0;
+		ov->GetOverlayWidthInMeters(ownDashboard, &width);
+		r["own_dashboard_width"] = width;
 		ov->DestroyOverlay(ownPlain);
 		ov->DestroyOverlay(ownDashboard);
 	}
@@ -525,8 +547,18 @@ void DashboardOverlayCase(CaseContext& c)
 			vr::EVROverlayError keyError = vr::VROverlayError_None;
 			ov->GetOverlayKey(games, key, sizeof(key), &keyError);
 			gamesKey = key;
-			// Nothing of another program's overlay can be changed
-			r["game_overlay_set_refused"] = ov->SetOverlayWidthInMeters(games, 3) != vr::VROverlayError_None;
+			// Changed through the game, which applies it: read back from here at once
+			r["game_overlay_set"] = (int)ov->SetOverlayWidthInMeters(games, 0.75f);
+			float width = 0;
+			ov->GetOverlayWidthInMeters(games, &width);
+			r["game_overlay_width_read_back"] = width;
+			// An event for it, which the game polls on it
+			if (auto* view = Interface<vr::IVROverlayView_003::IVROverlayView>(c, "IVROverlayView_003")) {
+				vr::VREvent_t posted{};
+				posted.eventType = vr::VREvent_ButtonPress;
+				posted.data.controller.button = 7;
+				view->PostOverlayEvent(games, &posted);
+			}
 		}
 		if (sawOpen && !open && closedAt == std::chrono::steady_clock::time_point::max())
 			closedAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);

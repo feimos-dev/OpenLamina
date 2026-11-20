@@ -330,9 +330,21 @@ struct BaseOverlay::Sharing {
 		uint32_t pid;
 		uint64_t handle; // in its own program
 		vr::VROverlayHandle_t local; // the handle FindOverlay gave for it
+		// What this program asked of it (SendRemoteCommand) and its program hasn't published yet: what this program's
+		// getters answer, each until its program publishes it, or for at most kPendingSeconds
+		struct Pending {
+			std::optional<bool> shown;
+			std::optional<float> alpha, width;
+			std::optional<uint32_t> sortOrder;
+			std::map<uint32_t, bool> flags;
+			double until = 0;
+		} pending;
 	};
+	static constexpr double kPendingSeconds = 2.0;
 	std::map<std::string, std::unique_ptr<Remote>> remotes;
 	std::map<vr::VROverlayHandle_t, std::string> remoteKeys;
+	// FindOverlay's handle for the dashboard's panel (system.systemui), once asked for
+	vr::VROverlayHandle_t systemUi = vr::k_ulOverlayHandleInvalid;
 };
 
 struct BaseOverlay::DashboardState {
@@ -734,6 +746,10 @@ namespace {
 // The cursor: a circle on a 2 cm quad
 constexpr int kCursorPixels = 64;
 constexpr float kCursorMetres = 0.02f;
+// The lasers' beams: a gradient image, faint at the hand and bright where it meets a target, this thick; ahead this far
+// while the dashboard is open and the laser meets nothing
+constexpr int kBeamPixelsWide = 4, kBeamPixelsLong = 64;
+constexpr float kBeamMetres = 0.004f, kBeamReach = 2.0f;
 
 // A message box: a panel a millimetre per pixel, its buttons in a row along the bottom
 constexpr int kPanelWidth = 1000, kPanelHeight = 500;
@@ -923,6 +939,34 @@ public:
 	bool cursorShown = false;
 	XrPosef cursorPose{ { 0, 0, 0, 1 }, { 0, 0, 0 } };
 
+	// Each hand's beam, from where it aims to where it meets a target: one swapchain for both, made and filled on
+	// the game's thread
+	std::unique_ptr<CpuSwapchain> beamChain;
+	bool beamUnavailable = false;
+	bool beamShown[2] = { false, false };
+	overlay_maths::Placement beams[2]{};
+	XrCompositionLayerQuad beamLayers[2]{};
+	void HideBeams() { beamShown[0] = beamShown[1] = false; }
+	bool BeamReady()
+	{
+		if (!beamChain && !beamUnavailable) {
+			beamChain = CpuSwapchain::Create(kBeamPixelsWide, kBeamPixelsLong);
+			beamUnavailable = !beamChain;
+		}
+		if (!beamChain)
+			return false;
+		if (!beamChain->Live()) {
+			// Rows top (the far end) to bottom (the hand)
+			Canvas canvas(kBeamPixelsWide, kBeamPixelsLong);
+			for (int y = 0; y < kBeamPixelsLong; y++) {
+				const uint32_t alpha = 0xe0 - (uint32_t)((0xe0 - 0x20) * y / (kBeamPixelsLong - 1));
+				canvas.FillRect(0, y, kBeamPixelsWide, 1, 0x7fbfff00 | alpha);
+			}
+			beamChain->Upload(canvas.Pixels());
+		}
+		return beamChain->Live();
+	}
+
 	// The keyboard's quad; its placement in keyboardOrigin, and in the frame's space as last drawn
 	std::unique_ptr<CpuSwapchain> keyboardChain;
 	bool keyboardShown = false;
@@ -1035,10 +1079,46 @@ bool BaseOverlay::SceneAppPoints() const
 	    && SharedStore::IsSameProcessAlive(pid, scene["start"].isUInt64() ? scene["start"].asUInt64() : 0);
 }
 
-void BaseOverlay::TakeRemotePointerEvents()
+void BaseOverlay::TakeRemoteEvents()
 {
 	const uint32_t self = oc_current_pid();
 	for (const StoreEvent& s : SharedStore::Get().PollEvents(sharing->eventCursor)) {
+		if (s.eventType == OcEvent_OverlayCommand) {
+			// Another program's change to one of this program's overlays, made as this program's own call makes it
+			const OcOverlayCommand c = OcUnpackOverlayCommand(s.data);
+			OverlayData* o = c.pid == self ? OverlayAt(c.handle) : nullptr;
+			if (!o)
+				continue;
+			switch (c.kind) {
+			case OcOverlayCommand::Show:
+				ShowOverlay(c.handle);
+				break;
+			case OcOverlayCommand::Hide:
+				HideOverlay(c.handle);
+				break;
+			case OcOverlayCommand::Alpha:
+				SetOverlayAlpha(c.handle, c.number);
+				break;
+			case OcOverlayCommand::Width:
+				SetOverlayWidthInMeters(c.handle, c.number);
+				break;
+			case OcOverlayCommand::Flag:
+				if (c.flag < 64)
+					SetOverlayFlag(c.handle, (VROverlayFlags)c.flag, c.enabled);
+				break;
+			case OcOverlayCommand::SortOrder:
+				SetOverlaySortOrder(c.handle, c.sortOrder);
+				break;
+			case OcOverlayCommand::Event: {
+				VREvent_t e{};
+				e.eventType = c.eventType;
+				memcpy(&e.data, c.data, sizeof(c.data));
+				o->QueueEvent(e);
+				break;
+			}
+			}
+			continue;
+		}
 		if (s.eventType != OcEvent_RemotePointer)
 			continue;
 		const RemotePointerEvent r = UnpackRemotePointer(s.data);
@@ -1354,6 +1434,11 @@ void BaseOverlay::_PublishOverlays()
 	const bool helper = IsHelperSession();
 	if (!helper && !SceneDashboard() && !oovr_global_configuration.LaserMouse())
 		return;
+	// Other programs' changes to this program's overlays, applied before they're published
+	{
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		TakeRemoteEvents();
+	}
 	Sharing& sh = *sharing;
 	const double now = NowSeconds();
 	if (sh.lastTry >= 0 && now - sh.lastTry < 0.1)
@@ -1454,6 +1539,13 @@ void BaseOverlay::_PublishOverlays()
 			// As the game's own targets have it: a signed number on the pointer's side
 			e["sort_order"] = std::min<uint32_t>(o->sortOrder, INT_MAX - 1);
 			e["visible"] = placed && (o->visible || o->dashboard) && (o->texture.handle != nullptr || !o->rawImage.Empty());
+			// As IsOverlayVisible answers it in this program, and what else other programs read through FindOverlay
+			e["shown"] = ShownOnItsOwn(*o) && ParentsShown(*o);
+			e["alpha"] = round(o->colour.a, 0.001f);
+			e["mouse_scale"] = Json::Value(Json::arrayValue);
+			e["mouse_scale"].append(round(o->mouseScale.v[0], 0.001f));
+			e["mouse_scale"].append(round(o->mouseScale.v[1], 0.001f));
+			e["rendering_pid"] = o->renderingPid;
 			e["dashboard"] = o->dashboard;
 			if (o->thumbnail)
 				e["thumbnail"] = true;
@@ -1811,6 +1903,44 @@ void BaseOverlay::_UpdatePointer()
 			if (std::optional<XrPosef> point = sharing->remote.CursorPoint())
 				p.ShowCursor(*point);
 		}
+
+		// The beams: each tracked hand's, to what it meets (whether or not the target hides the cursor there), or
+		// straight ahead while the dashboard is open; none otherwise. Turned towards the head.
+		p.HideBeams();
+		std::optional<XrVector3f> head;
+		if (std::shared_ptr<ITrackedDevice> hmd = p.running ? BackendManager::Instance().GetDevice(vr::k_unTrackedDeviceIndex_Hmd) : nullptr) {
+			TrackedDevicePose_t pose{};
+			hmd->GetPose(space, &pose, ETrackingStateType::TrackingStateType_Rendering);
+			if (pose.bPoseIsValid) {
+				const HmdMatrix34_t& m = pose.mDeviceToAbsoluteTracking;
+				head = XrVector3f{ m.m[0][3], m.m[1][3], m.m[2][3] };
+			}
+		}
+		for (const PointerRay& ray : rays) {
+			const int h = ray.hand & 1;
+			if (!head || !ray.valid)
+				continue;
+			std::optional<XrVector3f> end;
+			if (std::optional<overlay_maths::Hit> at = p.mouse.Cursor(h)) {
+				end = at->point;
+			} else if (h == hand && pointRemote) {
+				if (std::optional<XrPosef> point = sharing->remote.CursorPoint())
+					end = point->position;
+			}
+			const float dirLength = std::sqrt(ray.dir.x * ray.dir.x + ray.dir.y * ray.dir.y + ray.dir.z * ray.dir.z);
+			if (!end && dash->shown && dirLength > 0) {
+				const float k = kBeamReach / dirLength;
+				end = XrVector3f{ ray.origin.x + ray.dir.x * k, ray.origin.y + ray.dir.y * k, ray.origin.z + ray.dir.z * k };
+			}
+			if (!end)
+				continue;
+			if (std::optional<overlay_maths::Placement> beam = overlay_maths::BeamPlacement(ray.origin, *end, *head, kBeamMetres)) {
+				if (p.BeamReady()) {
+					p.beams[h] = *beam;
+					p.beamShown[h] = true;
+				}
+			}
+		}
 	}
 	dropped.reset();
 	// To the other programs, after any left from earlier frames. More than a few seconds' worth left: the other
@@ -2063,6 +2193,12 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 		    kNotificationHeight * kPanelMetresPerPixel);
 		layerHeaders.push_back((XrCompositionLayerBaseHeader*)&p.notificationLayer);
 	}
+	for (int h = 0; h < 2; h++) {
+		if (p.beamShown[h] && p.beamChain && p.beamChain->Live()) {
+			p.beamLayers[h] = OwnQuad(*p.beamChain, p.beams[h].pose, p.beams[h].width, p.beams[h].height);
+			layerHeaders.push_back((XrCompositionLayerBaseHeader*)&p.beamLayers[h]);
+		}
+	}
 	if (p.cursorShown && p.cursorChain && p.cursorChain->Live()) {
 		p.cursorLayer = OwnQuad(*p.cursorChain, p.cursorPose, kCursorMetres, kCursorMetres);
 		layerHeaders.push_back((XrCompositionLayerBaseHeader*)&p.cursorLayer);
@@ -2092,7 +2228,17 @@ EVROverlayError BaseOverlay::FindOverlay(const char* pchOverlayKey, VROverlayHan
 		}
 	}
 
-	// Another program's overlay, as the store has it: a handle its state can be read through (not changed)
+	// The dashboard's panel, wherever the scene app shows it: a handle its placement can be read through
+	if (std::string(pchOverlayKey) == "system.systemui") {
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		if (sharing->systemUi == k_ulOverlayHandleInvalid)
+			sharing->systemUi = nextOverlayHandle++;
+		*pOverlayHandle = sharing->systemUi;
+		return VROverlayError_None;
+	}
+
+	// Another program's overlay, as the store has it: a handle its state can be read through, and changed through its
+	// program (SendRemoteCommand)
 	const uint32_t self = oc_current_pid();
 	const Json::Value doc = SharedStore::Get().Read(StoreDoc::Overlays);
 	if (doc.isObject()) {
@@ -2126,6 +2272,36 @@ bool BaseOverlay::RemoteOverlayEntry(VROverlayHandle_t handle, Json::Value& entr
 {
 	uint32_t pid = 0;
 	uint64_t theirs = 0;
+	bool systemUi = false;
+	{
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		systemUi = handle != k_ulOverlayHandleInvalid && handle == sharing->systemUi;
+	}
+	if (systemUi) {
+		// The panel as the store's Dashboard document has it: where it is while it's open, shown only then
+		const Json::Value doc = SharedStore::Get().Read(StoreDoc::Dashboard);
+		XrPosef panel{ { 0, 0, 0, 1 }, { 0, 0, 0 } };
+		const bool open = DashboardDocOpen(doc, SharedStore::IsSameProcessAlive) && PoseFromJson(doc["panel_pose"], panel);
+		entry = Json::Value(Json::objectValue);
+		entry["key"] = "system.systemui";
+		entry["name"] = "System UI";
+		entry["pose"] = PoseJson(panel);
+		entry["space"] = "standing";
+		entry["width"] = Dashboard::kWidthMetres;
+		entry["height"] = Dashboard::kHeightMetres;
+		entry["curvature"] = 0.0;
+		entry["flags"] = (Json::UInt64)0;
+		entry["sort_order"] = 0;
+		entry["alpha"] = 1.0;
+		entry["visible"] = open;
+		entry["shown"] = open;
+		entry["mask"] = Json::Value(Json::arrayValue);
+		entry["mouse_scale"] = Json::Value(Json::arrayValue);
+		entry["mouse_scale"].append(Dashboard::kWidth);
+		entry["mouse_scale"].append(Dashboard::kHeight);
+		entry["rendering_pid"] = PidOf(doc["scene_pid"]);
+		return true;
+	}
 	{
 		std::lock_guard<std::recursive_mutex> lock(layersLock);
 		auto key = sharing->remoteKeys.find(handle);
@@ -2142,10 +2318,120 @@ bool BaseOverlay::RemoteOverlayEntry(VROverlayHandle_t handle, Json::Value& entr
 	for (const Json::Value& o : program["overlays"]) {
 		if (o.isObject() && o["handle"].isUInt64() && o["handle"].asUInt64() == theirs) {
 			entry = o;
+			ApplyPending(handle, entry);
 			return true;
 		}
 	}
 	return false;
+}
+
+void BaseOverlay::ApplyPending(VROverlayHandle_t handle, Json::Value& entry)
+{
+	// Each value asked for is answered until the owner has published it: then its own (which may have changed since)
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	auto key = sharing->remoteKeys.find(handle);
+	if (key == sharing->remoteKeys.end())
+		return;
+	Sharing::Remote::Pending& p = sharing->remotes[key->second]->pending;
+	if (NowSeconds() >= p.until) {
+		p = {};
+		return;
+	}
+	auto settle = [&](auto& value, const char* field, auto published, auto equal) {
+		if (!value)
+			return;
+		if (entry[field].isNull() || !equal(published(entry[field]), *value))
+			entry[field] = *value;
+		else
+			value.reset();
+	};
+	auto exact = [](auto a, auto b) { return a == b; };
+	auto near = [](float a, float b) { return std::fabs(a - b) < 0.002f; };
+	settle(p.shown, "shown", [](const Json::Value& v) { return v.asBool(); }, exact);
+	settle(p.alpha, "alpha", [](const Json::Value& v) { return v.asFloat(); }, near);
+	settle(p.width, "width", [](const Json::Value& v) { return v.asFloat(); }, near);
+	settle(p.sortOrder, "sort_order", [](const Json::Value& v) { return v.asUInt(); }, exact);
+	uint64_t flags = entry["flags"].asUInt64();
+	for (auto it = p.flags.begin(); it != p.flags.end();) {
+		const bool published = (flags & (1uLL << it->first)) != 0;
+		if (published == it->second) {
+			it = p.flags.erase(it);
+			continue;
+		}
+		flags = it->second ? flags | (1uLL << it->first) : flags & ~(1uLL << it->first);
+		++it;
+	}
+	entry["flags"] = (Json::UInt64)flags;
+}
+
+bool BaseOverlay::SendRemoteCommand(VROverlayHandle_t handle, OcOverlayCommand command, EVROverlayError& sent)
+{
+	{
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		auto key = sharing->remoteKeys.find(handle);
+		if (key == sharing->remoteKeys.end())
+			return false;
+		const Sharing::Remote& remote = *sharing->remotes[key->second];
+		command.pid = remote.pid;
+		command.handle = remote.handle;
+	}
+	// Posted without the layers' lock: the store may be another program's for a moment
+	std::optional<std::array<uint64_t, 4>> packed = OcPackOverlayCommand(command);
+	if (!packed || !SharedStore::Get().PostEvent(OcEvent_OverlayCommand, *packed)) {
+		sent = VROverlayError_RequestFailed;
+		return true;
+	}
+	sent = VROverlayError_None;
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	auto key = sharing->remoteKeys.find(handle);
+	if (key == sharing->remoteKeys.end())
+		return true;
+	Sharing::Remote::Pending& p = sharing->remotes[key->second]->pending;
+	switch (command.kind) {
+	case OcOverlayCommand::Show:
+	case OcOverlayCommand::Hide:
+		p.shown = command.kind == OcOverlayCommand::Show;
+		break;
+	case OcOverlayCommand::Alpha:
+		p.alpha = command.number;
+		break;
+	case OcOverlayCommand::Width:
+		p.width = command.number;
+		break;
+	case OcOverlayCommand::Flag:
+		p.flags[command.flag] = command.enabled;
+		break;
+	case OcOverlayCommand::SortOrder:
+		p.sortOrder = command.sortOrder;
+		break;
+	case OcOverlayCommand::Event:
+		return true;
+	}
+	p.until = NowSeconds() + Sharing::kPendingSeconds;
+	return true;
+}
+
+void BaseOverlay::_PostOverlayEvent(VROverlayHandle_t handle, const VREvent_t* event)
+{
+	if (!event)
+		return;
+	{
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		if (OverlayData* o = OverlayAt(handle)) {
+			o->QueueEvent(*event);
+			return;
+		}
+	}
+	// Only the first 16 bytes of the event's data reach another program
+	OcOverlayCommand command;
+	command.kind = OcOverlayCommand::Event;
+	command.eventType = event->eventType;
+	memcpy(command.data, &event->data, sizeof(command.data));
+	EVROverlayError sent;
+	if (!SendRemoteCommand(handle, command, sent))
+		OOVR_LOG_ONCEF("PostOverlayEvent: no overlay with handle %llu", (unsigned long long)handle);
+	else if (sent != VROverlayError_None)
+		OOVR_LOG_ONCE("PostOverlayEvent: the event couldn't be sent to the overlay's program");
 }
 
 bool BaseOverlay::RemoteOverlayPlacement(const Json::Value& entry, vr::ETrackingUniverseOrigin origin, overlay_maths::Placement& out)
@@ -2414,6 +2700,9 @@ EVROverlayError BaseOverlay::SetOverlayRenderingPid(VROverlayHandle_t ulOverlayH
 }
 uint32_t BaseOverlay::GetOverlayRenderingPid(VROverlayHandle_t ulOverlayHandle)
 {
+	Json::Value remote;
+	if (RemoteOverlayEntry(ulOverlayHandle, remote))
+		return remote["rendering_pid"].asUInt();
 	OverlayData* overlay = LiveOverlay(ulOverlayHandle);
 	if (!overlay)
 		return 0;
@@ -2421,6 +2710,16 @@ uint32_t BaseOverlay::GetOverlayRenderingPid(VROverlayHandle_t ulOverlayHandle)
 }
 EVROverlayError BaseOverlay::SetOverlayFlag(VROverlayHandle_t ulOverlayHandle, VROverlayFlags eOverlayFlag, bool bEnabled)
 {
+	// A flag of no bit OpenLamina keeps isn't sent: an invalid handle, or as this program's own overlay takes it
+	if ((uint32_t)eOverlayFlag < 64) {
+		OcOverlayCommand command;
+		command.kind = OcOverlayCommand::Flag;
+		command.flag = (uint32_t)eOverlayFlag;
+		command.enabled = bEnabled;
+		EVROverlayError sent;
+		if (SendRemoteCommand(ulOverlayHandle, command, sent))
+			return sent;
+	}
 	USEH_LOCKED();
 
 	if (bEnabled) {
@@ -2472,6 +2771,14 @@ EVROverlayError BaseOverlay::GetOverlayColor(VROverlayHandle_t ulOverlayHandle, 
 }
 EVROverlayError BaseOverlay::SetOverlayAlpha(VROverlayHandle_t ulOverlayHandle, float fAlpha)
 {
+	{
+		OcOverlayCommand command;
+		command.kind = OcOverlayCommand::Alpha;
+		command.number = fAlpha;
+		EVROverlayError sent;
+		if (SendRemoteCommand(ulOverlayHandle, command, sent))
+			return sent;
+	}
 	USEH_LOCKED();
 
 	overlay->colour.a = fAlpha;
@@ -2480,6 +2787,13 @@ EVROverlayError BaseOverlay::SetOverlayAlpha(VROverlayHandle_t ulOverlayHandle, 
 }
 EVROverlayError BaseOverlay::GetOverlayAlpha(VROverlayHandle_t ulOverlayHandle, float* pfAlpha)
 {
+	Json::Value remote;
+	if (RemoteOverlayEntry(ulOverlayHandle, remote)) {
+		if (!pfAlpha)
+			return VROverlayError_InvalidParameter;
+		*pfAlpha = remote["alpha"].isNumeric() ? remote["alpha"].asFloat() : 1.0f;
+		return VROverlayError_None;
+	}
 	USEH();
 	if (!pfAlpha)
 		return VROverlayError_InvalidParameter;
@@ -2509,6 +2823,14 @@ EVROverlayError BaseOverlay::GetOverlayTexelAspect(VROverlayHandle_t ulOverlayHa
 }
 EVROverlayError BaseOverlay::SetOverlaySortOrder(VROverlayHandle_t ulOverlayHandle, uint32_t unSortOrder)
 {
+	{
+		OcOverlayCommand command;
+		command.kind = OcOverlayCommand::SortOrder;
+		command.sortOrder = unSortOrder;
+		EVROverlayError sent;
+		if (SendRemoteCommand(ulOverlayHandle, command, sent))
+			return sent;
+	}
 	USEH_LOCKED();
 	overlay->sortOrder = unSortOrder;
 	return VROverlayError_None;
@@ -2517,12 +2839,25 @@ EVROverlayError BaseOverlay::GetOverlaySortOrder(VROverlayHandle_t ulOverlayHand
 {
 	if (!punSortOrder)
 		return VROverlayError_InvalidParameter;
+	Json::Value remote;
+	if (RemoteOverlayEntry(ulOverlayHandle, remote)) {
+		*punSortOrder = remote["sort_order"].asUInt();
+		return VROverlayError_None;
+	}
 	USEH();
 	*punSortOrder = overlay->sortOrder;
 	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::SetOverlayWidthInMeters(VROverlayHandle_t ulOverlayHandle, float fWidthInMeters)
 {
+	{
+		OcOverlayCommand command;
+		command.kind = OcOverlayCommand::Width;
+		command.number = fWidthInMeters;
+		EVROverlayError sent;
+		if (SendRemoteCommand(ulOverlayHandle, command, sent))
+			return sent;
+	}
 	USEH_LOCKED();
 
 	overlay->widthMeters = fWidthInMeters;
@@ -2838,6 +3173,13 @@ EVROverlayError BaseOverlay::SetOverlayTransformProjection(VROverlayHandle_t ulO
 }
 EVROverlayError BaseOverlay::ShowOverlay(VROverlayHandle_t ulOverlayHandle)
 {
+	{
+		OcOverlayCommand command;
+		command.kind = OcOverlayCommand::Show;
+		EVROverlayError sent;
+		if (SendRemoteCommand(ulOverlayHandle, command, sent))
+			return sent;
+	}
 	USEH_LOCKED();
 	// A dashboard overlay is shown by the dashboard alone, which tells it
 	if (!overlay->visible && !overlay->dashboard)
@@ -2847,6 +3189,13 @@ EVROverlayError BaseOverlay::ShowOverlay(VROverlayHandle_t ulOverlayHandle)
 }
 EVROverlayError BaseOverlay::HideOverlay(VROverlayHandle_t ulOverlayHandle)
 {
+	{
+		OcOverlayCommand command;
+		command.kind = OcOverlayCommand::Hide;
+		EVROverlayError sent;
+		if (SendRemoteCommand(ulOverlayHandle, command, sent))
+			return sent;
+	}
 	USEH_LOCKED();
 	if (overlay->visible && !overlay->dashboard)
 		overlay->QueueVisibilityEvent(false);
@@ -2857,7 +3206,7 @@ bool BaseOverlay::IsOverlayVisible(VROverlayHandle_t ulOverlayHandle)
 {
 	Json::Value remote;
 	if (RemoteOverlayEntry(ulOverlayHandle, remote))
-		return remote["visible"].asBool();
+		return remote["shown"].isBool() ? remote["shown"].asBool() : remote["visible"].asBool();
 	USEHB();
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	// Not while a parent it's placed relative to is hidden: it isn't drawn then
@@ -2901,7 +3250,7 @@ bool BaseOverlay::PollNextOverlayEvent(VROverlayHandle_t ulOverlayHandle, VREven
 
 	// The lasers and the keyboard queue events on the game's thread, and another program's pointer through the store
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
-	TakeRemotePointerEvents();
+	TakeRemoteEvents();
 	if (overlay->eventQueue.empty())
 		return false;
 
@@ -2918,7 +3267,7 @@ bool BaseOverlay::PollNextAnyOverlayEvent(VREvent_t* pEvent, uint32_t eventSize,
 		return false;
 
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
-	TakeRemotePointerEvents();
+	TakeRemoteEvents();
 	for (const auto& kv : overlays) {
 		OverlayData* o = kv.second;
 		if (!o || o->eventQueue.empty())
@@ -2956,7 +3305,18 @@ EVROverlayError BaseOverlay::SetOverlayInputMethod(VROverlayHandle_t ulOverlayHa
 }
 EVROverlayError BaseOverlay::GetOverlayMouseScale(VROverlayHandle_t ulOverlayHandle, HmdVector2_t* pvecMouseScale)
 {
+	Json::Value remote;
+	if (RemoteOverlayEntry(ulOverlayHandle, remote)) {
+		if (!pvecMouseScale)
+			return VROverlayError_InvalidParameter;
+		const Json::Value& scale = remote["mouse_scale"];
+		const bool given = scale.isArray() && scale.size() == 2;
+		*pvecMouseScale = HmdVector2_t{ { given ? scale[0].asFloat() : 1.0f, given ? scale[1].asFloat() : 1.0f } };
+		return VROverlayError_None;
+	}
 	USEH();
+	if (!pvecMouseScale)
+		return VROverlayError_InvalidParameter;
 
 	*pvecMouseScale = overlay->mouseScale;
 
@@ -3286,6 +3646,11 @@ EVROverlayError BaseOverlay::ClearOverlayCursorPositionOverride(VROverlayHandle_
 }
 EVROverlayError BaseOverlay::SetOverlayTexture(VROverlayHandle_t ulOverlayHandle, const Texture_t* pTexture)
 {
+	// Only its creator, or the program it names as rendering it, sets an overlay's texture; a texture can't be handed
+	// to another program from here
+	Json::Value remote;
+	if (RemoteOverlayEntry(ulOverlayHandle, remote) && remote["rendering_pid"].asUInt() == oc_current_pid())
+		OC_UNSUPPORTED(VROverlayError_RequestFailed, "SetOverlayTexture: another program's overlay's texture can't be set from this one");
 	USEH();
 	if (!pTexture)
 		return VROverlayError_InvalidTexture;
@@ -3980,6 +4345,13 @@ EVROverlayError BaseOverlay::SetOverlayIntersectionMask(VROverlayHandle_t ulOver
 }
 EVROverlayError BaseOverlay::GetOverlayFlags(VROverlayHandle_t ulOverlayHandle, uint32_t* pFlags)
 {
+	Json::Value remote;
+	if (RemoteOverlayEntry(ulOverlayHandle, remote)) {
+		if (!pFlags)
+			return VROverlayError_InvalidParameter;
+		*pFlags = (uint32_t)remote["flags"].asUInt64();
+		return VROverlayError_None;
+	}
 	USEH();
 	if (!pFlags)
 		return VROverlayError_InvalidParameter;
@@ -4032,6 +4404,7 @@ BaseOverlay::VRMessageOverlayResponse BaseOverlay::ShowMessageOverlay(const char
 			pointing->closeMessage = false;
 			pointing->message = std::move(message);
 			pointing->cursorShown = false;
+			pointing->HideBeams();
 		}
 	}
 	if (busy) {
@@ -4102,6 +4475,7 @@ BaseOverlay::VRMessageOverlayResponse BaseOverlay::ShowMessageOverlay(const char
 		if (!m.uploaded || !m.chain->Live())
 			m.uploaded = m.chain->Upload(m.image);
 		p.cursorShown = false;
+		p.HideBeams();
 		const int hand = m.mouse.ActiveHand();
 		if (std::optional<overlay_maths::Hit> hit = m.mouse.Cursor(hand); hit && m.mouse.Target(hand) == m.Handle())
 			p.ShowCursor(overlay_maths::PointOn(m.placement, hit->u, hit->v));

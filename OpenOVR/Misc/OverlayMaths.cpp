@@ -262,4 +262,28 @@ XrPosef InversePose(const XrPosef& a)
 	return Inverse(a);
 }
 
+std::optional<Placement> BeamPlacement(const XrVector3f& from, const XrVector3f& to, const XrVector3f& head, float thickness)
+{
+	const glm::vec3 a = V(from), b = V(to);
+	const float length = glm::length(b - a);
+	if (!(length >= 0.001f) || !(thickness > 0))
+		return std::nullopt;
+	const glm::vec3 up = (b - a) / length;
+	const glm::vec3 middle = (a + b) * 0.5f;
+	// Towards the head, less what's along the beam; seen end on, any face across it
+	glm::vec3 face = V(head) - middle;
+	face -= up * glm::dot(face, up);
+	if (glm::length(face) < 1e-5f)
+		face = std::fabs(up.y) < 0.9f ? glm::vec3(0, 1, 0) - up * up.y : glm::vec3(1, 0, 0) - up * up.x;
+	face = glm::normalize(face);
+	const glm::vec3 right = glm::cross(up, face);
+	const glm::quat q = glm::normalize(glm::quat_cast(glm::mat3(right, up, face)));
+	Placement p{};
+	p.pose = XrPosef{ { q.x, q.y, q.z, q.w }, { middle.x, middle.y, middle.z } };
+	p.width = thickness;
+	p.height = length;
+	p.curvature = 0;
+	return p;
+}
+
 } // namespace overlay_maths

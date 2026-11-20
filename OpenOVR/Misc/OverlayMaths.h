@@ -7,6 +7,7 @@
 #include <openxr/openxr.h>
 
 #include <functional>
+#include <optional>
 #include <vector>
 
 // IVROverlay's intersection mask primitives (SetOverlayIntersectionMask)
@@ -131,5 +132,10 @@ float SubtendedAngle(float width, float distance);
 // a then b (b given in a's space), and a's inverse
 XrPosef ComposePoses(const XrPosef& a, const XrPosef& b);
 XrPosef InversePose(const XrPosef& a);
+
+// A laser's beam from one point to another as a quad thickness wide: its middle half way, its height (+Y) the beam's
+// length along it, its face (+Z) turned as near the head as a quad along the beam can be. Nothing for a beam under a
+// millimetre long.
+std::optional<Placement> BeamPlacement(const XrVector3f& from, const XrVector3f& to, const XrVector3f& head, float thickness);
 
 } // namespace overlay_maths

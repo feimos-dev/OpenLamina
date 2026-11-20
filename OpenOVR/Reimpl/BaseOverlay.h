@@ -2,6 +2,7 @@
 #include "../BaseCommon.h" // TODO don't import from OCOVR, and remove the "../"
 #include "../Misc/Keyboard/VRKeyboard.h" // TODO don't import from OCOVR, and remove the "../"
 #include "../Misc/OverlayMaths.h"
+#include "../Misc/ProgramEvents.h"
 #include <map>
 #include <memory>
 #include <mutex>
@@ -238,13 +239,21 @@ private:
 	// events from other programs (BaseOverlay.cpp)
 	struct Sharing;
 	std::unique_ptr<Sharing> sharing;
-	// Other programs' pointer events for this program's overlays, queued on them; with layersLock held
-	void TakeRemotePointerEvents();
+	// Other programs' pointer events for this program's overlays, queued on them, and their commands for them
+	// (OcOverlayCommand), applied; with layersLock held
+	void TakeRemoteEvents();
+	// A handle FindOverlay gave for another program's overlay: the command sent to that program, which applies it, and
+	// what it changes kept here until that program has published it (sent says whether it went). False, sending
+	// nothing, if the handle isn't such a one.
+	bool SendRemoteCommand(vr::VROverlayHandle_t handle, OcOverlayCommand command, vr::EVROverlayError& sent);
 	// An overlay application while a scene app is running: the scene app's instance points, and this one doesn't
 	bool SceneAppPoints() const;
 	// A handle FindOverlay gave for another program's overlay: its entry in the store's Overlays document. False if the
-	// handle isn't such a one, or its program has ended or no longer has the overlay.
+	// handle isn't such a one, or its program has ended or no longer has the overlay. What this program asked of it and
+	// that program hasn't published yet is as it was asked. The dashboard's panel (system.systemui) is such an entry.
 	bool RemoteOverlayEntry(vr::VROverlayHandle_t handle, Json::Value& entry);
+	// What's pending for such a handle (SendRemoteCommand), put over its entry; what the entry shows is pending no more
+	void ApplyPending(vr::VROverlayHandle_t handle, Json::Value& entry);
 	// Where such an entry's overlay is, in origin; false if it isn't placed
 	bool RemoteOverlayPlacement(const Json::Value& entry, vr::ETrackingUniverseOrigin origin, overlay_maths::Placement& out);
 
@@ -285,6 +294,8 @@ public:
 
 	// Whether the handle is one of this program's overlays
 	bool _IsOwnOverlay(vr::VROverlayHandle_t handle);
+	// IVROverlayView::PostOverlayEvent: queued on this program's overlay, or sent to the program whose overlay it is
+	void _PostOverlayEvent(vr::VROverlayHandle_t handle, const vr::VREvent_t* event);
 
 	// Whether the keyboard is shown
 	bool _KeyboardShown()
