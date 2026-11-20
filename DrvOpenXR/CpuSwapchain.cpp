@@ -195,7 +195,8 @@ bool CpuSwapchain::Upload(const Image& image)
 	bool written = false;
 	if (pendingIndex < imageCount) {
 		if (bgra) {
-			std::vector<uint8_t> swapped(image.rgba);
+			// One buffer for every upload, so a redraw doesn't allocate
+			swapped.assign(image.rgba.begin(), image.rgba.end());
 			for (size_t i = 0; i + 3 < swapped.size(); i += 4)
 				std::swap(swapped[i], swapped[i + 2]);
 			written = api->Write(pendingIndex, swapped);

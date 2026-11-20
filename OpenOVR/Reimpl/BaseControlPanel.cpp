@@ -2,6 +2,9 @@
 #define BASE_IMPL
 #include "BaseControlPanel.h"
 
+#include "BaseApplications.h"
+#include "Misc/Dashboard.h"
+
 // These functions are used in HL:A - See #176
 // Nooping both of these should be fine.
 void BaseControlPanel::SetDashBoardUserToggleEnabled(bool status)
@@ -169,7 +172,8 @@ void BaseControlPanel::SetMasterProcessToThis()
 
 void BaseControlPanel::StartAutolaunchOverlays()
 {
-	// SteamVR's autolaunch overlays aren't installed here: none to start
+	BaseApplications apps;
+	::StartAutolaunchOverlays(apps);
 }
 
 void BaseControlPanel::AbortTransition()

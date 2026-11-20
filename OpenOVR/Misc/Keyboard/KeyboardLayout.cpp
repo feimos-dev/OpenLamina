@@ -13,7 +13,6 @@
 #include <cwctype>
 #include <memory>
 #include <mutex>
-#include <numbers>
 
 static void wstrim(wstring& s)
 {
@@ -74,15 +73,14 @@ static wchar_t escapeChar(const wstring& str)
 		return '\x03'; // Done
 	}
 
-	string utf = VRKeyboard::CHAR_CONV.to_bytes(str);
+	string utf = VRKeyboard::WideToUtf8(str);
 
-	string msg = "Unknown escape sequence '" + utf + "'";
-	{ OOVR_LOG(msg.c_str()); return 0; } // the built-in layout is broken: no keyboard
+	{ OOVR_LOGF("Unknown escape sequence '%s'", utf.c_str()); return 0; } // the built-in layout is broken: no keyboard
 }
 
 KeyboardLayout::KeyboardLayout(std::vector<char> data)
 {
-	wstring contents = VRKeyboard::CHAR_CONV.from_bytes(string(data.data(), data.size()));
+	wstring contents = VRKeyboard::Utf8ToWide(string(data.data(), data.size()));
 
 	Key* last = nullptr;
 
@@ -154,11 +152,10 @@ KeyboardLayout::KeyboardLayout(std::vector<char> data)
 
 		if (op[0] == '.') {
 			wstring prop = op.substr(1);
-			string utfProp = VRKeyboard::CHAR_CONV.to_bytes(prop);
+			string utfProp = VRKeyboard::WideToUtf8(prop);
 
 			if (!last) {
-				string msg = "Cannot set property '" + utfProp + "' without a prior key!";
-				{ OOVR_LOG(msg.c_str()); return; } // the built-in layout is broken: no keyboard
+				{ OOVR_LOGF("Cannot set property '%s' without a prior key!", utfProp.c_str()); return; } // the built-in layout is broken: no keyboard
 			}
 
 			if (prop == L"spans_to_right") {
@@ -170,8 +167,7 @@ KeyboardLayout::KeyboardLayout(std::vector<char> data)
 				continue;
 			}
 
-			string msg = "Unknown property property '" + utfProp + "' for key '" + VRKeyboard::CHAR_CONV.to_bytes(last->label) + "'";
-			{ OOVR_LOG(msg.c_str()); return; } // the built-in layout is broken: no keyboard
+			{ OOVR_LOGF("Unknown property '%s' for key '%s'", utfProp.c_str(), VRKeyboard::WideToUtf8(last->label).c_str()); return; } // the built-in layout is broken: no keyboard
 
 			continue;
 		}
@@ -185,8 +181,7 @@ KeyboardLayout::KeyboardLayout(std::vector<char> data)
 		wy = pullstring(line);
 
 		if (wx.empty() != wy.empty()) {
-			string msg = string("x/y empty mismatch for keyboard char '") + ((char)ch) + "'";
-			{ OOVR_LOG(msg.c_str()); return; } // the built-in layout is broken: no keyboard
+			{ OOVR_LOGF("x/y empty mismatch for keyboard char '%c'", (char)ch); return; } // the built-in layout is broken: no keyboard
 		}
 
 		if (wx.empty()) {
@@ -211,45 +206,6 @@ KeyboardLayout::KeyboardLayout(std::vector<char> data)
 	if (width == 0)
 		{ OOVR_LOG("Missing keyboard layout width specifier"); return; } // the built-in layout is broken: no keyboard
 	valid = !keys.empty();
-
-	// Calculate the adjacent keys
-	for (Key& key : keys) {
-		int ids[4] = { -1, -1, -1, -1 };
-		float distances[4] = { 1000, 1000, 1000, 1000 };
-		// Find the nearest keys in each direction
-		for (Key& to : keys) {
-			if (&key == &to)
-				continue;
-
-			float dx = to.x - key.x;
-			float dy = to.y - key.y;
-
-			float lenSq = dx * dx + dy * dy;
-
-			int angle = (int)(atan2(-dy, dx) * 180 / std::numbers::pi);
-
-			// Spin everything back 45deg, so the borders between regions are diagonal
-			angle -= 45;
-
-			if (angle < 0)
-				angle += 360;
-
-			int index = angle / 90;
-
-			int deviation = abs(angle - (index * 90 + 45));
-			lenSq += deviation / 45.0f;
-
-			if (lenSq < distances[index]) {
-				distances[index] = lenSq;
-				ids[index] = to.id;
-			}
-		}
-
-		key.toRight = ids[0];
-		key.toDown = ids[1];
-		key.toLeft = ids[2];
-		key.toUp = ids[3];
-	}
 }
 
 KeyboardLayout::~KeyboardLayout()
@@ -301,7 +257,7 @@ const KeyboardLayout* KeyboardLayout::Current()
 #ifdef _WIN32
 	wchar_t name[LOCALE_NAME_MAX_LENGTH] = {};
 	if (GetUserDefaultLocaleName(name, LOCALE_NAME_MAX_LENGTH) > 0)
-		locale = VRKeyboard::CHAR_CONV.to_bytes(name);
+		locale = VRKeyboard::WideToUtf8(name);
 #else
 	for (const char* var : { "LC_ALL", "LC_MESSAGES", "LANG" }) {
 		const char* value = getenv(var);

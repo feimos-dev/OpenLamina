@@ -43,6 +43,8 @@
 #include <atomic>
 #include <chrono>
 #include <climits>
+#include <codecvt>
+#include <locale>
 #include <optional>
 #include <string>
 #include <utility>
@@ -65,14 +67,16 @@ public:
 
 	const string key;
 	string name;
-	HmdColor_t colour;
+	HmdColor_t colour = { 1, 1, 1, 1 };
 
 	float widthMeters = 1; // default 1 meter
 	float curvature = 0;
 
-	float autoCurveDistanceRangeMin, autoCurveDistanceRangeMax; // WTF does this do?
+	float autoCurveDistanceRangeMin = 0, autoCurveDistanceRangeMax = 0;
 	EColorSpace colourSpace = ColorSpace_Auto;
-	bool visible = false; // TODO check against SteamVR
+	// The colour space of a texture: its own, or the overlay's where the texture leaves it to the overlay
+	EColorSpace TextureColourSpace(EColorSpace texture) const { return texture == ColorSpace_Auto ? colourSpace : texture; }
+	bool visible = false;
 	VRTextureBounds_t textureBounds = { 0, 0, 1, 1 };
 	VROverlayInputMethod inputMethod = VROverlayInputMethod_None; // Mouse: the lasers send it mouse events
 	// HandleControllerOverlayInteractionAsMouse: a pointer target for this many more of the lasers' updates
@@ -108,11 +112,20 @@ public:
 		e.data.overlay.overlayHandle = (VROverlayHandle_t)(uintptr_t)this;
 		QueueEvent(e);
 	}
+	// An event about this overlay itself: its handle in the data
+	void QueueOverlayEvent(uint32_t type)
+	{
+		VREvent_t e{};
+		e.eventType = type;
+		e.trackedDeviceIndex = k_unTrackedDeviceIndexInvalid;
+		e.data.overlay.overlayHandle = (VROverlayHandle_t)(uintptr_t)this;
+		QueueEvent(e);
+	}
 	// Whether a dashboard overlay was last told it's the one shown
 	bool shownInDashboard = false;
 
 	// Kept and returned, not shown yet (drawing or using them is not implemented yet)
-	uint32_t renderingPid = 0;
+	uint32_t renderingPid = oc_current_pid(); // the creator renders to it until told otherwise
 	float preCurvePitch = 0;
 	std::string renderModel;
 	HmdColor_t renderModelColor = { 1, 1, 1, 1 };
@@ -168,11 +181,46 @@ public:
 		XrCompositionLayerCylinderKHR cylinder;
 	} compositionLayer;
 
+	// The overlay's colour and alpha as the layer's colour scale (chained to compositionLayer where the runtime has it)
+	XrCompositionLayerColorScaleBiasKHR colourScale{ XR_TYPE_COMPOSITION_LAYER_COLOR_SCALE_BIAS_KHR };
+
 	std::weak_ptr<Compositor> compositor;
 	// SetOverlayRaw's image (empty for a texture overlay), shown through a swapchain filled from memory
 	Image rawImage;
 	std::unique_ptr<CpuSwapchain> raw;
-	float distance;
+	// A texture is copied into its swapchain whole (mirrored where the bounds were when it was set), and the bounds
+	// select the layer's image rectangle in it. textureCopySize is the copy's size in texels (0 without a copy).
+	XrExtent2Di textureCopySize{};
+	bool copyMirrorX = false, copyMirrorY = false;
+
+	// Sets the layer's image rectangle to the bounds' area of the texture's copy
+	void ApplyTextureBounds()
+	{
+		if (!texture.handle || textureCopySize.width <= 0 || textureCopySize.height <= 0)
+			return;
+		TextureRegion region;
+		if (!RegionFromBounds(&textureBounds, (uint32_t)textureCopySize.width, (uint32_t)textureCopySize.height, region))
+			return;
+		compositionLayer.quad.subImage.imageRect = overlay_maths::ImageRect(region.x0, region.y0, region.x1, region.y1,
+		    (uint32_t)textureCopySize.width, (uint32_t)textureCopySize.height, copyMirrorX, copyMirrorY);
+	}
+
+	// Copies the texture whole into the compositor's swapchain, mirrored where the bounds run backwards
+	void CopyTexture(Compositor& compositor, const Texture_t& shown)
+	{
+		copyMirrorX = textureBounds.uMin > textureBounds.uMax;
+		copyMirrorY = textureBounds.vMin > textureBounds.vMax;
+		const VRTextureBounds_t whole = { copyMirrorX ? 1.0f : 0.0f, copyMirrorY ? 1.0f : 0.0f, copyMirrorX ? 0.0f : 1.0f, copyMirrorY ? 0.0f : 1.0f };
+		XrSwapchainSubImage& subImage = compositionLayer.quad.subImage; // the same for quad and cylinder layers
+		compositor.Invoke(&shown, &whole, subImage);
+		if (subImage.swapchain != XR_NULL_HANDLE)
+			textureCopySize = { subImage.imageRect.extent.width, std::abs(subImage.imageRect.extent.height) };
+		else
+			textureCopySize = {};
+		ApplyTextureBounds();
+	}
+
+	float distance = 0;
 	uint32_t sortOrder = 0;
 
 	// Transform
@@ -215,12 +263,12 @@ public:
 	// through its parent overlays (valid: the overlays that exist)
 	bool ComputeOverlayTransform(vr::ETrackingUniverseOrigin trackingSpace, const std::set<OverlayData*>& valid, glm::mat4& out) const;
 
-	// The texture's width over its height (a flipped texture is drawn with a negative height), 1 without one
+	// The texture's width over its height, with its texels' aspect (a flipped texture is drawn with a negative height),
+	// 1 without one
 	float AspectRatio() const
 	{
 		const XrExtent2Di& extent = compositionLayer.quad.subImage.imageRect.extent;
-		const int32_t height = std::abs(extent.height);
-		return height > 0 && extent.width > 0 ? (float)extent.width / (float)height : 1.0f;
+		return overlay_maths::QuadAspect(extent.width, extent.height, texelAspect);
 	}
 
 	// Where the overlay is drawn in the tracking space; false if it can't be drawn
@@ -230,10 +278,10 @@ public:
 // TODO don't pass around handles, as it will cause
 // crashes when we should merely return VROverlayError_InvalidHandle
 #define OVL (*((OverlayData**)pOverlayHandle))
-#define USEH()                                                                        \
-	OverlayData* overlay = (OverlayData*)ulOverlayHandle;                             \
-	if (!overlay || !validOverlays.count(overlay) || !overlays.count(overlay->key)) { \
-		return VROverlayError_InvalidHandle;                                          \
+#define USEH()                                           \
+	OverlayData* overlay = (OverlayData*)ulOverlayHandle; \
+	if (!IsLiveOverlay(overlay)) {                        \
+		return VROverlayError_InvalidHandle;              \
 	}
 
 // USEH() for a setter of what _BuildLayers reads (on the own frames' thread too): under the layers' lock
@@ -241,18 +289,23 @@ public:
 	std::lock_guard<std::recursive_mutex> layersGuard(layersLock); \
 	USEH()
 
-#define USEHB()                                                                       \
-	OverlayData* overlay = (OverlayData*)ulOverlayHandle;                             \
-	if (!overlay || !validOverlays.count(overlay) || !overlays.count(overlay->key)) { \
-		return false;                                                                 \
+#define USEHB()                                          \
+	OverlayData* overlay = (OverlayData*)ulOverlayHandle; \
+	if (!IsLiveOverlay(overlay)) {                        \
+		return false;                                     \
 	}
 
 // k_unVROverlayMaxKeyLength and k_unVROverlayMaxNameLength, the same in every SDK version: with the terminator
 static constexpr uint32_t kOverlayMaxKeyLength = 128;
 static constexpr uint32_t kOverlayMaxNameLength = 128;
+// k_unMaxOverlayCount: the overlays that can exist at once
+static constexpr size_t kMaxOverlayCount = 128;
 
-// The overlay that has gamepad focus (SetGamepadFocusOverlay)
-static VROverlayHandle_t gamepadFocusOverlay = k_ulOverlayHandleInvalid;
+// VROverlayFlags as masks (see LaserMouse.h for the input ones)
+static constexpr uint64_t kOverlayFlagIsPremultiplied = 1uLL << 21;
+static constexpr uint64_t kOverlayFlagIgnoreTextureAlpha = 1uLL << 22;
+// How wide a texture of 8 pixels or less must look to be taken for a fade between scenes: 45 degrees
+static constexpr float kFadeSquareAngle = 0.785f;
 
 struct BaseOverlay::Sharing {
 	RemotePointer remote;
@@ -285,6 +338,7 @@ struct BaseOverlay::DashboardState {
 	bool open = false;
 	uint32_t activePid = 0;
 	uint64_t activeOverlay = 0;
+	uint32_t scenePid = 0; // the scene app whose dashboard it is
 	XrPosef panelPose{ { 0, 0, 0, 1 }, { 0, 0, 0 } }; // in the standing space
 	// The scene app's frame, filled on the game's thread
 	std::unique_ptr<CpuSwapchain> chain;
@@ -295,6 +349,8 @@ struct BaseOverlay::DashboardState {
 	XrPosef framePose{ { 0, 0, 0, 1 }, { 0, 0, 0 } }; // in the frame's space
 	XrCompositionLayerQuad layer{};
 	vr::VROverlayHandle_t Handle() const { return (vr::VROverlayHandle_t)(uintptr_t)this; }
+	// Whether the overlay is meant for the scene app whose dashboard this is (SetDashboardOverlaySceneProcess; none set: any)
+	bool ForScene(const OverlayData& o) const { return !o.dashboardScenePid || o.dashboardScenePid == scenePid; }
 };
 
 struct BaseOverlay::BoundsState {
@@ -369,6 +425,13 @@ uint32_t PidOf(const Json::Value& v)
 }
 
 } // namespace
+
+bool BaseOverlay::IsLiveOverlay(const OverlayData* overlay)
+{
+	// The overlays are changed under the layers' lock, taken here only for the check
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	return overlay && validOverlays.count(const_cast<OverlayData*>(overlay)) && overlays.count(overlay->key);
+}
 
 BaseOverlay::~BaseOverlay()
 {
@@ -645,6 +708,16 @@ vr::ETrackingUniverseOrigin FrameOrigin()
 	return BaseSystem::currentSpace == XR_REFERENCE_SPACE_TYPE_LOCAL ? vr::TrackingUniverseSeated : vr::TrackingUniverseStanding;
 }
 
+// The lasers read the old input's actions, which an overlay application never loads itself: an empty manifest is
+// loaded for it the first time something needs a laser. Not under the session lock (loading restarts the session).
+void EnsurePointerInput()
+{
+	if (CurrentSessionKind() != SessionKind::Overlay)
+		return;
+	if (std::shared_ptr<BaseInput> input = GetBaseInput())
+		input->LoadEmptyManifestIfRequired();
+}
+
 // Each hand's laser, from its aim pose in the frame's space; none while input isn't available
 std::array<PointerRay, 2> ReadRays(bool available)
 {
@@ -768,6 +841,10 @@ public:
 	vr::ETrackingUniverseOrigin keyboardOrigin = vr::TrackingUniverseStanding;
 	vr::VROverlayHandle_t keyboardFor = vr::k_ulOverlayHandleInvalid;
 	bool keyboardModal = false; // only the keyboard can be pointed at (KeyboardFlag_Modal)
+	// The triggers held at the last update, once one has been read since the keyboard was shown (a trigger held as it
+	// opened doesn't count as a click)
+	bool keyboardClickSeen = false;
+	bool keyboardClicking[2] = { false, false };
 
 	// A message box (ShowMessageOverlay), while one is shown
 	struct Message {
@@ -794,10 +871,13 @@ public:
 			canvas.FillRect(kPanelMargin, y, kPanelWidth - 2 * kPanelMargin, 2, 0x6a7486ff);
 			y += 16;
 			const int textEnd = ButtonRect(0, buttons.size()).y - 16;
-			for (const std::wstring& row : WrapText(canvas, text, kPanelWidth - 2 * kPanelMargin)) {
+			const std::vector<std::wstring> rows = WrapText(canvas, text, kPanelWidth - 2 * kPanelMargin);
+			for (size_t i = 0; i < rows.size(); i++) {
 				if (y + line > textEnd)
 					break;
-				canvas.Text(kPanelMargin, y, row, 0xd8d8d8ff);
+				// Text that doesn't all fit ends in an ellipsis on the last line that does
+				const bool last = y + 2 * line + 4 > textEnd && i + 1 < rows.size();
+				canvas.Text(kPanelMargin, y, last ? rows[i] + L" ..." : rows[i], 0xd8d8d8ff);
 				y += line + 4;
 			}
 			for (size_t i = 0; i < buttons.size(); i++) {
@@ -951,13 +1031,14 @@ void BaseOverlay::_UpdateDashboard()
 		d.open = open;
 		d.activePid = PidOf(doc["active_pid"]);
 		d.activeOverlay = doc["active_overlay"].isUInt64() ? doc["active_overlay"].asUInt64() : 0;
+		d.scenePid = PidOf(doc["scene_pid"]);
 		d.panelPose = panel;
 		// A dashboard overlay is told when it becomes the one shown, and when it no longer is
 		for (const auto& kv : overlays) {
 			OverlayData* o = kv.second;
 			if (!o || !o->dashboard || o->thumbnail)
 				continue;
-			const bool shown = open && d.activePid == self && d.activeOverlay == (uint64_t)(uintptr_t)o;
+			const bool shown = open && d.activePid == self && d.activeOverlay == (uint64_t)(uintptr_t)o && d.ForScene(*o);
 			if (shown != o->shownInDashboard) {
 				o->shownInDashboard = shown;
 				o->QueueVisibilityEvent(shown);
@@ -1148,7 +1229,7 @@ void BaseOverlay::DashboardChanged(bool open, const char* overlayKey)
 bool BaseOverlay::DashboardPlacement(const OverlayData& overlay, vr::ETrackingUniverseOrigin origin, overlay_maths::Placement& out) const
 {
 	const DashboardState& d = *dash;
-	if (!overlay.dashboard || overlay.thumbnail || !d.open || d.activePid != oc_current_pid() || d.activeOverlay != (uint64_t)(uintptr_t)&overlay)
+	if (!overlay.dashboard || overlay.thumbnail || !d.open || d.activePid != oc_current_pid() || d.activeOverlay != (uint64_t)(uintptr_t)&overlay || !d.ForScene(overlay))
 		return false;
 	out.pose = origin == vr::TrackingUniverseStanding ? d.panelPose : overlay_maths::ChangeOrigin(d.panelPose, vr::TrackingUniverseStanding, origin, SeatedInStanding());
 	out.width = overlay.widthMeters;
@@ -1311,6 +1392,21 @@ void BaseOverlay::_PublishOverlays()
 	sh.wrote = true;
 }
 
+bool BaseOverlay::_PointerWanted()
+{
+	const bool laserMouse = oovr_global_configuration.LaserMouse();
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	if (keyboard != nullptr)
+		return true;
+	for (const auto& kv : overlays) {
+		const OverlayData* o = kv.second;
+		if (o && o->visible && ((laserMouse && o->inputMethod == VROverlayInputMethod_Mouse) || o->asMouseUpdates > 0)
+		    && (o->texture.handle != nullptr || !o->rawImage.Empty()))
+			return true;
+	}
+	return false;
+}
+
 void BaseOverlay::_UpdatePointer()
 {
 	// Swapchains are filled and input read under the session lock
@@ -1461,6 +1557,15 @@ void BaseOverlay::_UpdatePointer()
 		}
 
 		if (keyboard) {
+			// A click off a modal keyboard closes it: a trigger newly pressed while its hand isn't on the keyboard
+			for (const PointerRay& ray : rays) {
+				const bool pressed = ray.valid && ray.click;
+				if (p.keyboardClickSeen && pressed && !p.keyboardClicking[ray.hand & 1] && keyboard->Modal()
+				    && p.mouse.Target(ray.hand) != keyboard->Handle())
+					keyboard->Close();
+				p.keyboardClicking[ray.hand & 1] = pressed;
+			}
+			p.keyboardClickSeen = true;
 			keyboard->OnPointer(p.mouse, events);
 			for (const VREvent_t& e : keyboard->TakeEvents())
 				DispatchKeyboardEvent(e, p.keyboardFor);
@@ -1493,8 +1598,14 @@ void BaseOverlay::_UpdatePointer()
 			if (t.handle == target)
 				on = &t;
 		if (p.running && hit && on) {
-			const XrPosef point = overlay_maths::PointOn(on->placement, hit->u, hit->v);
 			OverlayData* o = validOverlays.count((OverlayData*)(uintptr_t)target) ? (OverlayData*)(uintptr_t)target : nullptr;
+			float u = hit->u, v = hit->v;
+			// A cursor position the program set, in the overlay's mouse coordinates, replaces where the laser is
+			if (o && o->cursorOverridden && o->mouseScale.v[0] > 0 && o->mouseScale.v[1] > 0) {
+				u = o->cursorOverride.v[0] / o->mouseScale.v[0];
+				v = o->cursorOverride.v[1] / o->mouseScale.v[1];
+			}
+			const XrPosef point = overlay_maths::PointOn(on->placement, u, v);
 			OverlayData* cursor = o && validOverlays.count((OverlayData*)(uintptr_t)o->cursor) ? (OverlayData*)(uintptr_t)o->cursor : nullptr;
 			if (cursor && cursor->visible) {
 				std::lock_guard<std::mutex> cursors(cursorPointsLock);
@@ -1573,15 +1684,6 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 	if (sceneLayer)
 		layerHeaders.push_back(sceneLayer);
 
-	// For performance reasons, this indicates that something is using input
-	// Don't write it directly to usingInput, as that could cause race conditions between
-	//  when it's initially set to false, and when it's reset to true.
-	bool checkUsingInput = false;
-
-	// Set while the keyboard is up. Nothing reads it: the game keeps getting the controllers' input meanwhile.
-	if (keyboard)
-		checkUsingInput = true;
-
 	// sort overlays by distance starting with this index
 	size_t firstOverlay = layerHeaders.size();
 	// find HMD position to sort overlays by distance
@@ -1598,6 +1700,38 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 	}
 	layerOverlays.clear();
 
+	// An overlay placed relative to another is shown only while its parents are
+	auto parentsShown = [&](const OverlayData& child) {
+		const OverlayData* o = &child;
+		for (int depth = 0; o->overlayRelative && depth <= overlay_maths::kMaxChainDepth; depth++) {
+			o = (const OverlayData*)o->relativeParent;
+			if (!validOverlays.count(const_cast<OverlayData*>(o)))
+				return true; // gone: the chain's placement decides
+			const bool shown = o->dashboard ? !o->thumbnail && dash->open && dash->activePid == oc_current_pid() && dash->activeOverlay == (uint64_t)(uintptr_t)o && dash->ForScene(*o) : o->visible;
+			if (!shown)
+				return false;
+		}
+		return true;
+	};
+
+	// Puts an overlay's stored texture (set before the graphics were configured) into a swapchain of a compositor of its own
+	auto showStoredTexture = [](OverlayData& overlay) {
+		auto* xrBackend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
+		std::shared_ptr<Compositor> compositor = xrBackend ? BaseCompositor::CreateCompositorAPI(&overlay.texture) : nullptr;
+		if (!compositor) {
+			OOVR_LOG_ONCEF("An overlay's texture (type %d) can't be shown: no compositor for it", (int)overlay.texture.eType);
+			return;
+		}
+		overlay.compositor = std::weak_ptr(compositor);
+		xrBackend->RegisterOverlayCompositor(compositor);
+		Texture_t shown = overlay.texture;
+		shown.eColorSpace = overlay.TextureColourSpace(shown.eColorSpace);
+		compositor->LoadSubmitContext();
+		overlay.CopyTexture(*compositor, shown);
+		compositor->ResetSubmitContext();
+		overlay.compositionLayer.base.space = xr_space_from_ref_space_type(BaseSystem::currentSpace);
+	};
+
 	for (const auto& kv : overlays) {
 		if (kv.second) {
 			OverlayData& overlay = *kv.second;
@@ -1609,6 +1743,8 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 			// Skip hiddden overlays, and those without a valid texture or image (eg, after calling ClearOverlayTexture).
 			if ((overlay.dashboard ? !inDashboard : !overlay.visible) || (overlay.texture.handle == nullptr && overlay.rawImage.Empty()))
 				continue;
+			if (!parentsShown(overlay))
+				continue;
 
 			// An image from memory whose swapchain went with the last session is put into one on this session, by the
 			// game's thread: the upload uses the device's immediate context or queue, which it uses too
@@ -1618,32 +1754,31 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 				overlay.compositionLayer.quad.subImage = overlay.raw && overlay.raw->Live() ? overlay.raw->SubImage() : XrSwapchainSubImage{};
 			}
 
+			// A texture set before the graphics were configured is put into a swapchain now, by the game's thread. Only a
+			// D3D11 texture (referenced) or an OpenGL one (a name): a Vulkan or D3D12 handle points at the game's struct,
+			// gone by now, and waits for the game's next SetOverlayTexture
+			const bool storedUsable = overlay.texture.eType == TextureType_DirectX || overlay.texture.eType == TextureType_OpenGL;
+			if (mayUpload && overlay.texture.handle && storedUsable && CurrentSessionKind() != SessionKind::Overlay
+			    && !overlay.compositor.lock() && BackendManager::Instance().IsGraphicsConfigured())
+				showStoredTexture(overlay);
+
 #if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
 			// A texture its program writes without another call (or shows by its shared handle) is read again
 			if (mayUpload && overlay.liveSession) {
 				if (std::shared_ptr<Compositor> compositor = overlay.compositor.lock()) {
-					const Texture_t shown{ overlay.liveSession, TextureType_DirectX, overlay.texture.eColorSpace };
+					const Texture_t shown{ overlay.liveSession, TextureType_DirectX, overlay.TextureColourSpace(overlay.texture.eColorSpace) };
 					compositor->LoadSubmitContext();
-					compositor->Invoke(&shown, &overlay.textureBounds, overlay.compositionLayer.quad.subImage);
+					overlay.CopyTexture(*compositor, shown);
 					compositor->ResetSubmitContext();
 				}
 			}
 #endif
 
-			// Quick hack to get around Boneworks creating overlays and setting them to an opacity of
-			// zero to hide them. Leave 1% of margin in case of weird float issues.
-			// if (overlay.colour.a < 0.01)
-			//	continue;
+			// Games hide an overlay by setting its alpha to zero; a layer that faint isn't worth submitting
+			if (!(overlay.colour.a >= 0.01f))
+				continue;
 
 			if ((uint64_t)overlay.compositionLayer.quad.subImage.swapchain == 0) {
-				continue;
-			}
-
-			const XrRect2Di& srcSize = overlay.compositionLayer.quad.subImage.imageRect;
-			const int32_t srcHeight = std::abs(srcSize.extent.height);
-			if (srcHeight <= 8 && srcSize.extent.width <= 8) {
-				// Hack for F1 22 which creates a low res texture to fade between scenes
-				// but ends up just leaving a black square that takes up half the screen.
 				continue;
 			}
 
@@ -1678,14 +1813,41 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 			}
 
 			overlay.distance = glm::distance(position, hmdPosition);
+
+			// A tiny texture stretched across a wide view is a fade between scenes that would leave a flat square over
+			// half the screen; a small one, such as a tint, is drawn
+			const XrRect2Di& srcSize = overlay.compositionLayer.quad.subImage.imageRect;
+			if (std::abs(srcSize.extent.height) <= 8 && srcSize.extent.width <= 8
+			    && overlay_maths::SubtendedAngle(placement.width, overlay.distance) >= kFadeSquareAngle)
+				continue;
+
+			// Straight alpha, unless the overlay says its texture is premultiplied; the texture's alpha is ignored if asked
+			XrCompositionLayerFlags layerFlags = 0;
+			if (!(overlay.flags & kOverlayFlagIgnoreTextureAlpha))
+				layerFlags |= XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+			const bool premultiplied = (overlay.flags & kOverlayFlagIsPremultiplied) != 0;
+			if (!premultiplied)
+				layerFlags |= XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
+			overlay.compositionLayer.base.layerFlags = layerFlags;
+
+			// The overlay's colour and alpha, as the layer's colour scale
+			overlay.compositionLayer.base.next = nullptr;
+			if (xr_ext->ColorScaleBiasKHR_Available()) {
+				overlay.colourScale = { XR_TYPE_COMPOSITION_LAYER_COLOR_SCALE_BIAS_KHR };
+				overlay.colourScale.colorScale = overlay_maths::ColourScale(overlay.colour.r, overlay.colour.g, overlay.colour.b, overlay.colour.a, premultiplied);
+				overlay.colourScale.colorBias = { 0, 0, 0, 0 };
+				overlay.compositionLayer.base.next = &overlay.colourScale;
+			}
+
 			size_t i;
 
-			// Sort the overlays: later layers are drawn on top, so by sort order, then the farthest first
+			// Sort the overlays: later layers are drawn on top, so the high quality overlay last, then by sort order, then
+			// the farthest first
+			const overlay_maths::DrawOrder order{ highQualityOverlay == (VROverlayHandle_t)(uintptr_t)&overlay, overlay.sortOrder, overlay.distance };
 			for (i = firstOverlay; i < layerHeaders.size(); i++) {
 				const OverlayData* d = layerOverlays[i - firstOverlay];
-				if (d->sortOrder > overlay.sortOrder)
-					break;
-				if (d->sortOrder == overlay.sortOrder && d->distance < overlay.distance)
+				const overlay_maths::DrawOrder other{ highQualityOverlay == (VROverlayHandle_t)(uintptr_t)d, d->sortOrder, d->distance };
+				if (overlay_maths::DrawnBefore(order, other))
 					break;
 			}
 			// Finally, add it to the list of layers to be sent to LibOVR
@@ -1722,18 +1884,8 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 		layerHeaders.push_back((XrCompositionLayerBaseHeader*)&p.cursorLayer);
 	}
 
-	usingInput = checkUsingInput;
 	layers = layerHeaders.data();
 	return static_cast<int>(layerHeaders.size());
-}
-
-bool BaseOverlay::_HandleOverlayInput(EVREye side, TrackedDeviceIndex_t index, VRControllerState_t state)
-{
-	// Nothing calls this: the keyboard is typed on with the lasers (_UpdatePointer), and the game keeps the input
-	if (!usingInput)
-		return true;
-
-	return !keyboard;
 }
 
 bool BaseOverlay::_IsOwnOverlay(VROverlayHandle_t handle)
@@ -1748,9 +1900,13 @@ EVROverlayError BaseOverlay::FindOverlay(const char* pchOverlayKey, VROverlayHan
 	if (!pchOverlayKey || !pOverlayHandle)
 		return VROverlayError_InvalidParameter;
 	*pOverlayHandle = k_ulOverlayHandleInvalid;
-	if (overlays.count(pchOverlayKey)) {
-		OVL = overlays[pchOverlayKey];
-		return VROverlayError_None;
+	{
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		auto own = overlays.find(pchOverlayKey);
+		if (own != overlays.end()) {
+			OVL = own->second;
+			return VROverlayError_None;
+		}
 	}
 
 	// Another program's overlay, as the store has it: a handle its state can be read through (not changed)
@@ -1778,8 +1934,7 @@ EVROverlayError BaseOverlay::FindOverlay(const char* pchOverlayKey, VROverlayHan
 		}
 	}
 
-	// TODO is this the correct return value
-	return VROverlayError_InvalidParameter;
+	return VROverlayError_UnknownOverlay;
 }
 
 bool BaseOverlay::RemoteOverlayEntry(VROverlayHandle_t handle, Json::Value& entry)
@@ -1843,11 +1998,12 @@ EVROverlayError BaseOverlay::CreateOverlay(const char* pchOverlayKey, const char
 		return VROverlayError_KeyTooLong;
 	if (strlen(pchOverlayName) >= kOverlayMaxNameLength)
 		return VROverlayError_NameTooLong;
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	if (overlays.count(pchOverlayKey)) {
 		return VROverlayError_KeyInUse;
 	}
-
-	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	if (overlays.size() >= kMaxOverlayCount)
+		return VROverlayError_OverlayLimitExceeded;
 	OverlayData* data = new OverlayData(pchOverlayKey, pchOverlayName);
 	OVL = data;
 
@@ -1856,7 +2012,7 @@ EVROverlayError BaseOverlay::CreateOverlay(const char* pchOverlayKey, const char
 
 	data->compositionLayer.base.type = XR_TYPE_COMPOSITION_LAYER_QUAD;
 	data->compositionLayer.base.next = NULL;
-	data->compositionLayer.base.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT;
+	data->compositionLayer.base.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT | XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
 	data->compositionLayer.base.space = xr_space_from_ref_space_type(BaseSystem::currentSpace);
 
 	// Still same for quad + cylinder
@@ -1868,17 +2024,36 @@ EVROverlayError BaseOverlay::CreateOverlay(const char* pchOverlayKey, const char
 }
 EVROverlayError BaseOverlay::DestroyOverlay(VROverlayHandle_t ulOverlayHandle)
 {
+	auto session = xr_session.lock_shared();
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	USEH();
 
 	if (highQualityOverlay == ulOverlayHandle)
 		highQualityOverlay = vr::k_ulOverlayHandleInvalid;
-
-	auto session = xr_session.lock_shared();
-	std::lock_guard<std::recursive_mutex> lock(layersLock);
-	auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
-	if (std::shared_ptr<Compositor> comp = overlay->compositor.lock())
-		backend->UnregisterOverlayCompositor(comp);
-	backend->ForgetOverlayTextures(overlay);
+	if (gamepadFocusOverlay == ulOverlayHandle)
+		gamepadFocusOverlay = vr::k_ulOverlayHandleInvalid;
+	if (pointing->keyboardFor == ulOverlayHandle)
+		pointing->keyboardFor = vr::k_ulOverlayHandleInvalid;
+	pointing->mouse.Forget(ulOverlayHandle);
+	// Nothing keeps pointing at the overlay: the laser mouse, the others' cursor, parent and neighbours
+	for (const auto& kv : overlays) {
+		if (!kv.second)
+			continue;
+		OverlayData& other = *kv.second;
+		if (other.cursor == ulOverlayHandle)
+			other.cursor = vr::k_ulOverlayHandleInvalid;
+		if (other.relativeParent == ulOverlayHandle)
+			other.relativeParent = vr::k_ulOverlayHandleInvalid;
+		for (auto it = other.neighbours.begin(); it != other.neighbours.end();)
+			it = it->second == ulOverlayHandle ? other.neighbours.erase(it) : std::next(it);
+	}
+	// (there's no backend before the runtime is set up, or after it's shut down)
+	BackendManager* manager = BackendManager::InstancePtr();
+	if (auto* backend = manager ? (XrBackend*)manager->GetBackendInstance() : nullptr) {
+		if (std::shared_ptr<Compositor> comp = overlay->compositor.lock())
+			backend->UnregisterOverlayCompositor(comp);
+		backend->ForgetOverlayTextures(overlay);
+	}
 	overlays.erase(overlay->key);
 	validOverlays.erase(overlay);
 	delete overlay;
@@ -1921,7 +2096,7 @@ uint32_t BaseOverlay::GetOverlayKey(VROverlayHandle_t ulOverlayHandle, char* pch
 		return CopyOutString(remote["key"].asString(), pchValue, unBufferSize);
 	}
 	OverlayData* overlay = (OverlayData*)ulOverlayHandle;
-	if (!overlay || !validOverlays.count(overlay) || !overlays.count(overlay->key)) {
+	if (!IsLiveOverlay(overlay)) {
 		if (pError)
 			*pError = VROverlayError_InvalidHandle;
 		CopyOutString("", pchValue, unBufferSize);
@@ -1940,7 +2115,7 @@ uint32_t BaseOverlay::GetOverlayName(VROverlayHandle_t ulOverlayHandle, VR_OUT_S
 		return CopyOutString(remote["name"].asString(), pchValue, unBufferSize);
 	}
 	OverlayData* overlay = (OverlayData*)ulOverlayHandle;
-	if (!overlay || !validOverlays.count(overlay) || !overlays.count(overlay->key)) {
+	if (!IsLiveOverlay(overlay)) {
 		if (pError)
 			*pError = VROverlayError_InvalidHandle;
 		CopyOutString("", pchValue, unBufferSize);
@@ -1952,7 +2127,7 @@ uint32_t BaseOverlay::GetOverlayName(VROverlayHandle_t ulOverlayHandle, VR_OUT_S
 }
 EVROverlayError BaseOverlay::SetOverlayName(VROverlayHandle_t ulOverlayHandle, const char* pchName)
 {
-	USEH();
+	USEH_LOCKED();
 	if (!pchName)
 		return VROverlayError_InvalidParameter;
 	if (strlen(pchName) >= kOverlayMaxNameLength)
@@ -1976,27 +2151,48 @@ EVROverlayError BaseOverlay::GetOverlayImageData(VROverlayHandle_t ulOverlayHand
 	Texture_t texture{};
 	VRTextureBounds_t textureBounds{};
 	std::shared_ptr<Compositor> shared;
+	// An overlay application's texture is shown from its copy on the session's device (kept referenced here), which the
+	// stored compositor reads; the program's own texture is on its device
+	Texture_t session{};
+#if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+	ID3D11Texture2D* sessionCopy = nullptr;
+#endif
 	{
 		std::lock_guard<std::recursive_mutex> lock(layersLock);
 		copied = overlay->rawImage;
 		texture = overlay->texture;
 		textureBounds = overlay->textureBounds;
 		shared = overlay->compositor.lock();
+#if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+		sessionCopy = overlay->liveSession;
+		if (sessionCopy) {
+			sessionCopy->AddRef();
+			session = Texture_t{ sessionCopy, TextureType_DirectX, overlay->TextureColourSpace(texture.eColorSpace) };
+		}
+#endif
 	}
+#if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+	ScopeGuard releaseSessionCopy([&]() {
+		if (sessionCopy)
+			sessionCopy->Release();
+	});
+#endif
 	const Image* image = &copied;
 	if (image->Empty()) {
 		if (!texture.handle)
 			return VROverlayError_InvalidTexture;
-		if (texture.eType == TextureType_DXGISharedHandle)
+		const bool fromSession = session.handle != nullptr;
+		if (!fromSession && texture.eType == TextureType_DXGISharedHandle)
 			OC_UNSUPPORTED(VROverlayError_RequestFailed, "GetOverlayImageData: a texture given by its shared handle can't be read back");
+		const Texture_t& source = fromSession ? session : texture;
 		std::unique_ptr<Compositor> own;
-		Compositor* comp = shared.get();
+		Compositor* comp = fromSession || CurrentSessionKind() != SessionKind::Overlay ? shared.get() : nullptr;
 		if (!comp) {
-			own = BaseCompositor::CreateCompositorAPI(&texture);
+			own = BaseCompositor::CreateCompositorAPI(&source);
 			comp = own.get();
 		}
-		if (!comp || !comp->ReadbackToCpu(&texture, &textureBounds, copied))
-			OC_UNSUPPORTED(VROverlayError_RequestFailed, "GetOverlayImageData: this overlay's texture (type %d) can't be read back", (int)texture.eType);
+		if (!comp || !comp->ReadbackToCpu(&source, &textureBounds, copied))
+			OC_UNSUPPORTED(VROverlayError_RequestFailed, "GetOverlayImageData: this overlay's texture (type %d) can't be read back", (int)source.eType);
 	}
 	if (punWidth)
 		*punWidth = image->width;
@@ -2014,14 +2210,14 @@ const char* BaseOverlay::GetOverlayErrorNameFromEnum(EVROverlayError error)
 }
 EVROverlayError BaseOverlay::SetOverlayRenderingPid(VROverlayHandle_t ulOverlayHandle, uint32_t unPID)
 {
-	USEH();
+	USEH_LOCKED();
 	overlay->renderingPid = unPID;
 	return VROverlayError_None;
 }
 uint32_t BaseOverlay::GetOverlayRenderingPid(VROverlayHandle_t ulOverlayHandle)
 {
 	OverlayData* overlay = (OverlayData*)ulOverlayHandle;
-	if (!overlay || !validOverlays.count(overlay) || !overlays.count(overlay->key))
+	if (!IsLiveOverlay(overlay))
 		return 0;
 	return overlay->renderingPid;
 }
@@ -2041,10 +2237,14 @@ EVROverlayError BaseOverlay::GetOverlayFlag(VROverlayHandle_t ulOverlayHandle, V
 {
 	Json::Value remote;
 	if (RemoteOverlayEntry(ulOverlayHandle, remote)) {
+		if (!pbEnabled)
+			return VROverlayError_InvalidParameter;
 		*pbEnabled = (remote["flags"].asUInt64() & (1uLL << eOverlayFlag)) != 0uLL;
 		return VROverlayError_None;
 	}
 	USEH();
+	if (!pbEnabled)
+		return VROverlayError_InvalidParameter;
 
 	*pbEnabled = (overlay->flags & (1uLL << eOverlayFlag)) != 0uLL;
 
@@ -2063,6 +2263,8 @@ EVROverlayError BaseOverlay::SetOverlayColor(VROverlayHandle_t ulOverlayHandle, 
 EVROverlayError BaseOverlay::GetOverlayColor(VROverlayHandle_t ulOverlayHandle, float* pfRed, float* pfGreen, float* pfBlue)
 {
 	USEH();
+	if (!pfRed || !pfGreen || !pfBlue)
+		return VROverlayError_InvalidParameter;
 
 	*pfRed = overlay->colour.r;
 	*pfGreen = overlay->colour.g;
@@ -2081,6 +2283,8 @@ EVROverlayError BaseOverlay::SetOverlayAlpha(VROverlayHandle_t ulOverlayHandle, 
 EVROverlayError BaseOverlay::GetOverlayAlpha(VROverlayHandle_t ulOverlayHandle, float* pfAlpha)
 {
 	USEH();
+	if (!pfAlpha)
+		return VROverlayError_InvalidParameter;
 
 	*pfAlpha = overlay->colour.a;
 
@@ -2088,7 +2292,7 @@ EVROverlayError BaseOverlay::GetOverlayAlpha(VROverlayHandle_t ulOverlayHandle, 
 }
 EVROverlayError BaseOverlay::SetOverlayTexelAspect(VROverlayHandle_t ulOverlayHandle, float fTexelAspect)
 {
-	USEH();
+	USEH_LOCKED();
 
 	overlay->texelAspect = fTexelAspect;
 
@@ -2113,6 +2317,8 @@ EVROverlayError BaseOverlay::SetOverlaySortOrder(VROverlayHandle_t ulOverlayHand
 }
 EVROverlayError BaseOverlay::GetOverlaySortOrder(VROverlayHandle_t ulOverlayHandle, uint32_t* punSortOrder)
 {
+	if (!punSortOrder)
+		return VROverlayError_InvalidParameter;
 	USEH();
 	*punSortOrder = overlay->sortOrder;
 	return VROverlayError_None;
@@ -2129,10 +2335,14 @@ EVROverlayError BaseOverlay::GetOverlayWidthInMeters(VROverlayHandle_t ulOverlay
 {
 	Json::Value remote;
 	if (RemoteOverlayEntry(ulOverlayHandle, remote)) {
+		if (!pfWidthInMeters)
+			return VROverlayError_InvalidParameter;
 		*pfWidthInMeters = remote["width"].asFloat();
 		return VROverlayError_None;
 	}
 	USEH();
+	if (!pfWidthInMeters)
+		return VROverlayError_InvalidParameter;
 
 	*pfWidthInMeters = overlay->widthMeters;
 
@@ -2152,6 +2362,8 @@ EVROverlayError BaseOverlay::SetOverlayCurvature(VROverlayHandle_t ulOverlayHand
 EVROverlayError BaseOverlay::GetOverlayCurvature(VROverlayHandle_t ulOverlayHandle, float* pfCurvature)
 {
 	USEH();
+	if (!pfCurvature)
+		return VROverlayError_InvalidParameter;
 
 	*pfCurvature = overlay->curvature;
 
@@ -2169,6 +2381,8 @@ EVROverlayError BaseOverlay::SetOverlayAutoCurveDistanceRangeInMeters(VROverlayH
 EVROverlayError BaseOverlay::GetOverlayAutoCurveDistanceRangeInMeters(VROverlayHandle_t ulOverlayHandle, float* pfMinDistanceInMeters, float* pfMaxDistanceInMeters)
 {
 	USEH();
+	if (!pfMinDistanceInMeters || !pfMaxDistanceInMeters)
+		return VROverlayError_InvalidParameter;
 
 	*pfMinDistanceInMeters = overlay->autoCurveDistanceRangeMin;
 	*pfMaxDistanceInMeters = overlay->autoCurveDistanceRangeMax;
@@ -2186,6 +2400,8 @@ EVROverlayError BaseOverlay::SetOverlayTextureColorSpace(VROverlayHandle_t ulOve
 EVROverlayError BaseOverlay::GetOverlayTextureColorSpace(VROverlayHandle_t ulOverlayHandle, EColorSpace* peTextureColorSpace)
 {
 	USEH();
+	if (!peTextureColorSpace)
+		return VROverlayError_InvalidParameter;
 
 	*peTextureColorSpace = overlay->colourSpace;
 
@@ -2200,11 +2416,18 @@ EVROverlayError BaseOverlay::SetOverlayTextureBounds(VROverlayHandle_t ulOverlay
 	else
 		overlay->textureBounds = { 0, 0, 1, 1 };
 
+	// The texture's copy is whole: its bounds are the layer's image rectangle in it. A flip (min above max) is made
+	// when the texture is copied, so a change of flip shows from the next SetOverlayTexture: the texture handle the
+	// game gave may not be valid any more to copy again now.
+	overlay->ApplyTextureBounds();
+
 	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::GetOverlayTextureBounds(VROverlayHandle_t ulOverlayHandle, VRTextureBounds_t* pOverlayTextureBounds)
 {
 	USEH();
+	if (!pOverlayTextureBounds)
+		return VROverlayError_InvalidParameter;
 
 	*pOverlayTextureBounds = overlay->textureBounds;
 
@@ -2220,7 +2443,7 @@ uint32_t BaseOverlay::GetOverlayRenderModel(VROverlayHandle_t ulOverlayHandle, c
 		return 0;
 	};
 	OverlayData* overlay = (OverlayData*)ulOverlayHandle;
-	if (!overlay || !validOverlays.count(overlay) || !overlays.count(overlay->key))
+	if (!IsLiveOverlay(overlay))
 		return fail(VROverlayError_InvalidHandle);
 	if (pError)
 		*pError = VROverlayError_None;
@@ -2247,18 +2470,28 @@ EVROverlayError BaseOverlay::GetOverlayTransformType(VROverlayHandle_t ulOverlay
 	// Another program's overlay is read as it's placed in the standing space
 	Json::Value remote;
 	if (RemoteOverlayEntry(ulOverlayHandle, remote)) {
+		if (!peTransformType)
+			return VROverlayError_InvalidParameter;
 		*peTransformType = VROverlayTransform_Absolute;
 		return VROverlayError_None;
 	}
 	USEH();
+	if (!peTransformType)
+		return VROverlayError_InvalidParameter;
 
-	*peTransformType = overlay->transformType;
+	// A dashboard overlay is placed by the dashboard, as its tab or its thumbnail
+	if (overlay->dashboard)
+		*peTransformType = overlay->thumbnail ? VROverlayTransform_DashboardThumb : VROverlayTransform_DashboardTab;
+	else
+		*peTransformType = overlay->transformType;
 
 	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::SetOverlayTransformAbsolute(VROverlayHandle_t ulOverlayHandle, ETrackingUniverseOrigin eTrackingOrigin, const HmdMatrix34_t* pmatTrackingOriginToOverlayTransform)
 {
 	USEH_LOCKED();
+	if (!pmatTrackingOriginToOverlayTransform)
+		return VROverlayError_InvalidParameter;
 
 	// Drawn in whatever origin the frame uses (ChangeOrigin)
 	overlay->transformType = VROverlayTransform_Absolute;
@@ -2281,12 +2514,15 @@ EVROverlayError BaseOverlay::GetOverlayTransformAbsolute(VROverlayHandle_t ulOve
 		return VROverlayError_None;
 	}
 	USEH();
+	if (!pmatTrackingOriginToOverlayTransform)
+		return VROverlayError_InvalidParameter;
 
 	if (overlay->transformType != VROverlayTransform_Absolute)
 		return VROverlayError_WrongTransformType;
 
-	if (peTrackingOrigin && overlay->absoluteOrigin >= 0)
-		*peTrackingOrigin = (ETrackingUniverseOrigin)overlay->absoluteOrigin;
+	// Whichever origin the frame uses, until one is given
+	if (peTrackingOrigin)
+		*peTrackingOrigin = overlay->absoluteOrigin >= 0 ? (ETrackingUniverseOrigin)overlay->absoluteOrigin : FrameOrigin();
 	O2S_om34(overlay->overlayTransform, *pmatTrackingOriginToOverlayTransform);
 
 	return VROverlayError_None;
@@ -2294,6 +2530,8 @@ EVROverlayError BaseOverlay::GetOverlayTransformAbsolute(VROverlayHandle_t ulOve
 EVROverlayError BaseOverlay::SetOverlayTransformTrackedDeviceRelative(VROverlayHandle_t ulOverlayHandle, TrackedDeviceIndex_t unTrackedDevice, const HmdMatrix34_t* pmatTrackedDeviceToOverlayTransform)
 {
 	USEH_LOCKED();
+	if (!pmatTrackedDeviceToOverlayTransform)
+		return VROverlayError_InvalidParameter;
 
 	overlay->transformType = VROverlayTransform_TrackedDeviceRelative;
 	overlay->overlayRelative = false;
@@ -2347,13 +2585,15 @@ EVROverlayError BaseOverlay::GetOverlayTransformOverlayRelative(VROverlayHandle_
 	USEH();
 	if (!ulOverlayHandleParent || !pmatParentOverlayToOverlayTransform)
 		return VROverlayError_InvalidParameter;
+	if (!overlay->overlayRelative)
+		return VROverlayError_WrongTransformType;
 	*ulOverlayHandleParent = overlay->relativeParent;
 	*pmatParentOverlayToOverlayTransform = overlay->relativeTransform;
 	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::SetOverlayTransformOverlayRelative(VROverlayHandle_t ulOverlayHandle, VROverlayHandle_t ulOverlayHandleParent, const HmdMatrix34_t* pmatParentOverlayToOverlayTransform)
 {
-	USEH();
+	USEH_LOCKED();
 	// Placed by its parent when drawn: the parent may be made, moved or destroyed afterwards
 	overlay->overlayRelative = true;
 	overlay->relativeParent = ulOverlayHandleParent;
@@ -2363,8 +2603,9 @@ EVROverlayError BaseOverlay::SetOverlayTransformOverlayRelative(VROverlayHandle_
 }
 EVROverlayError BaseOverlay::SetOverlayTransformCursor(VROverlayHandle_t ulCursorOverlayHandle, const HmdVector2_t* pvHotspot)
 {
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	OverlayData* overlay = (OverlayData*)ulCursorOverlayHandle;
-	if (!overlay || !validOverlays.count(overlay) || !overlays.count(overlay->key))
+	if (!IsLiveOverlay(overlay))
 		return VROverlayError_InvalidHandle;
 	// Drawn where a laser pointer meets the overlay it's the cursor of; until one does, at its own transform
 	overlay->transformType = VROverlayTransform_Cursor;
@@ -2423,7 +2664,7 @@ bool BaseOverlay::IsOverlayVisible(VROverlayHandle_t ulOverlayHandle)
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	// A dashboard overlay: while it's the one the open dashboard shows
 	if (overlay->dashboard)
-		return !overlay->thumbnail && dash->open && dash->activePid == oc_current_pid() && dash->activeOverlay == (uint64_t)(uintptr_t)overlay;
+		return !overlay->thumbnail && dash->open && dash->activePid == oc_current_pid() && dash->activeOverlay == (uint64_t)(uintptr_t)overlay && dash->ForScene(*overlay);
 	return overlay->visible;
 }
 EVROverlayError BaseOverlay::GetTransformForOverlayCoordinates(VROverlayHandle_t ulOverlayHandle, ETrackingUniverseOrigin eTrackingOrigin, HmdVector2_t coordinatesInOverlay, HmdMatrix34_t* pmatTransform)
@@ -2475,6 +2716,27 @@ bool BaseOverlay::PollNextOverlayEvent(VROverlayHandle_t ulOverlayHandle, VREven
 
 	return true;
 }
+bool BaseOverlay::PollNextAnyOverlayEvent(VREvent_t* pEvent, uint32_t eventSize, VROverlayHandle_t* pulOverlayHandle)
+{
+	if (!pEvent || eventSize < offsetof(VREvent_t, data))
+		return false;
+
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	TakeRemotePointerEvents();
+	for (const auto& kv : overlays) {
+		OverlayData* o = kv.second;
+		if (!o || o->eventQueue.empty())
+			continue;
+		const VREvent_t e = o->eventQueue.front();
+		o->eventQueue.pop();
+		memset(pEvent, 0, eventSize);
+		memcpy(pEvent, &e, std::min((size_t)eventSize, sizeof(e)));
+		if (pulOverlayHandle)
+			*pulOverlayHandle = (VROverlayHandle_t)(uintptr_t)o;
+		return true;
+	}
+	return false;
+}
 EVROverlayError BaseOverlay::GetOverlayInputMethod(VROverlayHandle_t ulOverlayHandle, VROverlayInputMethod* peInputMethod)
 {
 	USEH();
@@ -2487,7 +2749,10 @@ EVROverlayError BaseOverlay::GetOverlayInputMethod(VROverlayHandle_t ulOverlayHa
 
 EVROverlayError BaseOverlay::SetOverlayInputMethod(VROverlayHandle_t ulOverlayHandle, VROverlayInputMethod eInputMethod)
 {
-	USEH();
+	// Before the layers' lock: loading the input takes the session lock
+	if (eInputMethod == VROverlayInputMethod_Mouse)
+		EnsurePointerInput();
+	USEH_LOCKED();
 
 	overlay->inputMethod = eInputMethod;
 
@@ -2503,7 +2768,7 @@ EVROverlayError BaseOverlay::GetOverlayMouseScale(VROverlayHandle_t ulOverlayHan
 }
 EVROverlayError BaseOverlay::SetOverlayMouseScale(VROverlayHandle_t ulOverlayHandle, const HmdVector2_t* pvecMouseScale)
 {
-	USEH();
+	USEH_LOCKED();
 
 	if (pvecMouseScale)
 		overlay->mouseScale = *pvecMouseScale;
@@ -2516,7 +2781,7 @@ bool BaseOverlay::ComputeOverlayIntersection(VROverlayHandle_t ulOverlayHandle, 
 {
 	Json::Value remote;
 	if (RemoteOverlayEntry(ulOverlayHandle, remote)) {
-		// Another program's overlay: its whole area (its intersection mask is its owner's)
+		// Another program's overlay, with its owner's intersection mask
 		overlay_maths::Placement there{};
 		if (!pParams || !pResults || !RemoteOverlayPlacement(remote, pParams->eOrigin, there))
 			return false;
@@ -2530,7 +2795,8 @@ bool BaseOverlay::ComputeOverlayIntersection(VROverlayHandle_t ulOverlayHandle, 
 		pResults->vNormal = { hit.normal.x, hit.normal.y, hit.normal.z };
 		pResults->vUVs = { hit.u, hit.v };
 		pResults->fDistance = hit.distance;
-		return on;
+		// The mask is in units of the overlay's width and height, from its lower left
+		return on && overlay_maths::InMask(MaskFromJson(remote["mask"]), hit.u, hit.v);
 	}
 	USEHB();
 
@@ -2570,7 +2836,7 @@ bool BaseOverlay::HandleControllerOverlayInteractionAsMouse(VROverlayHandle_t ul
 }
 EVROverlayError BaseOverlay::SetOverlayFlagMask(VROverlayHandle_t ulOverlayHandle, uint32_t flagMask, bool bEnabled)
 {
-	USEH();
+	USEH_LOCKED();
 	if (bEnabled)
 		overlay->flags |= flagMask;
 	else
@@ -2683,44 +2949,80 @@ bool BaseOverlay::IsFocusOverlay(VROverlayHandle_t ulOverlayHandle)
 bool BaseOverlay::IsHoverTargetOverlay(VROverlayHandle_t ulOverlayHandle)
 {
 	USEHB();
-	// The overlay the laser driving the mouse is on
+	// The last overlay the laser driving the mouse was on
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
-	return pointing->mouse.Focus() == ulOverlayHandle;
+	return pointing->mouse.Hover() == ulOverlayHandle;
 }
 VROverlayHandle_t BaseOverlay::GetGamepadFocusOverlay()
 {
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	return gamepadFocusOverlay;
+}
+void BaseOverlay::ChangeGamepadFocus(VROverlayHandle_t to)
+{
+	if (to == gamepadFocusOverlay)
+		return;
+	if (gamepadFocusOverlay != k_ulOverlayHandleInvalid)
+		((OverlayData*)gamepadFocusOverlay)->QueueOverlayEvent(VREvent_OverlayGamepadFocusLost);
+	gamepadFocusOverlay = to;
+	if (to != k_ulOverlayHandleInvalid)
+		((OverlayData*)to)->QueueOverlayEvent(VREvent_OverlayGamepadFocusGained);
 }
 EVROverlayError BaseOverlay::SetGamepadFocusOverlay(VROverlayHandle_t ulNewFocusOverlay)
 {
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	if (ulNewFocusOverlay != k_ulOverlayHandleInvalid) {
 		OverlayData* overlay = (OverlayData*)ulNewFocusOverlay;
 		if (!validOverlays.count(overlay))
 			return VROverlayError_InvalidHandle;
 	}
-	gamepadFocusOverlay = ulNewFocusOverlay;
+	ChangeGamepadFocus(ulNewFocusOverlay);
 	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::SetOverlayNeighbor(EOverlayDirection eDirection, VROverlayHandle_t ulFrom, VROverlayHandle_t ulTo)
 {
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	OverlayData* overlay = (OverlayData*)ulFrom;
 	if (!overlay || !validOverlays.count(overlay))
 		return VROverlayError_InvalidHandle;
-	if (ulTo == k_ulOverlayHandleInvalid)
-		overlay->neighbours.erase((int)eDirection);
-	else
-		overlay->neighbours[(int)eDirection] = ulTo;
+	OverlayData* to = (OverlayData*)ulTo;
+	if (ulTo != k_ulOverlayHandleInvalid && (!to || !validOverlays.count(to)))
+		return VROverlayError_InvalidHandle;
+	if ((int)eDirection < 0 || (int)eDirection >= 4)
+		return VROverlayError_InvalidParameter;
+	// Up and down, left and right: each end points back at the other
+	const int direction = (int)eDirection, opposite = direction ^ 1;
+	// Whatever pointed at each other in these directions no longer does
+	auto unlink = [&](OverlayData* from, int dir, int back) {
+		auto it = from->neighbours.find(dir);
+		if (it == from->neighbours.end())
+			return;
+		if (validOverlays.count((OverlayData*)it->second)) {
+			OverlayData* other = (OverlayData*)it->second;
+			auto backIt = other->neighbours.find(back);
+			if (backIt != other->neighbours.end() && backIt->second == (VROverlayHandle_t)(uintptr_t)from)
+				other->neighbours.erase(backIt);
+		}
+		from->neighbours.erase(it);
+	};
+	unlink(overlay, direction, opposite);
+	if (to) {
+		unlink(to, opposite, direction);
+		overlay->neighbours[direction] = ulTo;
+		to->neighbours[opposite] = ulFrom;
+	}
 	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::MoveGamepadFocusToNeighbor(EOverlayDirection eDirection, VROverlayHandle_t ulFrom)
 {
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	OverlayData* overlay = (OverlayData*)ulFrom;
 	if (!overlay || !validOverlays.count(overlay))
 		return VROverlayError_InvalidHandle;
 	auto it = overlay->neighbours.find((int)eDirection);
 	if (it == overlay->neighbours.end())
 		return VROverlayError_NoNeighbor;
-	gamepadFocusOverlay = it->second;
+	ChangeGamepadFocus(it->second);
 	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::SetOverlayDualAnalogTransform(VROverlayHandle_t ulOverlay, EDualAnalogWhich eWhich, const HmdVector2_t& vCenter, float fRadius)
@@ -2766,13 +3068,13 @@ EVROverlayError BaseOverlay::TriggerLaserMouseHapticVibration(VROverlayHandle_t 
 }
 EVROverlayError BaseOverlay::SetOverlayCursor(VROverlayHandle_t ulOverlayHandle, VROverlayHandle_t ulCursorHandle)
 {
-	USEH();
+	USEH_LOCKED();
 	overlay->cursor = ulCursorHandle;
 	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::SetOverlayCursorPositionOverride(VROverlayHandle_t ulOverlayHandle, const HmdVector2_t* pvCursor)
 {
-	USEH();
+	USEH_LOCKED();
 	if (!pvCursor)
 		return VROverlayError_InvalidParameter;
 	overlay->cursorOverridden = true;
@@ -2781,7 +3083,7 @@ EVROverlayError BaseOverlay::SetOverlayCursorPositionOverride(VROverlayHandle_t 
 }
 EVROverlayError BaseOverlay::ClearOverlayCursorPositionOverride(VROverlayHandle_t ulOverlayHandle)
 {
-	USEH();
+	USEH_LOCKED();
 	overlay->cursorOverridden = false;
 	return VROverlayError_None;
 }
@@ -2850,6 +3152,7 @@ EVROverlayError BaseOverlay::SetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 			OC_UNSUPPORTED(VROverlayError_InvalidTexture, "SetOverlayTexture: the overlay application's texture (type %d) can't be shown: %s", (int)texture.eType, why.c_str());
 		shown = Texture_t{ copy, TextureType_DirectX, texture.eColorSpace };
 	}
+	shown.eColorSpace = overlay->TextureColourSpace(shown.eColorSpace);
 
 	// A texture of another graphics API than the last one's needs another compositor (an overlay application's are all
 	// shown from the session's own device)
@@ -2859,6 +3162,7 @@ EVROverlayError BaseOverlay::SetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 		overlay->compositor.reset();
 	}
 	overlay->SetTexture(texture);
+	overlay->textureCopySize = {};
 	// A texture replaces an image from memory
 	overlay->raw.reset();
 	overlay->rawImage = {};
@@ -2878,8 +3182,7 @@ EVROverlayError BaseOverlay::SetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 	}
 
 	compositor->LoadSubmitContext();
-	// (subImage is the same for quad and cylinder layers)
-	compositor->Invoke(&shown, &overlay->textureBounds, overlay->compositionLayer.quad.subImage);
+	overlay->CopyTexture(*compositor, shown);
 	compositor->ResetSubmitContext();
 
 	overlay->compositionLayer.base.space = xr_space_from_ref_space_type(BaseSystem::currentSpace);
@@ -2892,6 +3195,7 @@ EVROverlayError BaseOverlay::ClearOverlayTexture(VROverlayHandle_t ulOverlayHand
 	auto session = xr_session.lock_shared();
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	overlay->SetTexture({});
+	overlay->textureCopySize = {};
 	overlay->DropLive();
 	overlay->raw.reset();
 	overlay->rawImage = {};
@@ -2913,8 +3217,11 @@ EVROverlayError BaseOverlay::SetOverlayRaw(VROverlayHandle_t ulOverlayHandle, vo
 	Image image = ConvertToRgba8(pvBuffer, unWidth, unHeight, unWidth * unDepth, unDepth);
 	if (image.Empty())
 		return VROverlayError_InvalidParameter;
-	if (CurrentSessionKind() == SessionKind::Headless)
+	if (CurrentSessionKind() == SessionKind::Headless) {
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		overlay->QueueOverlayEvent(VREvent_ImageFailed);
 		OC_UNSUPPORTED(VROverlayError_RequestFailed, "SetOverlayRaw: a background application's session has no graphics to show it");
+	}
 
 	// The overlay's image and swapchain are what OpenLamina's own frames draw from
 	auto session = xr_session.lock_shared();
@@ -2927,18 +3234,21 @@ EVROverlayError BaseOverlay::SetOverlayRaw(VROverlayHandle_t ulOverlayHandle, vo
 	}
 	overlay->compositor.reset();
 	overlay->SetTexture({});
+	overlay->textureCopySize = {};
 	overlay->rawImage = std::move(image);
 	if (!overlay->raw)
 		overlay->raw = CpuSwapchain::Create(unWidth, unHeight);
 	if (!overlay->raw) {
 		// Logged (a soft failure) by Create: no session with a graphics API
 		overlay->rawImage = {};
+		overlay->QueueOverlayEvent(VREvent_ImageFailed);
 		return VROverlayError_RequestFailed;
 	}
 	// A failed upload (logged) is tried again when the frame's layers are built
 	if (overlay->raw->Upload(overlay->rawImage))
 		overlay->compositionLayer.quad.subImage = overlay->raw->SubImage();
 	overlay->compositionLayer.base.space = xr_space_from_ref_space_type(BaseSystem::currentSpace);
+	overlay->QueueOverlayEvent(VREvent_ImageLoaded);
 	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::SetOverlayFromFile(VROverlayHandle_t ulOverlayHandle, const char* pchFilePath)
@@ -2951,6 +3261,8 @@ EVROverlayError BaseOverlay::SetOverlayFromFile(VROverlayHandle_t ulOverlayHandl
 	std::optional<Image> image = LoadImageFile(PathFromUtf8(pchFilePath), &why);
 	if (!image) {
 		OOVR_LOGF("SetOverlayFromFile: '%s' can't be shown: %s", pchFilePath, why.c_str());
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		overlay->QueueOverlayEvent(VREvent_ImageFailed);
 		return VROverlayError_UnableToLoadFile;
 	}
 	return SetOverlayRaw(ulOverlayHandle, image->rgba.data(), image->width, image->height, 4);
@@ -3082,15 +3394,10 @@ EVROverlayError BaseOverlay::GetOverlayTextureSize(VROverlayHandle_t ulOverlayHa
 	if (!overlay->rawImage.Empty()) {
 		width = overlay->rawImage.width;
 		height = overlay->rawImage.height;
-	} else if (overlay->texture.handle) {
-		// The swapchain holds the bounds' area of the texture
-		const XrExtent2Di& extent = overlay->compositionLayer.quad.subImage.imageRect.extent;
-		const float u = std::abs(overlay->textureBounds.uMax - overlay->textureBounds.uMin);
-		const float v = std::abs(overlay->textureBounds.vMax - overlay->textureBounds.vMin);
-		if (extent.width > 0 && extent.height > 0 && u > 0 && v > 0) {
-			width = (uint32_t)std::lround(extent.width / u);
-			height = (uint32_t)std::lround(std::abs(extent.height) / v);
-		}
+	} else if (overlay->texture.handle && overlay->textureCopySize.width > 0 && overlay->textureCopySize.height > 0) {
+		// The swapchain holds the whole texture
+		width = (uint32_t)overlay->textureCopySize.width;
+		height = (uint32_t)overlay->textureCopySize.height;
 	}
 	if (!width || !height)
 		return VROverlayError_InvalidTexture;
@@ -3145,13 +3452,16 @@ bool BaseOverlay::IsActiveDashboardOverlay(VROverlayHandle_t ulOverlayHandle)
 	USEHB();
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	return overlay->dashboard && !overlay->thumbnail && dash->open && dash->activePid == oc_current_pid()
-	    && dash->activeOverlay == (uint64_t)(uintptr_t)overlay;
+	    && dash->activeOverlay == (uint64_t)(uintptr_t)overlay && dash->ForScene(*overlay);
 }
 EVROverlayError BaseOverlay::SetDashboardOverlaySceneProcess(VROverlayHandle_t ulOverlayHandle, uint32_t unProcessId)
 {
 	USEH();
-	// Kept and returned: every program's dashboard overlays are shown over whichever game runs
-	overlay->dashboardScenePid = unProcessId;
+	// Shown only over that program's dashboard (0: any); the dashboard's next update applies it
+	{
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		overlay->dashboardScenePid = unProcessId;
+	}
 	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::GetDashboardOverlaySceneProcess(VROverlayHandle_t ulOverlayHandle, uint32_t* punProcessId)
@@ -3182,6 +3492,8 @@ void BaseOverlay::ShowDashboard(const char* pchOverlayToShow)
 	}
 	// Another program asks the scene app to, through the store: unless it's open already
 	const uint32_t self = oc_current_pid();
+	if (!SharedStore::IsProcessAlive(PidOf(SharedStore::Get().Read(StoreDoc::Scene)["pid"])))
+		OOVR_LOG("ShowDashboard: no scene application is running to open the dashboard");
 	SharedStore::Get().Update(StoreDoc::Dashboard, [&](Json::Value& doc) {
 		if (DashboardDocOpen(doc, SharedStore::IsSameProcessAlive))
 			return;
@@ -3197,11 +3509,16 @@ TrackedDeviceIndex_t BaseOverlay::GetPrimaryDashboardDevice()
 {
 	if (IsSceneApp() && !SceneDashboard())
 		OC_UNSUPPORTED(k_unTrackedDeviceIndexInvalid, "GetPrimaryDashboardDevice: there's no dashboard (dashboardButton is off)");
-	// The left controller opens it
 	if (!IsDashboardVisible())
 		return k_unTrackedDeviceIndexInvalid;
-	std::shared_ptr<ITrackedDevice> left = BackendManager::Instance().GetDeviceByHand(ITrackedDevice::HAND_LEFT);
-	return left ? left->DeviceIndex() : k_unTrackedDeviceIndexInvalid;
+	// The hand whose laser is on the dashboard, else the one that last drove the mouse
+	int hand;
+	{
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		hand = Dashboard::PrimaryHand(pointing->mouse.HandOn(dash->Handle()), pointing->mouse.ActiveHand());
+	}
+	std::shared_ptr<ITrackedDevice> device = BackendManager::Instance().GetDeviceByHand(hand == 0 ? ITrackedDevice::HAND_LEFT : ITrackedDevice::HAND_RIGHT);
+	return device ? device->DeviceIndex() : k_unTrackedDeviceIndexInvalid;
 }
 EVROverlayError BaseOverlay::ShowKeyboardWithDispatch(EGamepadTextInputMode eInputMode, EGamepadTextInputLineMode eLineInputMode,
     uint32_t unFlags, const char* pchDescription, uint32_t unCharMax, const char* pchExistingText, uint64_t uUserValue,
@@ -3217,15 +3534,22 @@ EVROverlayError BaseOverlay::ShowKeyboardWithDispatch(EGamepadTextInputMode eInp
 		mode = VRKeyboard::Mode::Submit;
 	const bool multiline = eLineInputMode == k_EGamepadTextInputLineModeMultipleLines;
 	if (!oovr_global_configuration.Keyboard()) {
-		// Answered as done at once (GetKeyboardText then has a name ready)
+		// Answered as done at once, with the text as given (or a name where there was none)
+		{
+			std::lock_guard<std::recursive_mutex> lock(layersLock);
+			keyboardCache = existing;
+		}
 		SubmitPlaceholderKeyboardEvent(VREvent_KeyboardDone, forOverlay, uUserValue);
 		return VROverlayError_None;
 	}
+	EnsurePointerInput();
 	auto session = xr_session.lock_shared();
 	std::unique_ptr<VRKeyboard> made;
 	std::unique_ptr<CpuSwapchain> chain;
 	if (KeyboardLayout::Current()) {
 		made = std::make_unique<VRKeyboard>(mode, multiline, unFlags, existing, unCharMax, uUserValue);
+		if (pchDescription)
+			made->SetDescription(pchDescription);
 		chain = CpuSwapchain::Create(made->CanvasWidth(), made->CanvasHeight());
 	}
 	std::unique_ptr<CpuSwapchain> old;
@@ -3257,6 +3581,7 @@ EVROverlayError BaseOverlay::ShowKeyboardWithDispatch(EGamepadTextInputMode eInp
 		p.keyboardOrigin = space;
 		p.keyboardPose = keyboard->Placement();
 		p.keyboardModal = (unFlags & VRKeyboard::kFlagModal) != 0;
+		p.keyboardClickSeen = false;
 	}
 	old.reset();
 
@@ -3279,7 +3604,9 @@ std::unique_ptr<CpuSwapchain> BaseOverlay::DropKeyboard()
 void BaseOverlay::DispatchKeyboardEvent(VREvent_t event, VROverlayHandle_t forOverlay)
 {
 	event.data.keyboard.overlayHandle = forOverlay;
-	if (forOverlay != k_ulOverlayHandleInvalid) {
+	// The global events go to the program's own queue, with the overlay it was for in their data
+	const bool global = event.eventType == VREvent_KeyboardOpened_Global || event.eventType == VREvent_KeyboardClosed_Global;
+	if (forOverlay != k_ulOverlayHandleInvalid && !global) {
 		std::lock_guard<std::recursive_mutex> lock(layersLock);
 		OverlayData* overlay = (OverlayData*)(uintptr_t)forOverlay;
 		if (validOverlays.count(overlay))
@@ -3329,13 +3656,14 @@ EVROverlayError BaseOverlay::ShowKeyboardForOverlay(VROverlayHandle_t ulOverlayH
 }
 uint32_t BaseOverlay::GetKeyboardText(char* pchText, uint32_t cchText)
 {
-	// The keyboard's text, or the last one's after it has gone. Without the keyboard, a name: Skyrim's character
-	// creation waits for one
-	std::string str = "Adventurer";
-	if (oovr_global_configuration.Keyboard()) {
+	// The keyboard's text, or the last one's after it has gone; without the keyboard, the text it was given
+	std::string str;
+	{
 		std::lock_guard<std::recursive_mutex> lock(layersLock);
 		str = keyboard ? keyboard->Text() : keyboardCache;
 	}
+	if (!oovr_global_configuration.Keyboard())
+		str = VRKeyboard::TextWithoutKeyboard(str);
 
 	if (!pchText || cchText == 0)
 		return (uint32_t)str.size() + 1;
@@ -3351,6 +3679,13 @@ void BaseOverlay::HideKeyboard()
 	std::unique_ptr<CpuSwapchain> chain;
 	{
 		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		if (keyboard && !keyboard->Closed()) {
+			// A keyboard that goes without being closed on the keyboard says so
+			const VROverlayHandle_t forOverlay = pointing->keyboardFor;
+			const uint64_t userValue = keyboard->UserValue();
+			SubmitPlaceholderKeyboardEvent(VREvent_KeyboardClosed, forOverlay, userValue);
+			SubmitPlaceholderKeyboardEvent(VREvent_KeyboardClosed_Global, forOverlay, userValue);
+		}
 		chain = DropKeyboard();
 	}
 	chain.reset();
@@ -3419,13 +3754,16 @@ EVROverlayError BaseOverlay::SetOverlayIntersectionMask(VROverlayHandle_t ulOver
 		return VROverlayError_None;
 	}
 	if (unPrimitiveSize != sizeof(OOVR_VROverlayIntersectionMaskPrimitive_t))
-		OC_UNSUPPORTED(VROverlayError_None, "SetOverlayIntersectionMask: primitives of %u bytes, not %u: kept as the whole overlay",
-		    unPrimitiveSize, (unsigned)sizeof(OOVR_VROverlayIntersectionMaskPrimitive_t));
-	// Bounded: a mask is a few shapes, not a texture's worth
-	static constexpr uint32_t maxPrimitives = 4096;
+		return VROverlayError_BadMaskPrimitive;
+	// k_unMaxOverlayIntersectionMaskPrimitivesCount
+	static constexpr uint32_t maxPrimitives = 32;
 	if (unNumMaskPrimitives > maxPrimitives)
-		OC_UNSUPPORTED(VROverlayError_None, "SetOverlayIntersectionMask: %u primitives, more than %u: kept as the whole overlay",
-		    unNumMaskPrimitives, maxPrimitives);
+		return VROverlayError_TooManyMaskPrimitives;
+	for (uint32_t i = 0; i < unNumMaskPrimitives; i++) {
+		const int type = (int)pMaskPrimitives[i].m_nPrimitiveType;
+		if (type != OverlayIntersectionPrimitiveType_Rectangle && type != OverlayIntersectionPrimitiveType_Circle)
+			return VROverlayError_BadMaskPrimitive;
+	}
 	overlay->intersectionMask.assign(pMaskPrimitives, pMaskPrimitives + unNumMaskPrimitives);
 	return VROverlayError_None;
 }
@@ -3445,6 +3783,7 @@ BaseOverlay::VRMessageOverlayResponse BaseOverlay::ShowMessageOverlay(const char
 		OC_UNSUPPORTED(VRMessageOverlayResponse_CouldntFindSystemOverlay, "ShowMessageOverlay: no frames of OpenLamina's own to show it in (ownFrames)");
 	// Answered with the controllers' lasers, which read the game's input actions: before it has any, nothing could
 	// answer it
+	EnsurePointerInput();
 	BaseInput* input = GetUnsafeBaseInput();
 	if (!input || !input->AreActionsLoaded())
 		OC_UNSUPPORTED(VRMessageOverlayResponse_CouldntFindSystemOverlay, "ShowMessageOverlay: the game has loaded no input yet, so nothing could answer it");

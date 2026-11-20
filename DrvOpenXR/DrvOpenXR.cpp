@@ -328,8 +328,9 @@ IBackend* DrvOpenXR::CreateOpenXRBackend(const char* startupInfo, vr::EVRInitErr
 	// The gaze for eye-tracked foveation; a runtime may start its eye tracker for it, so only when the user wants it
 	if (oovr_global_configuration.EyeTracking() && availableExtensions.contains(XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME))
 		extensions.push_back(XR_EXT_EYE_GAZE_INTERACTION_EXTENSION_NAME);
-	// Depth with the projection layer (submitDepth), and equirect layers for skyboxes, where the runtime has them
-	for (const char* layerExtension : { XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME, XR_KHR_COMPOSITION_LAYER_EQUIRECT2_EXTENSION_NAME })
+	// Depth with the projection layer (submitDepth), equirect layers for skyboxes, and overlays' colour and alpha, where
+	// the runtime has them
+	for (const char* layerExtension : { XR_KHR_COMPOSITION_LAYER_DEPTH_EXTENSION_NAME, XR_KHR_COMPOSITION_LAYER_EQUIRECT2_EXTENSION_NAME, XR_KHR_COMPOSITION_LAYER_COLOR_SCALE_BIAS_EXTENSION_NAME })
 		if (availableExtensions.contains(layerExtension))
 			extensions.push_back(layerExtension);
 	// The display's refresh rate (Prop_DisplayFrequency_Float) and its changes

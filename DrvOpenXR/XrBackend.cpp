@@ -2255,10 +2255,10 @@ void XrBackend::StartHelperLoop()
 		    if (!overlaySession)
 			    return 0; // a headless session runs no frames
 		    // The lasers, the keyboard and the cursor, on the session's device, which only OpenLamina's threads use. While
-		    // the keyboard is up the program waits for its text: the lasers' actions are synced here.
+		    // a keyboard or a mouse overlay is shown, the program syncs no input of its own: the lasers' actions are synced here.
 		    if (overlay && OwnFramesFillSwapchains()) {
 			    BaseInput* input = GetUnsafeBaseInput();
-			    if (input && overlay->_KeyboardShown() && IsInputAvailable())
+			    if (input && overlay->_PointerWanted() && IsInputAvailable())
 				    input->SyncPointerActions();
 			    WithStoreDocuments([&] { overlay->_UpdatePointer(); });
 		    }

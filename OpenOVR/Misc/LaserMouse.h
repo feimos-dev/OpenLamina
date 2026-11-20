@@ -52,9 +52,10 @@ public:
 	// Each hand's nearest hit (the highest sort order, then the nearest) is where it points. One hand drives the
 	// mouse at a time: the last to press its trigger on a target (the right to begin with, or whichever points at
 	// something while the other doesn't). Its target gets FocusEnter and FocusLeave as it changes, MouseMove (x, y =
-	// u * scale.x, (1 - v) * scale.y) when it moves, MouseButtonDown and Up (Left) for its trigger, and ScrollDiscrete
-	// or ScrollSmooth for its thumbstick, as the target's flags ask. A click belongs to the hand that started it until
-	// that hand lets go; it stays on the target it started on.
+	// u * scale.x, v * scale.y up from the target's lower left, or (1 - v) * scale.y with yDown) when it moves,
+	// MouseButtonDown and Up (Left) for its trigger, and ScrollDiscrete or ScrollSmooth for its thumbstick, as the
+	// target's flags ask. A click belongs to the hand that started it until that hand lets go; it stays on the target
+	// it started on.
 	void Update(const std::array<PointerRay, 2>& rays, const std::vector<PointerTarget>& targets, double now, std::vector<PointerEvent>& out);
 
 	// Where a hand's laser meets its target (for the cursor), nothing if it points at none
@@ -67,6 +68,24 @@ public:
 	int HandOn(vr::VROverlayHandle_t handle) const;
 	// The target with the mouse's focus (k_ulOverlayHandleInvalid for none)
 	vr::VROverlayHandle_t Focus() const { return focus; }
+	// The last target the mouse was on: it stays when the laser leaves every target, until another is pointed at
+	vr::VROverlayHandle_t Hover() const { return hover; }
+	// A target that no longer exists: nothing keeps pointing at it (its handle may be reused by a new overlay)
+	void Forget(vr::VROverlayHandle_t handle)
+	{
+		for (Hand& h : hands) {
+			if (h.target == handle) {
+				h.target = vr::k_ulOverlayHandleInvalid;
+				h.hit.reset();
+				h.held = false;
+			}
+		}
+		if (clickTarget == handle)
+			clickOwner = -1;
+		for (vr::VROverlayHandle_t* held : { &clickTarget, &focus, &hover, &movedOn })
+			if (*held == handle)
+				*held = vr::k_ulOverlayHandleInvalid;
+	}
 
 private:
 	struct Hand {
@@ -82,6 +101,7 @@ private:
 	int clickOwner = -1;
 	vr::VROverlayHandle_t clickTarget = vr::k_ulOverlayHandleInvalid;
 	vr::VROverlayHandle_t focus = vr::k_ulOverlayHandleInvalid;
+	vr::VROverlayHandle_t hover = vr::k_ulOverlayHandleInvalid;
 	vr::VROverlayHandle_t movedOn = vr::k_ulOverlayHandleInvalid; // the target of the last MouseMove, and where
 	float movedX = 0, movedY = 0;
 	double lastTime = -1;

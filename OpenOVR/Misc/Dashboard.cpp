@@ -4,6 +4,8 @@
 
 #include "SharedStore.h"
 
+#include "Reimpl/BaseApplications.h"
+
 #include <codecvt>
 #include <cstdlib>
 #include <locale>
@@ -180,4 +182,21 @@ std::optional<std::string> Dashboard::OnClick(float u, float v)
 			return "tab:" + std::to_string(drawnTabs[i].pid) + ":" + std::to_string(drawnTabs[i].handle);
 	}
 	return std::nullopt;
+}
+
+std::vector<std::string> StartAutolaunchOverlays(BaseApplications& apps)
+{
+	std::vector<std::string> tried;
+	const uint32_t count = apps.GetApplicationCount();
+	for (uint32_t i = 0; i < count; i++) {
+		char key[256];
+		if (apps.GetApplicationKeyByIndex(i, key, sizeof(key)) != VRApplicationError_None || !apps.GetApplicationAutoLaunch(key))
+			continue;
+		BaseApplications::EVRApplicationError error = VRApplicationError_None;
+		if (!apps.GetApplicationPropertyBool(key, VRApplicationProperty_IsDashboardOverlay_Bool, &error) || error != VRApplicationError_None)
+			continue;
+		apps.LaunchDashboardOverlay(key);
+		tried.push_back(key);
+	}
+	return tried;
 }

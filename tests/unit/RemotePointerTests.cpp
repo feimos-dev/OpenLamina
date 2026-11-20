@@ -221,3 +221,24 @@ TEST_CASE("Remote_pointer_event_round_trip")
 	CHECK(back.button == e.button);
 	CHECK(back.device == e.device);
 }
+
+TEST_CASE("A_published_mask_is_read_back_as_its_primitives")
+{
+	Json::Value mask(Json::arrayValue);
+	Json::Value rect;
+	for (float v : { 0.0f, 0.0f, 0.5f, 1.0f })
+		rect["rect"].append(v);
+	mask.append(rect);
+	Json::Value circle;
+	for (float v : { 0.75f, 0.5f, 0.1f })
+		circle["circle"].append(v);
+	mask.append(circle);
+	mask.append(Json::Value("junk"));
+
+	const std::vector<OOVR_VROverlayIntersectionMaskPrimitive_t> got = MaskFromJson(mask);
+	REQUIRE(got.size() == 2);
+	CHECK(overlay_maths::InMask(got, 0.25f, 0.5f));
+	CHECK(overlay_maths::InMask(got, 0.75f, 0.5f));
+	CHECK_FALSE(overlay_maths::InMask(got, 0.6f, 0.9f));
+	CHECK(overlay_maths::InMask(MaskFromJson(Json::Value()), 0.6f, 0.9f));
+}

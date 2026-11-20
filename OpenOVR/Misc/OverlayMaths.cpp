@@ -206,6 +206,52 @@ Chain ResolveChain(const void* overlay, const std::function<ChainLink(const void
 	return Chain::TooDeep;
 }
 
+bool DrawnBefore(const DrawOrder& a, const DrawOrder& b)
+{
+	if (a.highQuality != b.highQuality)
+		return b.highQuality;
+	if (a.sortOrder != b.sortOrder)
+		return a.sortOrder < b.sortOrder;
+	return a.distance > b.distance;
+}
+
+float QuadAspect(int32_t texelsWide, int32_t texelsHigh, float texelAspect)
+{
+	const int32_t high = texelsHigh < 0 ? -texelsHigh : texelsHigh;
+	if (high <= 0 || texelsWide <= 0)
+		return 1.0f;
+	const float aspect = (float)texelsWide / (float)high;
+	return texelAspect > 0 && std::isfinite(texelAspect) ? aspect * texelAspect : aspect;
+}
+
+XrRect2Di ImageRect(uint32_t x0, uint32_t y0, uint32_t x1, uint32_t y1, uint32_t width, uint32_t height, bool mirrorX, bool mirrorY)
+{
+	if (mirrorX) {
+		const uint32_t from = width - x1, to = width - x0;
+		x0 = from, x1 = to;
+	}
+	if (mirrorY) {
+		const uint32_t from = height - y1, to = height - y0;
+		y0 = from, y1 = to;
+	}
+	return XrRect2Di{ { (int32_t)x0, (int32_t)y0 }, { (int32_t)(x1 - x0), (int32_t)(y1 - y0) } };
+}
+
+XrColor4f ColourScale(float r, float g, float b, float a, bool premultiplied)
+{
+	auto clamp = [](float v) { return v >= 0 ? (v <= 1 ? v : 1.0f) : 0.0f; }; // NaN gives 0
+	a = clamp(a);
+	const float fade = premultiplied ? a : 1.0f;
+	return XrColor4f{ clamp(r) * fade, clamp(g) * fade, clamp(b) * fade, a };
+}
+
+float SubtendedAngle(float width, float distance)
+{
+	if (!(width > 0) || !(distance >= 0))
+		return 0;
+	return 2 * std::atan2(width / 2, distance);
+}
+
 XrPosef ComposePoses(const XrPosef& a, const XrPosef& b)
 {
 	return Compose(a, b);

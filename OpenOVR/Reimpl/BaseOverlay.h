@@ -36,10 +36,12 @@ enum OOVR_VROverlayTransformType {
 	VROverlayTransform_SystemOverlay = 2,
 	VROverlayTransform_TrackedComponent = 3,
 	VROverlayTransform_Cursor = 4,
+	VROverlayTransform_DashboardTab = 5,
+	VROverlayTransform_DashboardThumb = 6,
 	VROverlayTransform_Projection = 8,
 };
 
-/** Overlay control settings */
+/** Overlay control settings, as the bit numbers the oldest interfaces pass (OverlayData stores each as the mask 1 << n) */
 enum OOVR_VROverlayFlags {
 	VROverlayFlags_None = 0,
 
@@ -166,6 +168,13 @@ private:
 
 	// This doesn't do a whole lot, since OOVR does this for every overlay
 	vr::VROverlayHandle_t highQualityOverlay = vr::k_ulOverlayHandleInvalid;
+	// The overlay that has gamepad focus (SetGamepadFocusOverlay)
+	vr::VROverlayHandle_t gamepadFocusOverlay = vr::k_ulOverlayHandleInvalid;
+	// The overlay that loses gamepad focus is told, and the one that gains it. A live handle or none; under the layers' lock.
+	void ChangeGamepadFocus(vr::VROverlayHandle_t to);
+
+	// Whether a handle is an overlay that exists
+	bool IsLiveOverlay(const OverlayData* overlay);
 
 	// List of layers, with the first being reserved for the main scene
 	std::vector<XrCompositionLayerBaseHeader*> layerHeaders;
@@ -177,9 +186,6 @@ private:
 
 	// Cached copy of the keyboard contents, available after it is closed
 	std::string keyboardCache;
-
-	// True if we're modifying the input in any way
-	bool usingInput = false;
 
 	std::recursive_mutex layersLock;
 
@@ -264,6 +270,10 @@ public:
 		return keyboard != nullptr;
 	}
 
+	// Whether the lasers' actions need syncing for this program: the keyboard is shown, or a visible overlay with an
+	// image takes mouse input
+	bool _PointerWanted();
+
 	// This program's overlays in the store's Overlays document (other programs point at them), at most ten times a second
 	// and when they changed, dropping the entries of programs that have ended: in an overlay or background application,
 	// or with laserMouse. Not holding _LayersLock().
@@ -285,9 +295,6 @@ public:
 	// with their layers is built and ended (on the game's thread, or OpenLamina's own frames' thread). Taken after the
 	// session lock (shared), never before it.
 	std::recursive_mutex& _LayersLock() { return layersLock; }
-
-	// If an overlay needs input, this grabs the input and returns whether the input should preceed to the application
-	bool _HandleOverlayInput(vr::EVREye role, vr::TrackedDeviceIndex_t controllerDeviceIndex, vr::VRControllerState_t state);
 
 	// ---------------------------------------------
 	// Overlay management methods
@@ -487,6 +494,8 @@ public:
 	/** Returns true and fills the event with the next event on the overlay's event queue, if there is one.
 	 * If there are no events this method returns false. uncbVREvent should be the size in bytes of the VREvent_t struct */
 	bool PollNextOverlayEvent(vr::VROverlayHandle_t ulOverlayHandle, vr::VREvent_t* pEvent, uint32_t uncbVREvent);
+	// The next event of any of this program's overlays, with that overlay's handle (IVRSystem::PollNextEventWithPoseAndOverlays)
+	bool PollNextAnyOverlayEvent(vr::VREvent_t* pEvent, uint32_t uncbVREvent, vr::VROverlayHandle_t* pulOverlayHandle);
 
 	/** Returns the current input settings for the specified overlay. */
 	vr::EVROverlayError GetOverlayInputMethod(vr::VROverlayHandle_t ulOverlayHandle, VROverlayInputMethod* peInputMethod);
@@ -526,7 +535,7 @@ public:
 	vr::EVROverlayError SetOverlayFlagMask(vr::VROverlayHandle_t ulOverlayHandle, uint32_t flagMask, bool bEnabled);
 	vr::EVROverlayError GetOverlayFlagMask(vr::VROverlayHandle_t ulOverlayHandle, uint32_t flagMask, bool* pbEnabled);
 
-	/** IVROverlay_001-006 (SDK 0.9.2 to 0.9.11): the overlay's gamma, kept and answered (2.2 for a linear texture) */
+	/** IVROverlay_001-006 (SDK 0.9.2 to 0.9.11): the overlay's gamma, kept and answered as set (1.0 until then) */
 	vr::EVROverlayError SetOverlayGamma(vr::VROverlayHandle_t ulOverlayHandle, float fGamma);
 	vr::EVROverlayError GetOverlayGamma(vr::VROverlayHandle_t ulOverlayHandle, float* pfGamma);
 

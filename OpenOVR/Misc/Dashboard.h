@@ -20,6 +20,8 @@
 #include <string>
 #include <vector>
 
+class BaseApplications;
+
 class Dashboard {
 public:
 	// How its button opens it. ini dashboardButton=system|system_long|menu|menu_long|off: the button is a controller's
@@ -60,6 +62,10 @@ public:
 	void Draw(Canvas& canvas, const Json::Value& dashboardDoc, const Json::Value& overlaysDoc) const;
 	std::optional<std::string> OnClick(float u, float v); // "tab:<pid>:<handle>" or "quit"; u, v from the top left, 0 to 1
 
+	// The hand (0 left, 1 right) that IVROverlay::GetPrimaryDashboardDevice names: the one whose laser is on the dashboard
+	// (onDashboard, -1 for none), else the one that last drove the mouse (lastDriver)
+	static int PrimaryHand(int onDashboard, int lastDriver) { return onDashboard >= 0 ? onDashboard : (lastDriver == 0 ? 0 : 1); }
+
 	// The programs' dashboard overlays in the Overlays document, live ones only: each tab's id and label
 	struct Tab {
 		uint32_t pid;
@@ -87,3 +93,7 @@ using ProcessAlive = std::function<bool(uint32_t pid, uint64_t start)>;
 bool DashboardDocOpen(const Json::Value& doc, const ProcessAlive& alive);
 // A request a scene app adopts: no scene app named, from a program that's still running, under 2 s old at nowWall
 bool DashboardDocRequest(const Json::Value& doc, double nowWall, const ProcessAlive& alive);
+
+// Starts the installed dashboard overlay programs whose auto-launch flag is set (those already running are left as
+// they are). Returns the app keys of both, the ones started and the ones already running.
+std::vector<std::string> StartAutolaunchOverlays(BaseApplications& apps);

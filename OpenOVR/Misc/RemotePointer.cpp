@@ -96,6 +96,27 @@ void RemotePointer::SetFrameOrigin(vr::ETrackingUniverseOrigin frameOrigin, cons
 	seatedInStanding = seated;
 }
 
+std::vector<OOVR_VROverlayIntersectionMaskPrimitive_t> MaskFromJson(const Json::Value& mask)
+{
+	std::vector<OOVR_VROverlayIntersectionMaskPrimitive_t> out;
+	for (const Json::Value& m : mask) {
+		if (!m.isObject())
+			continue;
+		OOVR_VROverlayIntersectionMaskPrimitive_t primitive{};
+		if (m["rect"].isArray() && m["rect"].size() == 4) {
+			primitive.m_nPrimitiveType = OverlayIntersectionPrimitiveType_Rectangle;
+			primitive.m_Primitive.m_Rectangle = { m["rect"][0].asFloat(), m["rect"][1].asFloat(), m["rect"][2].asFloat(), m["rect"][3].asFloat() };
+		} else if (m["circle"].isArray() && m["circle"].size() == 3) {
+			primitive.m_nPrimitiveType = OverlayIntersectionPrimitiveType_Circle;
+			primitive.m_Primitive.m_Circle = { m["circle"][0].asFloat(), m["circle"][1].asFloat(), m["circle"][2].asFloat() };
+		} else {
+			continue;
+		}
+		out.push_back(primitive);
+	}
+	return out;
+}
+
 void RemotePointer::Update(const std::array<PointerRay, 2>& rays, const Json::Value& overlaysDoc, uint32_t selfPid, double now, std::vector<StoreEvent>& toPost)
 {
 	sawDead = false;
@@ -153,19 +174,7 @@ void RemotePointer::Update(const std::array<PointerRay, 2>& rays, const Json::Va
 				// Another build may have written the whole unsigned number
 				const Json::Value& order = o["sort_order"];
 				t.sortOrder = order.isInt() ? order.asInt() : order.isUInt() ? INT_MAX - 1 : 0;
-				for (const Json::Value& m : o["mask"]) {
-					OOVR_VROverlayIntersectionMaskPrimitive_t primitive{};
-					if (m["rect"].isArray() && m["rect"].size() == 4) {
-						primitive.m_nPrimitiveType = OverlayIntersectionPrimitiveType_Rectangle;
-						primitive.m_Primitive.m_Rectangle = { m["rect"][0].asFloat(), m["rect"][1].asFloat(), m["rect"][2].asFloat(), m["rect"][3].asFloat() };
-					} else if (m["circle"].isArray() && m["circle"].size() == 3) {
-						primitive.m_nPrimitiveType = OverlayIntersectionPrimitiveType_Circle;
-						primitive.m_Primitive.m_Circle = { m["circle"][0].asFloat(), m["circle"][1].asFloat(), m["circle"][2].asFloat() };
-					} else {
-						continue;
-					}
-					t.mask.push_back(primitive);
-				}
+				t.mask = MaskFromJson(o["mask"]);
 				targets.push_back(t);
 			}
 		}

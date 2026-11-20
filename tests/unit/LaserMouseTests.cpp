@@ -234,3 +234,17 @@ TEST_CASE("Laser_mouse_focus_leaves_when_pointing_away")
 	CHECK(mouse.Target(1) == vr::k_ulOverlayHandleInvalid);
 	CHECK(mouse.HandOn(5) == -1);
 }
+
+TEST_CASE("Hover_target_stays_when_the_laser_leaves_every_target")
+{
+	LaserMouse mouse;
+	std::vector<PointerEvent> events;
+	mouse.Update({ None(0), Ray(1, 0, 0) }, { Square(7, 0, 0, -2) }, 0.0, events);
+	CHECK(mouse.Focus() == 7);
+	CHECK(mouse.Hover() == 7);
+	mouse.Update({ None(0), Ray(1, 5, 0) }, { Square(7, 0, 0, -2) }, 0.1, events);
+	CHECK(mouse.Focus() == vr::k_ulOverlayHandleInvalid);
+	CHECK(mouse.Hover() == 7);
+	mouse.Update({ None(0), Ray(1, 0, 0) }, { Square(8, 0, 0, -2) }, 0.2, events);
+	CHECK(mouse.Hover() == 8);
+}

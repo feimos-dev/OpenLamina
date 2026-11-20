@@ -28,20 +28,6 @@ public:
 		short XAdvance;
 	};
 
-	struct pix_t {
-		uint8_t r, g, b, a;
-	};
-
-	/**
-	 * Copy a character onto pixel data.
-	 *
-	 * Does not copy transparent regions, so this respects the background.
-	 */
-	void Blit(wchar_t ch, int x, int y, int img_width, pix_t targetColour, pix_t* rawPixels, bool hpad = true);
-
-	int Width(wchar_t ch);
-	int Width(std::wstring str);
-
 	unsigned int GetLineHeight() const { return lineHeight; }
 
 	// For drawing glyphs from the packed image: a character's place in it (null if the font lacks it), the image
