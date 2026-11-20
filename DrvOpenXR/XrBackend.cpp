@@ -825,8 +825,17 @@ void XrBackend::WaitForTrackingData()
 	ShowPendingSkybox();
 
 	// A frame the game gave one eye (or ended no other way) is ended with what it has before the next begins
-	if (renderingFrame && submittedEyeTextures)
+	if (renderingFrame && submittedEyeTextures) {
 		SubmitFrames(false);
+	} else if (frameBegun && ownFrames && OwnFramesHere()) {
+		// One it waited for and didn't submit to (a game that calls WaitGetPoses without Submit, maybe before it has
+		// given a texture, on OpenLamina's own session) is ended as an own frame would be: its last frame again, the
+		// skybox, the overlays; not left to be discarded
+		renderingFrame = true;
+		repeatLastFrame = true;
+		SubmitFrames(false);
+		repeatLastFrame = false;
+	}
 
 	// The game's frame from here to its xrEndFrame (SubmitFrames): an own frame in flight is ended first
 	std::unique_lock<std::mutex> owner(frameOwner);
@@ -1235,6 +1244,13 @@ void XrBackend::SubmitFrames(bool showSkybox)
 		}
 	}
 
+	// A frame ended for the game without its eye textures: its last frame again, which the runtime reprojects
+	bool repeated = false;
+	if (!app_layer && repeatLastFrame && haveLastProjection && !sceneCleared && !renderingSuspended) {
+		app_layer = (XrCompositionLayerBaseHeader*)&lastProjection;
+		repeated = true;
+	}
+
 	// The scene (the game's layer, or the skybox in its place once the grid is fully in), the fade over it, then the
 	// overlays. The overlays' layers stay as they are until the frame has ended.
 	const ScenePlan plan = PlanScene(app_layer != nullptr, SkyboxShown(), CompositorFades::Get().GridAlphaAt(CompositorClockSeconds()));
@@ -1311,7 +1327,7 @@ void XrBackend::SubmitFrames(bool showSkybox)
 	const float presentMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - endCall).count();
 	OOVR_FAILED_XR_SOFT_ABORT(endResult);
 	// A present: the game's eye textures shown
-	const bool presented = XR_SUCCEEDED(endResult) && app_layer && sceneShown && frameShouldRender;
+	const bool presented = XR_SUCCEEDED(endResult) && app_layer && !repeated && sceneShown && frameShouldRender;
 	if (presented) {
 		FrameStats::Get().OnAppPresent();
 		BaseApplications::SetSceneDrawn();
@@ -2291,7 +2307,7 @@ void XrBackend::OnSessionLost()
 // Own frames call xrEndFrame on their own thread, where the runtime may use the session's device while the game's
 // threads use it too. A D3D11 device's immediate context is made safe for that (multithread protection, logged once);
 // a D3D12 queue is free-threaded. A Vulkan queue or an OpenGL context can't be shared with the game's threads that
-// way: false, logged once, and there are no own frames.
+// way: false, and their own frames run only inside the game's calls (OwnFramesInCallsOnly).
 static bool DeviceReadyForOwnFrames(const void* binding)
 {
 	const auto* header = (const XrBaseInStructure*)binding;
@@ -2321,9 +2337,33 @@ static bool DeviceReadyForOwnFrames(const void* binding)
 		return true;
 #endif
 	default:
-		OOVR_LOG_ONCEF("ownFrames: no own frames on a session of graphics binding type %d (a Vulkan queue or an OpenGL context "
-		               "is the game's own)",
-		    (int)header->type);
+		return false;
+	}
+}
+
+// A Vulkan queue or an OpenGL context is the game's own: own frames on its session run only inside the game's calls
+// to OpenLamina (where OpenVR may use the queue, and on the thread where the context is current), with no thread of
+// their own. True for those, with the OpenGL context to look for; false, logged once, for anything else.
+static bool OwnFramesInCallsOnly(const void* binding, const void** glContext)
+{
+	*glContext = nullptr;
+	const auto* header = (const XrBaseInStructure*)binding;
+	if (!header)
+		return false;
+	switch (header->type) {
+	case XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR:
+		return true;
+#if defined(SUPPORT_GL) && defined(_WIN32)
+	case XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR:
+		*glContext = (const void*)((const XrGraphicsBindingOpenGLWin32KHR*)binding)->hGLRC;
+		return *glContext != nullptr;
+#elif defined(SUPPORT_GL) && !defined(ANDROID)
+	case XR_TYPE_GRAPHICS_BINDING_OPENGL_XLIB_KHR:
+		*glContext = (const void*)((const XrGraphicsBindingOpenGLXlibKHR*)binding)->glxContext;
+		return *glContext != nullptr;
+#endif
+	default:
+		OOVR_LOG_ONCEF("ownFrames: no own frames on a session of graphics binding type %d", (int)header->type);
 		return false;
 	}
 }
@@ -2373,10 +2413,20 @@ void XrBackend::OnSessionCreated()
 
 	// Frames of OpenLamina's own while the game runs none and there's a skybox or an overlay to show
 	StopOwnFrames();
-	if (ownFramesStopped || !oovr_global_configuration.OwnFrames() || !DeviceReadyForOwnFrames(GetCurrentGraphicsBinding()))
+	ownFramesGlContext = nullptr;
+	if (ownFramesStopped || !oovr_global_configuration.OwnFrames())
 		return;
+	const void* binding = GetCurrentGraphicsBinding();
+	OwnFrameLoop::Mode mode = OwnFrameLoop::Mode::WhenAppIdle;
+	if (!DeviceReadyForOwnFrames(binding)) {
+		const void* glContext = nullptr;
+		if (!OwnFramesInCallsOnly(binding, &glContext))
+			return;
+		mode = OwnFrameLoop::Mode::InCallsOnly;
+		ownFramesGlContext = glContext;
+	}
 	ownFrames = std::make_unique<OwnFrameLoop>(
-	    OwnFrameLoop::Mode::WhenAppIdle,
+	    mode,
 	    [this](XrTime, std::vector<const XrCompositionLayerBaseHeader*>& layers) {
 		    // RunOwnFrame holds frameOwner, under which the skybox and the game's last frame are replaced: the skybox in
 		    // the game's place, else its last frame again (which the runtime reprojects); then the overlays
@@ -2553,7 +2603,7 @@ OwnFrameLoop::OwnFrameLoop(Mode mode, LayerSource source, std::chrono::milliseco
 
 bool XrBackend::RunOwnFramesWhile(const std::function<bool()>& keepGoing)
 {
-	if (!ownFrames)
+	if (!ownFrames || !OwnFramesHere())
 		return false;
 	ownFrames->RunWhile(keepGoing);
 	return true;
@@ -2561,8 +2611,25 @@ bool XrBackend::RunOwnFramesWhile(const std::function<bool()>& keepGoing)
 
 void XrBackend::EndOpenAppFrame()
 {
-	// As if the game had submitted
+	// As if the game had submitted: with its last frame again
+	repeatLastFrame = true;
 	SubmitFrames(false);
+	repeatLastFrame = false;
+}
+
+bool XrBackend::OwnFramesHere() const
+{
+	if (!ownFrames)
+		return false;
+	if (!ownFramesGlContext)
+		return true;
+#if defined(SUPPORT_GL) && defined(_WIN32)
+	return (const void*)wglGetCurrentContext() == ownFramesGlContext;
+#elif defined(SUPPORT_GL) && !defined(ANDROID)
+	return (const void*)glXGetCurrentContext() == ownFramesGlContext;
+#else
+	return false;
+#endif
 }
 
 void XrBackend::ClearSubmittedFrame()

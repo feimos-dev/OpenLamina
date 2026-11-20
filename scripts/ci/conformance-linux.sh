@@ -8,8 +8,9 @@
 #   scripts/ci/conformance-linux.sh x64|x86 [build-dir] [out-dir]
 #
 # Exits non-zero if any run failed; every run is made all the same. Left out, as they don't apply here: the cases of
-# Direct3D (their Vulkan and OpenGL counterparts run), OpenGL and Vulkan through D3D11, OpenLamina's own frames (on
-# D3D sessions only), the Steam client observer and the background apps' refusals (background apps get a scene session
+# Direct3D (their Vulkan and OpenGL counterparts run), OpenGL and Vulkan through D3D11, OpenLamina's own frames on a
+# thread of their own when the game is idle (on D3D sessions only: Vulkan and OpenGL ones run them only inside the
+# game's calls), the Steam client observer and the background apps' refusals (background apps get a scene session
 # on Linux, for Proton).
 set -u
 
@@ -103,6 +104,13 @@ run --shipped-defaults --cases laser-mouse --script tests/conformance/scripts/la
 run --shipped-defaults --cases session-events --script tests/conformance/scripts/session_events.json --expect tests/conformance/expect/session_events.json --out "$out"/defaults-session-events
 run --shipped-defaults --cases bounds --script tests/conformance/scripts/bounds.json --expect tests/conformance/expect/bounds.json --out "$out"/defaults-bounds
 run --shipped-defaults --cases recentre --script tests/conformance/scripts/recentre.json --expect tests/conformance/expect/recentre.json --out "$out"/defaults-recentre
+# A message box in OpenLamina's own frames, run inside the blocked call (no thread on a Vulkan or OpenGL session),
+# answered with the laser; one the session ends under answers as the game's quit
+run --cases message-overlay --script tests/conformance/scripts/message_box.json --ini tests/conformance/ini/own_frames.ini --expect tests/conformance/expect/message_overlay.json --out "$out"/message-overlay
+run --cases message-overlay --script tests/conformance/scripts/message_box_exit.json --ini tests/conformance/ini/own_frames.ini --expect tests/conformance/expect/message_overlay_exit.json --out "$out"/message-overlay-exit
+run --shipped-defaults --cases message-overlay --script tests/conformance/scripts/message_box.json --expect tests/conformance/expect/message_overlay.json --out "$out"/defaults-message-overlay
+# A game that calls WaitGetPoses without Submit: its frames are ended for it inside the call
+run --cases wait-without-submit --ini tests/conformance/ini/own_frames.ini --expect tests/conformance/expect/wait_without_submit.json --out "$out"/wait-without-submit
 # The keyboard, typed on with the laser
 run --cases keyboard --script tests/conformance/scripts/keyboard.json --ini tests/conformance/ini/keyboard_us.ini --expect tests/conformance/expect/keyboard.json --out "$out"/keyboard
 # Frames and overlays from the Vulkan and OpenGL games, as the stand-in reads them back (the Direct3D cases skip)

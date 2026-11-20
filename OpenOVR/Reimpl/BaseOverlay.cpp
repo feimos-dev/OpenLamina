@@ -3993,7 +3993,8 @@ BaseOverlay::VRMessageOverlayResponse BaseOverlay::ShowMessageOverlay(const char
 {
 	// Shown in frames of OpenLamina's own, run here until a button is clicked: without them, it can't be
 	auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
-	if (!oovr_global_configuration.OwnFrames() || !backend || !backend->HasOwnFrames() || !backend->sessionActive)
+	// (on an OpenGL session, only on the thread where its context is current)
+	if (!oovr_global_configuration.OwnFrames() || !backend || !backend->OwnFramesHere() || !backend->sessionActive)
 		OC_UNSUPPORTED(VRMessageOverlayResponse_CouldntFindSystemOverlay, "ShowMessageOverlay: no frames of OpenLamina's own to show it in (ownFrames)");
 	// Answered with the controllers' lasers, which read the game's input actions: before it has any, nothing could
 	// answer it

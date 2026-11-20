@@ -714,6 +714,41 @@ void BoundsCase(CaseContext& c, bool commitRoom)
 	c.Record("walls", r);
 }
 
+// A game that calls WaitGetPoses and never Submit, with an overlay shown: each frame it waited for is ended for it
+// (with the overlay), not left to be discarded
+void WaitWithoutSubmitCase(CaseContext& c)
+{
+	using namespace vr::IVROverlay_028;
+	SceneApp app;
+	if (!OpenSceneApp(c, app))
+		return;
+	Json::Value r;
+	auto* ov = Interface<IVROverlay>(c, "IVROverlay_028");
+	if (ov) {
+		vr::VROverlayHandle_t h = vr::k_ulOverlayHandleInvalid;
+		ov->CreateOverlay("oc.test.wait", "Wait", &h);
+		std::vector<uint8_t> grey(64 * 64 * 4, 0x80);
+		ov->SetOverlayRaw(h, grey.data(), 64, 64, 4);
+		ov->SetOverlayWidthInMeters(h, 0.75f);
+		vr::HmdMatrix34_t m = At(0, 1.5f, -2);
+		ov->SetOverlayTransformAbsolute(h, vr::TrackingUniverseStanding, &m);
+		ov->ShowOverlay(h);
+	}
+	for (int frame = 1; frame <= 30; frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		app.comp->WaitGetPoses(poses, 16, nullptr, 0);
+	}
+	c.core->Cleanup();
+	Json::Value dump = ReadStandInDump();
+	r["frames_ended_at_least_25"] = dump["frames_ended"].asInt64() >= 25;
+	bool quad = false;
+	for (const Json::Value& layer : dump["layers"])
+		quad = quad || (layer["type"].asString() == "quad" && layer["size"].size() == 2 && std::fabs(layer["size"][0].asDouble() - 0.75) < 1e-3);
+	r["overlay_quad"] = quad;
+	r["frame_order_errors"] = dump["frame_order_errors"];
+	c.Record("frames", r);
+}
+
 // A game with legacy input looking for its controllers in its first frames: the frame the right hand's controller
 // is first connected on (scripts/controllers_early.json gives the profile)
 void ControllersEarlyCase(CaseContext& c)
@@ -1086,6 +1121,7 @@ const std::map<std::string, CaseFn>& conformance::HelperCases()
 	static const std::map<std::string, CaseFn> cases = {
 		{ "overlay-app", OverlayAppCase },
 		{ "controllers-early", ControllersEarlyCase },
+		{ "wait-without-submit", WaitWithoutSubmitCase },
 		{ "overlay-app-two-apis", [](CaseContext& c) {
 			 OverlayAppTexturesCase(c, "textures", { { GfxKind::D3D11, 29, "d3d11" }, { GfxKind::D3D12, 29, "d3d12" } });
 		 } },

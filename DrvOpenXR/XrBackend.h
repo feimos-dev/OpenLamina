@@ -177,6 +177,9 @@ public:
 
 	/** Whether OpenLamina runs frames of its own on this session (RunOwnFramesWhile can show something) */
 	bool HasOwnFrames() const { return ownFrames != nullptr; }
+	/** Whether own frames can run on the calling thread now: there are some, and on an OpenGL session (whose frames
+	 * run only inside the game's calls) the session's context is current here */
+	bool OwnFramesHere() const;
 
 	/**
 	 * Runs OpenLamina's own frames on the calling thread while keepGoing() holds (OwnFrameLoop::RunWhile): a blocking
@@ -255,6 +258,11 @@ private:
 	XrCompositionLayerProjection lastProjection{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
 	XrCompositionLayerProjectionView lastProjectionViews[2]{};
 	std::atomic<bool> haveLastProjection{ false };
+	// SubmitFrames shows the game's last frame again if this frame has none of its own (a frame the game didn't submit
+	// to, ended for it); under frameOwner's caller
+	bool repeatLastFrame = false;
+	// An OpenGL session's context, which its own frames (run only inside the game's calls) need current; else null
+	const void* ownFramesGlContext = nullptr;
 	bool SkyboxShown();
 	// The layers of the frame being ended, under frameOwner
 	std::vector<const XrCompositionLayerBaseHeader*> frameLayers;
