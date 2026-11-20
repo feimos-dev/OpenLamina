@@ -7,6 +7,7 @@
 #include "Reimpl/BaseOverlay.h"
 
 #include <string>
+#include <vector>
 
 using namespace vr;
 
@@ -190,4 +191,52 @@ TEST_CASE("Moving_gamepad_focus_tells_both_overlays")
 	// Destroying the focused overlay leaves none
 	CHECK(overlays.DestroyOverlay(b) == VROverlayError_None);
 	CHECK(overlays.GetGamepadFocusOverlay() == k_ulOverlayHandleInvalid);
+}
+
+TEST_CASE("A_destroyed_overlay_s_handle_stays_invalid")
+{
+	BaseOverlay overlays;
+	std::vector<VROverlayHandle_t> old;
+	for (int i = 0; i < 50; i++) {
+		// The new overlay may well have the memory the destroyed one had: its handle is still another
+		const VROverlayHandle_t h = Make(overlays, "oc.test.again");
+		for (VROverlayHandle_t o : old) {
+			CHECK(o != h);
+			float alpha = 0;
+			CHECK(overlays.GetOverlayAlpha(o, &alpha) == VROverlayError_InvalidHandle);
+		}
+		CHECK(overlays.DestroyOverlay(h) == VROverlayError_None);
+		old.push_back(h);
+	}
+	// A made-up value is no overlay either
+	float alpha = 0;
+	CHECK(overlays.GetOverlayAlpha(0x12345678, &alpha) == VROverlayError_InvalidHandle);
+}
+
+TEST_CASE("A_child_of_a_hidden_parent_is_not_visible")
+{
+	BaseOverlay overlays;
+	const VROverlayHandle_t parent = Make(overlays, "oc.test.parent");
+	const VROverlayHandle_t child = Make(overlays, "oc.test.child");
+	const VROverlayHandle_t grandchild = Make(overlays, "oc.test.grandchild");
+	HmdMatrix34_t identity{ { { 1, 0, 0, 0 }, { 0, 1, 0, 0 }, { 0, 0, 1, 0 } } };
+	REQUIRE(overlays.SetOverlayTransformOverlayRelative(child, parent, &identity) == VROverlayError_None);
+	REQUIRE(overlays.SetOverlayTransformOverlayRelative(grandchild, child, &identity) == VROverlayError_None);
+	overlays.ShowOverlay(child);
+	overlays.ShowOverlay(grandchild);
+	CHECK_FALSE(overlays.IsOverlayVisible(child));
+	CHECK_FALSE(overlays.IsOverlayVisible(grandchild));
+
+	overlays.ShowOverlay(parent);
+	CHECK(overlays.IsOverlayVisible(child));
+	CHECK(overlays.IsOverlayVisible(grandchild));
+
+	overlays.HideOverlay(child);
+	CHECK(overlays.IsOverlayVisible(parent));
+	CHECK_FALSE(overlays.IsOverlayVisible(grandchild));
+
+	// A parent that's gone: placed by nothing, and seen as its own setting says
+	overlays.ShowOverlay(child);
+	CHECK(overlays.DestroyOverlay(parent) == VROverlayError_None);
+	CHECK(overlays.IsOverlayVisible(child));
 }

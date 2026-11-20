@@ -161,10 +161,9 @@ private:
 	// Name-to-overlay mapping
 	std::map<std::string, OverlayData*> overlays;
 
-	// Set of overlay pointers - use these to ensure the overlays are valid, and
-	// if games pass in some random value (*COUGH* Boneworks *COUGH) we can deal
-	// with it, rather than crashing everything.
-	std::set<OverlayData*> validOverlays;
+	// The overlays by handle. A handle is an id, never handed out twice, so a destroyed overlay's handle or a made-up
+	// value (*COUGH* Boneworks *COUGH) finds nothing, even once another overlay has the memory the old one had.
+	std::map<vr::VROverlayHandle_t, OverlayData*> validOverlays;
 
 	// This doesn't do a whole lot, since OOVR does this for every overlay
 	vr::VROverlayHandle_t highQualityOverlay = vr::k_ulOverlayHandleInvalid;
@@ -173,8 +172,13 @@ private:
 	// The overlay that loses gamepad focus is told, and the one that gains it. A live handle or none; under the layers' lock.
 	void ChangeGamepadFocus(vr::VROverlayHandle_t to);
 
-	// Whether a handle is an overlay that exists
-	bool IsLiveOverlay(const OverlayData* overlay);
+	// The overlay a handle is, or nullptr: under the layers' lock (OverlayAt), or taking it for the look-up (LiveOverlay)
+	OverlayData* OverlayAt(vr::VROverlayHandle_t handle) const;
+	OverlayData* LiveOverlay(vr::VROverlayHandle_t handle);
+	// Whether the overlay is shown by itself (ShowOverlay, or the dashboard's), and whether every parent it's placed
+	// relative to is. Under the layers' lock.
+	bool ShownOnItsOwn(const OverlayData& o) const;
+	bool ParentsShown(const OverlayData& child) const;
 
 	// List of layers, with the first being reserved for the main scene
 	std::vector<XrCompositionLayerBaseHeader*> layerHeaders;
