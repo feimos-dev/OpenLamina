@@ -358,6 +358,9 @@ XrResult MakeInstance(const InstancePlan& plan, XrInstance* instance, XrVersion*
 
 // The instance VR_IsHmdPresent made, with the extensions it was made with, for the scene application's session
 std::mutex probeLock;
+// The extensions and graphics APIs of the running instance, for one made again after a loss
+InstancePlan currentPlan;
+
 XrInstance probedInstance = XR_NULL_HANDLE;
 XrVersion probedVersion = 0;
 std::vector<std::string> probedExtensions;
@@ -521,6 +524,7 @@ IBackend* DrvOpenXR::CreateOpenXRBackend(const char* startupInfo, vr::EVRInitErr
 	// Create the OpenXR instance - this is the overall handle that connects us to the runtime, or take the one
 	// VR_IsHmdPresent made for a scene application
 	const InstancePlan plan = PlanInstance(availableExtensions, choice.kind);
+	currentPlan = plan;
 	const std::vector<const char*>& extensions = plan.extensions;
 	const XrGraphicsApiSupportedFlags apiFlags = plan.apiFlags;
 	xr_instance = TakeProbedInstance(plan, &xr_instance_version);
@@ -654,6 +658,40 @@ XrResult DrvOpenXR::SetupSession()
 XrResult DrvOpenXR::FindSystem()
 {
 	return CreateSystemID();
+}
+
+XrResult DrvOpenXR::RemakeInstance()
+{
+#ifdef _DEBUG
+	// It went with the old instance
+	dbgMessenger = NULL;
+#endif
+	if (xr_instance) {
+		if (XR_FAILED(xrDestroyInstance(xr_instance)))
+			OOVR_LOG("xrDestroyInstance of the lost instance failed");
+		xr_instance = XR_NULL_HANDLE;
+	}
+	if (XrResult res = MakeInstance(currentPlan, &xr_instance, &xr_instance_version); XR_FAILED(res)) {
+		OOVR_LOGF("The OpenXR instance can't be made again yet: %d", (int)res);
+		xr_instance = XR_NULL_HANDLE;
+		return res;
+	}
+	delete xr_ext;
+	xr_ext = new XrExt(currentPlan.apiFlags, currentPlan.extensions);
+	if (XrResult res = CreateSystemID(); XR_FAILED(res))
+		return res;
+	uint32_t viewCount = 0;
+	if (XrResult res = xrEnumerateViewConfigurationViews(xr_instance, xr_system, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 0, &viewCount, nullptr); XR_FAILED(res))
+		return res;
+	std::vector<XrViewConfigurationView> views(viewCount, { XR_TYPE_VIEW_CONFIGURATION_VIEW });
+	if (XrResult res = xrEnumerateViewConfigurationViews(xr_instance, xr_system, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, viewCount, &viewCount, views.data()); XR_FAILED(res))
+		return res;
+	// The game sized its textures for two views: a headset with another count isn't one to go on with
+	if (viewCount != XruEyeCount)
+		return XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED;
+	xr_views_list = views;
+	OOVR_LOG("Made the OpenXR instance again");
+	return XR_SUCCESS;
 }
 
 void DrvOpenXR::KeepOverlaysInstance()

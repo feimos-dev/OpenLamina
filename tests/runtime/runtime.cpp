@@ -280,6 +280,14 @@ XrResult XRAPI_CALL CreateInstance(const XrInstanceCreateInfo* info, XrInstance*
 	std::lock_guard<std::recursive_mutex> g(St().lock);
 	if (St().instanceAlive)
 		return XR_ERROR_LIMIT_REACHED;
+	if (std::chrono::steady_clock::now() < St().systemBackAt)
+		return XR_ERROR_RUNTIME_FAILURE; // the runtime is gone after a scripted loss
+#ifdef _WIN32
+	// Kept loaded once used: the loader unloads a runtime whose last instance is destroyed, and the state of a
+	// scripted loss must outlive the lost instance (on Linux, -z nodelete)
+	HMODULE self = nullptr;
+	GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN, (LPCSTR)&CreateInstance, &self);
+#endif
 	std::set<std::string> enabled;
 	for (uint32_t i = 0; i < info->enabledExtensionCount; i++) {
 		std::string name = info->enabledExtensionNames[i];
@@ -293,7 +301,13 @@ XrResult XRAPI_CALL CreateInstance(const XrInstanceCreateInfo* info, XrInstance*
 	{
 		Dump& d = GetDump();
 		std::lock_guard<std::mutex> dg(d.lock);
-		d.root = Json::Value(Json::objectValue);
+		// The counts of losses and sessions go on across instances
+		Json::Value kept(Json::objectValue);
+		for (const char* key : { "sessions_created", "sessions_lost", "instances_lost", "instances_created" })
+			if (d.root.isMember(key))
+				kept[key] = d.root[key];
+		d.root = kept;
+		d.root["instances_created"] = d.root["instances_created"].asUInt64() + 1;
 		d.root["instance"]["extensions"] = Json::Value(Json::arrayValue);
 		for (const std::string& e : enabled)
 			d.root["instance"]["extensions"].append(e);
@@ -315,6 +329,7 @@ XrResult XRAPI_CALL DestroyInstance(XrInstance)
 		St().session.reset();
 		St().events.clear();
 		St().instanceAlive = false;
+		St().instanceLost = false;
 		Dump& d = GetDump();
 		std::lock_guard<std::mutex> dg(d.lock);
 		RtActionsDump(d.root);
@@ -334,6 +349,8 @@ XrResult XRAPI_CALL GetInstanceProperties(XrInstance, XrInstanceProperties* prop
 XrResult XRAPI_CALL PollEvent(XrInstance, XrEventDataBuffer* out)
 {
 	std::lock_guard<std::recursive_mutex> g(St().lock);
+	if (St().instanceLost)
+		return XR_ERROR_INSTANCE_LOST;
 	if (St().events.empty())
 		return XR_EVENT_UNAVAILABLE;
 	*out = St().events.front();
@@ -403,6 +420,8 @@ XrResult XRAPI_CALL GetSystem(XrInstance, const XrSystemGetInfo* info, XrSystemI
 		return XR_ERROR_FORM_FACTOR_UNSUPPORTED;
 	{
 		std::lock_guard<std::recursive_mutex> g(St().lock);
+		if (St().instanceLost)
+			return XR_ERROR_INSTANCE_LOST;
 		if (std::chrono::steady_clock::now() < St().systemBackAt)
 			return XR_ERROR_FORM_FACTOR_UNAVAILABLE; // gone after a scripted loss
 	}
@@ -469,6 +488,8 @@ XrResult XRAPI_CALL CreateSession(XrInstance, const XrSessionCreateInfo* info, X
 {
 	FAIL_POINT("xrCreateSession");
 	std::lock_guard<std::recursive_mutex> g(St().lock);
+	if (St().instanceLost)
+		return XR_ERROR_INSTANCE_LOST;
 	if (St().session)
 		return XR_ERROR_LIMIT_REACHED;
 	auto session = std::make_unique<RtSession>();
@@ -538,6 +559,8 @@ XrResult XRAPI_CALL BeginSession(XrSession, const XrSessionBeginInfo* info)
 	RtSession* s = St().session.get();
 	if (!s)
 		return XR_ERROR_HANDLE_INVALID;
+	if (St().instanceLost)
+		return XR_ERROR_INSTANCE_LOST;
 	if (s->lost)
 		return XR_ERROR_SESSION_LOST;
 	if (s->running)
@@ -554,6 +577,8 @@ XrResult XRAPI_CALL EndSession(XrSession)
 	RtSession* s = St().session.get();
 	if (!s)
 		return XR_ERROR_HANDLE_INVALID;
+	if (St().instanceLost)
+		return XR_ERROR_INSTANCE_LOST;
 	if (s->lost)
 		return XR_ERROR_SESSION_LOST;
 	if (!s->running)
@@ -830,6 +855,8 @@ XrResult XRAPI_CALL WaitFrame(XrSession, const XrFrameWaitInfo*, XrFrameState* f
 	RtSession* s = St().session.get();
 	if (!s)
 		return XR_ERROR_HANDLE_INVALID;
+	if (St().instanceLost)
+		return XR_ERROR_INSTANCE_LOST;
 	if (s->lost)
 		return XR_ERROR_SESSION_LOST;
 	if (!s->running)
@@ -861,6 +888,18 @@ XrResult XRAPI_CALL WaitFrame(XrSession, const XrFrameWaitInfo*, XrFrameState* f
 		}
 		if (loss)
 			continue;
+		if (ev.type == "instance_lost") {
+			if (ev.frame == s->framesWaited && St().lossesSent.insert(i).second) {
+				St().instanceLost = true;
+				St().systemBackAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(GetScript().lossUnavailableMs);
+				if (Dump::Enabled()) {
+					Dump& d = GetDump();
+					std::lock_guard<std::mutex> dg(d.lock);
+					d.root["instances_lost"] = d.root["instances_lost"].asUInt64() + 1;
+				}
+			}
+			continue;
+		}
 		// EXITING is the user quitting from the runtime: STOPPING first, EXITING once the session has ended
 		if (ev.frame == s->framesWaited && ev.type == "session_state" && ev.state == "EXITING" && s->running) {
 			s->exitRequested = true;
@@ -888,6 +927,8 @@ XrResult XRAPI_CALL BeginFrame(XrSession, const XrFrameBeginInfo*)
 	RtSession* s = St().session.get();
 	if (!s)
 		return XR_ERROR_HANDLE_INVALID;
+	if (St().instanceLost)
+		return XR_ERROR_INSTANCE_LOST;
 	if (s->lost)
 		return XR_ERROR_SESSION_LOST;
 	if (!s->running)
@@ -1229,6 +1270,8 @@ XrResult XRAPI_CALL EndFrame(XrSession, const XrFrameEndInfo* info)
 	RtSession* s = St().session.get();
 	if (!s)
 		return XR_ERROR_HANDLE_INVALID;
+	if (St().instanceLost)
+		return XR_ERROR_INSTANCE_LOST;
 	if (s->lost)
 		return XR_ERROR_SESSION_LOST;
 	if (s->headless || !s->frameOpen) {

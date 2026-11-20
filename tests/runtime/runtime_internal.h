@@ -218,6 +218,7 @@ struct RtState {
 	bool presenceSent = false;
 	// A scripted loss: the system is gone (xrGetSystem fails) until then; the loss events already sent (by index)
 	std::chrono::steady_clock::time_point systemBackAt{};
+	bool instanceLost = false; // a scripted instance loss, until xrDestroyInstance
 	std::set<size_t> lossesSent;
 };
 

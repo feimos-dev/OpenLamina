@@ -2111,7 +2111,7 @@ void XrBackend::PumpEvents()
 		if (XR_FAILED(res)) {
 			OOVR_LOG_ONCE("xrPollEvent failed: no events this frame");
 			if (res == XR_ERROR_INSTANCE_LOST)
-				OnSessionLost();
+				OnInstanceLost();
 			break;
 		}
 
@@ -2136,11 +2136,11 @@ void XrBackend::PumpEvents()
 			continue;
 		}
 
-		// The instance is going away (the runtime updating or shutting down): its session with it
+		// The instance is going away (the runtime updating or shutting down): it's made again, with its session
 		if (ev.type == XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING) {
 			OOVR_LOG("The OpenXR instance will be lost");
 			if (!exitExpected)
-				OnSessionLost();
+				OnInstanceLost();
 			continue;
 		}
 
@@ -2362,7 +2362,9 @@ bool XrBackend::WaitForEvents(const std::function<bool()>& done, int timeoutMs)
 void XrBackend::OnFrameCallFailed(XrResult res)
 {
 	renderingFrame = false;
-	if (res == XR_ERROR_SESSION_LOST || res == XR_ERROR_INSTANCE_LOST || ++frameCallFailures >= 5)
+	if (res == XR_ERROR_INSTANCE_LOST)
+		OnInstanceLost();
+	else if (res == XR_ERROR_SESSION_LOST || ++frameCallFailures >= 5)
 		OnSessionLost();
 	// No waited frame to pace the game: about one frame's wait instead of a busy loop
 	std::this_thread::sleep_for(std::chrono::milliseconds(11));
@@ -2384,6 +2386,65 @@ void XrBackend::OnSessionLost()
 	}
 }
 
+void XrBackend::OnInstanceLost()
+{
+	if (!instanceLost.exchange(true))
+		OOVR_LOG("The OpenXR instance is lost: making it again once the runtime is back");
+	OnSessionLost();
+}
+
+// A new instance's xrCreateSession wants the graphics requirements of the binding's API asked of it first
+static void AskGraphicsRequirements(const void* binding)
+{
+	const auto* header = (const XrBaseInStructure*)binding;
+	if (!header)
+		return;
+	switch (header->type) {
+#if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+	case XR_TYPE_GRAPHICS_BINDING_D3D11_KHR: {
+		XrGraphicsRequirementsD3D11KHR requirements{ XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR };
+		OC_XR_LOG(xr_ext->xrGetD3D11GraphicsRequirementsKHR(xr_instance, xr_system, &requirements));
+		break;
+	}
+#endif
+#if defined(SUPPORT_DX) && defined(SUPPORT_DX12)
+	case XR_TYPE_GRAPHICS_BINDING_D3D12_KHR: {
+		XrGraphicsRequirementsD3D12KHR requirements{ XR_TYPE_GRAPHICS_REQUIREMENTS_D3D12_KHR };
+		OC_XR_LOG(xr_ext->xrGetD3D12GraphicsRequirementsKHR(xr_instance, xr_system, &requirements));
+		break;
+	}
+#endif
+#if defined(SUPPORT_VK)
+	case XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR: {
+		XrGraphicsRequirementsVulkanKHR requirements{ XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN_KHR };
+		OC_XR_LOG(xr_ext->xrGetVulkanGraphicsRequirementsKHR(xr_instance, xr_system, &requirements));
+		break;
+	}
+#endif
+#if defined(SUPPORT_GL)
+#ifdef _WIN32
+	case XR_TYPE_GRAPHICS_BINDING_OPENGL_WIN32_KHR:
+#else
+	case XR_TYPE_GRAPHICS_BINDING_OPENGL_XLIB_KHR:
+#endif
+	{
+		XrGraphicsRequirementsOpenGLKHR requirements{ XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_KHR };
+		OC_XR_LOG(xr_ext->xrGetOpenGLGraphicsRequirementsKHR(xr_instance, xr_system, &requirements));
+		break;
+	}
+#endif
+#if defined(SUPPORT_GLES)
+	case XR_TYPE_GRAPHICS_BINDING_OPENGL_ES_ANDROID_KHR: {
+		XrGraphicsRequirementsOpenGLESKHR requirements{ XR_TYPE_GRAPHICS_REQUIREMENTS_OPENGL_ES_KHR };
+		OC_XR_LOG(xr_ext->xrGetOpenGLESGraphicsRequirementsKHR(xr_instance, xr_system, &requirements));
+		break;
+	}
+#endif
+	default:
+		break;
+	}
+}
+
 void XrBackend::RecoverLostSession()
 {
 	if (!sessionLost || quitting)
@@ -2400,16 +2461,36 @@ void XrBackend::RecoverLostSession()
 	auto lock = xr_session.lock();
 	if (!sessionLost || quitting)
 		return;
-	// The lost session first, once: its handles are no use any more
+	// The lost session first, once: its handles are no use any more. With a lost instance, the game's actions go
+	// too (forgotten: they went with it), and are made again on the new one.
 	if (!lostSessionDestroyed) {
+		if (instanceLost) {
+			if (BaseInput* input = GetUnsafeBaseInput())
+				input->_ForgetInstance();
+		}
 		if (xr_gbl || xr_session.get())
 			DrvOpenXR::ShutdownSession();
 		lostSessionDestroyed = true;
 	}
-	if (XR_FAILED(DrvOpenXR::FindSystem()))
+	if (instanceLost) {
+		if (XR_FAILED(DrvOpenXR::RemakeInstance()))
+			return; // no runtime or headset yet: the next try in a second
+		instanceLost = false;
+		// What was made on the old instance: the info set and its paths, and the trackers' list of devices
+		infoSet = XR_NULL_HANDLE;
+		infoAction = XR_NULL_HANDLE;
+		subactionPaths[0] = subactionPaths[1] = XR_NULL_PATH;
+		generic_trackers_generation = UINT64_MAX;
+		generic_trackers_session = XR_NULL_HANDLE;
+		AskGraphicsRequirements(GetCurrentGraphicsBinding());
+	} else if (XR_FAILED(DrvOpenXR::FindSystem())) {
 		return; // no headset yet: the next try in a second
+	}
 	if (XR_FAILED(RebuildSession(RebuildReason::Loss)) || sessionLost)
 		return;
+	// After a new instance: the game's actions and bindings, from its manifest, on it and its session
+	if (BaseInput* input = GetUnsafeBaseInput())
+		input->_RebuildForNewInstance();
 	OOVR_LOG("The OpenXR session is back");
 	if (devicesDeactivated.exchange(false)) {
 		for (TrackedDeviceIndex_t i : PresentDevices(*this))

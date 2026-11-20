@@ -73,10 +73,10 @@ def check(name, want, out):
             misses.append(f"frame-loop: device events {seq}, expected {want['device_events']} in that order")
         if 704 in seq:
             misses.append("frame-loop: VREvent_DriverRequestedQuit polled after a loss")
-    for key, at_least in (("sessions_lost", False), ("sessions_created_min", True)):
+    for key, at_least in (("sessions_lost", False), ("sessions_created_min", True), ("instances_lost", False), ("instances_created_min", True)):
         if key in want:
             dump = json.loads(dump_path.read_text(encoding="utf-8")) if dump_path.exists() else {}
-            name = "sessions_created" if at_least else key
+            name = key.removesuffix("_min")
             got = dump.get(name, 0)
             if (got < want[key]) if at_least else (got != want[key]):
                 misses.append(f"frame-loop: the runtime saw {got} {name.replace('_', ' ')}, expected {'at least ' if at_least else ''}{want[key]}")

@@ -72,6 +72,10 @@ public:
 	std::atomic<bool> sawStopping{ false };
 	// The game has been told the devices are deactivated (a loss), and not yet that they're back
 	std::atomic<bool> devicesDeactivated{ false };
+	// The instance was lost with the session (XR_ERROR_INSTANCE_LOST, or INSTANCE_LOSS_PENDING): made again first
+	std::atomic<bool> instanceLost{ false };
+	// The instance loss: lost with the session (OnSessionLost)
+	void OnInstanceLost();
 	// The last try to find the system again (RecoverLostSession), and whether the lost session is destroyed yet
 	std::chrono::steady_clock::time_point lastRecoveryTry{};
 	bool lostSessionDestroyed = false;
