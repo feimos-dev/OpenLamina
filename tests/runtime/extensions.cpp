@@ -242,6 +242,7 @@ void RtChangeRefreshRate(RtSession* s, float to)
 	QueueEvent(buf);
 }
 
+#ifdef _WIN32
 XrTime RtCounterTime(const LARGE_INTEGER& counter)
 {
 	LARGE_INTEGER frequency;
@@ -265,6 +266,38 @@ XrResult XRAPI_CALL ConvertWin32PerformanceCounterToTime(XrInstance, const LARGE
 	return XR_SUCCESS;
 }
 } // namespace
+#else
+XrTime RtTimespecTime(const timespec& ts)
+{
+	return (XrTime)ts.tv_sec * 1000000000 + ts.tv_nsec;
+}
+
+XrTime RtNowTime()
+{
+	timespec ts{};
+	clock_gettime(CLOCK_MONOTONIC, &ts);
+	return RtTimespecTime(ts);
+}
+
+namespace {
+XrResult XRAPI_CALL ConvertTimespecTimeToTime(XrInstance, const timespec* ts, XrTime* time)
+{
+	if (!ts || !time)
+		return XR_ERROR_VALIDATION_FAILURE;
+	*time = RtTimespecTime(*ts);
+	return XR_SUCCESS;
+}
+
+XrResult XRAPI_CALL ConvertTimeToTimespecTime(XrInstance, XrTime time, timespec* ts)
+{
+	if (!ts)
+		return XR_ERROR_VALIDATION_FAILURE;
+	ts->tv_sec = (time_t)(time / 1000000000);
+	ts->tv_nsec = (long)(time % 1000000000);
+	return XR_SUCCESS;
+}
+} // namespace
+#endif
 
 PFN_xrVoidFunction RtExtensionsLookup(const char* name, const char** extension)
 {
@@ -287,7 +320,12 @@ PFN_xrVoidFunction RtExtensionsLookup(const char* name, const char** extension)
 		{ "xrEnumerateDisplayRefreshRatesFB", (PFN_xrVoidFunction)EnumerateDisplayRefreshRates, "XR_FB_display_refresh_rate" },
 		{ "xrGetDisplayRefreshRateFB", (PFN_xrVoidFunction)GetDisplayRefreshRate, "XR_FB_display_refresh_rate" },
 		{ "xrRequestDisplayRefreshRateFB", (PFN_xrVoidFunction)RequestDisplayRefreshRate, "XR_FB_display_refresh_rate" },
+#ifdef _WIN32
 		{ "xrConvertWin32PerformanceCounterToTimeKHR", (PFN_xrVoidFunction)ConvertWin32PerformanceCounterToTime, "XR_KHR_win32_convert_performance_counter_time" },
+#else
+		{ "xrConvertTimespecTimeToTimeKHR", (PFN_xrVoidFunction)ConvertTimespecTimeToTime, "XR_KHR_convert_timespec_time" },
+		{ "xrConvertTimeToTimespecTimeKHR", (PFN_xrVoidFunction)ConvertTimeToTimespecTime, "XR_KHR_convert_timespec_time" },
+#endif
 	};
 	for (const Entry& e : entries) {
 		if (!std::strcmp(e.name, name)) {

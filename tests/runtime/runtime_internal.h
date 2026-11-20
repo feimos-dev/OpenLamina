@@ -1,6 +1,7 @@
 #pragma once
 // Internals of the stand-in OpenXR runtime (oc_test_runtime).
 
+#ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
@@ -12,15 +13,26 @@
 #include <d3d11.h>
 #include <d3d12.h>
 #include <GL/gl.h>
+#else
+// Xlib and GLX for XR_KHR_opengl_enable's Xlib binding. X11's macros that clash with names here are undefined after.
+#include <GL/glx.h>
+#include <X11/Xlib.h>
+#undef None
+#undef Bool
+#undef Status
+#undef Success
+#undef Always
+#endif
 
-// Vulkan's functions are looked up at run time (vulkan-1.dll needn't exist for the other APIs)
+// Vulkan's functions are looked up at run time (the loader needn't exist for the other APIs)
 #ifndef VK_NO_PROTOTYPES
 #define VK_NO_PROTOTYPES
 #endif
 #include <vulkan/vulkan.h>
 
-// D3D11, D3D12, Vulkan and OpenGL (not OpenGL ES)
+// Windows: D3D11, D3D12, Vulkan and OpenGL (WGL). Elsewhere: Vulkan and OpenGL (GLX). Not OpenGL ES.
 #undef XR_USE_GRAPHICS_API_OPENGL_ES
+#ifdef _WIN32
 #ifndef XR_USE_PLATFORM_WIN32
 #define XR_USE_PLATFORM_WIN32
 #endif
@@ -29,6 +41,15 @@
 #endif
 #ifndef XR_USE_GRAPHICS_API_D3D12
 #define XR_USE_GRAPHICS_API_D3D12
+#endif
+#else
+#ifndef XR_USE_PLATFORM_XLIB
+#define XR_USE_PLATFORM_XLIB
+#endif
+#ifndef XR_USE_TIMESPEC
+#define XR_USE_TIMESPEC
+#endif
+#include <time.h>
 #endif
 #ifndef XR_USE_GRAPHICS_API_VULKAN
 #define XR_USE_GRAPHICS_API_VULKAN
@@ -140,15 +161,23 @@ struct RtSwapchain {
 
 struct RtSession {
 	RtApi api = RtApi::None;
+#ifdef _WIN32
 	ID3D11Device* device = nullptr; // D3D11
 	ID3D12Device* d3d12Device = nullptr;
 	ID3D12CommandQueue* d3d12Queue = nullptr;
+#endif
 	VkInstance vkInstance = VK_NULL_HANDLE;
 	VkPhysicalDevice vkPhysicalDevice = VK_NULL_HANDLE;
 	VkDevice vkDevice = VK_NULL_HANDLE;
 	uint32_t vkQueueFamily = 0, vkQueueIndex = 0;
+#ifdef _WIN32
 	HDC glDC = nullptr;
 	HGLRC glRC = nullptr;
+#else
+	Display* glDisplay = nullptr;
+	GLXDrawable glDrawable = 0;
+	GLXContext glContext = nullptr;
+#endif
 	bool headless = false;
 	bool overlay = false;
 	bool running = false;
@@ -169,7 +198,9 @@ struct RtState {
 	std::recursive_mutex lock;
 	bool instanceAlive = false;
 	std::set<RtApi> requirementsQueried; // xrGet*GraphicsRequirementsKHR called: a session on that API needs it first
+#ifdef _WIN32
 	LUID requiredLuid{}; // the adapter xrGetD3D11/D3D12GraphicsRequirementsKHR named: a D3D session's device must be on it
+#endif
 	std::set<std::string> enabledExtensions;
 	std::unique_ptr<RtSession> session;
 	std::map<RtSpace*, std::unique_ptr<RtSpace>> spaces;
@@ -221,16 +252,20 @@ struct RtGfx {
 	bool (*read)(RtSession* session, RtSwapchain* sc, uint32_t index, uint32_t arrayIndex,
 	    const std::vector<XrOffset2Di>& points, uint32_t bytesPerTexel, std::vector<uint8_t>& out, std::string* why);
 };
+#ifdef _WIN32
 const RtGfx& RtD3D11Gfx();
 const RtGfx& RtD3D12Gfx();
+#endif
 const RtGfx& RtVulkanGfx();
 const RtGfx& RtOpenGLGfx();
 const RtGfx* RtGfxOf(RtApi api); // nullptr for None
 const RtGfx* RtGfxForBinding(XrStructureType type);
 // The API's functions (requirements, Vulkan's instance and device): *extension gets the extension they need
 PFN_xrVoidFunction RtGfxLookup(const char* name, const char** extension);
+#ifdef _WIN32
 PFN_xrVoidFunction RtD3D11Lookup(const char* name);
 PFN_xrVoidFunction RtD3D12Lookup(const char* name);
+#endif
 PFN_xrVoidFunction RtVulkanLookup(const char* name, const char** extension);
 PFN_xrVoidFunction RtOpenGLLookup(const char* name);
 uint32_t RtBytesOf(PixelLayout layout);
@@ -255,13 +290,20 @@ bool RtActionSpaceScripted(const RtSpace* sp, uint64_t frame, ScriptPose* out);
 // extensions.cpp: functions of optional extensions; *extension gets the extension that must be enabled
 PFN_xrVoidFunction RtExtensionsLookup(const char* name, const char** extension);
 void RtExtensionsSystemProperties(XrSystemProperties* props);
+#ifdef _WIN32
 // The adapter the D3D11 and D3D12 requirements name: the one whose LUID is OC_TEST_RUNTIME_GPU_LUID (16 hex digits,
 // HighPart then LowPart) when that is set and one has it, else the first. False if there's none.
 bool RtRuntimeAdapterLuid(LUID* out);
+#endif
 // The display's refresh rate changes to rate (XR_FB_display_refresh_rate's event, if it changed); with St().lock held
 void RtChangeRefreshRate(RtSession* s, float rate);
 bool RtExtensionsSessionInfo(const XrSessionCreateInfo* info, RtSession* session); // headless / overlay chains
+#ifdef _WIN32
 // The system clock as XrTime (XR_KHR_win32_convert_performance_counter_time's conversion): QueryPerformanceCounter in
 // nanoseconds
 XrTime RtCounterTime(const LARGE_INTEGER& counter);
+#else
+// The system clock as XrTime (XR_KHR_convert_timespec_time's conversion): CLOCK_MONOTONIC in nanoseconds
+XrTime RtTimespecTime(const timespec& ts);
+#endif
 XrTime RtNowTime();

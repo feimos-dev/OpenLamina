@@ -1,6 +1,6 @@
 // The stand-in runtime's Vulkan sessions (XR_KHR_vulkan_enable and XR_KHR_vulkan_enable2): swapchain images made on
 // the app's device, read back through a copy on the app's queue. Vulkan's functions come from the loader the app has
-// loaded (vulkan-1.dll), looked up at run time.
+// loaded (vulkan-1.dll, libvulkan.so.1), looked up at run time.
 
 #include "runtime_internal.h"
 
@@ -11,14 +11,25 @@
 #include <functional>
 #include <map>
 
+#ifndef _WIN32
+#include <dlfcn.h>
+#endif
+
 namespace {
 
 PFN_vkGetInstanceProcAddr LoaderGetInstanceProcAddr()
 {
+#ifdef _WIN32
 	HMODULE module = GetModuleHandleA("vulkan-1.dll");
 	if (!module)
 		module = LoadLibraryA("vulkan-1.dll");
 	return module ? (PFN_vkGetInstanceProcAddr)GetProcAddress(module, "vkGetInstanceProcAddr") : nullptr;
+#else
+	void* module = dlopen("libvulkan.so.1", RTLD_NOW | RTLD_NOLOAD);
+	if (!module)
+		module = dlopen("libvulkan.so.1", RTLD_NOW);
+	return module ? (PFN_vkGetInstanceProcAddr)dlsym(module, "vkGetInstanceProcAddr") : nullptr;
+#endif
 }
 
 // The functions of the session's device
@@ -81,9 +92,13 @@ VkPhysicalDevice ChoosePhysicalDevice(VkInstance instance)
 	if (enumerate(instance, &count, devices.data()) < 0 || count == 0)
 		return VK_NULL_HANDLE;
 	// From the process's environment as it is now (a case may set it before OpenLamina starts)
+#ifdef _WIN32
 	char wantBuffer[128] = {};
 	DWORD wantLength = GetEnvironmentVariableA("OC_TEST_RUNTIME_GPU_UUID", wantBuffer, sizeof(wantBuffer));
 	const char* want = wantLength > 0 && wantLength < sizeof(wantBuffer) ? wantBuffer : nullptr;
+#else
+	const char* want = std::getenv("OC_TEST_RUNTIME_GPU_UUID");
+#endif
 	auto props2 = (PFN_vkGetPhysicalDeviceProperties2)gipa(instance, "vkGetPhysicalDeviceProperties2");
 	if (!props2)
 		props2 = (PFN_vkGetPhysicalDeviceProperties2)gipa(instance, "vkGetPhysicalDeviceProperties2KHR");

@@ -1,6 +1,11 @@
-// Smoke test of the stand-in runtime's actions, scripted input and optional extensions.
+// Smoke test of the stand-in runtime's actions, scripted input and optional extensions, on a D3D11 session (Windows)
+// or a Vulkan one (elsewhere).
 //   runtime_input_smoke noext   default script: enabling XR_EXT_hand_tracking is refused
 //   runtime_input_smoke input   scripts/input_smoke.json: trigger value 1 from frame 5, the Index profile, hand joints
+#undef XR_USE_GRAPHICS_API_OPENGL
+#undef XR_USE_GRAPHICS_API_OPENGL_ES
+#undef XR_USE_GRAPHICS_API_D3D12
+#ifdef _WIN32
 #ifndef XR_USE_PLATFORM_WIN32
 #define XR_USE_PLATFORM_WIN32
 #endif
@@ -8,14 +13,24 @@
 #define XR_USE_GRAPHICS_API_D3D11
 #endif
 #undef XR_USE_GRAPHICS_API_VULKAN
-#undef XR_USE_GRAPHICS_API_OPENGL
-#undef XR_USE_GRAPHICS_API_OPENGL_ES
-#undef XR_USE_GRAPHICS_API_D3D12
 #ifndef WIN32_LEAN_AND_MEAN
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <d3d11.h>
 #include <windows.h>
+#else
+// A Vulkan session (the platform's own API here); Vulkan's functions are looked up at run time
+#undef XR_USE_PLATFORM_XLIB
+#ifndef XR_USE_GRAPHICS_API_VULKAN
+#define XR_USE_GRAPHICS_API_VULKAN
+#endif
+#ifndef VK_NO_PROTOTYPES
+#define VK_NO_PROTOTYPES
+#endif
+#include <dlfcn.h>
+#include <vector>
+#include <vulkan/vulkan.h>
+#endif
 
 #include <openxr/openxr.h>
 #include <openxr/openxr_platform.h>
@@ -37,7 +52,11 @@ static int failures = 0;
 int main(int argc, char** argv)
 {
 	std::string mode = argc > 1 ? argv[1] : "";
+#ifdef _WIN32
 	const char* exts[] = { XR_KHR_D3D11_ENABLE_EXTENSION_NAME, XR_EXT_HAND_TRACKING_EXTENSION_NAME };
+#else
+	const char* exts[] = { XR_KHR_VULKAN_ENABLE_EXTENSION_NAME, XR_EXT_HAND_TRACKING_EXTENSION_NAME };
+#endif
 	XrInstanceCreateInfo ici{ XR_TYPE_INSTANCE_CREATE_INFO };
 	std::snprintf(ici.applicationInfo.applicationName, sizeof(ici.applicationInfo.applicationName), "runtime_input_smoke");
 	ici.applicationInfo.apiVersion = XR_MAKE_VERSION(1, 0, 0);
@@ -64,6 +83,7 @@ int main(int argc, char** argv)
 	XR_OK(xrGetSystemProperties(instance, system, &sysProps));
 	CHECK(htProps.supportsHandTracking == XR_TRUE);
 
+#ifdef _WIN32
 	PFN_xrGetD3D11GraphicsRequirementsKHR getReqs = nullptr;
 	XR_OK(xrGetInstanceProcAddr(instance, "xrGetD3D11GraphicsRequirementsKHR", (PFN_xrVoidFunction*)&getReqs));
 	XrGraphicsRequirementsD3D11KHR reqs{ XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR };
@@ -91,6 +111,51 @@ int main(int argc, char** argv)
 	XrGraphicsBindingD3D11KHR binding{ XR_TYPE_GRAPHICS_BINDING_D3D11_KHR };
 	binding.device = device;
 	XrSessionCreateInfo sci{ XR_TYPE_SESSION_CREATE_INFO, &binding, 0, system };
+#else
+	// A Vulkan device on the physical device the runtime names
+	XrGraphicsBindingVulkanKHR binding{ XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR };
+	PFN_vkGetInstanceProcAddr gipa = nullptr;
+	if (void* loader = dlopen("libvulkan.so.1", RTLD_NOW))
+		gipa = (PFN_vkGetInstanceProcAddr)dlsym(loader, "vkGetInstanceProcAddr");
+	CHECK(gipa != nullptr);
+	if (gipa) {
+		PFN_xrGetVulkanGraphicsRequirementsKHR getReqs = nullptr;
+		PFN_xrGetVulkanGraphicsDeviceKHR getDevice = nullptr;
+		XR_OK(xrGetInstanceProcAddr(instance, "xrGetVulkanGraphicsRequirementsKHR", (PFN_xrVoidFunction*)&getReqs));
+		XR_OK(xrGetInstanceProcAddr(instance, "xrGetVulkanGraphicsDeviceKHR", (PFN_xrVoidFunction*)&getDevice));
+		XrGraphicsRequirementsVulkanKHR reqs{ XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN_KHR };
+		XR_OK(getReqs(instance, system, &reqs));
+		VkApplicationInfo app{ VK_STRUCTURE_TYPE_APPLICATION_INFO };
+		app.apiVersion = VK_API_VERSION_1_1;
+		VkInstanceCreateInfo vici{ VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
+		vici.pApplicationInfo = &app;
+		auto createInstance = (PFN_vkCreateInstance)gipa(VK_NULL_HANDLE, "vkCreateInstance");
+		if (createInstance(&vici, nullptr, &binding.instance) != VK_SUCCESS) {
+			std::printf("FAILED: no Vulkan instance\n");
+			return 1;
+		}
+		XR_OK(getDevice(instance, system, binding.instance, &binding.physicalDevice));
+		auto families = (PFN_vkGetPhysicalDeviceQueueFamilyProperties)gipa(binding.instance, "vkGetPhysicalDeviceQueueFamilyProperties");
+		uint32_t n = 0;
+		families(binding.physicalDevice, &n, nullptr);
+		std::vector<VkQueueFamilyProperties> props(n);
+		families(binding.physicalDevice, &n, props.data());
+		while (binding.queueFamilyIndex < n && !(props[binding.queueFamilyIndex].queueFlags & VK_QUEUE_GRAPHICS_BIT))
+			binding.queueFamilyIndex++;
+		float priority = 1;
+		VkDeviceQueueCreateInfo qci{ VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO };
+		qci.queueFamilyIndex = binding.queueFamilyIndex;
+		qci.queueCount = 1;
+		qci.pQueuePriorities = &priority;
+		VkDeviceCreateInfo dci{ VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
+		dci.queueCreateInfoCount = 1;
+		dci.pQueueCreateInfos = &qci;
+		auto createDevice = (PFN_vkCreateDevice)gipa(binding.instance, "vkCreateDevice");
+		CHECK(createDevice(binding.physicalDevice, &dci, nullptr, &binding.device) == VK_SUCCESS);
+	}
+	CHECK(binding.device != VK_NULL_HANDLE);
+	XrSessionCreateInfo sci{ XR_TYPE_SESSION_CREATE_INFO, &binding, 0, system };
+#endif
 	XrSession session = XR_NULL_HANDLE;
 	XR_OK(xrCreateSession(instance, &sci, &session));
 
@@ -180,7 +245,14 @@ int main(int argc, char** argv)
 	}
 
 	xrDestroyInstance(instance);
+#ifdef _WIN32
 	device->Release();
+#else
+	if (binding.device)
+		((PFN_vkDestroyDevice)gipa(binding.instance, "vkDestroyDevice"))(binding.device, nullptr);
+	if (binding.instance)
+		((PFN_vkDestroyInstance)gipa(binding.instance, "vkDestroyInstance"))(binding.instance, nullptr);
+#endif
 	std::printf("%s (%d failures)\n", failures ? "FAILED" : "passed", failures);
 	return failures ? 1 : 0;
 }

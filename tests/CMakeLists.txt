@@ -60,18 +60,23 @@ add_executable(oc_conformance
 	conformance/crash_report.cpp
 )
 target_link_libraries(oc_conformance PRIVATE oc_callers)
-# The frame cases' graphics APIs (gfx/): Windows only; Vulkan's functions are looked up at run time
+# The frame cases' graphics APIs (gfx/): Vulkan and OpenGL (WGL, or GLX on Linux), and on Windows the D3D ones;
+# Vulkan's functions are looked up at run time
+target_sources(oc_conformance PRIVATE
+	conformance/gfx/VkGfx.cpp
+	conformance/gfx/GLGfx.cpp
+)
+target_compile_definitions(oc_conformance PRIVATE VK_NO_PROTOTYPES)
 if (WIN32)
 	target_sources(oc_conformance PRIVATE
 		conformance/gfx/D3D11Gfx.cpp
 		conformance/gfx/D3D12Gfx.cpp
-		conformance/gfx/VkGfx.cpp
-		conformance/gfx/GLGfx.cpp
 		conformance/gfx/D3D10Gfx.cpp
 	)
 	target_include_directories(oc_conformance PRIVATE ${CMAKE_SOURCE_DIR}/libs/vulkan/Include)
-	target_compile_definitions(oc_conformance PRIVATE VK_NO_PROTOTYPES)
 	target_link_libraries(oc_conformance PRIVATE d3d10_1 d3d12 dxgi opengl32)
+else ()
+	target_link_libraries(oc_conformance PRIVATE GL X11)
 endif ()
 # The program the applications case launches (next to oc_conformance)
 add_executable(oc_echo_app conformance/echo_app.cpp)
@@ -175,6 +180,4 @@ endif ()
 add_test(NAME unit COMMAND oc_unit_tests)
 set_tests_properties(unit PROPERTIES LABELS unit)
 
-if (WIN32)
-	add_subdirectory(runtime)
-endif ()
+add_subdirectory(runtime)

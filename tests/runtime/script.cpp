@@ -36,6 +36,16 @@ static Script LoadScript()
 		s.extensions.clear();
 		for (const Json::Value& e : root["extensions"])
 			s.extensions.insert(e.asString());
+#ifndef _WIN32
+		// Windows' extensions as this platform has them: no D3D, and the clock conversion from timespec. A script
+		// left with no graphics API gets the default one, the API OpenLamina's own session uses here.
+		bool hadApi = s.extensions.erase("XR_KHR_D3D11_enable") + s.extensions.erase("XR_KHR_D3D12_enable") > 0;
+		if (s.extensions.erase("XR_KHR_win32_convert_performance_counter_time"))
+			s.extensions.insert("XR_KHR_convert_timespec_time");
+		if (hadApi && !s.extensions.count("XR_KHR_vulkan_enable") && !s.extensions.count("XR_KHR_vulkan_enable2")
+		    && !s.extensions.count("XR_KHR_opengl_enable"))
+			s.extensions.insert("XR_KHR_vulkan_enable");
+#endif
 	}
 	if (root.isMember("view_size")) {
 		s.viewWidth = root["view_size"][0].asUInt();
