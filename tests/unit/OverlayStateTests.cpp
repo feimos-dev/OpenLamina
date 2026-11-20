@@ -286,3 +286,21 @@ TEST_CASE("An_overlay_key_of_another_running_program_is_in_use")
 	doc[std::to_string(other)]["start"] = (Json::UInt64)(SharedStore::ProcessStartTime(other) + 1);
 	CHECK_FALSE(KeyOfAnotherProgram(doc, "oc.test.taken", self));
 }
+
+TEST_CASE("A_texture_not_copied_yet_has_the_size_it_says")
+{
+	VRVulkanTextureData_t data{};
+	data.m_nWidth = 640;
+	data.m_nHeight = 360;
+	Texture_t vulkan{ &data, TextureType_Vulkan, ColorSpace_Auto };
+	auto size = OverlayTextureSize(vulkan);
+	REQUIRE(size);
+	CHECK(size->first == 640);
+	CHECK(size->second == 360);
+	data.m_nWidth = 0;
+	CHECK_FALSE(OverlayTextureSize(vulkan));
+	Texture_t none{ nullptr, TextureType_Vulkan, ColorSpace_Auto };
+	CHECK_FALSE(OverlayTextureSize(none));
+	Texture_t gl{ (void*)(uintptr_t)1, TextureType_OpenGL, ColorSpace_Auto };
+	CHECK_FALSE(OverlayTextureSize(gl));
+}

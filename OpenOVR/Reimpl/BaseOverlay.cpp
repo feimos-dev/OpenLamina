@@ -435,6 +435,34 @@ namespace {
 std::atomic<uint64_t> nextOverlayHandle{ 1 };
 } // namespace
 
+std::optional<std::pair<uint32_t, uint32_t>> OverlayTextureSize(const vr::Texture_t& texture)
+{
+	if (!texture.handle)
+		return std::nullopt;
+	switch (texture.eType) {
+	case vr::TextureType_Vulkan: {
+		const vr::VRVulkanTextureData_t* data = (const vr::VRVulkanTextureData_t*)texture.handle;
+		if (data->m_nWidth && data->m_nHeight)
+			return std::make_pair(data->m_nWidth, data->m_nHeight);
+		return std::nullopt;
+	}
+#if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+	case vr::TextureType_DirectX: {
+		ID3D11Texture2D* given = nullptr;
+		if (FAILED(((IUnknown*)texture.handle)->QueryInterface(__uuidof(ID3D11Texture2D), (void**)&given)) || !given)
+			return std::nullopt;
+		D3D11_TEXTURE2D_DESC desc{};
+		given->GetDesc(&desc);
+		given->Release();
+		return std::make_pair((uint32_t)desc.Width, (uint32_t)desc.Height);
+	}
+#endif
+	default:
+		// An OpenGL texture's size needs its context, which may not be this thread's
+		return std::nullopt;
+	}
+}
+
 bool KeyOfAnotherProgram(const Json::Value& overlaysDoc, const std::string& key, uint32_t self)
 {
 	if (!overlaysDoc.isObject())
@@ -3453,6 +3481,12 @@ EVROverlayError BaseOverlay::GetOverlayTextureSize(VROverlayHandle_t ulOverlayHa
 		// The swapchain holds the whole texture
 		width = (uint32_t)overlay->textureCopySize.width;
 		height = (uint32_t)overlay->textureCopySize.height;
+	} else if (overlay->texture.handle) {
+		// Kept until the graphics are set up, and not copied yet: the texture's own size, where it says it
+		if (std::optional<std::pair<uint32_t, uint32_t>> size = OverlayTextureSize(overlay->texture)) {
+			width = size->first;
+			height = size->second;
+		}
 	}
 	if (!width || !height)
 		return VROverlayError_InvalidTexture;

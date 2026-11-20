@@ -5,6 +5,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <queue>
 #include <set>
 #include <vector>
@@ -151,6 +152,10 @@ class Value;
 
 /** Whether a running program other than self has an overlay with that key, as the store's Overlays document lists them */
 bool KeyOfAnotherProgram(const Json::Value& overlaysDoc, const std::string& key, uint32_t self);
+
+/** A texture's size as the texture says it (a Vulkan texture's data, a D3D11 texture's description); nothing where it
+ * doesn't (an OpenGL texture) */
+std::optional<std::pair<uint32_t, uint32_t>> OverlayTextureSize(const vr::Texture_t& texture);
 
 class BaseOverlay {
 private:
