@@ -15,8 +15,8 @@ OpenLamina runs a game's OpenVR calls directly on your headset's OpenXR runtime 
 Pimax, Varjo and others), so the game runs as if it were a native OpenXR game. That means no SteamVR install, no
 SteamVR startup, and often less stutter.
 
-It is a fork of [OpenComposite](https://gitlab.com/znixian/OpenOVR) by ZNix and its contributors. They haven't
-merged anything since July 2025, so OpenLamina picks up its open merge requests and continues from there.
+OpenLamina is a fork of [OpenComposite](https://gitlab.com/znixian/OpenOVR) by ZNix and its contributors. They haven't
+merged anything since July 2025, so this picks up its open merge requests and continues from there.
 
 **Report bugs [here](https://github.com/feimos-dev/OpenLamina/issues)**, not on OpenComposite's GitLab or Discord.
 
@@ -63,9 +63,9 @@ should all work now.
 
 ## AI usage
 
-Almost all of OpenLamina's own code, tests and documentation were written by an AI coding assistant (Anthropic's
-Claude), directed, reviewed and tested by [feimos-dev](https://github.com/feimos-dev) on real hardware. The upstream
-merge requests credited above were written by their authors. Bugs are reported and fixed like any other: please
+Almost all of OpenLamina's own code, tests and documentation were written by Anthropic's
+Claude, directed, reviewed and tested by [feimos-dev](https://github.com/feimos-dev) on real hardware. The upstream
+merge requests credited above were written by their authors. Bugs are reported and fixed like any other, please
 [open an issue](https://github.com/feimos-dev/OpenLamina/issues/new).
 
 ## Installing
