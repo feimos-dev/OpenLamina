@@ -5,6 +5,7 @@
 #include "../OpenOVR/Misc/Input/Bindings/LegacyBindings.h"
 
 #include <array>
+#include <cctype>
 #include <map>
 #include <mutex>
 
@@ -55,7 +56,32 @@ uint64_t ButtonsForComponent(const std::string& component)
 
 } // namespace
 
-DeviceIdentity HmdIdentity(const std::string& xrSystemName, const RuntimeDevice& device)
+std::string HmdManufacturer(uint32_t vendorId, const std::string& runtimeName)
+{
+	// The USB vendor IDs runtimes give, as SteamVR's drivers name those makers
+	switch (vendorId) {
+	case 0x2833:
+		return "Oculus";
+	case 0x28de:
+		return "Valve";
+	case 0x0bb4:
+		return "HTC";
+	case 0x045e:
+		return "WindowsMR";
+	default:
+		break;
+	}
+	// Else the runtime's name, as far as its first word ("Monado" of "Monado(XRT) by Collabora et al ...")
+	std::string name;
+	for (char c : runtimeName) {
+		if (isspace((unsigned char)c) || c == '(' || c == ':')
+			break;
+		name += c;
+	}
+	return name;
+}
+
+DeviceIdentity HmdIdentity(const std::string& xrSystemName, const RuntimeDevice& device, uint32_t vendorId, const std::string& runtimeName)
 {
 	auto it = HmdRows().find(xrSystemName);
 	if (it != HmdRows().end())
@@ -64,8 +90,10 @@ DeviceIdentity HmdIdentity(const std::string& xrSystemName, const RuntimeDevice&
 	DeviceIdentity id = DefaultHmd();
 	if (xrSystemName.empty())
 		return id;
-	// The runtime's own words: the system name is all OpenXR says of who made it
-	id.manufacturer = xrSystemName;
+	// Who made it from the system's vendor ID (the system name is its model), else the runtime's name
+	std::string maker = HmdManufacturer(vendorId, runtimeName);
+	if (!maker.empty())
+		id.manufacturer = maker;
 	id.modelNumber = device.name.empty() ? xrSystemName : device.name;
 	id.serial = device.serial.empty() ? xrSystemName + "-head" : device.serial;
 	return id;

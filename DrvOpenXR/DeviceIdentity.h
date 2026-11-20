@@ -23,11 +23,16 @@ struct RuntimeDevice {
 	std::string name, serial;
 };
 
-/** The HMD of the OpenXR system of that name: its row if the table has one, else what the runtime says (the system
- * name as the manufacturer and model number, the device's name and serial where libmonado gives them) on the generic
- * answers that games branch on (tracking system, controller type, render model). With no system name (no runtime
- * yet) the generic answers alone. */
-DeviceIdentity HmdIdentity(const std::string& xrSystemName, const RuntimeDevice& device = {});
+/** The HMD's manufacturer for an OpenXR system's vendor ID (XrSystemProperties::vendorId): the maker's name as
+ * SteamVR gives it for the vendors known, else the first word of the runtime's name; empty without either */
+std::string HmdManufacturer(uint32_t vendorId, const std::string& runtimeName);
+
+/** The HMD of the OpenXR system of that name: its row if the table has one, else what the runtime says (the
+ * manufacturer from the system's vendor ID, else the runtime's name; the system name as the model number, the
+ * device's name and serial where libmonado gives them) on the generic answers that games branch on (tracking system,
+ * controller type, render model). With no system name (no runtime yet) the generic answers alone. */
+DeviceIdentity HmdIdentity(const std::string& xrSystemName, const RuntimeDevice& device = {}, uint32_t vendorId = 0,
+    const std::string& runtimeName = std::string());
 
 /** A controller of that profile in that hand: the profile's OpenVR name and render models, its buttons. The serial is
  * the runtime's where libmonado gives one, else one that is the hand's own. */
