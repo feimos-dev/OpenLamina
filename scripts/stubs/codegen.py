@@ -139,7 +139,14 @@ def _build_fntable(fi, ver: InterfaceDef):
 
     # Generate the stub functions
     for func in ver.functions:
-        call_stmt = f"return {inst_name}->{func.name}({func.args_names()});"
+        # After the object is deleted (VR_Shutdown) a table a game kept answers a zero value instead of calling it
+        if func.return_type.strip() == "void":
+            guard = f"if (!{inst_name}) return; "
+        elif func.return_type.strip().endswith("&"):
+            guard = ""
+        else:
+            guard = f"if (!{inst_name}) return {{}}; "
+        call_stmt = f"{guard}return {inst_name}->{func.name}({func.args_names()});"
 
         fi.write(
             f"static {func.return_type} OPENVR_FNTABLE_CALLTYPE {func_name_template % func.name}({func.args_str()}) {{ {call_stmt} }}\n")
@@ -167,6 +174,14 @@ def write_stub_footer(fi, interfaces: List[InterfaceSpec]):
                 f"\tif(strcmp({ver.version_variable()}, name) == 0) return new {ver.proxy_class_name()}();\n")
 
     fi.write("\treturn NULL;\n")
+    fi.write("}\n")
+
+    # Generate InterfaceExists: the same names, without making the interface
+    fi.write("bool InterfaceExists(const char *name) {\n")
+    for spec in interfaces:
+        for ver in spec.versions:
+            fi.write(f"\tif(strcmp({ver.version_variable()}, name) == 0) return true;\n")
+    fi.write("\treturn false;\n")
     fi.write("}\n")
 
     # Generate the flag stuff

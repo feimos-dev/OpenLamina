@@ -35,7 +35,7 @@ MboxErr BaseMailbox::UnregisterMailbox(OOVR_mbox_handle mbox)
 			break;
 		}
 	}
-	OOVR_LOGF("Pretending to unregister mailbox ID %d", (int)mbox);
+	OOVR_LOGF("Unregistered mailbox ID %d", (int)mbox);
 	return VR_MBox_None;
 }
 
@@ -60,6 +60,7 @@ MboxErr BaseMailbox::ReadMessage(OOVR_mbox_handle mboxHandle, char* outBuf, uint
 	}
 	*msgLen = 0;
 
+	std::lock_guard<std::mutex> lock(mutex);
 	if (!readySent) {
 		static const char msg[] = R"({ "type": "ready" })";
 		const uint32_t len = (uint32_t)(sizeof(msg) - 1);

@@ -6,9 +6,9 @@
 #include <array>
 #include <atomic>
 #include <memory>
+#include <mutex>
 #include <queue>
 #include <vector>
-#include <mutex>
 
 class BaseSystem {
 	// Copied from IVRSystem, because MSVC made me.
