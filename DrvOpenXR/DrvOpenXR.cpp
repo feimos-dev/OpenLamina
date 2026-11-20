@@ -10,6 +10,7 @@
 #include "../OpenOVR/Misc/android_api.h"
 #include "../OpenOVR/Misc/xr_ext.h"
 #include "../OpenOVR/Reimpl/BaseInput.h"
+#include "../OpenOVR/Reimpl/BaseSystem.h"
 #include "../RuntimeExtensions/XR_MNDX_xdev_space.h"
 #include "HelperSession.h"
 #include "XrBackend.h"
@@ -625,8 +626,10 @@ XrResult DrvOpenXR::SetupSession()
 		return res;
 	}
 
-	// Setup the OpenXR globals, which uses the current session so we have to do this last
+	// Setup the OpenXR globals, which uses the current session so we have to do this last. Its seated origin is the
+	// seated zero pose kept in the store, where one is.
 	xr_gbl = new XrSessionGlobals();
+	BaseSystem::_LoadStoredSeatedZero();
 
 	// Print the current version for diagnostic purposes
 	OOVR_LOGF("Started OpenXR session on runtime '%s', hand tracking supported: %d",

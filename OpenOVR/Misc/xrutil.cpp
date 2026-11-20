@@ -17,7 +17,7 @@ SessionWrapper& xr_session = *new SessionWrapper();
 XrSystemId xr_system = XR_NULL_SYSTEM_ID;
 XrViewConfigurationView xr_main_views[XruEyeCount] = {};
 XrSessionGlobals* xr_gbl = nullptr;
-XrPosef xr_seated_origin = { { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
+std::optional<XrPosef> xr_seated_zero;
 
 XrExt* xr_ext = nullptr;
 
@@ -161,14 +161,6 @@ XrSessionGlobals::XrSessionGlobals()
 	spaceInfo.poseInReferenceSpace.orientation = G2X_quat(glm::identity<glm::quat>());
 
 	// A space the runtime won't give stays XR_NULL_HANDLE: poses in it are then invalid, nothing ends.
-	// A runtime without a stage (some seated-only ones) gets the local space for standing too.
-	// The seated origin the program last set stays across a session restart
-	seatedPose = xr_seated_origin;
-	spaceInfo.poseInReferenceSpace = seatedPose;
-	spaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
-	OC_XR_LOG(xrCreateReferenceSpace(xr_session.get(), &spaceInfo, &seatedSpace));
-	spaceInfo.poseInReferenceSpace = { { 0.0f, 0.0f, 0.0f, 1.0f }, { 0.0f, 0.0f, 0.0f } };
-
 	// The standing space: the stage; without one, the local space at the floor's height where the runtime has it, else
 	// the local space
 	for (XrReferenceSpaceType type : StandingSpaceTypes(xr_ext && xr_ext->LocalFloor_Available())) {
@@ -181,8 +173,15 @@ XrSessionGlobals::XrSessionGlobals()
 	}
 	if (floorSpaceType == OC_XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR)
 		OOVR_LOG("No stage space from the runtime: standing poses use the local floor space");
-	else if (floorSpaceType != XR_REFERENCE_SPACE_TYPE_STAGE)
+	else if (floorSpaceType == XR_REFERENCE_SPACE_TYPE_LOCAL)
 		OOVR_LOG("No stage space from the runtime: standing poses use the local space");
+
+	// The seated origin: the seated zero pose set (by this program, or kept in the store) stays across sessions;
+	// without one, the runtime's local space
+	if (!xr_seated_zero || !SetSeatedZero(*xr_seated_zero)) {
+		spaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_LOCAL;
+		OC_XR_LOG(xrCreateReferenceSpace(xr_session.get(), &spaceInfo, &seatedSpace));
+	}
 
 	spaceInfo.referenceSpaceType = XR_REFERENCE_SPACE_TYPE_VIEW;
 	OC_XR_LOG(xrCreateReferenceSpace(xr_session.get(), &spaceInfo, &viewSpace));
@@ -207,6 +206,22 @@ XrSessionGlobals::XrSessionGlobals()
 	}
 	if (xr_ext->EyeGaze_Available())
 		OOVR_LOGF("Eye gaze: %s", eyeGazeProperties.supportsEyeGazeInteraction ? "available" : "not available on this system");
+}
+
+bool XrSessionGlobals::SetSeatedZero(const XrPosef& zero)
+{
+	if (!floorSpace || floorSpaceType == XR_REFERENCE_SPACE_TYPE_MAX_ENUM)
+		return false;
+	XrReferenceSpaceCreateInfo info{ XR_TYPE_REFERENCE_SPACE_CREATE_INFO, nullptr, floorSpaceType, zero };
+	XrSpace space = XR_NULL_HANDLE;
+	if (XrResult res = xrCreateReferenceSpace(xr_session.get(), &info, &space); XR_FAILED(res)) {
+		OOVR_LOGF("The seated origin couldn't be moved: %d", (int)res);
+		return false;
+	}
+	if (seatedSpace)
+		xrDestroySpace(seatedSpace);
+	seatedSpace = space;
+	return true;
 }
 
 std::vector<XrReferenceSpaceType> XrSessionGlobals::StandingSpaceTypes(bool localFloor)

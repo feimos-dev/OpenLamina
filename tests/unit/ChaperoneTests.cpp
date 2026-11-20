@@ -4,6 +4,9 @@
 #include "stdafx.h"
 
 #include "Misc/ChaperoneData.h"
+#include "Reimpl/BaseSystem.h"
+
+#include <glm/gtc/quaternion.hpp>
 
 TEST_CASE("Chaperone_data_round_trip")
 {
@@ -102,4 +105,39 @@ TEST_CASE("Chaperone_default_colours_are_clear_bounds_and_a_clear_white_camera")
 	room.removeMember("colors");
 	REQUIRE(ChaperoneData::FromJson(room).has_value());
 	CHECK(ChaperoneData::FromJson(room)->colors[1].b == 1.0f);
+}
+
+TEST_CASE("Chaperone_seated_zero_is_kept_in_the_offsets_document")
+{
+	Json::Value offsets(Json::objectValue);
+	offsets["stage"]["zero"] = 1; // another record stays
+	CHECK_FALSE(BaseSystem::_SeatedZeroOf(offsets).has_value());
+	CHECK_FALSE(BaseSystem::_SeatedZeroOf(Json::Value()).has_value());
+
+	vr::HmdMatrix34_t zero{};
+	zero.m[0][0] = zero.m[1][1] = zero.m[2][2] = 1;
+	zero.m[0][3] = 0.5f;
+	zero.m[1][3] = 1.2f;
+	BaseSystem::_RecordSeatedZero(offsets, zero);
+	std::optional<vr::HmdMatrix34_t> read = BaseSystem::_SeatedZeroOf(offsets);
+	REQUIRE(read.has_value());
+	CHECK(read->m[0][3] == doctest::Approx(0.5f));
+	CHECK(read->m[1][3] == doctest::Approx(1.2f));
+	CHECK(read->m[2][2] == doctest::Approx(1.0f));
+	CHECK(offsets["stage"]["zero"] == 1);
+}
+
+TEST_CASE("Chaperone_seated_zero_goes_to_the_head_facing_its_way")
+{
+	// The head 1.6 m up and 1 m to the side, turned 90 degrees left and looking down a little
+	glm::quat turned = glm::angleAxis(1.5707963f, glm::vec3(0, 1, 0)) * glm::angleAxis(-0.3f, glm::vec3(1, 0, 0));
+	XrPosef head{ { turned.x, turned.y, turned.z, turned.w }, { 1.0f, 1.6f, 0.0f } };
+	XrPosef zero = BaseSystem::_SeatedZeroAtHead(head);
+	CHECK(zero.position.x == doctest::Approx(1.0f));
+	CHECK(zero.position.y == doctest::Approx(1.6f));
+	// Only the heading: a quarter turn about the vertical
+	glm::quat q(zero.orientation.w, zero.orientation.x, zero.orientation.y, zero.orientation.z);
+	glm::vec3 forward = q * glm::vec3(0, 0, -1);
+	CHECK(forward.x == doctest::Approx(-1.0f).epsilon(0.001));
+	CHECK(forward.y == doctest::Approx(0.0f));
 }

@@ -141,4 +141,6 @@ private:
 	std::mutex lock;
 	std::optional<ChaperoneData> working;
 	bool workingKept = false;
+	// The working copy's seated zero pose was set: committing it moves every program's seated origin
+	bool seatedZeroSet = false;
 };

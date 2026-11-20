@@ -86,6 +86,9 @@ ovr_enum_t BaseCompositor::WaitGetPoses(TrackedDevicePose_t* renderPoseArray, ui
 		return VRCompositorError_IsNotSceneApplication;
 	}
 
+	// A seated zero pose another program stored moves the seated origin, between frames
+	BaseSystem::_ApplyStoredSeatedZero();
+
 	BackendManager::Instance().WaitForTrackingData();
 
 	ovr_enum_t result = GetLastPoses(renderPoseArray, renderPoseArrayCount, gamePoseArray, gamePoseArrayCount);

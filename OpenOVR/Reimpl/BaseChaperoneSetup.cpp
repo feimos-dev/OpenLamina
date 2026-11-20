@@ -187,16 +187,22 @@ ChaperoneData BaseChaperoneSetup::LiveData(bool* found)
 {
 	if (found)
 		*found = true;
-	if (auto committed = ChaperoneData::FromJson(SharedStore::Get().Read(StoreDoc::Chaperone)))
-		return *committed;
-
-	// The runtime's stage
-	float width, depth;
-	if (RuntimeStageSize(width, depth))
-		return ChaperoneData::FromStage(width, depth);
-	if (found)
-		*found = false;
-	return ChaperoneData{};
+	// The seated zero pose in use: the one kept for every program, which a recentre also sets
+	std::optional<vr::HmdMatrix34_t> seated = BaseSystem::_SeatedZeroOf(SharedStore::Get().Read(StoreDoc::Offsets));
+	ChaperoneData data;
+	if (auto committed = ChaperoneData::FromJson(SharedStore::Get().Read(StoreDoc::Chaperone))) {
+		data = *committed;
+	} else if (float width, depth; RuntimeStageSize(width, depth)) {
+		// The runtime's stage
+		data = ChaperoneData::FromStage(width, depth);
+	} else {
+		if (found)
+			*found = false;
+		return ChaperoneData{};
+	}
+	if (seated)
+		data.seatedZero = *seated;
+	return data;
 }
 
 ChaperoneData& BaseChaperoneSetup::Working(bool editing)
@@ -218,6 +224,12 @@ bool BaseChaperoneSetup::CommitWorkingCopy(EChaperoneConfigFile configFile)
 	Json::Value data = Working().ToJson();
 	if (!SharedStore::Get().Update(StoreDoc::Chaperone, [&](Json::Value& doc) { doc = data; }))
 		return false;
+	// A seated zero pose set: kept as the seated origin of every program (BaseSystem::_ApplyStoredSeatedZero)
+	if (seatedZeroSet) {
+		const vr::HmdMatrix34_t seated = Working().seatedZero;
+		if (SharedStore::Get().Update(StoreDoc::Offsets, [&](Json::Value& offsets) { BaseSystem::_RecordSeatedZero(offsets, seated); }))
+			seatedZeroSet = false;
+	}
 	// The standing zero pose onto Monado's stage: read, applied and recorded under the store's lock
 	LibMonado& monado = LibMonado::Get();
 	if (oovr_global_configuration.ApplyZeroPoses() && monado.Available()) {
@@ -235,6 +247,7 @@ void BaseChaperoneSetup::RevertWorkingCopy()
 {
 	std::lock_guard guard(lock);
 	working = LiveData(&workingKept);
+	seatedZeroSet = false;
 }
 bool BaseChaperoneSetup::GetWorkingPlayAreaSize(float* pSizeX, float* pSizeZ)
 {
@@ -304,8 +317,10 @@ void BaseChaperoneSetup::SetWorkingCollisionBoundsInfo(VR_ARRAY_COUNT(unQuadsCou
 void BaseChaperoneSetup::SetWorkingSeatedZeroPoseToRawTrackingPose(const HmdMatrix34_t* pMatSeatedZeroPoseToRawTrackingPose)
 {
 	std::lock_guard guard(lock);
-	if (pMatSeatedZeroPoseToRawTrackingPose)
+	if (pMatSeatedZeroPoseToRawTrackingPose) {
 		Working(true).seatedZero = *pMatSeatedZeroPoseToRawTrackingPose;
+		seatedZeroSet = true;
+	}
 }
 void BaseChaperoneSetup::SetWorkingStandingZeroPoseToRawTrackingPose(const HmdMatrix34_t* pMatStandingZeroPoseToRawTrackingPose)
 {
@@ -317,12 +332,17 @@ void BaseChaperoneSetup::ReloadFromDisk(EChaperoneConfigFile configFile)
 {
 	std::lock_guard guard(lock);
 	working = LiveData(&workingKept);
+	seatedZeroSet = false;
 }
 bool BaseChaperoneSetup::GetLiveSeatedZeroPoseToRawTrackingPose(HmdMatrix34_t* pmatSeatedZeroPoseToRawTrackingPose)
 {
 	if (!pmatSeatedZeroPoseToRawTrackingPose)
 		return false;
-	// A committed one; without, none
+	// The one kept for every program (a recentre's, or a committed one's); else a committed one; without, none
+	if (std::optional<vr::HmdMatrix34_t> seated = BaseSystem::_SeatedZeroOf(SharedStore::Get().Read(StoreDoc::Offsets))) {
+		*pmatSeatedZeroPoseToRawTrackingPose = *seated;
+		return true;
+	}
 	if (auto committed = ChaperoneData::FromJson(SharedStore::Get().Read(StoreDoc::Chaperone))) {
 		*pmatSeatedZeroPoseToRawTrackingPose = committed->seatedZero;
 		return true;

@@ -8,8 +8,13 @@
 #include <chrono>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <queue>
 #include <vector>
+
+namespace Json {
+class Value;
+}
 
 class BaseSystem {
 	// Copied from IVRSystem, because MSVC made me.
@@ -85,6 +90,19 @@ public:
 	static void SortRightToLeft(std::vector<DeviceSortKey>& devices);
 
 	static float SGetIpd();
+
+	/** The seated zero pose kept in the store's Offsets document ({"seated": {"zero": M}}, a pose in the standing
+	 * space), which every program's seated origin follows, and keeps between runs, where the standing space is the
+	 * runtime's stage (the other standing spaces start where the head was when each session began) */
+	static std::optional<vr::HmdMatrix34_t> _SeatedZeroOf(const Json::Value& offsets);
+	static void _RecordSeatedZero(Json::Value& offsets, const vr::HmdMatrix34_t& zero);
+	/** The seated zero pose ResetSeatedZeroPose sets: at the head (in the standing space), turned only about the vertical */
+	static XrPosef _SeatedZeroAtHead(const XrPosef& headInStanding);
+	/** Once a session is made, with the session lock held exclusively: the stored seated zero pose it starts with */
+	static void _LoadStoredSeatedZero();
+	/** Between frames, holding no session lock: a seated zero pose another program stored (a room setup, a recentre)
+	 * moves this one's seated origin, and the game is told (VREvent_SeatedZeroPoseReset) */
+	static void _ApplyStoredSeatedZero();
 
 	// The OpenXR runtime's adapter, from the D3D11 requirements or else the D3D12 ones (whichever extension is
 	// enabled), as LowPart | HighPart << 32: false without either. And its index among DXGI's adapters, -1 for none.
