@@ -1,0 +1,555 @@
+{
+ "#": "OpenGL and Vulkan formats through the interop, under a runtime with D3D11 alone that offers RGBA8 sRGB swapchains only (run.py --cases gfx-gl-interop-formats,gfx-vk-interop-formats --script scripts/gfx_interop_rgba8_only.json --expect expect/gfx_interop_formats.json): GL_RGB8, GL_R11F_G11F_B10F, GL_RGBA16F and GL_RGB10_A2, and Vulkan B10G11R11_UFLOAT, R16G16B16A16_SFLOAT, A2B10G10R10_UNORM and B8G8R8A8_SRGB, each its own size, copied into D3D11 and converted into RGBA8 sRGB. Needs OpenGL and Vulkan drivers (skipped on CI).",
+ "gfx-gl-interop-formats/format rgb8/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   512,
+   512
+  ],
+  "dump:views[0].image": [
+   512,
+   512
+  ],
+  "dump:views[0].format": 29,
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].rect": [
+   0,
+   0,
+   512,
+   512
+  ],
+  "dump:views[1].image": [
+   512,
+   512
+  ],
+  "dump:views[1].format": 29,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  }
+ },
+ "gfx-gl-interop-formats/format r11g11b10f/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   448,
+   448
+  ],
+  "dump:views[0].image": [
+   512,
+   512
+  ],
+  "dump:views[0].format": 29,
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].rect": [
+   0,
+   0,
+   448,
+   448
+  ],
+  "dump:views[1].image": [
+   512,
+   512
+  ],
+  "dump:views[1].format": 29,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  }
+ },
+ "gfx-gl-interop-formats/format rgba16f/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   384,
+   384
+  ],
+  "dump:views[0].image": [
+   512,
+   512
+  ],
+  "dump:views[0].format": 29,
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].rect": [
+   0,
+   0,
+   384,
+   384
+  ],
+  "dump:views[1].image": [
+   512,
+   512
+  ],
+  "dump:views[1].format": 29,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  }
+ },
+ "gfx-gl-interop-formats/format rgb10a2/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   320,
+   320
+  ],
+  "dump:views[0].image": [
+   512,
+   512
+  ],
+  "dump:views[0].format": 29,
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].rect": [
+   0,
+   0,
+   320,
+   320
+  ],
+  "dump:views[1].image": [
+   512,
+   512
+  ],
+  "dump:views[1].format": 29,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  }
+ },
+ "gfx-vk-interop-formats/format b10g11r11/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   512,
+   512
+  ],
+  "dump:views[0].image": [
+   512,
+   512
+  ],
+  "dump:views[0].format": 29,
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].rect": [
+   0,
+   0,
+   512,
+   512
+  ],
+  "dump:views[1].image": [
+   512,
+   512
+  ],
+  "dump:views[1].format": 29,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  }
+ },
+ "gfx-vk-interop-formats/format rgba16f/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   448,
+   448
+  ],
+  "dump:views[0].image": [
+   512,
+   512
+  ],
+  "dump:views[0].format": 29,
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].rect": [
+   0,
+   0,
+   448,
+   448
+  ],
+  "dump:views[1].image": [
+   512,
+   512
+  ],
+  "dump:views[1].format": 29,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  }
+ },
+ "gfx-vk-interop-formats/format rgb10a2/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   384,
+   384
+  ],
+  "dump:views[0].image": [
+   512,
+   512
+  ],
+  "dump:views[0].format": 29,
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].rect": [
+   0,
+   0,
+   384,
+   384
+  ],
+  "dump:views[1].image": [
+   512,
+   512
+  ],
+  "dump:views[1].format": 29,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  }
+ },
+ "gfx-vk-interop-formats/format bgra8/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   320,
+   320
+  ],
+  "dump:views[0].image": [
+   512,
+   512
+  ],
+  "dump:views[0].format": 29,
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].rect": [
+   0,
+   0,
+   320,
+   320
+  ],
+  "dump:views[1].image": [
+   512,
+   512
+  ],
+  "dump:views[1].format": 29,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  }
+ }
+}

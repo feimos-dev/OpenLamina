@@ -10,6 +10,7 @@
 
 #include "IVRCompositor_029.h"
 #include "IVROverlay_028.h"
+#include "IVRSystem_022.h"
 
 #ifdef _WIN32
 #include <d3d11.h>
@@ -688,7 +689,256 @@ void Mirror(CaseContext& c)
 	r["hidden"] = !s.comp->IsMirrorWindowVisible();
 	c.Record("mirror", r);
 }
+
+// The D3D11 mirror texture of frames with bounds that run backwards (expect/compositor.json): 256 x 256 per eye, the
+// mirror asked for once, then 3 frames with each bounds and the left eye's mirror read at its top-left. As the eye shows it: the pattern's
+// top-left (red) for full bounds, its bottom-left (blue) turned upside down, its top-right (green) turned left to right,
+// its bottom-right (white) turned both ways.
+void MirrorFlipped(CaseContext& c)
+{
+	Scene s(c);
+	if (!s.Start(GfxKind::D3D11, "mirror flipped"))
+		return;
+	GfxTexture left = s.gfx->Pattern(256, 256, kDxgiRGBA8Srgb, 0);
+	GfxTexture right = s.gfx->Pattern(256, 256, kDxgiRGBA8Srgb, 1);
+	s.gfx->Flush();
+	ID3D11Device* device = nullptr;
+	((ID3D11Texture2D*)left.tex.handle)->GetDevice(&device);
+	struct Config {
+		const char* name;
+		vr::VRTextureBounds_t bounds;
+	};
+	const Config configs[] = {
+		{ "full", { 0, 0, 1, 1 } },
+		{ "flipped v", { 0, 1, 1, 0 } },
+		{ "flipped u", { 1, 0, 0, 1 } },
+		{ "flipped both", { 1, 1, 0, 0 } },
+	};
+	Json::Value r;
+	// Asked for once first: frames are copied into the mirror from then on
+	{
+		ID3D11ShaderResourceView* view = nullptr;
+		r["first_get"] = (int)s.comp->GetMirrorTextureD3D11(vr::Eye_Left, device, (void**)&view);
+		if (view)
+			s.comp->ReleaseMirrorTextureD3D11(view);
+	}
+	for (const Config& cfg : configs) {
+		Json::Value answers;
+		s.Frames(3, left, right, cfg.bounds, cfg.bounds, answers);
+		ID3D11ShaderResourceView* view = nullptr;
+		Json::Value one;
+		one["get"] = (int)s.comp->GetMirrorTextureD3D11(vr::Eye_Left, device, (void**)&view);
+		char hex[9] = "";
+		if (view) {
+			snprintf(hex, sizeof(hex), "%08x", TopLeftOfView(view));
+			s.comp->ReleaseMirrorTextureD3D11(view);
+		}
+		one["top_left"] = hex;
+		r[cfg.name] = one;
+	}
+	device->Release();
+	c.Record("mirror flipped", r);
+}
 #endif
+
+// Odd OpenGL textures through the interop (a runtime with D3D11 alone; expect/gfx_interop.json), each its own size:
+// slice 1 of two-slice array textures (SubmitWithArrayIndex: the other eye's pattern), one two-slice array of eye 0's
+// pattern submitted with Submit_GlArrayTexture and no index (the left eye slice 0, the right slice 1: eye 1's pattern),
+// a 4x multisampled texture, a renderbuffer (Submit_GlRenderBuffer), a 4x multisampled one, and a renderbuffer with
+// flipped bounds (upside down). Every one shown the right way up, as a plain texture is.
+void GlInteropOdd(CaseContext& c)
+{
+	Scene s(c);
+	if (!s.Start(GfxKind::OpenGL, "array slice 1"))
+		return;
+	enum class Make { Array, ArrayFlag, Multisampled, Renderbuffer };
+	struct Odd {
+		const char* name;
+		uint32_t size;
+		Make make;
+		uint32_t samples;
+		vr::VRTextureBounds_t bounds;
+	};
+	const Odd odds[] = {
+		{ "array slice 1", 320, Make::Array, 1, kFull },
+		{ "array flag", 352, Make::ArrayFlag, 1, kFull },
+		{ "msaa", 384, Make::Multisampled, 4, kFull },
+		{ "renderbuffer", 416, Make::Renderbuffer, 1, kFull },
+		{ "msaa renderbuffer", 448, Make::Renderbuffer, 4, kFull },
+		{ "renderbuffer flipped", 480, Make::Renderbuffer, 1, { 0, 1, 1, 0 } },
+	};
+	bool first = true;
+	for (const Odd& o : odds) {
+		GfxTexture left, right;
+		vr::EVRSubmitFlags flags = vr::Submit_Default;
+		int slice = -1;
+		switch (o.make) {
+		case Make::Array:
+			left = s.gfx->Pattern(o.size, o.size, kGlSRGB8Alpha8, 0, 1, 2);
+			right = s.gfx->Pattern(o.size, o.size, kGlSRGB8Alpha8, 1, 1, 2);
+			slice = 1;
+			break;
+		case Make::ArrayFlag:
+			left = right = s.gfx->Pattern(o.size, o.size, kGlSRGB8Alpha8, 0, 1, 2);
+			flags = vr::Submit_GlArrayTexture;
+			break;
+		case Make::Multisampled:
+			left = s.gfx->Pattern(o.size, o.size, kGlSRGB8Alpha8, 0, o.samples);
+			right = s.gfx->Pattern(o.size, o.size, kGlSRGB8Alpha8, 1, o.samples);
+			break;
+		case Make::Renderbuffer:
+			left = s.gfx->Renderbuffer(o.size, o.size, kGlSRGB8Alpha8, 0, o.samples);
+			right = s.gfx->Renderbuffer(o.size, o.size, kGlSRGB8Alpha8, 1, o.samples);
+			flags = vr::Submit_GlRenderBuffer;
+			break;
+		}
+		s.gfx->Flush();
+		Json::Value r;
+		if (!left.Made() || !right.Made()) {
+			r["error"] = "the pattern textures couldn't be made";
+		} else {
+			s.Frames(first ? kFrames : 4, left, right, o.bounds, o.bounds, r, flags, slice);
+			r["dump_join"] = RectJoin(o.size, o.size);
+		}
+		c.Record(o.name, r);
+		first = false;
+	}
+}
+
+// Vulkan array textures through the interop (a runtime with D3D11 alone; expect/gfx_interop.json): slice 1 of two-slice
+// arrays through SubmitWithArrayIndex (320 x 320), and through Submit_VulkanTextureWithArrayData (352 x 352); each eye
+// shows the other eye's pattern
+void VkInteropOdd(CaseContext& c)
+{
+	Scene s(c);
+	if (!s.Start(GfxKind::Vulkan, "array slice 1"))
+		return;
+	{
+		GfxTexture left = s.gfx->Pattern(320, 320, kVkRGBA8Srgb, 0, 1, 2);
+		GfxTexture right = s.gfx->Pattern(320, 320, kVkRGBA8Srgb, 1, 1, 2);
+		s.gfx->Flush();
+		Json::Value r;
+		if (!left.Made() || !right.Made()) {
+			r["error"] = "the pattern textures couldn't be made";
+		} else {
+			s.Frames(kFrames, left, right, kFull, kFull, r, vr::Submit_Default, 1);
+			r["dump_join"] = RectJoin(320, 320);
+		}
+		c.Record("array slice 1", r);
+	}
+	GfxTexture left = s.gfx->Pattern(352, 352, kVkRGBA8Srgb, 0, 1, 2);
+	GfxTexture right = s.gfx->Pattern(352, 352, kVkRGBA8Srgb, 1, 1, 2);
+	s.gfx->Flush();
+	Json::Value r;
+	if (!left.Made() || !right.Made()) {
+		r["error"] = "the pattern textures couldn't be made";
+		c.Record("array data", r);
+		return;
+	}
+	vr::VRVulkanTextureArrayData_t data[2];
+	GfxTexture* eyes[2] = { &left, &right };
+	vr::Texture_t textures[2];
+	for (int eye = 0; eye < 2; eye++) {
+		static_cast<vr::VRVulkanTextureData_t&>(data[eye]) = eyes[eye]->vk;
+		data[eye].m_unArrayIndex = 1;
+		data[eye].m_unArraySize = 2;
+		textures[eye] = *eyes[eye]->Texture();
+		textures[eye].handle = &data[eye];
+	}
+	for (int frame = 1; frame <= 4; frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		s.comp->WaitGetPoses(poses, 16, nullptr, 0);
+		r["left"] = (int)s.comp->Submit(vr::Eye_Left, &textures[0], &kFull, vr::Submit_VulkanTextureWithArrayData);
+		r["right"] = (int)s.comp->Submit(vr::Eye_Right, &textures[1], &kFull, vr::Submit_VulkanTextureWithArrayData);
+	}
+	r["dump_join"] = RectJoin(352, 352);
+	c.Record("array data", r);
+}
+
+// A Vulkan game that makes its device with the extensions OpenVR asks for (GetOutputDevice, then
+// GetVulkanDeviceExtensionsRequired for that GPU), under a runtime with D3D11 alone (expect/gfx_interop.json): its
+// frames go through the interop, where the copies are waited for on the GPU (shared fences), and show as the basic
+// case's. "semaphores_asked": the list has VK_KHR_external_semaphore_win32 (the GPU-side wait's). --case-arg
+// plain=1 makes the device without them (the copies are then waited for on the CPU); --case-arg time=<frames> shows
+// that many more frames and records the Submit calls' time per frame, in ms, as "submit_ms"; --case-arg busy=<n> has
+// the game's queue still clearing a 4096 x 4096 image n times when it submits.
+void VkInteropGpuWait(CaseContext& c)
+{
+	const bool plain = c.IntArg("plain", 0) != 0;
+	const int timed = std::min(std::max(c.IntArg("time", 0), 0), 2000);
+	const int busy = std::min(std::max(c.IntArg("busy", 0), 0), 200);
+	if (c.core->Init(vr::VRApplication_Scene, nullptr) != vr::VRInitError_None) {
+		c.Record("Init failed");
+		return;
+	}
+	vr::EVRInitError le = vr::VRInitError_None;
+	auto* comp = (vr::IVRCompositor_029::IVRCompositor*)c.core->GetGenericInterface("IVRCompositor_029", &le);
+	auto* sys = (vr::IVRSystem_022::IVRSystem*)c.core->GetGenericInterface("IVRSystem_022", &le);
+	if (!comp || !sys) {
+		c.Record("no compositor or system");
+		c.core->Cleanup();
+		return;
+	}
+	std::vector<std::string> asked;
+	std::string why;
+	std::unique_ptr<GfxApi> gfx = MakeVkGfxWith(&why, [&](void* instance, void* physical) {
+		if (plain)
+			return asked;
+		uint64_t output = 0;
+		sys->GetOutputDevice(&output, vr::TextureType_Vulkan, (VkInstance_T*)instance);
+		VkPhysicalDevice_T* device = output ? (VkPhysicalDevice_T*)(uintptr_t)output : (VkPhysicalDevice_T*)physical;
+		char names[4096] = "";
+		comp->GetVulkanDeviceExtensionsRequired(device, names, sizeof(names));
+		std::string all = names, one;
+		for (char ch : all + " ") {
+			if (ch == ' ') {
+				if (!one.empty())
+					asked.push_back(one);
+				one.clear();
+			} else {
+				one += ch;
+			}
+		}
+		return asked;
+	});
+	if (!gfx) {
+		c.core->Cleanup();
+		c.Record("frame", Skipped(why));
+		return;
+	}
+	GfxTexture left = gfx->Pattern(1024, 1024, kVkRGBA8Srgb, 0);
+	GfxTexture right = gfx->Pattern(1024, 1024, kVkRGBA8Srgb, 1);
+	gfx->Flush();
+	Json::Value r;
+	r["semaphores_asked"] = std::find(asked.begin(), asked.end(), "VK_KHR_external_semaphore_win32") != asked.end();
+	if (!left.Made() || !right.Made()) {
+		r["error"] = "the pattern textures couldn't be made";
+	} else {
+		for (int frame = 1; frame <= kFrames; frame++) {
+			vr::TrackedDevicePose_t poses[16];
+			comp->WaitGetPoses(poses, 16, nullptr, 0);
+			r["left"] = (int)comp->Submit(vr::Eye_Left, left.Texture(), &kFull, vr::Submit_Default);
+			r["right"] = (int)comp->Submit(vr::Eye_Right, right.Texture(), &kFull, vr::Submit_Default);
+		}
+		r["dump_join"] = "last_projection";
+		double submitting = 0;
+		for (int frame = 1; frame <= timed; frame++) {
+			vr::TrackedDevicePose_t poses[16];
+			comp->WaitGetPoses(poses, 16, nullptr, 0);
+			gfx->Busy(busy);
+			const auto start = std::chrono::steady_clock::now();
+			comp->Submit(vr::Eye_Left, left.Texture(), &kFull, vr::Submit_Default);
+			comp->Submit(vr::Eye_Right, right.Texture(), &kFull, vr::Submit_Default);
+			submitting += std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start).count();
+		}
+		if (timed)
+			r["submit_ms"] = submitting / timed;
+	}
+	c.Record("frame", r);
+	// OpenLamina first, then the textures and the device
+	c.core->Cleanup();
+	gfx->Flush();
+}
 
 // Overlays from image files and the texture getters (D3D11, expect/gfx.json): a PNG of the pattern in a non-ASCII
 // folder shown on an overlay, a damaged file refused, and each overlay's texture and size answered
@@ -788,6 +1038,7 @@ const std::map<std::string, CaseFn>& conformance::GfxCases()
 		{ "skybox-6", [](CaseContext& c) { Skybox(c, 6); } },
 #ifdef _WIN32
 		{ "mirror", Mirror },
+		{ "mirror-flipped", MirrorFlipped },
 #endif
 		{ "gfx-d3d12-basic", [](CaseContext& c) { Basic(c, GfxKind::D3D12, kDxgiRGBA8Srgb); } },
 		{ "gfx-vk-basic", [](CaseContext& c) { Basic(c, GfxKind::Vulkan, kVkRGBA8Srgb); } },
@@ -819,6 +1070,13 @@ const std::map<std::string, CaseFn>& conformance::GfxCases()
 		{ "gfx-gl-interop-bounds", [](CaseContext& c) { Bounds(c, GfxKind::OpenGL, kGlSRGB8Alpha8); } },
 		{ "gfx-vk-interop-bounds", [](CaseContext& c) { Bounds(c, GfxKind::Vulkan, kVkRGBA8Srgb); } },
 		{ "gfx-vk-interop", [](CaseContext& c) { Basic(c, GfxKind::Vulkan, kVkRGBA8Srgb); } },
+		{ "gfx-gl-interop-odd", GlInteropOdd },
+		{ "gfx-vk-interop-odd", VkInteropOdd },
+		{ "gfx-vk-interop-gpu-wait", VkInteropGpuWait },
+		// As the formats ones, under a script whose runtime has D3D11 alone, with RGBA8 sRGB swapchains only
+		// (expect/gfx_interop_formats.json): formats the interop used to refuse
+		{ "gfx-gl-interop-formats", [](CaseContext& c) { Formats(c, GfxKind::OpenGL, { { "rgb8", 0x8051 }, { "r11g11b10f", 0x8C3A }, { "rgba16f", 0x881A }, { "rgb10a2", 0x8059 } }); } },
+		{ "gfx-vk-interop-formats", [](CaseContext& c) { Formats(c, GfxKind::Vulkan, { { "b10g11r11", 122 }, { "rgba16f", 97 }, { "rgb10a2", 64 }, { "bgra8", 44 } }); } },
 	};
 	return cases;
 }

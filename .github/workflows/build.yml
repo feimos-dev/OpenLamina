@@ -141,7 +141,10 @@ jobs:
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases gfx-d3d11-pose-depth,gfx-d3d12-pose-depth,gfx-vk-pose-depth,gfx-gl-pose-depth --script tests/conformance/scripts/gfx_depth.json --expect tests/conformance/expect/gfx_pose_depth_off.json --allow-skip ".*-(vk|gl)(-.*)?" --out conformance/gfx-pose-depth-off
           if ($LASTEXITCODE) { $failed++ }
           # OpenGL and Vulkan frames through D3D11 where the runtime has D3D11 alone (they skip without those drivers)
-          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases gfx-gl-interop,gfx-vk-interop,gfx-gl-interop-bounds,gfx-vk-interop-bounds --expect tests/conformance/expect/gfx_interop.json --allow-skip "gfx-(vk|gl)-.*" --out conformance/gfx-interop
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases gfx-gl-interop,gfx-vk-interop,gfx-gl-interop-bounds,gfx-vk-interop-bounds,gfx-gl-interop-odd,gfx-vk-interop-odd,gfx-vk-interop-gpu-wait --expect tests/conformance/expect/gfx_interop.json --allow-skip "gfx-(vk|gl)-.*" --out conformance/gfx-interop
+          if ($LASTEXITCODE) { $failed++ }
+          # Formats the interop used to refuse, copied into D3D11 and converted into the runtime's one format
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases gfx-gl-interop-formats,gfx-vk-interop-formats --script tests/conformance/scripts/gfx_interop_rgba8_only.json --expect tests/conformance/expect/gfx_interop_formats.json --allow-skip "gfx-(vk|gl)-.*" --out conformance/gfx-interop-formats
           if ($LASTEXITCODE) { $failed++ }
           # The events SteamVR sends for session changes: with sessionEvents all of them, without it only the IPD's and the quit
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases session-events --script tests/conformance/scripts/session_events.json --ini tests/conformance/ini/session_events.ini --expect tests/conformance/expect/session_events.json --out conformance/session-events
@@ -191,7 +194,7 @@ jobs:
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases display-frequency --script tests/conformance/scripts/display_120.json --expect tests/conformance/expect/display_frequency_measured.json --out conformance/display-frequency-measured
           if ($LASTEXITCODE) { $failed++ }
           # OpenLamina's own frames while the game stalls, also while another thread reads input
-          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases own-frames,own-frames-race,own-frames-nothing-shown,own-frames-overlay-churn --repeat 5 --jobs 2 --ini tests/conformance/ini/own_frames.ini --expect tests/conformance/expect/own_frames.json --out conformance/own-frames
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases own-frames,own-frames-race,own-frames-nothing-shown,own-frames-overlay-churn,own-frames-fade --repeat 5 --jobs 2 --ini tests/conformance/ini/own_frames.ini --expect tests/conformance/expect/own_frames.json --out conformance/own-frames
           if ($LASTEXITCODE) { $failed++ }
           # Overlay and background applications on overlay and headless sessions (a background one only while a game
           # runs), and their refusals without them
@@ -254,7 +257,7 @@ jobs:
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --shipped-defaults --cases gfx-d3d11-pose-depth,gfx-d3d12-pose-depth,gfx-vk-pose-depth,gfx-gl-pose-depth --script tests/conformance/scripts/gfx_depth.json --expect tests/conformance/expect/gfx_pose_depth.json --allow-skip ".*-(vk|gl)(-.*)?" --out conformance/defaults-pose-depth
           if ($LASTEXITCODE) { $failed++ }
-          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --shipped-defaults --cases own-frames,own-frames-race,own-frames-nothing-shown,own-frames-overlay-churn --repeat 2 --jobs 2 --expect tests/conformance/expect/own_frames.json --out conformance/defaults-own-frames
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --shipped-defaults --cases own-frames,own-frames-race,own-frames-nothing-shown,own-frames-overlay-churn,own-frames-fade --repeat 2 --jobs 2 --expect tests/conformance/expect/own_frames.json --out conformance/defaults-own-frames
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --shipped-defaults --cases message-overlay --script tests/conformance/scripts/message_box.json --expect tests/conformance/expect/message_overlay.json --out conformance/defaults-message-overlay
           if ($LASTEXITCODE) { $failed++ }
@@ -272,7 +275,7 @@ jobs:
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases keyboard --script tests/conformance/scripts/keyboard.json --ini tests/conformance/ini/keyboard_us.ini --expect tests/conformance/expect/keyboard.json --out conformance/keyboard
           if ($LASTEXITCODE) { $failed++ }
           # The compositor's statistics, timing and poses per frame
-          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases compositor-stats,mirror --script tests/conformance/scripts/gfx_all_apis.json --ini tests/conformance/ini/mirror_window.ini --expect tests/conformance/expect/compositor.json --out conformance/compositor-stats
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases compositor-stats,mirror,mirror-flipped --script tests/conformance/scripts/gfx_all_apis.json --ini tests/conformance/ini/mirror_window.ini --expect tests/conformance/expect/compositor.json --out conformance/compositor-stats
           if ($LASTEXITCODE) { $failed++ }
           # Without mirrorWindow no window is shown; the mirror texture is given all the same
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases mirror --script tests/conformance/scripts/gfx_all_apis.json --expect tests/conformance/expect/mirror_window_off.json --out conformance/mirror-window-off

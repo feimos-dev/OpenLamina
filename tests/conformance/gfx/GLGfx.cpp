@@ -1,7 +1,7 @@
 // OpenGL for the frame cases: a hidden window's context (WGL on Windows, GLX on Linux: DISPLAY's X server), current
 // on the case's thread (OpenLamina takes the game's context from the thread that submits). Textures are filled with
-// glTexImage2D, rows bottom-up as OpenGL has them. Windows' own OpenGL 1.1 isn't enough: a driver's OpenGL 3 or later
-// is needed.
+// glTexImage2D, rows bottom-up as OpenGL has them; multisampled textures and renderbuffers get a plain texture's pattern
+// through glBlitFramebuffer. Windows' own OpenGL 1.1 isn't enough: a driver's OpenGL 3 or later is needed.
 
 #include "GfxApi.h"
 
@@ -18,12 +18,24 @@
 #endif
 
 #include <cstdio>
+#include <functional>
 
 namespace {
 
 constexpr GLenum kTexture2DArray = 0x8C1A, kTextureBinding2DArray = 0x8C1D, kDepthComponent32F = 0x8CAC;
+constexpr GLenum kTexture2DMultisample = 0x9100, kTextureBinding2DMultisample = 0x9104, kRenderbuffer = 0x8D41,
+                 kRenderbufferBinding = 0x8CA7, kReadFramebuffer = 0x8CA8, kDrawFramebuffer = 0x8CA9,
+                 kReadFramebufferBinding = 0x8CAA, kDrawFramebufferBinding = 0x8CA6, kColorAttachment0 = 0x8CE0;
 constexpr int64_t kSRGB8Alpha8 = 0x8C43, kRGBA8 = 0x8058, kRGBA16F = 0x881A, kRGB10A2 = 0x8059, kR11G11B10F = 0x8C3A, kRGB8 = 0x8051;
 using PFNTexImage3D = void(APIENTRY*)(GLenum, GLint, GLint, GLsizei, GLsizei, GLsizei, GLint, GLenum, GLenum, const void*);
+using PFNGenObjects = void(APIENTRY*)(GLsizei, GLuint*);
+using PFNDeleteObjects = void(APIENTRY*)(GLsizei, const GLuint*);
+using PFNBindObject = void(APIENTRY*)(GLenum, GLuint);
+using PFNFramebufferTexture2D = void(APIENTRY*)(GLenum, GLenum, GLenum, GLuint, GLint);
+using PFNFramebufferRenderbuffer = void(APIENTRY*)(GLenum, GLenum, GLenum, GLuint);
+using PFNRenderbufferStorageMultisample = void(APIENTRY*)(GLenum, GLsizei, GLenum, GLsizei, GLsizei);
+using PFNTexImage2DMultisample = void(APIENTRY*)(GLenum, GLsizei, GLenum, GLsizei, GLsizei, GLboolean);
+using PFNBlitFramebuffer = void(APIENTRY*)(GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLint, GLbitfield, GLenum);
 
 #ifdef _WIN32
 void* GetProc(const char* name)
@@ -51,12 +63,22 @@ public:
 	GLXContext rc = nullptr;
 #endif
 	PFNTexImage3D texImage3D = nullptr;
-	std::vector<GLuint> made;
+	PFNGenObjects genFramebuffers = nullptr, genRenderbuffers = nullptr;
+	PFNDeleteObjects deleteFramebuffers = nullptr, deleteRenderbuffers = nullptr;
+	PFNBindObject bindFramebuffer = nullptr, bindRenderbuffer = nullptr;
+	PFNFramebufferTexture2D framebufferTexture2D = nullptr;
+	PFNFramebufferRenderbuffer framebufferRenderbuffer = nullptr;
+	PFNRenderbufferStorageMultisample renderbufferStorageMultisample = nullptr;
+	PFNTexImage2DMultisample texImage2DMultisample = nullptr;
+	PFNBlitFramebuffer blitFramebuffer = nullptr;
+	std::vector<GLuint> made, madeRenderbuffers;
 
 	~GLGfx() override
 	{
 		if (rc && !made.empty())
 			glDeleteTextures((GLsizei)made.size(), made.data());
+		if (rc && !madeRenderbuffers.empty() && deleteRenderbuffers)
+			deleteRenderbuffers((GLsizei)madeRenderbuffers.size(), madeRenderbuffers.data());
 #ifdef _WIN32
 		if (rc) {
 			wglMakeCurrent(nullptr, nullptr);
@@ -175,7 +197,100 @@ public:
 			return false;
 		}
 		texImage3D = (PFNTexImage3D)GetProc("glTexImage3D");
+		genFramebuffers = (PFNGenObjects)GetProc("glGenFramebuffers");
+		genRenderbuffers = (PFNGenObjects)GetProc("glGenRenderbuffers");
+		deleteFramebuffers = (PFNDeleteObjects)GetProc("glDeleteFramebuffers");
+		deleteRenderbuffers = (PFNDeleteObjects)GetProc("glDeleteRenderbuffers");
+		bindFramebuffer = (PFNBindObject)GetProc("glBindFramebuffer");
+		bindRenderbuffer = (PFNBindObject)GetProc("glBindRenderbuffer");
+		framebufferTexture2D = (PFNFramebufferTexture2D)GetProc("glFramebufferTexture2D");
+		framebufferRenderbuffer = (PFNFramebufferRenderbuffer)GetProc("glFramebufferRenderbuffer");
+		renderbufferStorageMultisample = (PFNRenderbufferStorageMultisample)GetProc("glRenderbufferStorageMultisample");
+		texImage2DMultisample = (PFNTexImage2DMultisample)GetProc("glTexImage2DMultisample");
+		blitFramebuffer = (PFNBlitFramebuffer)GetProc("glBlitFramebuffer");
 		return true;
+	}
+
+	bool CanBlit() const
+	{
+		return genFramebuffers && deleteFramebuffers && bindFramebuffer && framebufferTexture2D && framebufferRenderbuffer && blitFramebuffer;
+	}
+
+	// The single-sampled pattern texture src (w x h) blitted as it is into dst, attached as attach does to the draw
+	// framebuffer: a multisampled texture or a renderbuffer gets every sample of each texel the pattern's. False on a
+	// GL error.
+	bool BlitPattern(GLuint src, uint32_t w, uint32_t h, const std::function<void()>& attach)
+	{
+		GLint read = 0, draw = 0;
+		glGetIntegerv(kReadFramebufferBinding, &read);
+		glGetIntegerv(kDrawFramebufferBinding, &draw);
+		GLuint fbos[2] = {};
+		genFramebuffers(2, fbos);
+		bindFramebuffer(kReadFramebuffer, fbos[0]);
+		framebufferTexture2D(kReadFramebuffer, kColorAttachment0, GL_TEXTURE_2D, src, 0);
+		bindFramebuffer(kDrawFramebuffer, fbos[1]);
+		attach();
+		blitFramebuffer(0, 0, (GLint)w, (GLint)h, 0, 0, (GLint)w, (GLint)h, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+		bindFramebuffer(kReadFramebuffer, (GLuint)read);
+		bindFramebuffer(kDrawFramebuffer, (GLuint)draw);
+		deleteFramebuffers(2, fbos);
+		glFinish();
+		return glGetError() == GL_NO_ERROR;
+	}
+
+	// A multisampled texture of the pattern (the grey block too: blitted from a plain one)
+	GfxTexture MultisampledPattern(uint32_t w, uint32_t h, int64_t nativeFormat, int eye, uint32_t samples)
+	{
+		if (!texImage2DMultisample || !CanBlit())
+			return Wrap(0);
+		GfxTexture plain = Pattern(w, h, nativeFormat, eye, 1, 1);
+		if (!plain.Made())
+			return Wrap(0);
+		GLint previous = 0;
+		glGetIntegerv(kTextureBinding2DMultisample, &previous);
+		GLuint tex = 0;
+		glGenTextures(1, &tex);
+		glBindTexture(kTexture2DMultisample, tex);
+		texImage2DMultisample(kTexture2DMultisample, (GLsizei)samples, (GLenum)nativeFormat, (GLsizei)w, (GLsizei)h, GL_TRUE);
+		glBindTexture(kTexture2DMultisample, (GLuint)previous);
+		const GLuint src = (GLuint)(uintptr_t)plain.keep;
+		const bool ok = glGetError() == GL_NO_ERROR
+		    && BlitPattern(src, w, h, [&] { framebufferTexture2D(kDrawFramebuffer, kColorAttachment0, kTexture2DMultisample, tex, 0); });
+		if (!ok) {
+			glDeleteTextures(1, &tex);
+			return Wrap(0);
+		}
+		return Wrap(tex);
+	}
+
+	GfxTexture Renderbuffer(uint32_t w, uint32_t h, int64_t nativeFormat, int eye, uint32_t samples) override
+	{
+		if (!genRenderbuffers || !bindRenderbuffer || !renderbufferStorageMultisample || !CanBlit())
+			return {};
+		GfxTexture plain = Pattern(w, h, nativeFormat, eye, 1, 1);
+		if (!plain.Made())
+			return {};
+		GLint previous = 0;
+		glGetIntegerv(kRenderbufferBinding, &previous);
+		GLuint rb = 0;
+		genRenderbuffers(1, &rb);
+		bindRenderbuffer(kRenderbuffer, rb);
+		renderbufferStorageMultisample(kRenderbuffer, samples > 1 ? (GLsizei)samples : 0, (GLenum)nativeFormat, (GLsizei)w, (GLsizei)h);
+		bindRenderbuffer(kRenderbuffer, (GLuint)previous);
+		const GLuint src = (GLuint)(uintptr_t)plain.keep;
+		const bool ok = glGetError() == GL_NO_ERROR
+		    && BlitPattern(src, w, h, [&] { framebufferRenderbuffer(kDrawFramebuffer, kColorAttachment0, kRenderbuffer, rb); });
+		if (!ok) {
+			deleteRenderbuffers(1, &rb);
+			return {};
+		}
+		madeRenderbuffers.push_back(rb);
+		GfxTexture g;
+		g.tex.eType = vr::TextureType_OpenGL;
+		g.tex.eColorSpace = vr::ColorSpace_Auto;
+		g.tex.handle = (void*)(uintptr_t)rb;
+		g.keep = (void*)(uintptr_t)rb;
+		return g;
 	}
 
 	GfxTexture Wrap(GLuint name)
@@ -195,8 +310,10 @@ public:
 		bool known = nativeFormat == kSRGB8Alpha8 || nativeFormat == kRGBA8 || nativeFormat == kRGBA16F || nativeFormat == kRGB10A2
 		    || nativeFormat == kR11G11B10F || nativeFormat == kRGB8;
 		arraySize = arraySize ? arraySize : 1;
+		if (known && w && h && samples > 1 && arraySize == 1)
+			return MultisampledPattern(w, h, nativeFormat, eye, samples);
 		if (!known || !w || !h || samples > 1 || (arraySize > 1 && !texImage3D))
-			return Wrap(0); // multisampled patterns: D3D11 only for now
+			return Wrap(0);
 		// RGBA8 bytes whatever the internal format: OpenGL converts. A float or 10-bit format holds linear values, so
 		// the bytes are the colours' linear values for those.
 		const bool linear = nativeFormat == kRGBA16F || nativeFormat == kRGB10A2 || nativeFormat == kR11G11B10F;

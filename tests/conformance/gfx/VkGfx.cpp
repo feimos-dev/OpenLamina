@@ -20,6 +20,7 @@
 #endif
 #include <vulkan/vulkan.h>
 
+#include <algorithm>
 #include <functional>
 
 namespace {
@@ -69,6 +70,10 @@ public:
 	{
 		if (device) {
 			Flush();
+			if (busyFence)
+				D<PFN_vkDestroyFence>("vkDestroyFence")(device, busyFence, nullptr);
+			if (busyPool)
+				D<PFN_vkDestroyCommandPool>("vkDestroyCommandPool")(device, busyPool, nullptr);
 			for (const Made& m : made) {
 				D<PFN_vkDestroyImage>("vkDestroyImage")(device, m.image, nullptr);
 				D<PFN_vkFreeMemory>("vkFreeMemory")(device, m.memory, nullptr);
@@ -78,6 +83,10 @@ public:
 		if (instance)
 			I<PFN_vkDestroyInstance>("vkDestroyInstance")(instance, nullptr);
 	}
+
+	// The case's device extensions (MakeVkGfxWith), and the ones enabled
+	std::function<std::vector<std::string>(void*, void*)> deviceExtensions;
+	std::vector<std::string> enabledDeviceExtensions;
 
 	bool Init(std::string* whyNot)
 	{
@@ -137,23 +146,35 @@ public:
 		VkDeviceCreateInfo dci{ VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO };
 		dci.queueCreateInfoCount = 1;
 		dci.pQueueCreateInfos = &qci;
+		// The extensions wanted that the GPU has: on Windows VK_KHR_external_memory_win32 (external memory is core in
+		// 1.1, its Windows handles an extension), and those the case asks for
+		std::vector<std::string> wanted;
 #ifdef _WIN32
-		// External memory is core in 1.1; its Windows handles are an extension
-		const char* externalMemory = "VK_KHR_external_memory_win32";
-		if (app.apiVersion >= VK_API_VERSION_1_1) {
-			auto enumerateExtensions = I<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
-			uint32_t extensionCount = 0;
-			enumerateExtensions(physical, nullptr, &extensionCount, nullptr);
-			std::vector<VkExtensionProperties> extensions(extensionCount);
-			enumerateExtensions(physical, nullptr, &extensionCount, extensions.data());
+		if (app.apiVersion >= VK_API_VERSION_1_1)
+			wanted.push_back("VK_KHR_external_memory_win32");
+#endif
+		if (deviceExtensions) {
+			for (const std::string& e : deviceExtensions(instance, physical))
+				wanted.push_back(e);
+		}
+		auto enumerateExtensions = I<PFN_vkEnumerateDeviceExtensionProperties>("vkEnumerateDeviceExtensionProperties");
+		uint32_t extensionCount = 0;
+		enumerateExtensions(physical, nullptr, &extensionCount, nullptr);
+		std::vector<VkExtensionProperties> extensions(extensionCount);
+		enumerateExtensions(physical, nullptr, &extensionCount, extensions.data());
+		std::vector<std::string> names;
+		for (const std::string& w : wanted) {
 			for (const VkExtensionProperties& e : extensions) {
-				if (!std::strcmp(e.extensionName, externalMemory)) {
-					dci.enabledExtensionCount = 1;
-					dci.ppEnabledExtensionNames = &externalMemory;
-				}
+				if (w == e.extensionName && std::find(names.begin(), names.end(), w) == names.end())
+					names.push_back(w);
 			}
 		}
-#endif
+		std::vector<const char*> enabled;
+		for (const std::string& n : names)
+			enabled.push_back(n.c_str());
+		dci.enabledExtensionCount = (uint32_t)enabled.size();
+		dci.ppEnabledExtensionNames = enabled.data();
+		enabledDeviceExtensions = names;
 		r = I<PFN_vkCreateDevice>("vkCreateDevice")(physical, &dci, nullptr, &device);
 		if (r != VK_SUCCESS) {
 			device = VK_NULL_HANDLE;
@@ -350,6 +371,53 @@ public:
 		return Wrap(ok ? image : VK_NULL_HANDLE, VK_FORMAT_D32_SFLOAT, w, h, 1);
 	}
 
+	VkImage busyImage = VK_NULL_HANDLE;
+	VkCommandPool busyPool = VK_NULL_HANDLE;
+	VkCommandBuffer busyCommands = VK_NULL_HANDLE;
+	VkFence busyFence = VK_NULL_HANDLE;
+
+	void Busy(int n) override
+	{
+		if (n <= 0)
+			return;
+		if (!busyImage) {
+			busyImage = MakeImage(VK_FORMAT_R8G8B8A8_UNORM, 4096, 4096, 1, VK_IMAGE_USAGE_TRANSFER_DST_BIT);
+			VkCommandPoolCreateInfo pci{ VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO };
+			pci.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+			pci.queueFamilyIndex = family;
+			VkFenceCreateInfo fci{ VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+			fci.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+			if (!busyImage || D<PFN_vkCreateCommandPool>("vkCreateCommandPool")(device, &pci, nullptr, &busyPool) != VK_SUCCESS
+			    || D<PFN_vkCreateFence>("vkCreateFence")(device, &fci, nullptr, &busyFence) != VK_SUCCESS)
+				return;
+			VkCommandBufferAllocateInfo ai{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO };
+			ai.commandPool = busyPool;
+			ai.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+			ai.commandBufferCount = 1;
+			D<PFN_vkAllocateCommandBuffers>("vkAllocateCommandBuffers")(device, &ai, &busyCommands);
+		}
+		if (!busyCommands)
+			return;
+		// The last round's clears are over before the command buffer is recorded again
+		D<PFN_vkWaitForFences>("vkWaitForFences")(device, 1, &busyFence, VK_TRUE, UINT64_MAX);
+		D<PFN_vkResetFences>("vkResetFences")(device, 1, &busyFence);
+		VkCommandBufferBeginInfo bi{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
+		bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+		D<PFN_vkBeginCommandBuffer>("vkBeginCommandBuffer")(busyCommands, &bi);
+		Barrier(busyCommands, busyImage, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+		VkImageSubresourceRange range{ VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
+		for (int i = 0; i < n; i++) {
+			VkClearColorValue colour{ { (float)(i % 2), 0, 0, 1 } };
+			D<PFN_vkCmdClearColorImage>("vkCmdClearColorImage")(busyCommands, busyImage, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &colour, 1, &range);
+			Barrier(busyCommands, busyImage, VK_IMAGE_ASPECT_COLOR_BIT, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
+		}
+		D<PFN_vkEndCommandBuffer>("vkEndCommandBuffer")(busyCommands);
+		VkSubmitInfo si{ VK_STRUCTURE_TYPE_SUBMIT_INFO };
+		si.commandBufferCount = 1;
+		si.pCommandBuffers = &busyCommands;
+		D<PFN_vkQueueSubmit>("vkQueueSubmit")(queue, 1, &si, busyFence);
+	}
+
 	void Flush() override
 	{
 		if (queue)
@@ -362,6 +430,15 @@ public:
 std::unique_ptr<GfxApi> MakeVkGfx(std::string* whyNot)
 {
 	auto g = std::make_unique<VkGfx>();
+	if (!g->Init(whyNot))
+		return nullptr;
+	return g;
+}
+
+std::unique_ptr<GfxApi> MakeVkGfxWith(std::string* whyNot, const std::function<std::vector<std::string>(void*, void*)>& deviceExtensions)
+{
+	auto g = std::make_unique<VkGfx>();
+	g->deviceExtensions = deviceExtensions;
 	if (!g->Init(whyNot))
 		return nullptr;
 	return g;
