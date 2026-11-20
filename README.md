@@ -61,6 +61,13 @@ mostly applies here. Games listed as failing under the
 [game compatibility list](https://docs.google.com/spreadsheets/d/1s2SSuRt0oHm91RUZB-R-ef5BrfOtvP_jwDwb6FuMF9Q/edit#gid=2068512515)
 should all work now.
 
+## AI usage
+
+Almost all of OpenLamina's own code, tests and documentation were written by an AI coding assistant (Anthropic's
+Claude), directed, reviewed and tested by [feimos-dev](https://github.com/feimos-dev) on real hardware. The upstream
+merge requests credited above were written by their authors. Bugs are reported and fixed like any other: please
+[open an issue](https://github.com/feimos-dev/OpenLamina/issues/new).
+
 ## Installing
 
 Your headset's OpenXR runtime has to be the active one. Downloads are on the
@@ -68,7 +75,7 @@ Your headset's OpenXR runtime has to be the active one. Downloads are on the
 
 ### Windows
 
-Run `OpenLamina-Setup.exe`. It installs for your user only, no administrator needed. It isn't signed yet, so if
+Run `OpenLamina-Windows-Installer.exe`. It installs for your user only, no administrator needed. It isn't signed yet, so if
 Windows says it "protected your PC", choose *More info*, then *Run anyway*. Leave *Use OpenLamina for OpenVR games
 now* ticked.
 
@@ -79,13 +86,13 @@ The **OpenLamina** app can:
 - change common settings
 - update to a new release
 
-Uninstall from Windows' *Installed apps*. For scripts: `OpenLamina-Setup.exe /VERYSILENT /SWITCH`, and
+Uninstall from Windows' *Installed apps*. For scripts: `OpenLamina-Windows-Installer.exe /VERYSILENT /SWITCH`, and
 `OpenLamina.exe --use-openlamina`, `--use-steamvr` or `--remove`.
 
 ### Linux
 
 ```bash
-tar -xzf OpenLamina-linux.tar.gz
+tar -xzf OpenLamina-Linux.tar.gz
 OpenLamina/install.sh
 ```
 
@@ -106,7 +113,7 @@ in `bin/` (like `openlamina.ini`) survive updates. The Linux builds need glibc 2
 
 ### By hand
 
-Unpack `OpenLamina-windows.zip` or `OpenLamina-linux.tar.gz` and put the `OpenLamina` folder first in `"runtime"` of
+Unpack `OpenLamina-Windows-Portable.zip` or `OpenLamina-Linux.tar.gz` and put the `OpenLamina` folder first in `"runtime"` of
 `openvrpaths.vrpath` (`%LOCALAPPDATA%\openvr\` on Windows, `~/.config/openvr/` on Linux).
 
 For one Windows game only, replace its `openvr_api.dll` with `vrclient_x64.dll` (or `vrclient.dll` for 32-bit games)
