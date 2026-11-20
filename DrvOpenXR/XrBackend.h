@@ -33,6 +33,7 @@ public:
 
 	uint32_t CurrentFrameId() override;
 	float SecondsToFrame(uint32_t frameId) override;
+	void SetSceneOverlay(std::shared_ptr<const SceneOverlayImage> overlay) override;
 
 	/** The display slot (count of display periods) a display time falls in; 0 where the period is unknown */
 	static uint64_t DisplaySlot(XrTime displayTime, XrDuration period);
@@ -256,6 +257,15 @@ private:
 	XrCompositionLayerQuad fadeLayer{ XR_TYPE_COMPOSITION_LAYER_QUAD };
 	// The fade layer for the fade as it is now, or nullptr while nothing is faded (or it can't be drawn)
 	XrCompositionLayerBaseHeader* BuildFadeLayer();
+	// The old compositor calls' scene overlay (SetSceneOverlay): set from any thread under sceneOverlayLock, drawn
+	// under frameOwner from a swapchain filled from its image
+	std::mutex sceneOverlayLock;
+	std::shared_ptr<const SceneOverlayImage> sceneOverlay;
+	std::shared_ptr<const SceneOverlayImage> sceneOverlayShown; // the one in the swapchain
+	std::unique_ptr<CpuSwapchain> sceneOverlaySwapchain;
+	XrCompositionLayerQuad sceneOverlayLayer{ XR_TYPE_COMPOSITION_LAYER_QUAD };
+	// The scene overlay's layer, or nullptr while there's none (or it can't be drawn)
+	XrCompositionLayerBaseHeader* BuildSceneOverlayLayer();
 	// A skybox asked for while the session wasn't running, shown at the next frame's start; under pendingSkyboxLock
 	std::mutex pendingSkyboxLock;
 	SkyboxRequest pendingSkybox;

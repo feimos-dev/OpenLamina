@@ -1,10 +1,16 @@
 #include "stdafx.h"
 #include <numbers>
+
+#include <algorithm>
+#include <cmath>
+#include <filesystem>
+#include <optional>
 #define BASE_IMPL
 
 #include "Misc/Config.h"
 #include "Misc/Fade.h"
 #include "Misc/FrameStats.h"
+#include "Misc/Image.h"
 #include "Misc/MirrorWindow.h"
 
 #include "convert.h"
@@ -12,6 +18,7 @@
 #ifndef GLM_ENABLE_EXPERIMENTAL
 #define GLM_ENABLE_EXPERIMENTAL
 #endif
+#include <glm/gtc/type_ptr.hpp>
 #include <glm/gtx/transform.hpp>
 
 using glm::mat4;
@@ -537,6 +544,7 @@ void BaseCompositor::SetGraphicsDevice(OOVR_Compositor_DeviceType eType, void* p
 {
 	// The device itself comes with each texture (D3D11's GetDevice, OpenGL's current context), as for today's Submit
 	oldDeviceType = eType;
+	overlayReader.reset(); // made again for the new device's textures
 }
 
 bool BaseCompositor::OldDeviceTextureType(ETextureType* pType) const
@@ -591,7 +599,7 @@ void BaseCompositor::GetOverlayDefaults(Compositor_OverlaySettings* pSettings)
 {
 	if (!pSettings)
 		return;
-	// The settings a scene overlay would have, though none is drawn: a flat, opaque quad a metre away, its whole texture
+	// A flat, opaque quad a metre away, its whole texture
 	*pSettings = {};
 	pSettings->size = sizeof(Compositor_OverlaySettings);
 	pSettings->antialias = true;
@@ -604,24 +612,111 @@ void BaseCompositor::GetOverlayDefaults(Compositor_OverlaySettings* pSettings)
 		pSettings->transform.m[i][i] = 1.0f;
 }
 
+bool BaseCompositor::SceneOverlayFrom(const Image& source, const Compositor_OverlaySettings& settings, SceneOverlayImage& out)
+{
+	if (source.Empty() || source.rgba.size() != (size_t)source.width * source.height * 4)
+		return false;
+	// The part of the image picked, in pixels (a scale of zero or less, or not a number, is the whole image)
+	auto finite = [](float v, float otherwise) { return std::isfinite(v) ? v : otherwise; };
+	const float uOffset = finite(settings.uOffset, 0.0f), vOffset = finite(settings.vOffset, 0.0f);
+	const float uScale = finite(settings.uScale, 1.0f) > 0.0f ? finite(settings.uScale, 1.0f) : 1.0f;
+	const float vScale = finite(settings.vScale, 1.0f) > 0.0f ? finite(settings.vScale, 1.0f) : 1.0f;
+	auto pixel = [](float v, uint32_t size) { return (uint32_t)std::lround(std::clamp(v, 0.0f, 1.0f) * (float)size); };
+	const uint32_t x0 = pixel(uOffset, source.width), x1 = pixel(uOffset + uScale, source.width);
+	const uint32_t y0 = pixel(vOffset, source.height), y1 = pixel(vOffset + vScale, source.height);
+	if (x1 <= x0 || y1 <= y0)
+		return false;
+	const float alpha = std::isfinite(settings.alpha) ? std::clamp(settings.alpha, 0.0f, 1.0f) : 1.0f;
+	out.image.width = x1 - x0;
+	out.image.height = y1 - y0;
+	out.image.rgba.resize((size_t)out.image.width * out.image.height * 4);
+	for (uint32_t y = y0; y < y1; y++) {
+		const uint8_t* from = &source.rgba[((size_t)y * source.width + x0) * 4];
+		uint8_t* to = &out.image.rgba[(size_t)(y - y0) * out.image.width * 4];
+		std::memcpy(to, from, (size_t)out.image.width * 4);
+		if (alpha < 1.0f)
+			for (uint32_t i = 3; i < out.image.width * 4; i += 4)
+				to[i] = (uint8_t)std::lround(to[i] * alpha);
+	}
+
+	// The settings' transform (none: all zeroes, or not finite), then the distance ahead
+	glm::mat4 transform = glm::transpose(glm::make_mat4(&settings.transform.m[0][0]));
+	bool usable = false;
+	for (int c = 0; c < 4; c++)
+		for (int r = 0; r < 4; r++) {
+			if (!std::isfinite(transform[c][r]))
+				transform = glm::mat4(1.0f);
+			usable = usable || transform[c][r] != 0.0f;
+		}
+	if (!usable)
+		transform = glm::mat4(1.0f);
+	const float distance = std::isfinite(settings.distance) && settings.distance > 0.0f ? settings.distance : 1.0f;
+	out.inHead = G2S_m34(transform * glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, 0.0f, -distance)));
+	out.width = std::isfinite(settings.scale) && settings.scale > 0.0f ? settings.scale : 1.0f;
+	return true;
+}
+
+void BaseCompositor::ShowSceneOverlay(const Image& image, const Compositor_OverlaySettings* pSettings)
+{
+	BackendManager* backends = BackendManager::InstancePtr();
+	IBackend* backend = backends ? backends->GetBackendInstance() : nullptr;
+	if (!backend)
+		return;
+	Compositor_OverlaySettings settings;
+	GetOverlayDefaults(&settings);
+	// An older struct is as long as its size says
+	if (pSettings && pSettings->size > 0)
+		memcpy(&settings, pSettings, std::min<size_t>(pSettings->size, sizeof(settings)));
+	auto overlay = std::make_shared<SceneOverlayImage>();
+	if (!SceneOverlayFrom(image, settings, *overlay)) {
+		backend->SetSceneOverlay(nullptr);
+		return;
+	}
+	backend->SetSceneOverlay(std::move(overlay));
+}
+
 void BaseCompositor::SetOverlay(void* pTexture, Compositor_OverlaySettings* pSettings)
 {
-	OC_UNSUPPORTED_VOID("SetOverlay (IVRCompositor_005): no scene overlay is drawn");
+	// The texture, on the device SetGraphicsDevice named, read back
+	Texture_t texture = { pTexture, TextureType_DirectX, ColorSpace_Auto };
+	if (!pTexture || !OldDeviceTextureType(&texture.eType)) {
+		OOVR_LOG_ONCE("SetOverlay: a texture of a device type OpenLamina can't read (only D3D10, D3D11 and OpenGL)");
+		return;
+	}
+	if (!overlayReader)
+		overlayReader = CreateCompositorAPI(&texture);
+	Image image;
+	if (!overlayReader || !overlayReader->ReadbackToCpu(&texture, nullptr, image)) {
+		OOVR_LOG_ONCE("SetOverlay: the texture couldn't be read back");
+		return;
+	}
+	ShowSceneOverlay(image, pSettings);
 }
 
 void BaseCompositor::SetOverlayRaw(void* buffer, uint32_t width, uint32_t height, uint32_t depth, Compositor_OverlaySettings* pSettings)
 {
-	OC_UNSUPPORTED_VOID("SetOverlayRaw (IVRCompositor_005): no scene overlay is drawn");
+	// Grey, RGB or RGBA bytes, rows top to bottom
+	ShowSceneOverlay(ConvertToRgba8(buffer, width, height, width * depth, depth), pSettings);
 }
 
 void BaseCompositor::SetOverlayFromFile(const char* pchFilePath, Compositor_OverlaySettings* pSettings)
 {
-	OC_UNSUPPORTED_VOID("SetOverlayFromFile (IVRCompositor_005): no scene overlay is drawn");
+	if (!pchFilePath || !*pchFilePath)
+		return;
+	std::string why;
+	std::optional<Image> image = LoadImageFile(std::filesystem::path(std::u8string((const char8_t*)pchFilePath)), &why);
+	if (!image) {
+		OOVR_LOGF("SetOverlayFromFile: %s isn't shown: %s", pchFilePath, why.c_str());
+		return;
+	}
+	ShowSceneOverlay(*image, pSettings);
 }
 
 void BaseCompositor::ClearOverlay()
 {
-	// No overlay is drawn, so none is left to clear
+	if (BackendManager* backends = BackendManager::InstancePtr())
+		if (IBackend* backend = backends->GetBackendInstance())
+			backend->SetSceneOverlay(nullptr);
 }
 
 bool BaseCompositor::ComputeOverlayIntersection(const Compositor_OverlaySettings* pSettings, float fAspectRatio,

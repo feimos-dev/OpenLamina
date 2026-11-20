@@ -1237,6 +1237,8 @@ void XrBackend::SubmitFrames(bool showSkybox)
 	} else if (plan.scene) {
 		frameLayers.push_back(app_layer);
 	}
+	if (XrCompositionLayerBaseHeader* sceneOverlayQuad = BuildSceneOverlayLayer())
+		frameLayers.push_back(sceneOverlayQuad);
 	if (!frameLayers.empty()) {
 		if (XrCompositionLayerBaseHeader* fade = BuildFadeLayer())
 			frameLayers.push_back(fade);
@@ -1333,6 +1335,43 @@ void XrBackend::SubmitFrames(bool showSkybox)
 
 	auto now = std::chrono::system_clock::now().time_since_epoch();
 	frameSubmitTimeUs = (double)std::chrono::duration_cast<std::chrono::microseconds>(now).count() / 1000000.0;
+}
+
+void XrBackend::SetSceneOverlay(std::shared_ptr<const SceneOverlayImage> overlay)
+{
+	std::lock_guard<std::mutex> lock(sceneOverlayLock);
+	sceneOverlay = std::move(overlay);
+}
+
+XrCompositionLayerBaseHeader* XrBackend::BuildSceneOverlayLayer()
+{
+	std::shared_ptr<const SceneOverlayImage> overlay;
+	{
+		std::lock_guard<std::mutex> lock(sceneOverlayLock);
+		overlay = sceneOverlay;
+	}
+	if (!overlay || !xr_gbl || overlay->image.Empty())
+		return nullptr;
+	// Uploaded when it changed, or when the swapchain went with a session
+	if (!sceneOverlaySwapchain)
+		sceneOverlaySwapchain = CpuSwapchain::Create(overlay->image.width, overlay->image.height);
+	if (!sceneOverlaySwapchain)
+		return nullptr;
+	if (overlay != sceneOverlayShown || !sceneOverlaySwapchain->Live()) {
+		if (!sceneOverlaySwapchain->Upload(overlay->image) || !sceneOverlaySwapchain->Live())
+			return nullptr;
+		sceneOverlayShown = overlay;
+	}
+
+	const glm::mat4 inHead = S2G_m34(overlay->inHead);
+	sceneOverlayLayer = { XR_TYPE_COMPOSITION_LAYER_QUAD };
+	sceneOverlayLayer.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT | XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
+	sceneOverlayLayer.space = xr_gbl->viewSpace;
+	sceneOverlayLayer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+	sceneOverlayLayer.subImage = sceneOverlaySwapchain->SubImage();
+	sceneOverlayLayer.pose = { G2X_quat(glm::normalize(glm::quat_cast(glm::mat3(inHead)))), G2X_v3f(glm::vec3(inHead[3])) };
+	sceneOverlayLayer.size = { overlay->width, overlay->width * (float)overlay->image.height / (float)overlay->image.width };
+	return (XrCompositionLayerBaseHeader*)&sceneOverlayLayer;
 }
 
 XrCompositionLayerBaseHeader* XrBackend::BuildFadeLayer()

@@ -297,3 +297,59 @@ TEST_CASE("Screenshots_are_requested_of_a_game_that_hooked_them")
 	CHECK(error == Error::VRScreenshotError_NotFound);
 	CHECK(std::string(name).empty());
 }
+
+#include "Drivers/Backend.h"
+
+TEST_CASE("The scene overlay is the part of its image the settings pick, ahead of the head")
+{
+	BaseCompositor compositor;
+	vr::Compositor_OverlaySettings settings;
+	compositor.GetOverlayDefaults(&settings);
+	// A 4x2 image: the left half red, the right half blue, half transparent
+	Image image;
+	image.width = 4;
+	image.height = 2;
+	for (uint32_t y = 0; y < 2; y++)
+		for (uint32_t x = 0; x < 4; x++)
+			for (uint8_t b : { (uint8_t)(x < 2 ? 255 : 0), (uint8_t)0, (uint8_t)(x < 2 ? 0 : 255), (uint8_t)128 })
+				image.rgba.push_back(b);
+
+	SceneOverlayImage out;
+	REQUIRE(BaseCompositor::SceneOverlayFrom(image, settings, out));
+	CHECK(out.image.width == 4);
+	CHECK(out.width == 1.0f);
+	CHECK(out.inHead.m[2][3] == doctest::Approx(-1.0f)); // a metre ahead
+	CHECK(out.inHead.m[0][0] == doctest::Approx(1.0f));
+
+	// The right half, at half alpha, 2 m ahead and 0.5 m wide, moved up by the transform (row-major, as OpenVR's)
+	settings.uOffset = 0.5f;
+	settings.uScale = 0.5f;
+	settings.alpha = 0.5f;
+	settings.distance = 2.0f;
+	settings.scale = 0.5f;
+	settings.transform.m[1][3] = 0.25f;
+	REQUIRE(BaseCompositor::SceneOverlayFrom(image, settings, out));
+	CHECK(out.image.width == 2);
+	CHECK(out.image.height == 2);
+	CHECK(out.image.At(0, 0) == 0x0000ff40);
+	CHECK(out.width == 0.5f);
+	CHECK(out.inHead.m[2][3] == doctest::Approx(-2.0f));
+	CHECK(out.inHead.m[1][3] == doctest::Approx(0.25f));
+
+	// Offsets and scales that aren't numbers are the whole image
+	settings.uOffset = NAN;
+	settings.uScale = INFINITY;
+	REQUIRE(BaseCompositor::SceneOverlayFrom(image, settings, out));
+	CHECK(out.image.width == 4);
+
+	// An empty part, or image: none
+	settings.uScale = 0.5f;
+	settings.uOffset = 1.0f;
+	CHECK_FALSE(BaseCompositor::SceneOverlayFrom(image, settings, out));
+	compositor.GetOverlayDefaults(&settings);
+	CHECK_FALSE(BaseCompositor::SceneOverlayFrom(Image{}, settings, out));
+	// A transform of zeroes is none
+	settings.transform = {};
+	REQUIRE(BaseCompositor::SceneOverlayFrom(image, settings, out));
+	CHECK(out.inHead.m[0][0] == doctest::Approx(1.0f));
+}
