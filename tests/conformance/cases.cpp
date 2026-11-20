@@ -86,6 +86,16 @@ Json::Value conformance::ReadStandInDump()
 
 namespace {
 
+// The process id OpenVR's calls answer for this program
+uint32_t ThisProcessId()
+{
+#ifdef _WIN32
+	return (uint32_t)GetCurrentProcessId();
+#else
+	return (uint32_t)getpid();
+#endif
+}
+
 Json::Value Err(int e)
 {
 	Json::Value v;
@@ -3331,6 +3341,150 @@ void RenderModelsCase(CaseContext& c)
 	c.core->Cleanup();
 }
 
+// What each application type (scene, overlay, background, utility, other) is answered by the calls whose answers
+// depend on the session and on the controllers, for comparing with SteamVR's: run with controllers on
+// (scripts/controllers_on.json on the stand-in runtime; two controllers switched on with SteamVR). Each type is an
+// Init of its own, a few frames' worth of events pumped first, so the answers are those of a session that has started.
+void AppTypeAnswersCase(CaseContext& c)
+{
+	static const std::pair<vr::EVRApplicationType, const char*> types[] = {
+		{ vr::VRApplication_Scene, "scene" },
+		{ vr::VRApplication_Overlay, "overlay" },
+		{ vr::VRApplication_Background, "background" },
+		{ vr::VRApplication_Utility, "utility" },
+		{ vr::VRApplication_Other, "other" },
+	};
+	for (const auto& [type, name] : types) {
+		const std::string t = name;
+		vr::EVRInitError ie = c.core->Init(type, nullptr);
+		c.Record(t + " Init", Err(ie));
+		if (ie != vr::VRInitError_None)
+			continue;
+		auto get = [&](const char* version) {
+			vr::EVRInitError le = vr::VRInitError_None;
+			void* p = c.core->GetGenericInterface(version, &le);
+			if (!p)
+				c.Record(t + " no " + version, Err(le));
+			return p;
+		};
+		auto* sys = (vr::IVRSystem_022::IVRSystem*)get("IVRSystem_022");
+		auto* comp = (vr::IVRCompositor_029::IVRCompositor*)get("IVRCompositor_029");
+		auto* ov = (vr::IVROverlay_028::IVROverlay*)get("IVROverlay_028");
+		auto* apps = (vr::IVRApplications_007::IVRApplications*)get("IVRApplications_007");
+		auto* chap = (vr::IVRChaperone_004::IVRChaperone*)get("IVRChaperone_004");
+		auto* input = (vr::IVRInput_010::IVRInput*)get("IVRInput_010");
+
+		// The session's start-up events, as a game's first frames would see them
+		if (sys) {
+			vr::VREvent_t ev;
+			int events = 0;
+			for (int frame = 0; frame < 10; frame++) {
+				if (comp && type == vr::VRApplication_Scene) {
+					vr::TrackedDevicePose_t poses[vr::k_unMaxTrackedDeviceCount];
+					comp->WaitGetPoses(poses, vr::k_unMaxTrackedDeviceCount, nullptr, 0);
+				} else {
+					std::this_thread::sleep_for(std::chrono::milliseconds(11));
+				}
+				while (events < 256 && sys->PollNextEvent(&ev, sizeof(ev)))
+					events++;
+			}
+			Json::Value r;
+			r["any"] = events > 0;
+			c.Record(t + " startup events", r);
+		}
+
+		if (sys) {
+			Json::Value r;
+			r["IsInputAvailable"] = sys->IsInputAvailable();
+			r["IsSteamVRDrawingControllers"] = sys->IsSteamVRDrawingControllers();
+			r["ShouldApplicationPause"] = sys->ShouldApplicationPause();
+			r["ShouldApplicationReduceRenderingWork"] = sys->ShouldApplicationReduceRenderingWork();
+			r["HmdActivityLevel"] = (int)sys->GetTrackedDeviceActivityLevel(vr::k_unTrackedDeviceIndex_Hmd);
+			c.Record(t + " IVRSystem state", r);
+
+			for (auto role : { vr::TrackedControllerRole_LeftHand, vr::TrackedControllerRole_RightHand }) {
+				const std::string hand = role == vr::TrackedControllerRole_LeftHand ? "left" : "right";
+				vr::TrackedDeviceIndex_t i = sys->GetTrackedDeviceIndexForControllerRole(role);
+				Json::Value d;
+				d["found"] = i != vr::k_unTrackedDeviceIndexInvalid;
+				if (i != vr::k_unTrackedDeviceIndexInvalid) {
+					d["class"] = (int)sys->GetTrackedDeviceClass(i);
+					d["connected"] = sys->IsTrackedDeviceConnected(i);
+					d["role"] = (int)sys->GetControllerRoleForTrackedDeviceIndex(i);
+					vr::ETrackedPropertyError pe = vr::TrackedProp_Success;
+					d["RoleHint"] = sys->GetInt32TrackedDeviceProperty(i, vr::Prop_ControllerRoleHint_Int32, &pe);
+					d["RoleHint error"] = (int)pe;
+					d["ProvidesBatteryStatus"] = sys->GetBoolTrackedDeviceProperty(i, vr::Prop_DeviceProvidesBatteryStatus_Bool, &pe);
+					d["ProvidesBatteryStatus error"] = (int)pe;
+					float battery = sys->GetFloatTrackedDeviceProperty(i, vr::Prop_DeviceBatteryPercentage_Float, &pe);
+					d["Battery error"] = (int)pe;
+					d["Battery in 0..1"] = battery >= 0.0f && battery <= 1.0f;
+					d["ActivityLevel"] = (int)sys->GetTrackedDeviceActivityLevel(i);
+					vr::VRControllerState_t state{};
+					d["GetControllerState"] = sys->GetControllerState(i, &state, sizeof(state));
+				}
+				c.Record(t + " " + hand + " controller", d);
+			}
+			vr::TrackedDeviceIndex_t sorted[vr::k_unMaxTrackedDeviceCount];
+			Json::Value r2;
+			r2["controllers"] = sys->GetSortedTrackedDeviceIndicesOfClass(vr::TrackedDeviceClass_Controller, sorted, vr::k_unMaxTrackedDeviceCount);
+			c.Record(t + " GetSortedTrackedDeviceIndicesOfClass", r2);
+		}
+
+		if (comp) {
+			Json::Value r;
+			r["GetTrackingSpace"] = (int)comp->GetTrackingSpace();
+			r["CanRenderScene"] = comp->CanRenderScene();
+			r["IsFullscreen"] = comp->IsFullscreen();
+			r["CurrentSceneFocusProcess is this"] = comp->GetCurrentSceneFocusProcess() == ThisProcessId();
+			r["CurrentSceneFocusProcess is none"] = comp->GetCurrentSceneFocusProcess() == 0;
+			r["LastFrameRenderer is this"] = comp->GetLastFrameRenderer() == ThisProcessId();
+			r["IsMirrorWindowVisible"] = comp->IsMirrorWindowVisible();
+			r["ShouldAppRenderWithLowResources"] = comp->ShouldAppRenderWithLowResources();
+			r["IsMotionSmoothingEnabled"] = comp->IsMotionSmoothingEnabled();
+			r["IsMotionSmoothingSupported"] = comp->IsMotionSmoothingSupported();
+			r["IsCurrentSceneFocusAppLoading"] = comp->IsCurrentSceneFocusAppLoading();
+			c.Record(t + " IVRCompositor state", r);
+		}
+
+		if (ov) {
+			Json::Value r;
+			r["IsDashboardVisible"] = ov->IsDashboardVisible();
+			r["PrimaryDashboardDevice"] = (int)ov->GetPrimaryDashboardDevice();
+			vr::VROverlayHandle_t h = vr::k_ulOverlayHandleInvalid;
+			r["CreateOverlay"] = (int)ov->CreateOverlay(("oc.apptype." + t).c_str(), "App type", &h);
+			if (h != vr::k_ulOverlayHandleInvalid)
+				r["DestroyOverlay"] = (int)ov->DestroyOverlay(h);
+			c.Record(t + " IVROverlay state", r);
+		}
+
+		if (apps) {
+			Json::Value r;
+			r["SceneProcessId is this"] = apps->GetCurrentSceneProcessId() == ThisProcessId();
+			r["SceneProcessId is none"] = apps->GetCurrentSceneProcessId() == 0;
+			r["SceneApplicationState"] = (int)apps->GetSceneApplicationState();
+			char key[128] = {};
+			r["GetStartingApplication"] = (int)apps->GetStartingApplication(key, sizeof(key));
+			c.Record(t + " IVRApplications state", r);
+		}
+
+		if (chap) {
+			Json::Value r;
+			r["GetCalibrationState"] = (int)chap->GetCalibrationState();
+			r["AreBoundsVisible"] = chap->AreBoundsVisible();
+			c.Record(t + " IVRChaperone state", r);
+		}
+
+		if (input) {
+			Json::Value r;
+			r["IsUsingLegacyInput"] = input->IsUsingLegacyInput();
+			c.Record(t + " IVRInput state", r);
+		}
+
+		c.core->Cleanup();
+	}
+}
+
 } // namespace
 
 const std::map<std::string, CaseFn>& conformance::Cases()
@@ -3382,6 +3536,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "gpu-other-adapter", GpuOtherAdapterCase },
 		{ "display-frequency", DisplayFrequencyCase },
 		{ "render-models", RenderModelsCase },
+		{ "app-type-answers", AppTypeAnswersCase },
 	};
 	static const std::map<std::string, CaseFn> all = [] {
 		std::map<std::string, CaseFn> m = cases;
