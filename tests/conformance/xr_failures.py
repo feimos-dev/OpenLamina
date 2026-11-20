@@ -109,6 +109,14 @@ def check(name, want, out):
             misses.append(f"input-frames: the new instance has no actions {missing}")
         if not dump.get("suggested_bindings"):
             misses.append("input-frames: the new instance had no bindings suggested")
+    if "action_attaches_min" in want:
+        # Case input-frames through a session or instance loss: the game's actions are attached to the session made
+        # again too
+        path = out / "raw" / "case-input-frames.dump.json"
+        dump = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        lost = (dump.get("sessions_lost") or 0) + (dump.get("instances_lost") or 0)
+        if lost != 1 or dump.get("action_attaches", 0) < want["action_attaches_min"]:
+            misses.append(f"input-frames: {lost} sessions or instances lost and {dump.get('action_attaches')} action attaches, expected 1 and at least {want['action_attaches_min']}")
     if "old_event_quits" in want:
         # IVRSystem_009's events (case old-events): the quit arrives, and nothing is written past the 32-byte event
         olds = [r for r in records if r.get("case") == "old-events" and str(r.get("method", "")).startswith("frame ")]

@@ -73,6 +73,12 @@
   "sessions_created_min": 3,
   "frames_ended_min": 20
  },
+ "lost_input": {
+  "cases": [
+   "input-frames"
+  ],
+  "action_attaches_min": 3
+ },
  "lost_overlay": {
   "cases": [
    "overlay-app-loss"
