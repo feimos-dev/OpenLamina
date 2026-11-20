@@ -1,0 +1,10 @@
+{
+ "#": "An overlay app that submits no frames, on the stand-in with both controllers on (scripts/helper_apps_controllers.json): IVRSystem alone sees both controllers, their poses and the left one's state. The background app's session isn't focused without frames, so it gets no input.",
+ "helper-app-controllers/overlay controllers/-/-": {
+  "left connected": true,
+  "right connected": true,
+  "left pose valid": true,
+  "right pose valid": true,
+  "GetControllerState": true
+ }
+}

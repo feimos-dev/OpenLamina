@@ -1461,6 +1461,8 @@
   "chaperone-colours/Init#/-/-": {"#v": {"ret": 124}, "ret": "f38cfe2e2f", "s": "ok"},
   "device-properties/Init#/-/-": {"#v": {"ret": 124}, "ret": "f38cfe2e2f", "s": "ok"},
   "frame-loop/Init failed#/-/-": {"s": "ok"},
+  "helper-app-controllers/background Init#/-/-": {"#v": {"ret": 124}, "ret": "f38cfe2e2f", "s": "ok"},
+  "helper-app-controllers/overlay Init#/-/-": {"#v": {"ret": 130}, "ret": "2a7541babb", "s": "ok"},
   "init-again/Init#/-/-": {"#v": {"ret": 124}, "ret": "f38cfe2e2f", "s": "ok"},
   "init-matrix/BIsHmdPresent#/-/-": {"#v": {"ret": false}, "ret": "7cb6efb98b", "s": "ok"},
   "init-matrix/Init(0)#/-/-": {"#v": {"init_error": 130}, "init_error": "2a7541babb", "s": "ok"},

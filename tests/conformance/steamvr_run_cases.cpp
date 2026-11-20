@@ -563,6 +563,46 @@ void IOBufferCase(CaseContext& c)
 	c.core->Cleanup();
 }
 
+// An overlay app and a background app that read the controllers through IVRSystem only and submit no frames, as
+// overlay tools do: run with scripts/helper_apps_controllers.json on the stand-in
+void HelperAppControllersCase(CaseContext& c)
+{
+	for (auto [type, name] : { std::pair{ vr::VRApplication_Overlay, "overlay" }, std::pair{ vr::VRApplication_Background, "background" } }) {
+		const std::string t = name;
+		vr::EVRInitError e = c.core->Init(type, nullptr);
+		if (e != vr::VRInitError_None) {
+			c.Record(t + " Init", Ret(e));
+			continue;
+		}
+		auto* sys = Get<vr::IVRSystem_022::IVRSystem>(c, "IVRSystem_022");
+		if (sys) {
+			bool connected[3] = {};
+			vr::TrackedDevicePose_t poses[3] = {};
+			vr::VRControllerState_t state{};
+			bool stateRet = false;
+			for (int i = 0; i < 60 && !(connected[1] && connected[2] && poses[1].bPoseIsValid && poses[2].bPoseIsValid); i++) {
+				std::this_thread::sleep_for(std::chrono::milliseconds(11));
+				for (vr::TrackedDeviceIndex_t d = 1; d <= 2; d++)
+					connected[d] = sys->IsTrackedDeviceConnected(d);
+				sys->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding, 0, poses, 3);
+				vr::TrackedDeviceIndex_t left = sys->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_LeftHand);
+				stateRet = left != vr::k_unTrackedDeviceIndexInvalid && sys->GetControllerState(left, &state, sizeof(state));
+				vr::VREvent_t ev;
+				for (int k = 0; k < 64 && sys->PollNextEvent(&ev, sizeof(ev)); k++) {
+				}
+			}
+			Json::Value r;
+			r["left connected"] = connected[1];
+			r["right connected"] = connected[2];
+			r["left pose valid"] = poses[1].bPoseIsValid;
+			r["right pose valid"] = poses[2].bPoseIsValid;
+			r["GetControllerState"] = stateRet;
+			c.Record(t + " controllers", r);
+		}
+		c.core->Cleanup();
+	}
+}
+
 } // namespace
 
 const std::map<std::string, CaseFn>& conformance::SteamVRRunCases()
@@ -579,6 +619,7 @@ const std::map<std::string, CaseFn>& conformance::SteamVRRunCases()
 		{ "settings-defaults", SettingsDefaultsCase },
 		{ "application-list", ApplicationListCase },
 		{ "io-buffer", IOBufferCase },
+		{ "helper-app-controllers", HelperAppControllersCase },
 	};
 	return cases;
 }

@@ -1,6 +1,7 @@
 #include "logging.h"
 #include "stdafx.h"
 #define BASE_IMPL
+#include "BaseClientCore.h"
 #include "BaseCompositor.h"
 #include "BaseExtendedDisplay.h"
 #include "BaseInput.h"
@@ -332,6 +333,7 @@ bool BaseSystem::SetDisplayVisibility(bool bIsVisibleOnDesktop)
 void BaseSystem::GetDeviceToAbsoluteTrackingPose(ETrackingUniverseOrigin toOrigin, float predictedSecondsToPhotonsFromNow,
     TrackedDevicePose_t* poseArray, uint32_t poseArrayCount)
 {
+	InputWithoutFrames();
 
 	BackendManager::Instance().GetDeviceToAbsoluteTrackingPose(toOrigin, predictedSecondsToPhotonsFromNow, poseArray, poseArrayCount);
 }
@@ -442,6 +444,7 @@ vr::TrackedDeviceIndex_t BaseSystem::GetTrackedDeviceIndexForControllerRole(vr::
 {
 	if (unDeviceType == TrackedControllerRole_Invalid)
 		return vr::k_unTrackedDeviceIndexInvalid;
+	InputWithoutFrames();
 
 	for (vr::TrackedDeviceIndex_t index = 0; index < vr::k_unMaxTrackedDeviceCount; index++) {
 		std::shared_ptr<ITrackedDevice> dev = BackendManager::Instance().GetDevice(index);
@@ -465,6 +468,7 @@ ETrackedDeviceClass BaseSystem::GetTrackedDeviceClass(vr::TrackedDeviceIndex_t d
 {
 	if (deviceIndex >= vr::k_unMaxTrackedDeviceCount)
 		return TrackedDeviceClass_Invalid;
+	InputWithoutFrames();
 
 	// A slot that held a device keeps its class once the device is gone
 	std::shared_ptr<ITrackedDevice> dev = BackendManager::Instance().GetDevice(deviceIndex);
@@ -479,6 +483,7 @@ ETrackedDeviceClass BaseSystem::GetTrackedDeviceClass(vr::TrackedDeviceIndex_t d
 
 bool BaseSystem::IsTrackedDeviceConnected(vr::TrackedDeviceIndex_t deviceIndex)
 {
+	InputWithoutFrames();
 	return BackendManager::Instance().GetDevice(deviceIndex) != nullptr;
 }
 
@@ -848,6 +853,7 @@ bool BaseSystem::GetControllerState(vr::TrackedDeviceIndex_t controllerDeviceInd
 		return hmd && hmd->GetControllerState(controllerState);
 	}
 
+	InputWithoutFrames();
 	std::shared_ptr<BaseInput> input = InputSystem(false);
 
 	// Since we can only bind the manifest once, and some games may never call it or may
@@ -861,7 +867,7 @@ bool BaseSystem::GetControllerState(vr::TrackedDeviceIndex_t controllerDeviceInd
 	if (!input) {
 		return true;
 	}
-	if (frameNumber > 0)
+	if (frameNumber > 0 || BaseClientCore::appType == VRApplication_Overlay || BaseClientCore::appType == VRApplication_Background)
 		input->LoadEmptyManifestIfRequired();
 
 	const bool result = input->GetLegacyControllerState(controllerDeviceIndex, controllerState);
@@ -881,6 +887,25 @@ bool BaseSystem::GetControllerStateWithPose(ETrackingUniverseOrigin eOrigin, vr:
 		BackendManager::Instance().GetSinglePose(eOrigin, unControllerDeviceIndex, pTrackedDevicePose, ETrackingStateType::TrackingStateType_Now);
 
 	return GetControllerState(unControllerDeviceIndex, pControllerState, unControllerStateSize);
+}
+
+// A game's controllers come up after its first submitted frame (_OnPostFrame); an overlay or background app submits
+// none, so its device reads make the input system (no manifest yet: the program may still load its own) and pump the
+// OpenXR events and sync the input, at most every few milliseconds, as a game's frames do. The hands are found once
+// the session is focused, which an overlay session is without frames.
+void BaseSystem::InputWithoutFrames()
+{
+	if (BaseClientCore::appType != VRApplication_Overlay && BaseClientCore::appType != VRApplication_Background)
+		return;
+	static std::atomic<int64_t> last{ 0 };
+	const int64_t now = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+	int64_t was = last.load();
+	if (now - was < 5 || !last.compare_exchange_strong(was, now))
+		return;
+	std::shared_ptr<BaseInput> input = InputSystem(true);
+	BackendManager::Instance().PumpEvents();
+	if (input)
+		input->InternalUpdate();
 }
 
 std::shared_ptr<BaseInput> BaseSystem::InputSystem(bool create)

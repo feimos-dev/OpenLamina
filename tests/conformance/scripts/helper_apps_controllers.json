@@ -1,0 +1,64 @@
+{
+  "#": "Both controllers on, and overlay and headless sessions (XR_EXTX_overlay, XR_MND_headless): for helper-app-controllers",
+  "extensions": [
+    "XR_KHR_D3D11_enable",
+    "XR_KHR_vulkan_enable",
+    "XR_EXTX_overlay",
+    "XR_MND_headless"
+  ],
+  "interaction_profile": "/interaction_profiles/valve/index_controller",
+  "poses": {
+    "/user/hand/left/input/grip/pose": {
+      "p": [
+        -0.2,
+        1.0,
+        -0.3
+      ],
+      "q": [
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    "/user/hand/left/input/aim/pose": {
+      "p": [
+        -0.2,
+        1.0,
+        -0.3
+      ],
+      "q": [
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    "/user/hand/right/input/grip/pose": {
+      "p": [
+        0.2,
+        1.0,
+        -0.3
+      ],
+      "q": [
+        0,
+        0,
+        0,
+        1
+      ]
+    },
+    "/user/hand/right/input/aim/pose": {
+      "p": [
+        0.2,
+        1.0,
+        -0.3
+      ],
+      "q": [
+        0,
+        0,
+        0,
+        1
+      ]
+    }
+  }
+}

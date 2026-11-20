@@ -116,6 +116,8 @@ run --shipped-defaults --cases gfx-d3d11-pose-depth,gfx-d3d12-pose-depth,gfx-vk-
 # are the baselines' and the recordings')
 steamvr_run=app-type-answers,device-properties,init-again,chaperone-colours,submit-refusals,skeletal-input,legacy-controller,render-model-components,overlay-defaults,settings-defaults,application-list,io-buffer
 run --cases "$steamvr_run" --script tests/conformance/scripts/controllers_on.json --out "$out"/steamvr-run
+# An overlay app and a background app that submit no frames see the controllers through IVRSystem
+run --cases helper-app-controllers --script tests/conformance/scripts/helper_apps_controllers.json --expect tests/conformance/expect/helper_app_controllers.json --out "$out"/helper-app-controllers
 
 echo "$failed failed"
 exit $((failed > 0))
