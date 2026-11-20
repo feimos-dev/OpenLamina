@@ -142,14 +142,11 @@ bool BaseControlPanel::QuitProcess(uint32_t pidProcessToQuit)
 {
 	// SteamVR sends the process a quit request and answers true, whatever the process. This process gets VREvent_Quit,
 	// and so does another OpenLamina program (one listed in the store); any other process isn't OpenLamina's to reach
-	vr::VREvent_Data_t data{};
-	data.process.pid = pidProcessToQuit;
-	if (pidProcessToQuit == oc_current_pid()) {
-		OcPostEventTo(SharedStore::Get(), pidProcessToQuit, vr::VREvent_Quit, vr::k_unTrackedDeviceIndexInvalid, data);
-		return true;
-	}
 	char key[256];
-	if (pidProcessToQuit && BaseApplications().GetApplicationKeyByProcessId(pidProcessToQuit, key, sizeof(key)) == VRApplicationError_None) {
+	if (pidProcessToQuit == oc_current_pid()
+	    || (pidProcessToQuit && BaseApplications().GetApplicationKeyByProcessId(pidProcessToQuit, key, sizeof(key)) == VRApplicationError_None)) {
+		vr::VREvent_Data_t data{};
+		data.process.pid = pidProcessToQuit;
 		OcPostEventTo(SharedStore::Get(), pidProcessToQuit, vr::VREvent_Quit, vr::k_unTrackedDeviceIndexInvalid, data);
 		return true;
 	}

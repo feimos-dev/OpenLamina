@@ -2,8 +2,8 @@
 #define BASE_IMPL
 #include "BaseNotifications.h"
 #include "BaseOverlay.h"
-
 #include "generated/static_bases.gen.h"
+
 #include <algorithm>
 
 // EVRNotificationType_Persistent and _Transient_SystemWithUserValue

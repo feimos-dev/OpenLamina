@@ -17,17 +17,14 @@
 #if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
 #include "Compositor/dxcompositor.h"
 #endif
-#include "BaseClientCore.h"
-#include "BaseInput.h"
-#include "BaseNotifications.h"
 #include "Drivers/Backend.h"
 #include "Misc/AppManifest.h"
 #include "Misc/Bounds.h"
-#include "Misc/Canvas.h"
 #include "Misc/Config.h"
 #include "Misc/Dashboard.h"
 #include "Misc/Image.h"
 #include "Misc/Input/InteractionProfile.h"
+#include "Misc/Canvas.h"
 #include "Misc/Keyboard/KeyboardLayout.h"
 #include "Misc/LaserMouse.h"
 #include "Misc/OverlayMaths.h"
@@ -36,6 +33,9 @@
 #include "Misc/RemotePointer.h"
 #include "Misc/ScopeGuard.h"
 #include "Misc/SharedStore.h"
+#include "BaseClientCore.h"
+#include "BaseInput.h"
+#include "BaseNotifications.h"
 #include "convert.h"
 #include "generated/static_bases.gen.h"
 #include <glm/gtc/matrix_inverse.hpp>
@@ -196,6 +196,8 @@ public:
 	// A texture is copied into its swapchain whole (mirrored where the bounds were when it was set), and the bounds
 	// select the layer's image rectangle in it. textureCopySize is the copy's size in texels (0 without a copy).
 	XrExtent2Di textureCopySize{};
+	// The texture's size as it said when it was set, for before it's copied
+	std::optional<std::pair<uint32_t, uint32_t>> givenSize;
 	bool copyMirrorX = false, copyMirrorY = false;
 
 	// Sets the layer's image rectangle to the bounds' area of the texture's copy
@@ -3358,6 +3360,7 @@ EVROverlayError BaseOverlay::SetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 	}
 	overlay->SetTexture(texture);
 	overlay->textureCopySize = {};
+	overlay->givenSize = OverlayTextureSize(texture);
 	// A texture replaces an image from memory
 	overlay->raw.reset();
 	overlay->rawImage = {};
@@ -3391,6 +3394,7 @@ EVROverlayError BaseOverlay::ClearOverlayTexture(VROverlayHandle_t ulOverlayHand
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	overlay->SetTexture({});
 	overlay->textureCopySize = {};
+	overlay->givenSize.reset();
 	overlay->DropLive();
 	overlay->raw.reset();
 	overlay->rawImage = {};
@@ -3430,6 +3434,7 @@ EVROverlayError BaseOverlay::SetOverlayRaw(VROverlayHandle_t ulOverlayHandle, vo
 	overlay->compositor.reset();
 	overlay->SetTexture({});
 	overlay->textureCopySize = {};
+	overlay->givenSize.reset();
 	overlay->rawImage = std::move(image);
 	if (!overlay->raw)
 		overlay->raw = CpuSwapchain::Create(unWidth, unHeight);
@@ -3593,12 +3598,10 @@ EVROverlayError BaseOverlay::GetOverlayTextureSize(VROverlayHandle_t ulOverlayHa
 		// The swapchain holds the whole texture
 		width = (uint32_t)overlay->textureCopySize.width;
 		height = (uint32_t)overlay->textureCopySize.height;
-	} else if (overlay->texture.handle) {
-		// Kept until the graphics are set up, and not copied yet: the texture's own size, where it says it
-		if (std::optional<std::pair<uint32_t, uint32_t>> size = OverlayTextureSize(overlay->texture)) {
-			width = size->first;
-			height = size->second;
-		}
+	} else if (overlay->texture.handle && overlay->givenSize) {
+		// Kept until the graphics are set up, and not copied yet: the size the texture said when it was set
+		width = overlay->givenSize->first;
+		height = overlay->givenSize->second;
 	}
 	if (!width || !height)
 		return VROverlayError_InvalidTexture;
