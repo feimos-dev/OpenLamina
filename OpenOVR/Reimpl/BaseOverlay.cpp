@@ -1434,15 +1434,15 @@ void BaseOverlay::_PublishOverlays()
 	const bool helper = IsHelperSession();
 	if (!helper && !SceneDashboard() && !oovr_global_configuration.LaserMouse())
 		return;
-	{
-		std::lock_guard<std::recursive_mutex> lock(layersLock);
-		TakeRemoteEvents();
-	}
 	Sharing& sh = *sharing;
 	const double now = NowSeconds();
 	if (sh.lastTry >= 0 && now - sh.lastTry < 0.1)
 		return;
 	sh.lastTry = now;
+	{
+		std::lock_guard<std::recursive_mutex> lock(layersLock);
+		TakeRemoteEvents();
+	}
 	if (!sh.appKeyRead) {
 		sh.appKey = CurrentProcessAppKey();
 		sh.appKeyRead = true;
@@ -2384,10 +2384,10 @@ bool BaseOverlay::SendRemoteCommand(VROverlayHandle_t handle, OcOverlayCommand c
 		sent = VROverlayError_InvalidHandle;
 		return true;
 	}
-	// A value already in effect isn't sent again: programs set some every frame, and the ring is every program's
+	// A value already in effect isn't sent again: programs set some every frame, and the ring is every program's. Not
+	// a Hide: an overlay not shown under a hidden parent is still shown on its own.
 	const uint64_t flags = entry["flags"].asUInt64();
 	const bool unchanged = (command.kind == OcOverlayCommand::Show && entry["shown"].asBool())
-	    || (command.kind == OcOverlayCommand::Hide && entry["shown"].isBool() && !entry["shown"].asBool())
 	    || (command.kind == OcOverlayCommand::Alpha && entry["alpha"].isNumeric() && entry["alpha"].asFloat() == command.number)
 	    || (command.kind == OcOverlayCommand::Width && entry["width"].isNumeric() && entry["width"].asFloat() == command.number)
 	    || (command.kind == OcOverlayCommand::SortOrder && entry["sort_order"].isNumeric() && entry["sort_order"].asUInt() == command.sortOrder)
@@ -2731,7 +2731,7 @@ uint32_t BaseOverlay::GetOverlayRenderingPid(VROverlayHandle_t ulOverlayHandle)
 }
 EVROverlayError BaseOverlay::SetOverlayFlag(VROverlayHandle_t ulOverlayHandle, VROverlayFlags eOverlayFlag, bool bEnabled)
 {
-	// Flags are bits of a 64-bit mask; past them, as before
+	// A flag of 64 or more has no bit in the mask: answered as a handle of this program's
 	if ((uint32_t)eOverlayFlag < 64) {
 		OcOverlayCommand command;
 		command.kind = OcOverlayCommand::Flag;
