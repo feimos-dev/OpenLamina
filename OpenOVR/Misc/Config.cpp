@@ -153,6 +153,17 @@ static string parse_layout(string orig, string name, int line)
 	return val;
 }
 
+// handController: knuckles, oculus_touch or vive_controller
+static string parse_handController(string orig, string name, int line)
+{
+	string val = str_tolower(orig);
+	if (val != "knuckles" && val != "oculus_touch" && val != "vive_controller") {
+		BAD_VALUE("Value " + orig + " for " + name + " on line " + to_string(line) + " is none of knuckles, oculus_touch and vive_controller");
+	}
+	OOVR_LOGF("Setting config param %s to %s", name.c_str(), val.c_str());
+	return val;
+}
+
 int Config::ini_handler(void* user, const char* pSection,
     const char* pName, const char* pValue,
     int lineno)
@@ -208,6 +219,7 @@ int Config::ini_handler(void* user, const char* pSection,
 			return true;
 		}
 		CFGOPT(layout, keyboardLayout);
+		CFGOPT(handController, handController);
 
 		// Accepted and ignored: Direct3D 10 textures are told apart from Direct3D 11 ones by their interface
 		if (name == "dx10Mode") {

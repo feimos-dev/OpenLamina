@@ -410,6 +410,8 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/Input/ViveFocus3InteractionProfile.cpp
 	OpenOVR/Misc/Input/PicoInteractionProfile.cpp
 	OpenOVR/Misc/Input/MsftHandInteractionProfile.cpp
+	OpenOVR/Misc/Input/ExtHandInteractionProfile.cpp
+	OpenOVR/Misc/Input/ViveTrackerRoles.cpp
 	OpenOVR/Reimpl/BaseApplications.cpp
 	OpenOVR/Reimpl/BaseChaperone.cpp
 	OpenOVR/Reimpl/BaseChaperoneSetup.cpp
@@ -486,6 +488,8 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/Input/ViveFocus3InteractionProfile.h
 	OpenOVR/Misc/Input/PicoInteractionProfile.h
 	OpenOVR/Misc/Input/MsftHandInteractionProfile.h
+	OpenOVR/Misc/Input/ExtHandInteractionProfile.h
+	OpenOVR/Misc/Input/ViveTrackerRoles.h
 	OpenOVR/Misc/lodepng.h
 	OpenOVR/Misc/ScopeGuard.h
 	OpenOVR/Reimpl/BaseApplications.h

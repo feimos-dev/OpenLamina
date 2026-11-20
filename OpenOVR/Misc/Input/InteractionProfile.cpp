@@ -14,6 +14,7 @@
 #include "InteractionProfile.h"
 #include "KhrSimpleInteractionProfile.h"
 #include "MsftHandInteractionProfile.h"
+#include "ExtHandInteractionProfile.h"
 #include "OculusInteractionProfile.h"
 #include "ReverbG2InteractionProfile.h"
 #include "ViveCosmosInteractionProfile.h"
@@ -49,8 +50,22 @@ std::vector<std::pair<std::string, std::string>> InteractionProfile::RawComponen
 		const std::string& steamvrSource = renamed == rawSourceNames.end() ? source : renamed->second;
 		raw.emplace_back(path, path.substr(0, sourceStart) + steamvrSource + "/" + component);
 	}
+	for (const auto& extra : extraRawComponents)
+		if (validInputPaths.contains(extra.first))
+			raw.push_back(extra);
 	std::sort(raw.begin(), raw.end());
 	return raw;
+}
+
+void InteractionProfile::CopyControllerFrom(const InteractionProfile& other)
+{
+	propertiesMap = other.propertiesMap;
+	leftComponentTransforms = other.leftComponentTransforms;
+	rightComponentTransforms = other.rightComponentTransforms;
+	leftHandGripTransform = other.leftHandGripTransform;
+	rightHandGripTransform = other.rightHandGripTransform;
+	leftHandPoses = other.leftHandPoses;
+	rightHandPoses = other.rightHandPoses;
 }
 
 const std::unordered_set<std::string>& InteractionProfile::GetValidInputPaths() const
@@ -154,6 +169,20 @@ InteractionProfile::ProfileList InteractionProfile::CreateProfiles(XrExt& ext)
 	}
 	if (ext.ExtensionEnabled(XR_MSFT_HAND_INTERACTION_EXTENSION_NAME))
 		profiles.emplace_back(std::make_unique<MsftHandInteractionProfile>());
+	// The hands as a controller: XR_EXT_hand_interaction's profile, also a hand's while hand tracking runs and no
+	// controller is in it
+	const bool handInteraction = ext.ExtensionEnabled(OC_XR_EXT_HAND_INTERACTION_EXTENSION_NAME);
+	if (handInteraction || ext.ExtensionEnabled(XR_EXT_HAND_TRACKING_EXTENSION_NAME)) {
+		std::unique_ptr<InteractionProfile> emulated;
+		const std::string& type = oovr_global_configuration.HandController();
+		if (type == "oculus_touch")
+			emulated = std::make_unique<Touch>(Touch::Model::Touch);
+		else if (type == "vive_controller")
+			emulated = std::make_unique<ViveWandInteractionProfile>();
+		else
+			emulated = std::make_unique<IndexControllerInteractionProfile>();
+		profiles.emplace_back(std::make_unique<ExtHandInteractionProfile>(std::move(emulated), handInteraction));
+	}
 	profiles.emplace_back(std::make_unique<KhrSimpleInteractionProfile>());
 	profiles.emplace_back(std::make_unique<ViveTrackerInteractionProfile>());
 	return profiles;

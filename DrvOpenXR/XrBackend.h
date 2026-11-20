@@ -212,6 +212,7 @@ private:
 	std::shared_mutex generic_trackers_mutex;
 	// The session the trackers' spaces belong to, and the xdev list generation they were made from
 	XrSession generic_trackers_session = XR_NULL_HANDLE;
+	XrAction generic_trackers_action = XR_NULL_HANDLE; // the tracker action the role trackers' spaces were made from
 	std::atomic<uint64_t> generic_trackers_generation{ UINT64_MAX };
 	std::atomic<int64_t> generic_trackers_polled_ms{ 0 };
 	// Makes the trackers again when the runtime's list of devices has changed (looked at about once a second)
@@ -292,6 +293,16 @@ private:
 	 * These "Generic Trackers" act like an HTC vive tracker, but support no bindings.
 	 */
 	void CreateGenericTrackers();
+	/** The hand's profile as a controller (XR_EXT_hand_interaction's) if hand tracking tracks it (0 left, 1 right),
+	 * with its own joints where the runtime says; null if not */
+	const InteractionProfile* HandWithoutController(int hand);
+	/** Once a second: whether a hand without a controller came or went */
+	bool HandsWithoutControllersChanged();
+	int64_t handsCheckedMs = 0;
+	/** The xdevs that are trackers, in a list it makes (null if it can't), each passed to add; those whose serial is
+	 * in one of byRole (the persistent paths of the Vive trackers listed by role) are left out */
+	void FindXDevTrackers(XrXDevListMNDX& list, const std::vector<std::string>& byRole,
+	    const std::function<void(XrXDevIdMNDX, const XrXDevPropertiesMNDX&)>& add);
 
 	/**
 	 * Attempts to force the runtime to expose an interaction profile

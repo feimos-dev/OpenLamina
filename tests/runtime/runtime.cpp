@@ -10,8 +10,8 @@
 //   xrDestroyInstance xrDestroySession xrDestroySpace xrDestroySwapchain xrDestroyXDevListMNDX xrEndFrame
 //   xrEndSession xrEnumerateApiLayerProperties xrEnumerateBoundSourcesForAction
 //   xrEnumerateInstanceExtensionProperties xrEnumerateSwapchainFormats xrEnumerateSwapchainImages
-//   xrEnumerateViewConfigurationViews xrEnumerateXDevsMNDX xrGetActionStateBoolean xrGetActionStateFloat
-//   xrGetActionStateVector2f xrGetCurrentInteractionProfile xrGetD3D11GraphicsRequirementsKHR
+//   xrEnumerateViewConfigurationViews xrEnumerateViveTrackerPathsHTCX xrEnumerateXDevsMNDX xrGetActionStateBoolean
+//   xrGetActionStateFloat xrGetActionStateVector2f xrGetCurrentInteractionProfile xrGetD3D11GraphicsRequirementsKHR
 //   xrGetD3D12GraphicsRequirementsKHR xrGetInstanceProcAddr xrGetOpenGLESGraphicsRequirementsKHR
 //   xrGetOpenGLGraphicsRequirementsKHR xrGetReferenceSpaceBoundsRect xrGetSystem xrGetSystemProperties
 //   xrGetVisibilityMaskKHR xrGetVulkanDeviceExtensionsKHR xrGetVulkanGraphicsDeviceKHR

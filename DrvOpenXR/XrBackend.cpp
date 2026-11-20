@@ -7,6 +7,7 @@
 #include "HelperSession.h"
 #include "OverlayTextureCopy.h"
 #include "XrGenericTracker.h"
+#include "../OpenOVR/Misc/Input/ViveTrackerRoles.h"
 #include "generated/interfaces/vrtypes.h"
 
 #ifdef _WIN32
@@ -2173,6 +2174,10 @@ void XrBackend::PumpEvents()
 			// A session already destroyed (around a restart) has nothing to say about the controllers
 			if (((XrEventDataInteractionProfileChanged*)&ev)->session == xr_session.get())
 				UpdateInteractionProfile();
+		} else if (ev.type == OC_XR_TYPE_EVENT_DATA_VIVE_TRACKER_CONNECTED_HTCX) {
+			// A Vive tracker came, or its role changed: the trackers again
+			if (xr_session.get())
+				CreateGenericTrackers();
 		} else if (ev.type == OC_XR_TYPE_EVENT_DATA_DISPLAY_REFRESH_RATE_CHANGED_FB) {
 			// Prop_DisplayFrequency_Float asks the runtime again
 			auto* changed = (const OcXrEventDataDisplayRefreshRateChangedFB*)&ev;
@@ -2226,6 +2231,55 @@ void XrBackend::PumpEvents()
 	if (input && !exitExpected && !input->AreActionsLoaded() && sessionState == XR_SESSION_STATE_FOCUSED && !Hand(XrController::XCT_LEFT) && !Hand(XrController::XCT_RIGHT)) {
 		QueryForInteractionProfile();
 	}
+
+	// A hand without a controller is shown as one while hand tracking runs: checked once a second
+	if (input && !exitExpected && !sessionLost && xr_session.get() && HandsWithoutControllersChanged())
+		UpdateInteractionProfile();
+}
+
+const InteractionProfile* XrBackend::HandWithoutController(int hand)
+{
+	const InteractionProfile* profile = InteractionProfile::GetProfileByPath("/interaction_profiles/ext/hand_interaction_ext");
+	BaseInput* input = GetUnsafeBaseInput();
+	if (!profile || !input || !input->handTrackers[hand] || !xr_gbl || xr_gbl->floorSpace == XR_NULL_HANDLE)
+		return nullptr;
+
+	XrHandJointsLocateInfoEXT locateInfo = { XR_TYPE_HAND_JOINTS_LOCATE_INFO_EXT };
+	locateInfo.baseSpace = xr_gbl->floorSpace;
+	locateInfo.time = xr_gbl->GetBestTime();
+	std::vector<XrHandJointLocationEXT> joints(XR_HAND_JOINT_COUNT_EXT);
+	XrHandJointLocationsEXT locations = { XR_TYPE_HAND_JOINT_LOCATIONS_EXT };
+	locations.jointCount = (uint32_t)joints.size();
+	locations.jointLocations = joints.data();
+	// Where the runtime says where the joints come from, only joints that are the hand's own: joints inferred from a
+	// controller are a controller's hand
+	const bool withSource = xr_ext->ExtensionEnabled(OC_XR_EXT_HAND_TRACKING_DATA_SOURCE_EXTENSION_NAME);
+	OcXrHandTrackingDataSourceStateEXT source = { OC_XR_TYPE_HAND_TRACKING_DATA_SOURCE_STATE_EXT };
+	if (withSource)
+		locations.next = &source;
+	if (XR_FAILED(xr_ext->xrLocateHandJointsEXT(input->handTrackers[hand], &locateInfo, &locations)) || !locations.isActive)
+		return nullptr;
+	if (withSource && (!source.isActive || source.dataSource != OC_XR_HAND_TRACKING_DATA_SOURCE_UNOBSTRUCTED_EXT))
+		return nullptr;
+	return profile;
+}
+
+bool XrBackend::HandsWithoutControllersChanged()
+{
+	const int64_t nowMs = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+	if (nowMs - handsCheckedMs < 1000)
+		return false;
+	handsCheckedMs = nowMs;
+	const InteractionProfile* handProfile = InteractionProfile::GetProfileByPath("/interaction_profiles/ext/hand_interaction_ext");
+	if (!handProfile)
+		return false;
+	for (int hand = 0; hand < 2; hand++) {
+		std::shared_ptr<XrController> current = Hand(hand == 0 ? XrController::XCT_LEFT : XrController::XCT_RIGHT);
+		const bool tracked = HandWithoutController(hand) != nullptr;
+		if ((tracked && !current) || (!tracked && current && current->GetInteractionProfile() == handProfile))
+			return true;
+	}
+	return false;
 }
 
 bool XrBackend::WaitForEvents(const std::function<bool()>& done, int timeoutMs)
@@ -2305,6 +2359,11 @@ void XrBackend::OnSessionCreated()
 {
 	sessionLost = false;
 	exitExpected = false;
+	// The trackers' spaces went with the old session, even if the new one has the same handle
+	{
+		std::unique_lock lock(generic_trackers_mutex);
+		generic_trackers_session = XR_NULL_HANDLE;
+	}
 	toldIpd = NAN; // the new session's first IPD is the one the game has
 	// The gap from the old session's last frame isn't dropped frames
 	RestartFrameTiming();
@@ -2788,6 +2847,11 @@ void XrBackend::UpdateInteractionProfile()
 		OC_XR_LOG(xrStringToPath(xr_instance, info.pathstr, &path));
 		// On failure state.interactionProfile stays XR_NULL_PATH: no controller for this hand yet
 		OC_XR_LOG(xrGetCurrentInteractionProfile(xr_session.get(), path, &state));
+		// No controller, but the hand is tracked: the hand, shown as a controller
+		if (state.interactionProfile == XR_NULL_PATH) {
+			if (const InteractionProfile* hand = HandWithoutController(info.hand == XrController::XCT_LEFT ? 0 : 1))
+				OC_XR_LOG(xrStringToPath(xr_instance, hand->GetPath().c_str(), &state.interactionProfile));
+		}
 
 		// interaction profile detected
 		if (state.interactionProfile != XR_NULL_PATH) {
@@ -2871,21 +2935,24 @@ void XrBackend::UpdateInteractionProfile()
 	CreateGenericTrackers();
 }
 
-void XrBackend::CreateGenericTrackers()
+// A path's text; empty for a null path or one the runtime can't name
+static std::string XrPathText(XrPath path)
 {
-	if (!xr_ext->xrMndxXdevSpace_Available())
-		return;
+	if (path == XR_NULL_PATH)
+		return {};
+	char buffer[XR_MAX_PATH_LENGTH] = {};
+	uint32_t length = 0;
+	if (XR_FAILED(xrPathToString(xr_instance, path, sizeof(buffer), &length, buffer)))
+		return {};
+	return std::string(buffer, strnlen(buffer, sizeof(buffer)));
+}
 
-	std::unique_lock lock(generic_trackers_mutex);
-
-	OOVR_LOGF("Checking for generic trackers...");
-
+void XrBackend::FindXDevTrackers(XrXDevListMNDX& generic_tracker_list, const std::vector<std::string>& byRole,
+    const std::function<void(XrXDevIdMNDX, const XrXDevPropertiesMNDX&)>& add)
+{
 	// list containing all generic tracked devices
-	XrXDevListMNDX generic_tracker_list;
+	generic_tracker_list = XR_NULL_HANDLE;
 	std::vector<XrXDevIdMNDX> generic_tracker_ids(MAX_GENERIC_TRACKERS);
-	InteractionProfile* profile = InteractionProfile::GetProfileByPath("/interaction_profiles/htc/vive_tracker_htcx");
-	if (!profile)
-		return;
 
 	uint32_t xdev_count = 0;
 
@@ -2910,6 +2977,7 @@ void XrBackend::CreateGenericTrackers()
 	if (XR_FAILED(xr_ext->xrEnumerateXDevsMNDX(generic_tracker_list, MAX_GENERIC_TRACKERS, &xdev_count, generic_tracker_ids.data()))) {
 		OOVR_LOG("xrEnumerateXDevsMNDX failed: no generic trackers");
 		xr_ext->xrDestroyXDevListMNDX(generic_tracker_list);
+		generic_tracker_list = XR_NULL_HANDLE;
 		return;
 	}
 
@@ -2962,22 +3030,95 @@ void XrBackend::CreateGenericTrackers()
 	if (XR_SUCCEEDED(xr_ext->xrGetXDevListGenerationNumberMNDX(generic_tracker_list, &generation)))
 		generic_trackers_generation = generation;
 
-	// A tracker the runtime still lists keeps its place, so the indices the program holds stay right. Its space goes
-	// with the session it was made in, so after a restart it is made again in the same place.
-	const bool sameSession = generic_trackers_session == xr_session.get();
-	generic_trackers_session = xr_session.get();
 
-	struct Wanted {
-		XrXDevIdMNDX id;
-		XrXDevPropertiesMNDX properties;
-		bool placed = false;
-	};
-	std::vector<Wanted> wanted;
 	for (const XrXDevIdMNDX id : generic_tracker_ids) {
 		cur_info.id = id;
 		OC_XR_LOG(xr_ext->xrGetXDevPropertiesMNDX(generic_tracker_list, &cur_info, &cur_properties));
-		wanted.push_back({ id, cur_properties });
+		// A Vive tracker the runtime also lists by its role is that one
+		const std::string serial = cur_properties.serial;
+		if (!serial.empty() && std::any_of(byRole.begin(), byRole.end(), [&](const std::string& path) { return path.find(serial) != std::string::npos; }))
+			continue;
+		add(id, cur_properties);
 	}
+}
+
+void XrBackend::CreateGenericTrackers()
+{
+	const bool htcx = xr_ext->ViveTrackersHTCX_Available();
+	const bool mndx = xr_ext->xrMndxXdevSpace_Available();
+	if (!htcx && !mndx)
+		return;
+
+	std::unique_lock lock(generic_trackers_mutex);
+
+	OOVR_LOGF("Checking for generic trackers...");
+
+	InteractionProfile* profile = InteractionProfile::GetProfileByPath("/interaction_profiles/htc/vive_tracker_htcx");
+	if (!profile)
+		return;
+
+	// Each tracker wanted: a Vive tracker by its role (XR_HTCX_vive_tracker_interaction), whose pose is the tracker
+	// action's on the role's path, or an xdev (XR_MNDX_xdev_space)
+	struct Wanted {
+		XrXDevIdMNDX id = 0;
+		XrXDevPropertiesMNDX properties{ XR_TYPE_XDEV_PROPERTIES_MNDX };
+		XrPath rolePath = XR_NULL_PATH; // a role's tracker
+		std::string controllerType;
+		bool placed = false;
+	};
+	std::vector<Wanted> wanted;
+	std::vector<std::string> persistentPaths;
+
+	BaseInput* input = GetUnsafeBaseInput();
+	const XrAction trackerAction = input ? input->TrackerPoseAction() : XR_NULL_HANDLE;
+	if (htcx && trackerAction != XR_NULL_HANDLE) {
+		uint32_t count = 0;
+		std::vector<OcXrViveTrackerPathsHTCX> paths;
+		if (XR_SUCCEEDED(xr_ext->xrEnumerateViveTrackerPathsHTCX(xr_instance, 0, &count, nullptr)) && count > 0) {
+			paths.assign(count, { OC_XR_TYPE_VIVE_TRACKER_PATHS_HTCX });
+			if (XR_FAILED(xr_ext->xrEnumerateViveTrackerPathsHTCX(xr_instance, count, &count, paths.data())))
+				count = 0;
+			paths.resize(std::min<size_t>(count, paths.size()));
+		}
+		for (const OcXrViveTrackerPathsHTCX& p : paths) {
+			std::string persistent = XrPathText(p.persistentPath);
+			persistentPaths.push_back(persistent);
+			// A tracker without a role has no pose to read
+			if (p.rolePath == XR_NULL_PATH)
+				continue;
+			std::optional<ViveTrackerRole> role = ViveTrackerRoleForXrPath(XrPathText(p.rolePath));
+			if (!role)
+				continue;
+			Wanted want;
+			want.rolePath = p.rolePath;
+			want.controllerType = ViveTrackerControllerType(*role);
+			// The serial: the persistent path's last part
+			std::string serial = persistent.substr(persistent.rfind('/') + 1);
+			if (serial.empty())
+				serial = want.controllerType;
+			strcpy_arr(want.properties.name, ("Vive Tracker " + std::string(role->name)).c_str());
+			strcpy_arr(want.properties.serial, serial.c_str());
+			want.properties.canCreateSpace = XR_TRUE;
+			wanted.push_back(want);
+		}
+	}
+
+	XrXDevListMNDX generic_tracker_list = XR_NULL_HANDLE;
+	if (mndx)
+		FindXDevTrackers(generic_tracker_list, persistentPaths, [&](XrXDevIdMNDX id, const XrXDevPropertiesMNDX& properties) {
+			Wanted want;
+			want.id = id;
+			want.properties = properties;
+			wanted.push_back(want);
+		});
+
+	// A tracker the runtime still lists keeps its place, so the indices the program holds stay right. Its space goes
+	// with the session it was made in, so after a restart it is made again in the same place.
+	// So is a role's tracker's space when the tracker action was made again (new actions from the game)
+	const bool sessionChanged = generic_trackers_session != xr_session.get();
+	const bool sameAction = generic_trackers_action == trackerAction;
+	generic_trackers_session = xr_session.get();
+	generic_trackers_action = trackerAction;
 
 	BaseSystem* system = GetUnsafeBaseSystem();
 	auto sendEvent = [&](EVREventType type, TrackedDeviceIndex_t device) {
@@ -2995,6 +3136,18 @@ void XrBackend::CreateGenericTrackers()
 
 		XrSpace space = XR_NULL_HANDLE;
 		XrPosef pose = { .orientation = { 0, 0, 0, 1 }, .position = { 0, 0, 0 } };
+		if (want.rolePath != XR_NULL_PATH) {
+			XrActionSpaceCreateInfo info = { XR_TYPE_ACTION_SPACE_CREATE_INFO };
+			info.action = trackerAction;
+			info.subactionPath = want.rolePath;
+			info.poseInActionSpace = pose;
+			if (XR_FAILED(xrCreateActionSpace(xr_session.get(), &info, &space))) {
+				OOVR_LOGF("xrCreateActionSpace failed: no tracker for %s", want.properties.name);
+				return nullptr;
+			}
+			return std::make_shared<XrGenericTracker>(*profile, want.properties, index, space, want.controllerType);
+		}
+
 		XrCreateXDevSpaceInfoMNDX create_space_info = {
 			.type = XR_TYPE_CREATE_XDEV_SPACE_INFO_MNDX,
 			.next = NULL,
@@ -3017,13 +3170,13 @@ void XrBackend::CreateGenericTrackers()
 		if (!current[slot])
 			continue;
 		const TrackedDeviceIndex_t deviceIndex = (TrackedDeviceIndex_t)slot + RESERVED_DEVICE_INDICES;
-		auto it = std::find_if(wanted.begin(), wanted.end(), [&](const Wanted& w) { return !w.placed && current[slot]->Serial() == w.properties.serial; });
+		auto it = std::find_if(wanted.begin(), wanted.end(), [&](const Wanted& w) { return !w.placed && current[slot]->Serial() == w.properties.serial && current[slot]->ControllerType() == w.controllerType; });
 		if (it == wanted.end()) {
 			sendEvent(VREvent_TrackedDeviceDeactivated, deviceIndex);
 			continue;
 		}
 		it->placed = true;
-		if (sameSession) {
+		if (!sessionChanged && (it->rolePath == XR_NULL_PATH || sameAction)) {
 			generic_trackers[slot] = current[slot];
 		} else if ((generic_trackers[slot] = createTracker(*it, (uint32_t)slot))) {
 			sendEvent(VREvent_TrackedDeviceActivated, deviceIndex);
@@ -3032,7 +3185,7 @@ void XrBackend::CreateGenericTrackers()
 		}
 	}
 	// The old trackers' spaces go with their session when it was replaced
-	if (!sameSession) {
+	if (sessionChanged) {
 		for (std::shared_ptr<XrGenericTracker>& old : current)
 			if (old)
 				old->ForgetSpace();
@@ -3061,7 +3214,8 @@ void XrBackend::CreateGenericTrackers()
 		generic_trackers.pop_back();
 
 	// cleanup
-	xr_ext->xrDestroyXDevListMNDX(generic_tracker_list);
+	if (generic_tracker_list != XR_NULL_HANDLE)
+		xr_ext->xrDestroyXDevListMNDX(generic_tracker_list);
 }
 
 void XrBackend::PollGenericTrackers()

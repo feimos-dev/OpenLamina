@@ -235,8 +235,16 @@ InstancePlan PlanInstance(const std::set<std::string>& available, SessionKind ki
 	if (available.count(XR_KHR_VISIBILITY_MASK_EXTENSION_NAME))
 		plan.extensions.push_back(XR_KHR_VISIBILITY_MASK_EXTENSION_NAME);
 
-	if (available.count(XR_EXT_HAND_TRACKING_EXTENSION_NAME))
+	if (available.count(XR_EXT_HAND_TRACKING_EXTENSION_NAME)) {
 		plan.extensions.push_back(XR_EXT_HAND_TRACKING_EXTENSION_NAME);
+		// Whether a hand's joints are the hand's own or inferred from a controller
+		if (available.contains(OC_XR_EXT_HAND_TRACKING_DATA_SOURCE_EXTENSION_NAME))
+			plan.extensions.push_back(OC_XR_EXT_HAND_TRACKING_DATA_SOURCE_EXTENSION_NAME);
+	}
+
+	// Vive trackers by their role (/user/vive_tracker_htcx/role/waist), poses only
+	if (available.contains(OC_XR_HTCX_VIVE_TRACKER_INTERACTION_EXTENSION_NAME))
+		plan.extensions.push_back(OC_XR_HTCX_VIVE_TRACKER_INTERACTION_EXTENSION_NAME);
 
 	if (available.count(XR_MNDX_XDEV_SPACE_EXTENSION_NAME))
 		plan.extensions.push_back(XR_MNDX_XDEV_SPACE_EXTENSION_NAME);
@@ -256,7 +264,8 @@ InstancePlan PlanInstance(const std::set<std::string>& available, SessionKind ki
 	// More controllers' profiles: the Quest Pro's and Quest 3's, the Touch's finger proximity, Samsung's Odyssey, and
 	// the hands as controllers
 	for (const char* profileExtension : { OC_XR_FB_TOUCH_CONTROLLER_PRO_EXTENSION_NAME, OC_XR_META_TOUCH_CONTROLLER_PLUS_EXTENSION_NAME,
-	         OC_XR_FB_TOUCH_CONTROLLER_PROXIMITY_EXTENSION_NAME, XR_EXT_SAMSUNG_ODYSSEY_CONTROLLER_EXTENSION_NAME, XR_MSFT_HAND_INTERACTION_EXTENSION_NAME })
+	         OC_XR_FB_TOUCH_CONTROLLER_PROXIMITY_EXTENSION_NAME, XR_EXT_SAMSUNG_ODYSSEY_CONTROLLER_EXTENSION_NAME, XR_MSFT_HAND_INTERACTION_EXTENSION_NAME,
+	         OC_XR_EXT_HAND_INTERACTION_EXTENSION_NAME })
 		if (available.contains(profileExtension))
 			plan.extensions.push_back(profileExtension);
 

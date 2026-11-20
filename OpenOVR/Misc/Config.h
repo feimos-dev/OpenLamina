@@ -56,6 +56,9 @@ public:
 	const std::string& BindingEditor() const { return Loaded().bindingEditor; }
 	/** The keyboard's layout: "us", "uk", or empty to choose by the user's locale (UK for en-GB, else US) */
 	const std::string& KeyboardLayout() const { return Loaded().keyboardLayout; }
+	/** The controller the hands are shown as when no controller is in them: "knuckles" (an Index controller),
+	 * "oculus_touch" or "vive_controller" */
+	const std::string& HandController() const { return Loaded().handController; }
 
 private:
 	// Reads the files, once, and answers this
@@ -96,6 +99,7 @@ private:
 	bool logAllOpenVRCalls = false;
 	std::string bindingEditor;
 	std::string keyboardLayout;
+	std::string handController = "knuckles";
 };
 
 extern Config oovr_global_configuration;
