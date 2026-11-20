@@ -729,6 +729,49 @@ void OverlayAppCase(CaseContext& c)
 	c.Record("frames", r);
 }
 
+// An overlay application whose session (or instance) the runtime loses (xr_failures.py's lost_overlay scripts): its
+// overlay from memory is shown for 2.5 s while it polls its events every 11 ms. The device events and quits it got, in
+// order, and what the stand-in saw: the sessions made and lost, and the last session's frames.
+void OverlayAppLossCase(CaseContext& c)
+{
+	using namespace vr::IVROverlay_028;
+	Json::Value r;
+	r["init"] = (int)c.core->Init(vr::VRApplication_Overlay, nullptr);
+	if (r["init"].asInt() != vr::VRInitError_None) {
+		c.Record("loss", r);
+		return;
+	}
+	auto* ov = Interface<IVROverlay>(c, "IVROverlay_028");
+	auto* sys = Interface<vr::IVRSystem_022::IVRSystem>(c, "IVRSystem_022");
+	Json::Value events(Json::arrayValue);
+	if (ov && sys) {
+		vr::VROverlayHandle_t h = vr::k_ulOverlayHandleInvalid;
+		ov->CreateOverlay("oc.helper.loss", "Helper", &h);
+		std::vector<uint8_t> grey(64 * 64 * 4, 0x80);
+		ov->SetOverlayRaw(h, grey.data(), 64, 64, 4);
+		vr::HmdMatrix34_t m = At(0, 1.5f, -2);
+		ov->SetOverlayTransformAbsolute(h, vr::TrackingUniverseStanding, &m);
+		ov->ShowOverlay(h);
+		const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(2500);
+		while (std::chrono::steady_clock::now() < end) {
+			vr::VREvent_t ev{};
+			while (sys->PollNextEvent(&ev, sizeof(ev))) {
+				if (ev.eventType == vr::VREvent_TrackedDeviceActivated || ev.eventType == vr::VREvent_TrackedDeviceDeactivated
+				    || ev.eventType == vr::VREvent_Quit || ev.eventType == vr::VREvent_DriverRequestedQuit)
+					events.append((int)ev.eventType);
+			}
+			std::this_thread::sleep_for(std::chrono::milliseconds(11));
+		}
+		ov->DestroyOverlay(h);
+	}
+	c.core->Cleanup();
+	r["events"] = events;
+	Json::Value dump = ReadStandInDump();
+	for (const char* key : { "sessions_created", "sessions_lost", "instances_created", "instances_lost", "frames_ended" })
+		r[key] = dump[key];
+	c.Record("loss", r);
+}
+
 // An overlay application's textures of each API, at once: each is copied onto OpenLamina's own D3D11 device (the
 // overlay session's), and its quad shows the test pattern. A kind whose device can't be made here skips the case.
 struct OverlayTextureKind {
@@ -1045,6 +1088,7 @@ const std::map<std::string, CaseFn>& conformance::HelperCases()
 {
 	static const std::map<std::string, CaseFn> cases = {
 		{ "overlay-app", OverlayAppCase },
+		{ "overlay-app-loss", OverlayAppLossCase },
 		{ "overlay-app-two-apis", [](CaseContext& c) {
 			 OverlayAppTexturesCase(c, "textures", { { GfxKind::D3D11, 29, "d3d11" }, { GfxKind::D3D12, 29, "d3d12" } });
 		 } },

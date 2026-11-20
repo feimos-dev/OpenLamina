@@ -80,6 +80,9 @@ public:
 	std::chrono::steady_clock::time_point lastRecoveryTry{};
 	bool lostSessionDestroyed = false;
 	std::mutex recoveryLock;
+	// A helper program's loop makes its lost session again itself, between its passes: its loop and thread are kept
+	// through the rebuild (not stopped, nor started again)
+	std::atomic<bool> recoveringInHelperLoop{ false };
 	// What the game has been told of the session, as SteamVR tells it: whether it lost input focus (sessionEvents), and
 	// the IPD (NaN until the session's first)
 	std::atomic<bool> inputFocusLost{ false };
