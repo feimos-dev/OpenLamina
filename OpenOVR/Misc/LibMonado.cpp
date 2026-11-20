@@ -89,9 +89,27 @@ std::string RuntimeNameOfInstance()
 LibMonado& LibMonado::Get()
 {
 	// Never destroyed: at process exit libmonado may already be unloaded (Windows detaches DLLs in its own order) and
-	// the game's threads may still be calling it; the OS ends the connection
-	static LibMonado* instance = new LibMonado(RuntimeNameOfInstance());
-	return *instance;
+	// the game's threads may still be calling it; the OS ends the connection. An earlier instance's is kept too, for
+	// the references already handed out.
+	static std::mutex mutex;
+	static LibMonado* none = new LibMonado(std::string());
+	static LibMonado* current = nullptr;
+	static XrInstance currentInstance = XR_NULL_HANDLE;
+	static std::string currentRuntime;
+
+	std::lock_guard<std::mutex> guard(mutex);
+	if (xr_instance == XR_NULL_HANDLE)
+		return *none;
+	// Properties are read every frame: the runtime is asked only when the instance changes
+	if (current && xr_instance == currentInstance)
+		return *current;
+	std::string runtime = RuntimeNameOfInstance();
+	if (!current || xr_instance != currentInstance || runtime != currentRuntime) {
+		current = new LibMonado(runtime);
+		currentInstance = xr_instance;
+		currentRuntime = runtime;
+	}
+	return *current;
 }
 
 // An environment variable as a path: wide on Windows (the narrow one is in the ANSI code page, not UTF-8)
@@ -288,10 +306,16 @@ std::optional<LibMonado::Battery> LibMonado::BatteryFor(const std::string& devic
 	if (!Available() || !api->getBatteryStatus)
 		return std::nullopt;
 	std::lock_guard guard(lock);
-	std::optional<uint32_t> index = DeviceIndex(deviceName, serial);
-	if (!index)
-		return std::nullopt;
-	return BatteryAt(*index);
+	// Kept a second, as the roles' are
+	const std::string key = "device:" + deviceName + '\n' + serial;
+	auto it = batteryCache.find(key);
+	if (it != batteryCache.end() && std::chrono::steady_clock::now() - it->second.first < std::chrono::seconds(1))
+		return it->second.second;
+	std::optional<Battery> battery;
+	if (std::optional<uint32_t> index = DeviceIndex(deviceName, serial))
+		battery = BatteryAt(*index);
+	batteryCache[key] = { std::chrono::steady_clock::now(), battery };
+	return battery;
 }
 
 LibMonado::Battery LibMonado::BatteryAt(uint32_t index)
@@ -314,6 +338,32 @@ std::optional<std::string> LibMonado::DeviceForRole(const char* role)
 	if (api->getDeviceInfoString(root, (uint32_t)index, kMndPropertyNameString, &name) != 0 || !name)
 		return std::nullopt;
 	return std::string(name);
+}
+
+std::optional<LibMonado::DeviceInfo> LibMonado::DeviceInfoForRole(const char* role)
+{
+	if (!Available() || !api->getDeviceFromRole || !api->getDeviceInfoString || !role)
+		return std::nullopt;
+	std::lock_guard guard(lock);
+	// Kept a second: the property answers ask for it each time
+	auto it = deviceInfoCache.find(role);
+	if (it != deviceInfoCache.end() && std::chrono::steady_clock::now() - it->second.first < std::chrono::seconds(1))
+		return it->second.second;
+	std::optional<DeviceInfo> info;
+	int32_t index = -1;
+	if (api->getDeviceFromRole(root, role, &index) == 0 && index >= 0) {
+		DeviceInfo found;
+		const char* name = nullptr;
+		const char* serial = nullptr;
+		if (api->getDeviceInfoString(root, (uint32_t)index, kMndPropertyNameString, &name) == 0 && name)
+			found.name = name;
+		if (api->getDeviceInfoString(root, (uint32_t)index, kMndPropertySerialString, &serial) == 0 && serial)
+			found.serial = serial;
+		if (!found.name.empty() || !found.serial.empty())
+			info = found;
+	}
+	deviceInfoCache[role] = { std::chrono::steady_clock::now(), info };
+	return info;
 }
 
 std::optional<LibMonado::Battery> LibMonado::BatteryForRole(const char* role)

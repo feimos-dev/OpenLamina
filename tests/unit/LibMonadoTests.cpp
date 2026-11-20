@@ -235,8 +235,44 @@ TEST_CASE("Bool_property_makes_no_battery_call")
 	CHECK(XrController::BatteryBoolProperty(mnd, vr::Prop_DeviceIsCharging_Bool, "left") == std::optional<bool>(true));
 	int asked = FakeBatteryCalls();
 	CHECK(asked > before);
-	// No role (a tracker): nothing asked
-	CHECK(XrController::BatteryBoolProperty(mnd, vr::Prop_DeviceProvidesBatteryStatus_Bool, nullptr) == std::optional<bool>(true));
+	// No role: nothing asked, and no battery claimed
+	CHECK(XrController::BatteryBoolProperty(mnd, vr::Prop_DeviceProvidesBatteryStatus_Bool, nullptr) == std::optional<bool>(false));
+	CHECK(FakeBatteryCalls() == asked);
+}
+
+TEST_CASE("No_battery_claimed_without_libmonado")
+{
+	// A runtime other than Monado has none: the controller doesn't say it provides a battery it can't read
+	LibMonado none("Some other runtime");
+	REQUIRE_FALSE(none.Available());
+	CHECK(XrController::BatteryBoolProperty(none, vr::Prop_DeviceProvidesBatteryStatus_Bool, "left") == std::optional<bool>(false));
+	CHECK_FALSE(XrController::BatteryBoolProperty(none, vr::Prop_DeviceIsCharging_Bool, "left").has_value());
+}
+
+TEST_CASE("Device_name_and_serial_by_role")
+{
+	FakeLibMonado fake("1", "1,1,0.5");
+	LibMonado mnd("Monado(XRT) by Collabora et al");
+	REQUIRE(mnd.Available());
+	std::optional<LibMonado::DeviceInfo> head = mnd.DeviceInfoForRole("head");
+	REQUIRE(head.has_value());
+	CHECK(head->name == "Fake HMD");
+	CHECK(head->serial == "SN0");
+	CHECK(mnd.DeviceInfoForRole("right")->serial == "SN2");
+	CHECK_FALSE(mnd.DeviceInfoForRole("gamepad").has_value());
+	LibMonado none("Some other runtime");
+	CHECK_FALSE(none.DeviceInfoForRole("head").has_value());
+}
+
+TEST_CASE("Battery_of_a_named_device_is_kept_a_while")
+{
+	FakeLibMonado fake("1", "1,0,0.25");
+	LibMonado mnd("Monado(XRT) by Collabora et al");
+	REQUIRE(mnd.Available());
+	std::optional<LibMonado::Battery> first = mnd.BatteryFor("Fake Right", "SN2");
+	REQUIRE(first.has_value());
+	int asked = FakeBatteryCalls();
+	CHECK(mnd.BatteryFor("Fake Right", "SN2")->charge == 0.25f);
 	CHECK(FakeBatteryCalls() == asked);
 }
 

@@ -248,6 +248,9 @@ IBackend* DrvOpenXR::CreateOpenXRBackend(const char* startupInfo, vr::EVRInitErr
 	XrApplicationInfo appInfo{};
 	GetXRAppName(appInfo.applicationName);
 	appInfo.applicationVersion = 1;
+	// Runtimes pick per-engine behaviour by the engine's name
+	strcpy_s(appInfo.engineName, XR_MAX_ENGINE_NAME_SIZE, "OpenLamina");
+	appInfo.engineVersion = 1;
 
 	// Hard-code in the API version, because on Linux you might want to compile OC against
 	// the system-installed copy of the OXR loader. Distros are likely to update the loader
@@ -323,6 +326,9 @@ IBackend* DrvOpenXR::CreateOpenXRBackend(const char* startupInfo, vr::EVRInitErr
 	// The display's refresh rate (Prop_DisplayFrequency_Float) and its changes
 	if (availableExtensions.contains(OC_XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME))
 		extensions.push_back(OC_XR_FB_DISPLAY_REFRESH_RATE_EXTENSION_NAME);
+	// Notices that the runtime's CPU or GPU load is high (ShouldApplicationReduceRenderingWork)
+	if (availableExtensions.contains(XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME))
+		extensions.push_back(XR_EXT_PERFORMANCE_SETTINGS_EXTENSION_NAME);
 	// A helper program's session. A headless one runs no frames, so its poses are located at the time now, which the
 	// runtime converts from the system's clock where it can.
 	if (choice.kind == SessionKind::Overlay) {
@@ -527,18 +533,8 @@ void DrvOpenXR::ShutdownSession()
 		// Hey it turns out that xrDestroySession can be called whenever - how convenient
 		if (XR_FAILED(xrRequestExitSession(xr_session.get())))
 			OOVR_LOG("xrRequestExitSession failed: destroying the session anyway");
-		int count = 0;
-		while (currentBackend->GetSessionState() != XR_SESSION_STATE_EXITING && count++ < 10) {
-			const int durationMs = 250;
-			OOVR_LOGF("Session Exit state has not been reached yet, waiting %dms ...", durationMs);
-#ifdef _WIN32
-			Sleep(durationMs);
-#else
-			struct timespec ts = { 0, durationMs * 1000000 };
-			nanosleep(&ts, &ts);
-#endif
-			currentBackend->PumpEvents();
-		}
+		if (!currentBackend->WaitForEvents([&]() { return currentBackend->GetSessionState() == XR_SESSION_STATE_EXITING; }, 2500))
+			OOVR_LOG("Session Exit state has not been reached: destroying the session anyway");
 	}
 	// No running session from here until the next one reaches READY, also if xrCreateSession then fails
 	currentBackend->sessionActive = false;

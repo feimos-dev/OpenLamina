@@ -40,17 +40,14 @@ public:
 		HAND_NONE,
 	};
 
-	virtual void GetPose(
-	    vr::ETrackingUniverseOrigin origin,
-	    vr::TrackedDevicePose_t* pose,
-	    ETrackingStateType trackingState)
-	    = 0;
-
+	/**
+	 * xrTime is the OpenXR time to locate the device at; zero, the default, is the display time of the latest frame.
+	 */
 	virtual void GetPose(
 	    vr::ETrackingUniverseOrigin origin,
 	    vr::TrackedDevicePose_t* pose,
 	    ETrackingStateType trackingState,
-	    double absTime)
+	    int64_t xrTime = 0)
 	    = 0;
 
 	virtual vr::ETrackedDeviceClass GetTrackedDeviceClass() = 0;
@@ -225,6 +222,10 @@ public:
 	PREPEND void PumpEvents() APPEND;                                                                                                              \
 	/** Returns true if the runtime is focused and receiving input */                                                                              \
 	PREPEND bool IsInputAvailable() APPEND;                                                                                                        \
+	/** Returns true if the application had input focus and has lost it (to the runtime's menu, say) */                                           \
+	PREPEND bool IsInputFocusLost() APPEND;                                                                                                        \
+	/** Returns true if the runtime says it is short of time and the application should render less */                                            \
+	PREPEND bool ShouldReduceRenderingWork() APPEND;                                                                                               \
 	/** Returns true if the application graphics device is being used */                                                                           \
 	PREPEND bool IsGraphicsConfigured() APPEND;                                                                                                    \
 	PREPEND void OnOverlayTexture(const vr::Texture_t* texture) APPEND;

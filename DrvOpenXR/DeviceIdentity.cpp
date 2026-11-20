@@ -2,7 +2,11 @@
 
 #include "DeviceIdentity.h"
 
+#include "../OpenOVR/Misc/Input/Bindings/LegacyBindings.h"
+
+#include <array>
 #include <map>
+#include <mutex>
 
 namespace {
 
@@ -19,7 +23,7 @@ DeviceIdentity DefaultHmd()
 	return hmd;
 }
 
-// The rows by OpenXR system name. None: every HMD takes the default row.
+// The rows by OpenXR system name: the strings SteamVR gives that hardware. None yet.
 const std::map<std::string, DeviceIdentity>& HmdRows()
 {
 	static const std::map<std::string, DeviceIdentity> rows = {};
@@ -51,11 +55,20 @@ uint64_t ButtonsForComponent(const std::string& component)
 
 } // namespace
 
-const DeviceIdentity& HmdIdentity(const std::string& xrSystemName)
+DeviceIdentity HmdIdentity(const std::string& xrSystemName, const RuntimeDevice& device)
 {
-	static const DeviceIdentity defaultRow = DefaultHmd();
 	auto it = HmdRows().find(xrSystemName);
-	return it == HmdRows().end() ? defaultRow : it->second;
+	if (it != HmdRows().end())
+		return it->second;
+
+	DeviceIdentity id = DefaultHmd();
+	if (xrSystemName.empty())
+		return id;
+	// The runtime's own words: the system name is all OpenXR says of who made it
+	id.manufacturer = xrSystemName;
+	id.modelNumber = device.name.empty() ? xrSystemName : device.name;
+	id.serial = device.serial.empty() ? xrSystemName + "-head" : device.serial;
+	return id;
 }
 
 uint64_t SupportedButtonsFor(const InteractionProfile& profile, vr::ETrackedControllerRole role)
@@ -74,16 +87,20 @@ uint64_t SupportedButtonsFor(const InteractionProfile& profile, vr::ETrackedCont
 	return buttons;
 }
 
-DeviceIdentity ControllerIdentity(const InteractionProfile& profile, vr::ETrackedControllerRole role)
+DeviceIdentity ControllerIdentity(const InteractionProfile& profile, vr::ETrackedControllerRole role, const std::string& runtimeSerial)
 {
 	DeviceIdentity id;
 	// The generic device answers (XrTrackedDevice::Identity's)
 	id.trackingSystem = "oculus";
 	id.manufacturer = "Oculus";
-	id.serial = "<unknown>";
 	id.role = role;
 	if (std::optional<const char*> name = profile.GetOpenVRName())
 		id.controllerType = *name;
+
+	// Each device has a serial of its own (tools key devices by it): the runtime's, else one made of the hand
+	const char* hand = role == vr::TrackedControllerRole_LeftHand ? "left" : role == vr::TrackedControllerRole_RightHand ? "right"
+	                                                                                                                     : "tracked";
+	id.serial = !runtimeSerial.empty() ? runtimeSerial : (id.controllerType.empty() ? std::string("controller") : id.controllerType) + "-" + hand;
 
 	// Resonite tells controllers apart by their render model: the profile's, else OpenComposite's own
 	bool left = role == vr::TrackedControllerRole_LeftHand;
@@ -106,7 +123,29 @@ DeviceIdentity TrackerIdentity(const std::string& xdevName, const std::string& s
 	id.manufacturer = "Oculus";
 	id.controllerType = "vive_tracker_handheld_object";
 	id.modelNumber = "Vive Tracker Handheld Object";
-	id.serial = serial;
+	// The xdev's own serial, else one made of its name
+	id.serial = !serial.empty() ? serial : "tracker-" + xdevName;
 	id.role = vr::TrackedControllerRole_Invalid;
 	return id;
+}
+
+std::optional<vr::EVRControllerAxisType> AxisTypeFor(const std::string& openVrName, int axis)
+{
+	if (axis < 0 || axis > 4)
+		return std::nullopt;
+	if (openVrName != "knuckles" && openVrName != "oculus_touch" && openVrName != "vive_controller")
+		return std::nullopt;
+	// The legacy binding OpenComposite has for the controller says what each axis is; both hands are the same here
+	static std::mutex lock;
+	static std::map<std::string, std::array<vr::EVRControllerAxisType, 5>> cache;
+	std::lock_guard<std::mutex> guard(lock);
+	auto it = cache.find(openVrName);
+	if (it == cache.end()) {
+		BindingFile file = BuiltInLegacyBindings(openVrName);
+		std::array<vr::EVRControllerAxisType, 5> types;
+		for (int i = 0; i < 5; i++)
+			types[i] = LegacyAxisType(file, "left", i);
+		it = cache.emplace(openVrName, types).first;
+	}
+	return it->second[axis];
 }
