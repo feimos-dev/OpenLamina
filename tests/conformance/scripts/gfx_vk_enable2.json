@@ -1,0 +1,4 @@
+{
+ "#": "The Vulkan frame cases under a runtime that has XR_KHR_vulkan_enable2 alone (no XR_KHR_vulkan_enable): OpenLamina's temporary device is made through xrCreateVulkanInstanceKHR and xrCreateVulkanDeviceKHR, and the game's session through xrGetVulkanGraphicsDevice2KHR",
+ "extensions": ["XR_KHR_vulkan_enable2", "XR_KHR_convert_timespec_time"]
+}

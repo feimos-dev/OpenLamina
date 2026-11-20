@@ -461,7 +461,9 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 				OOVR_LOG_ONCE("The OpenVR app's Vulkan texture data has no instance, device or queue");
 				return false;
 			}
-			if (!xr_ext->xrGetVulkanGraphicsDeviceKHR_Available() && runtimeHasD3D11) {
+			// Also where the runtime has XR_KHR_vulkan_enable2 alone: the game's own device has none of the runtime's
+			// extensions (there's no list to tell it), and the interop's are what GetVulkan*ExtensionsRequired answered
+			if ((!xr_ext->xrGetVulkanGraphicsDeviceKHR_Available() || xr_ext->VulkanEnable2Only()) && runtimeHasD3D11) {
 				interop = GfxInterop::ForVulkan(vktex->m_pInstance, vktex->m_pPhysicalDevice, vktex->m_pDevice, vktex->m_pQueue);
 				if (!interop) {
 					OOVR_LOG("The OpenXR runtime has no Vulkan, and the game's Vulkan frames can't go through D3D11");
