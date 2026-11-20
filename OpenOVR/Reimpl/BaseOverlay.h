@@ -260,8 +260,9 @@ private:
 	void DashboardChanged(bool open, const char* overlayKey = nullptr);
 
 	// An overlay application's Vulkan or OpenGL texture that can't be copied onto its session's device, shown from an
-	// image of that device that shares its memory: nothing if it can't be. Under the session's and the layers' locks.
-	std::optional<vr::EVROverlayError> ShowShared(OverlayData& overlay, const vr::Texture_t& texture);
+	// image of that device that shares its memory: false, changing nothing, if it can't be. Under the session's and the
+	// layers' locks.
+	bool ShowShared(OverlayData& overlay, const vr::Texture_t& texture);
 	// Such a texture read back into memory (whyNotCopied: why it wasn't copied) and shown from there. The same locks.
 	vr::EVROverlayError ShowReadBack(OverlayData& overlay, const vr::Texture_t& texture, const std::string& whyNotCopied);
 	// Where a dashboard overlay is drawn while it's the one shown (false while it isn't); with layersLock held

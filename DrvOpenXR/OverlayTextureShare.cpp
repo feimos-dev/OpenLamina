@@ -18,7 +18,7 @@
 
 namespace {
 
-// As long as a copy is waited for, on either side, before its overlay is left out
+// How long a copy on either side is waited for; past it the texture is read back instead
 constexpr uint64_t kWaitNs = 100'000'000;
 
 constexpr VkImageUsageFlags kUsage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT;
