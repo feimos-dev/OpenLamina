@@ -86,6 +86,8 @@ constexpr uint64_t kNewAppLaunchMs = 30000;
 // How long after the old application was first asked to quit the transition lasts: it holds other launches off
 // while the old application runs, and its launch is taken over if the old one ended without launching it
 constexpr uint64_t kTakeOverMs = 5 * 60 * 1000;
+// How long an old application asked to quit for a launch has to do so before it's ended (ForceQuitProcess's way)
+constexpr uint64_t kForceQuitMs = 10000;
 
 // Launch arguments kept for running applications at most: the oldest go first
 constexpr size_t kMaxLaunchArgs = 32;
@@ -416,9 +418,20 @@ void BaseApplications::TakeOverPendingLaunch(SharedStore& store)
 	// first program to notice does
 	const Json::Value pending = store.ReadAt(StoreDoc::Scene, { "transition" });
 	if (!pending.isObject() || !BoolOr(pending["launch"], false) || !pending["state"].isInt()
-	    || pending["state"].asInt() != VRApplicationTransition_OldAppQuitSent || PidOf(pending["old_pid"]) == oc_current_pid()
-	    || SharedStore::IsSameProcessAlive(PidOf(pending["old_pid"]), UInt64Or(pending["old_start"], 0)))
+	    || pending["state"].asInt() != VRApplicationTransition_OldAppQuitSent || PidOf(pending["old_pid"]) == oc_current_pid())
 		return;
+	if (SharedStore::IsSameProcessAlive(PidOf(pending["old_pid"]), UInt64Or(pending["old_start"], 0))) {
+		// An old application that ignored the quit for kForceQuitMs is ended, if it's still the one asked (its start
+		// time known); its launch is taken over once it's gone
+		const uint64_t since = UInt64Or(pending["since_ms"], 0), now = NowMs();
+		const uint64_t start = UInt64Or(pending["old_start"], 0);
+		if (start && now >= since + kForceQuitMs && now < since + kTakeOverMs) {
+			const uint32_t oldPid = PidOf(pending["old_pid"]);
+			if (SharedStore::KillProcess(oldPid, start))
+				OOVR_LOGF("The scene application (pid %u) didn't quit for the launch of %s: ended", oldPid, StringOr(pending["app_key"]).c_str());
+		}
+		return;
+	}
 	std::string key;
 	uint32_t oldPid = 0;
 	bool dropped = false;

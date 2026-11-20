@@ -1229,3 +1229,115 @@ TEST_CASE("A_quit_request_that_cannot_be_sent_is_undone")
 	CHECK(apps.GetTransitionState() == VRApplicationTransition_None);
 	BaseApplications::SetSceneProcess(store, false);
 }
+
+#ifndef _WIN32
+namespace {
+// A child process that sleeps until it's ended, and its start time once it's running
+pid_t SleepingChild(uint64_t& start)
+{
+	const pid_t child = fork();
+	if (child == 0) {
+		for (;;)
+			pause();
+	}
+	start = 0;
+	for (int i = 0; i < 200 && !start; i++) {
+		start = SharedStore::ProcessStartTime((uint32_t)child);
+		if (!start)
+			std::this_thread::sleep_for(std::chrono::milliseconds(5));
+	}
+	return child;
+}
+
+bool EndedByKill(pid_t child)
+{
+	int status = 0;
+	for (int i = 0; i < 400; i++) {
+		if (waitpid(child, &status, WNOHANG) == child)
+			return WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL;
+		std::this_thread::sleep_for(std::chrono::milliseconds(5));
+	}
+	kill(child, SIGKILL);
+	waitpid(child, &status, 0);
+	return false;
+}
+} // namespace
+
+TEST_CASE("Kill_ends_only_the_process_that_started_then")
+{
+	uint64_t start = 0;
+	const pid_t child = SleepingChild(start);
+	REQUIRE(start != 0);
+	// Another start time: a process that took the pid over, not ended
+	CHECK_FALSE(SharedStore::KillProcess((uint32_t)child, start + 1));
+	CHECK_FALSE(SharedStore::KillProcess((uint32_t)child, 0));
+	CHECK(SharedStore::IsSameProcessAlive((uint32_t)child, start));
+	CHECK(SharedStore::KillProcess((uint32_t)child, start));
+	CHECK(EndedByKill(child));
+}
+
+TEST_CASE("Old_scene_application_ignoring_the_quit_is_ended_after_a_while")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	BaseApplications apps(store);
+	uint64_t start = 0;
+	const pid_t child = SleepingChild(start);
+	REQUIRE(start != 0);
+	// Asked to quit for a launch just now: left running
+	store.Update(StoreDoc::Scene, [&](Json::Value& doc) {
+		doc["pid"] = (uint32_t)child;
+		doc["start"] = (Json::UInt64)start;
+		doc["transition"]["state"] = VRApplicationTransition_OldAppQuitSent;
+		doc["transition"]["app_key"] = "oc.test.next";
+		doc["transition"]["old_pid"] = (uint32_t)child;
+		doc["transition"]["old_start"] = (Json::UInt64)start;
+		doc["transition"]["launch"] = true;
+		doc["transition"]["since_ms"] = NowMs();
+	});
+	CHECK(apps.GetTransitionState() == VRApplicationTransition_OldAppQuitSent);
+	CHECK(SharedStore::IsSameProcessAlive((uint32_t)child, start));
+	// Asked over ten seconds ago and still running: ended
+	store.Update(StoreDoc::Scene, [&](Json::Value& doc) { doc["transition"]["since_ms"] = NowMs() - 11000; });
+	apps.GetTransitionState();
+	CHECK(EndedByKill(child));
+}
+
+TEST_CASE("Only_programs_the_store_knows_are_known_processes")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	uint64_t start = 0;
+	const pid_t child = SleepingChild(start);
+	REQUIRE(start != 0);
+	const std::string name = std::to_string(child);
+	// Not in the store
+	CHECK(store.KnownProcessStart((uint32_t)child) == 0);
+	// Listed with another start time: a process that took the pid over
+	store.Update(StoreDoc::Applications, [&](Json::Value& doc) {
+		doc["pids"][name] = "oc.test.echo";
+		doc["pid_starts"][name] = (Json::UInt64)(start + 1);
+	});
+	CHECK(store.KnownProcessStart((uint32_t)child) == 0);
+	// Listed without one: not known well enough to end
+	store.Update(StoreDoc::Applications, [&](Json::Value& doc) { doc["pid_starts"].removeMember(name); });
+	CHECK(store.KnownProcessStart((uint32_t)child) == 0);
+	// The application's, the scene's or an overlay program's start time
+	store.Update(StoreDoc::Applications, [&](Json::Value& doc) { doc["pid_starts"][name] = (Json::UInt64)start; });
+	CHECK(store.KnownProcessStart((uint32_t)child) == start);
+	store.Update(StoreDoc::Applications, [&](Json::Value& doc) { doc = Json::Value(Json::objectValue); });
+	store.Update(StoreDoc::Scene, [&](Json::Value& doc) {
+		doc["pid"] = (uint32_t)child;
+		doc["start"] = (Json::UInt64)start;
+	});
+	CHECK(store.KnownProcessStart((uint32_t)child) == start);
+	store.Update(StoreDoc::Scene, [&](Json::Value& doc) { doc = Json::Value(Json::objectValue); });
+	store.Update(StoreDoc::Overlays, [&](Json::Value& doc) { doc[name]["start"] = (Json::UInt64)start; });
+	CHECK(store.KnownProcessStart((uint32_t)child) == start);
+	kill(child, SIGKILL);
+	int status = 0;
+	waitpid(child, &status, 0);
+	// Gone: not known any more
+	CHECK(store.KnownProcessStart((uint32_t)child) == 0);
+}
+#endif

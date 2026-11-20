@@ -85,6 +85,12 @@ public:
 	/** Whether pid is running and is the process that started at start; with start 0 (an entry written without it),
 	 * whether any process with that pid is running */
 	static bool IsSameProcessAlive(uint32_t pid, uint64_t start);
+	/** Ends pid at once if it's the process that started at start (not 0), checked as near to the kill as the system
+	 * allows; false if it isn't, or couldn't be ended */
+	static bool KillProcess(uint32_t pid, uint64_t start);
+	/** The start time the store has for an OpenLamina program's pid (the Applications document's processes, the
+	 * scene's, the overlay programs'), if it's still that process; 0 for a pid the store doesn't know or that's gone */
+	uint64_t KnownProcessStart(uint32_t pid);
 	/** Whether a program other than self has an entry in the Overlays document and is still running */
 	static bool OtherLiveProgram(const Json::Value& overlaysDoc, uint32_t self);
 	/** The same, or the Scene document's scene application (other than self) is still running */

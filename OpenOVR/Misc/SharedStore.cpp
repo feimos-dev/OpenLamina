@@ -12,6 +12,7 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <vector>
 
 #ifdef _WIN32
 #include <io.h>
@@ -23,6 +24,7 @@
 #include <sys/file.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 #endif
 
@@ -770,6 +772,66 @@ bool SharedStore::IsSameProcessAlive(uint32_t pid, uint64_t start)
 	if (start == 0)
 		return IsProcessAlive(pid);
 	return ProcessStartTime(pid) == start;
+}
+
+bool SharedStore::KillProcess(uint32_t pid, uint64_t start)
+{
+	if (pid == 0 || start == 0)
+		return false;
+#ifdef _WIN32
+	// The start time read from the handle that ends it: the pid can't be another process's by then
+	HANDLE process = OpenProcess(PROCESS_TERMINATE | PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pid);
+	if (!process)
+		return false;
+	FILETIME created{}, exited{}, kernel{}, user{};
+	bool killed = false;
+	if (GetProcessTimes(process, &created, &exited, &kernel, &user)
+	    && (((uint64_t)created.dwHighDateTime << 32) | created.dwLowDateTime) == start)
+		killed = TerminateProcess(process, 1) != 0;
+	CloseHandle(process);
+	return killed;
+#else
+#if defined(SYS_pidfd_open) && defined(SYS_pidfd_send_signal)
+	// A pidfd names the process itself: checked after it's opened, the signal can't reach another that took the pid
+	const int fd = (int)syscall(SYS_pidfd_open, (pid_t)pid, 0);
+	if (fd >= 0) {
+		const bool same = ProcessStartTime(pid) == start;
+		const bool killed = same && syscall(SYS_pidfd_send_signal, fd, SIGKILL, nullptr, 0) == 0;
+		close(fd);
+		return killed;
+	}
+#endif
+	// Without pidfds: checked just before
+	if (ProcessStartTime(pid) != start)
+		return false;
+	return kill((pid_t)pid, SIGKILL) == 0;
+#endif
+}
+
+uint64_t SharedStore::KnownProcessStart(uint32_t pid)
+{
+	if (pid == 0)
+		return 0;
+	const std::string name = std::to_string(pid);
+	std::vector<uint64_t> starts;
+	auto add = [&](const Json::Value& v) {
+		if (v.isUInt64() && v.asUInt64())
+			starts.push_back(v.asUInt64());
+	};
+	const Json::Value apps = Read(StoreDoc::Applications);
+	if (apps["pid_starts"].isObject())
+		add(apps["pid_starts"][name]);
+	const Json::Value scene = Read(StoreDoc::Scene);
+	if (scene.isObject() && scene["pid"].isUInt() && scene["pid"].asUInt() == pid)
+		add(scene["start"]);
+	const Json::Value overlays = Read(StoreDoc::Overlays);
+	if (overlays.isObject() && overlays[name].isObject())
+		add(overlays[name]["start"]);
+	const uint64_t now = ProcessStartTime(pid);
+	for (uint64_t start : starts)
+		if (start == now)
+			return start;
+	return 0;
 }
 
 bool SharedStore::OtherLiveProgram(const Json::Value& overlaysDoc, uint32_t self)
