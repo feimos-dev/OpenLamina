@@ -2394,7 +2394,7 @@ EVROverlayError BaseOverlay::GetOverlayCurvature(VROverlayHandle_t ulOverlayHand
 }
 EVROverlayError BaseOverlay::SetOverlayAutoCurveDistanceRangeInMeters(VROverlayHandle_t ulOverlayHandle, float fMinDistanceInMeters, float fMaxDistanceInMeters)
 {
-	USEH();
+	USEH_LOCKED();
 
 	overlay->autoCurveDistanceRangeMin = fMinDistanceInMeters;
 	overlay->autoCurveDistanceRangeMax = fMaxDistanceInMeters;
@@ -2481,7 +2481,7 @@ uint32_t BaseOverlay::GetOverlayRenderModel(VROverlayHandle_t ulOverlayHandle, c
 }
 EVROverlayError BaseOverlay::SetOverlayRenderModel(VROverlayHandle_t ulOverlayHandle, const char* pchRenderModel, const HmdColor_t* pColor)
 {
-	USEH();
+	USEH_LOCKED();
 	overlay->renderModel = pchRenderModel ? pchRenderModel : "";
 	if (pColor)
 		overlay->renderModelColor = *pColor;
@@ -2876,7 +2876,7 @@ EVROverlayError BaseOverlay::GetOverlayFlagMask(VROverlayHandle_t ulOverlayHandl
 
 EVROverlayError BaseOverlay::SetOverlayGamma(VROverlayHandle_t ulOverlayHandle, float fGamma)
 {
-	USEH();
+	USEH_LOCKED();
 	overlay->gamma = fGamma;
 	return VROverlayError_None;
 }
@@ -2892,7 +2892,7 @@ EVROverlayError BaseOverlay::GetOverlayGamma(VROverlayHandle_t ulOverlayHandle, 
 
 EVROverlayError BaseOverlay::SetOverlayVisibility(VROverlayHandle_t ulOverlayHandle, OOVR_VROverlayVisibility eOverlayVisibility)
 {
-	USEH();
+	USEH_LOCKED();
 	overlay->visibility = (int)eOverlayVisibility;
 	return VROverlayError_None;
 }
@@ -2919,7 +2919,7 @@ bool BaseOverlay::IsActiveSystemOverlay(VROverlayHandle_t ulOverlayHandle)
 
 EVROverlayError BaseOverlay::SetSystemOverlaySceneProcess(VROverlayHandle_t ulOverlayHandle, uint32_t unProcessId)
 {
-	USEH();
+	USEH_LOCKED();
 	overlay->systemOverlaySceneProcess = unProcessId;
 	return VROverlayError_None;
 }
@@ -3048,7 +3048,8 @@ EVROverlayError BaseOverlay::MoveGamepadFocusToNeighbor(EOverlayDirection eDirec
 }
 EVROverlayError BaseOverlay::SetOverlayDualAnalogTransform(VROverlayHandle_t ulOverlay, EDualAnalogWhich eWhich, const HmdVector2_t& vCenter, float fRadius)
 {
-	OverlayData* overlay = LiveOverlay(ulOverlay);
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	OverlayData* overlay = OverlayAt(ulOverlay);
 	if (!overlay)
 		return VROverlayError_InvalidHandle;
 	overlay->dualAnalog[(int)eWhich] = { vCenter, fRadius };
@@ -3940,7 +3941,7 @@ void BaseOverlay::CloseMessageOverlay()
 
 EVROverlayError BaseOverlay::SetOverlayPreCurvePitch(vr::VROverlayHandle_t ulOverlayHandle, float fRadians)
 {
-	USEH();
+	USEH_LOCKED();
 	overlay->preCurvePitch = fRadians;
 	return VROverlayError_None;
 }
