@@ -13,6 +13,8 @@ public:
 
 	bool ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTextureBounds_t* bounds, Image& out) override;
 
+	bool InvokeCubemap(const vr::Texture_t* faces, uint32_t maxWidth, XrSwapchainSubImage& subImage) override;
+
 protected:
 	bool CopyDepth(const vr::Texture_t* depth) override;
 
@@ -75,6 +77,12 @@ protected:
 		// The area drawn, from the image's origin
 		uint32_t width = 0, height = 0;
 	};
-	// Draws view over pass's area of swapchain image index (its render target view)
-	void DrawWithShader(ID3D11ShaderResourceView* view, uint32_t index, const ShaderPass& pass);
+	// Draws view over pass's area of swapchain image index (its render target view), through pixelShader (nullptr: the
+	// pass's own, ps_fs)
+	void DrawWithShader(ID3D11ShaderResourceView* view, uint32_t index, const ShaderPass& pass, ID3D11PixelShader* pixelShader = nullptr);
+	// InvokeCubemap's: the pixel shader, made at its first use (cubeShaderTried), and the faces copied into the slices
+	// of one texture it can read
+	ID3D11PixelShader* cube_pshader = nullptr;
+	bool cubeShaderTried = false;
+	ID3D11Texture2D* cubeFaces = nullptr;
 };

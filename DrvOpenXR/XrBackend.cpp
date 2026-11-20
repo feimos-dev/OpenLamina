@@ -1439,7 +1439,36 @@ bool XrBackend::SkyboxShown()
 
 int XrBackend::SetEquirectSkybox(const vr::Texture_t* textures, uint32_t count)
 {
-	// Six faces are read back and turned into one lat-long image first, without any lock: it takes a while
+	XrCompositionLayerEquirect2KHR layer{ XR_TYPE_COMPOSITION_LAYER_EQUIRECT2_KHR };
+	layer.space = xr_space_from_ref_space_type(BaseSystem::currentSpace);
+	layer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+	layer.pose = { { 0, 0, 0, 1 }, { 0, 0, 0 } };
+	layer.radius = 0; // a sphere at infinity
+	constexpr float pi = 3.14159265f;
+	layer.centralHorizontalAngle = 2 * pi;
+	layer.upperVerticalAngle = pi / 2;
+	layer.lowerVerticalAngle = -pi / 2;
+
+	// Six faces are drawn into one lat-long image on the GPU where the compositor has a pass for it (D3D11). The
+	// swapchain is refilled while no own frame uses it.
+	if (count == 6) {
+		std::lock_guard<std::mutex> owner(frameOwner);
+		std::lock_guard<std::mutex> lock(skyboxLock);
+		if (!skybox.cube)
+			skybox.cube = BaseCompositor::CreateCompositorAPI(&textures[0]);
+		XrSwapchainSubImage drawn{};
+		if (skybox.cube && skybox.cube->InvokeCubemap(textures, 2048, drawn)) {
+			layer.subImage = drawn;
+			skybox.layers[0] = layer;
+			skybox.layerCount = 1;
+			return 0;
+		}
+		// Not shown while it's joined on the CPU (the layer may name the pass's swapchain)
+		skybox.layerCount = 0;
+		skybox.cube.reset();
+	}
+
+	// Else they're read back and turned into one lat-long image first, without any lock: it takes a while
 	Image equirect;
 	if (count == 6) {
 		if (!skyboxReader)
@@ -1458,16 +1487,6 @@ int XrBackend::SetEquirectSkybox(const vr::Texture_t* textures, uint32_t count)
 		if (equirect.Empty())
 			return 1; // VRCompositorError_RequestFailed
 	}
-
-	XrCompositionLayerEquirect2KHR layer{ XR_TYPE_COMPOSITION_LAYER_EQUIRECT2_KHR };
-	layer.space = xr_space_from_ref_space_type(BaseSystem::currentSpace);
-	layer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-	layer.pose = { { 0, 0, 0, 1 }, { 0, 0, 0 } };
-	layer.radius = 0; // a sphere at infinity
-	constexpr float pi = 3.14159265f;
-	layer.centralHorizontalAngle = 2 * pi;
-	layer.upperVerticalAngle = pi / 2;
-	layer.lowerVerticalAngle = -pi / 2;
 
 	// The swapchains are refilled, and maybe remade, while no own frame uses them
 	std::lock_guard<std::mutex> owner(frameOwner);

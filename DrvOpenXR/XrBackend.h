@@ -237,7 +237,8 @@ private:
 	// next skybox, or let go of with the session. Under skyboxLock.
 	struct Skybox {
 		std::unique_ptr<Compositor> textures[2]; // lat-long textures, one per eye for a stereo pair
-		std::unique_ptr<CpuSwapchain> faces; // six faces, as one lat-long image
+		std::unique_ptr<CpuSwapchain> faces; // six faces, as one lat-long image joined on the CPU
+		std::unique_ptr<Compositor> cube; // six faces, as one lat-long image drawn on the GPU (InvokeCubemap)
 		XrCompositionLayerEquirect2KHR layers[2]{};
 		int layerCount = 0;
 	};

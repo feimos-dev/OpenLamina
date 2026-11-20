@@ -66,6 +66,55 @@ float4 ps_fs(psIn inputPS) : SV_TARGET
 	return c;
 })_";
 
+// InvokeCubemap's pass (vs_fs above draws the quad, with offset 0 and scale 1): each texel of the lat-long image
+// samples the cube face its direction points at, as CubeFacesToEquirect (Misc/Equirect.cpp) picks them. t0 holds the
+// faces as slices 0 to 5: front, back, left, right, top, bottom.
+static const char cube_shader_code[] = R"_(
+Texture2DArray faces : register(t0);
+
+SamplerState SampleType : register(s0);
+
+cbuffer ConstData : register(b0) {
+	float2 offset;
+	float2 scale;
+	float decodeSrgb;
+	float encodeSrgb;
+	float2 pad;
+};
+
+struct psIn {
+	float4 pos : SV_POSITION;
+	float2 tex : TEXCOORD0;
+};
+
+float4 ps_cube(psIn inputPS) : SV_TARGET
+{
+	// The direction (OpenXR axes: -Z forward, +Y up, +X right): longitude -pi to pi across, latitude pi/2 to -pi/2 down
+	const float pi = 3.14159265f;
+	float lon = inputPS.tex.x * 2.0f * pi - pi;
+	float lat = pi / 2.0f - inputPS.tex.y * pi;
+	float3 d = float3(cos(lat) * sin(lon), sin(lat), -cos(lat) * cos(lon));
+	float3 a = abs(d);
+	float face;
+	float2 uv;
+	if (a.z >= a.x && a.z >= a.y) {
+		uv = float2((d.z < 0.0f ? d.x : -d.x) / a.z, -d.y / a.z);
+		face = d.z < 0.0f ? 0.0f : 1.0f;
+	} else if (a.x >= a.y) {
+		uv = float2((d.x > 0.0f ? d.z : -d.z) / a.x, -d.y / a.x);
+		face = d.x > 0.0f ? 3.0f : 2.0f;
+	} else {
+		uv = float2(d.x / a.y, (d.y > 0.0f ? -d.z : d.z) / a.y);
+		face = d.y > 0.0f ? 4.0f : 5.0f;
+	}
+	float4 c = faces.Sample(SampleType, float3((uv + 1.0f) / 2.0f, face));
+	if (decodeSrgb > 0.5f)
+		c.rgb = c.rgb <= 0.04045f ? c.rgb / 12.92f : pow(abs((c.rgb + 0.055f) / 1.055f), 2.4f);
+	if (encodeSrgb > 0.5f)
+		c.rgb = c.rgb <= 0.0031308f ? c.rgb * 12.92f : 1.055f * pow(abs(c.rgb), 1.0f / 2.4f) - 0.055f;
+	return c;
+})_";
+
 ID3DBlob* d3d_compile_shader(const char* hlsl, const char* entrypoint, const char* target)
 {
 	DWORD flags = D3DCOMPILE_PACK_MATRIX_COLUMN_MAJOR | D3DCOMPILE_ENABLE_STRICTNESS | D3DCOMPILE_WARNINGS_ARE_ERRORS;
@@ -187,6 +236,10 @@ DX11Compositor::~DX11Compositor()
 
 	if (shaderSource)
 		shaderSource->Release();
+	if (cubeFaces)
+		cubeFaces->Release();
+	if (cube_pshader)
+		cube_pshader->Release();
 	if (constBuffer)
 		constBuffer->Release();
 	if (context1)
@@ -377,7 +430,7 @@ ID3D11Texture2D* DX11Compositor::ShaderSource(const D3D11_TEXTURE2D_DESC& of, DX
 	return shaderSource;
 }
 
-void DX11Compositor::DrawWithShader(ID3D11ShaderResourceView* view, uint32_t index, const ShaderPass& pass)
+void DX11Compositor::DrawWithShader(ID3D11ShaderResourceView* view, uint32_t index, const ShaderPass& pass, ID3D11PixelShader* pixelShader)
 {
 	ID3DDeviceContextState* appState = nullptr;
 	if (context1 && ownState)
@@ -470,7 +523,7 @@ void DX11Compositor::DrawWithShader(ID3D11ShaderResourceView* view, uint32_t ind
 	context->IASetInputLayout(nullptr);
 	context->PSSetShaderResources(0, 1, &view);
 	context->VSSetShader(fs_vshader, nullptr, 0);
-	context->PSSetShader(fs_pshader, nullptr, 0);
+	context->PSSetShader(pixelShader ? pixelShader : fs_pshader, nullptr, 0);
 	context->PSSetSamplers(0, 1, &quad_sampleState);
 	context->VSSetConstantBuffers(0, 1, &constBuffer);
 	context->PSSetConstantBuffers(0, 1, &constBuffer);
@@ -648,6 +701,123 @@ void DX11Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 
 	// Release the swapchain - OpenXR will use the last-released image in a swapchain
 	SwapchainCallFailed(xrReleaseSwapchainImage(chain, &releaseInfo), "xrReleaseSwapchainImage");
+}
+
+bool DX11Compositor::InvokeCubemap(const vr::Texture_t* faces, uint32_t maxWidth, XrSwapchainSubImage& subImage)
+{
+	if (!shadersUsable || !faces)
+		return false;
+	if (!cubeShaderTried) {
+		cubeShaderTried = true;
+		ID3DBlob* blob = d3d_compile_shader(cube_shader_code, "ps_cube", "ps_5_0");
+		if (blob && FAILED(device->CreatePixelShader(blob->GetBufferPointer(), blob->GetBufferSize(), nullptr, &cube_pshader)))
+			cube_pshader = nullptr;
+		if (blob)
+			blob->Release();
+		if (!cube_pshader)
+			OOVR_LOG("The D3D11 cube map pass couldn't be set up: cube faces are joined on the CPU");
+	}
+	if (!cube_pshader)
+		return false;
+
+	// Six textures of this device, of one size and format
+	ID3D11Texture2D* textures[6] = {};
+	D3D11_TEXTURE2D_DESC desc{};
+	for (int i = 0; i < 6; i++) {
+		if (faces[i].eType != vr::TextureType_DirectX || !faces[i].handle)
+			return false;
+		textures[i] = (ID3D11Texture2D*)faces[i].handle;
+		ComPtr<ID3D11Device> faceDevice;
+		textures[i]->GetDevice(&faceDevice);
+		D3D11_TEXTURE2D_DESC faceDesc;
+		textures[i]->GetDesc(&faceDesc);
+		if (faceDevice.Get() != device || (i > 0 && (faceDesc.Width != desc.Width || faceDesc.Height != desc.Height || faceDesc.Format != desc.Format))) {
+			OOVR_LOG_ONCE("Cube faces of other devices, sizes or formats: joined on the CPU");
+			return false;
+		}
+		desc = faceDesc;
+	}
+	if (!desc.Width || !desc.Height)
+		return false;
+	const uint32_t width = std::min<uint32_t>(maxWidth, desc.Width * 4) & ~1u;
+	const uint32_t height = width / 2;
+	if (width < 2)
+		return false;
+
+	// The faces as the slices of one texture: views read it, so a typeless format takes its family member of the
+	// colour space's sRGB-ness
+	const bool wantSrgb = WantsSrgb(GfxApiKind::D3D11, desc.Format, faces[0].eColorSpace);
+	const DXGI_FORMAT typedFormat = TypedDxgi(desc.Format) != desc.Format ? (DXGI_FORMAT)FormatWithSrgb(GfxApiKind::D3D11, desc.Format, wantSrgb) : desc.Format;
+	if (cubeFaces) {
+		D3D11_TEXTURE2D_DESC have;
+		cubeFaces->GetDesc(&have);
+		if (have.Width != desc.Width || have.Height != desc.Height || have.Format != typedFormat) {
+			cubeFaces->Release();
+			cubeFaces = nullptr;
+		}
+	}
+	if (!cubeFaces) {
+		D3D11_TEXTURE2D_DESC made = desc;
+		made.Format = typedFormat;
+		made.SampleDesc = { 1, 0 };
+		made.ArraySize = 6;
+		made.MipLevels = 1;
+		made.Usage = D3D11_USAGE_DEFAULT;
+		made.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+		made.CPUAccessFlags = 0;
+		made.MiscFlags = 0;
+		if (FAILED(device->CreateTexture2D(&made, nullptr, &cubeFaces))) {
+			cubeFaces = nullptr;
+			OOVR_LOG_ONCE("No texture for the cube faces' pass: joined on the CPU");
+			return false;
+		}
+	}
+
+	CheckCreateSwapChain(&faces[0], width, height, false);
+	if (!chain || XR_FAILED(lastResult))
+		return false;
+	uint32_t index = 0;
+	if (!AcquireAndWait((uint32_t)imagesHandles.size(), index))
+		return false;
+	XrSwapchainImageReleaseInfo releaseInfo{ XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
+	ID3D11ShaderResourceView* view = nullptr;
+	D3D11_SHADER_RESOURCE_VIEW_DESC srvDesc = {};
+	srvDesc.Format = typedFormat;
+	srvDesc.ViewDimension = D3D11_SRV_DIMENSION_TEXTURE2DARRAY;
+	srvDesc.Texture2DArray.MostDetailedMip = 0;
+	srvDesc.Texture2DArray.MipLevels = 1;
+	srvDesc.Texture2DArray.FirstArraySlice = 0;
+	srvDesc.Texture2DArray.ArraySize = 6;
+	if (index >= swapchain_rtvs.size() || !swapchain_rtvs[index] || FAILED(device->CreateShaderResourceView(cubeFaces, &srvDesc, &view)) || !view) {
+		// Nothing written: the image goes back as it was
+		xrReleaseSwapchainImage(chain, &releaseInfo);
+		OOVR_LOG_ONCE("The cube faces' pass has no view or target: joined on the CPU");
+		return false;
+	}
+	for (UINT i = 0; i < 6; i++) {
+		const UINT slice = D3D11CalcSubresource(0, i, 1);
+		if (desc.SampleDesc.Count > 1)
+			context->ResolveSubresource(cubeFaces, slice, textures[i], 0, typedFormat);
+		else
+			context->CopySubresourceRegion(cubeFaces, slice, 0, 0, 0, textures[i], 0, nullptr);
+	}
+	ShaderPass pass;
+	pass.width = width;
+	pass.height = height;
+	const bool viewSrgb = FormatIsSrgb(GfxApiKind::D3D11, typedFormat);
+	const bool targetSrgb = FormatIsSrgb(GfxApiKind::D3D11, createInfo.format);
+	pass.decodeSrgb = wantSrgb && !viewSrgb && targetSrgb;
+	pass.encodeSrgb = wantSrgb && viewSrgb && !targetSrgb;
+	DrawWithShader(view, index, pass, cube_pshader);
+	view->Release();
+	if (SwapchainCallFailed(xrReleaseSwapchainImage(chain, &releaseInfo), "xrReleaseSwapchainImage"))
+		return false;
+
+	subImage = {};
+	subImage.swapchain = chain;
+	subImage.imageRect = { { 0, 0 }, { (int32_t)width, (int32_t)height } };
+	subImage.imageArrayIndex = 0;
+	return true;
 }
 
 bool DX11Compositor::CopyDepth(const vr::Texture_t* depth)
