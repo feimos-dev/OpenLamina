@@ -982,6 +982,8 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 #if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX11)
 	vr::Texture_t copied;
 	vr::VRTextureBounds_t copiedBounds;
+	// The copy holds the slice SubmitWithArrayIndex named, as a texture of one slice
+	std::optional<SubmitArraySlice> copiedSlice;
 	if (gfxInterop && texture->eType == gfxInterop->Type()) {
 		const GfxInterop::Copied copy = gfxInterop->CopyIn(texture, submitFlags, (int)eye);
 		if (!copy.texture) {
@@ -1001,6 +1003,7 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 		}
 		copied = { copy.texture, vr::TextureType_DirectX, texture->eColorSpace };
 		texture = &copied;
+		copiedSlice.emplace(std::nullopt);
 		// A D3D11 compositor for the interop's texture
 		if (!compositors[eye])
 			compositors[eye] = std::make_unique<DX11Compositor>(copy.texture);

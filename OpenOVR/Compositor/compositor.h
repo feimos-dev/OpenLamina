@@ -46,10 +46,11 @@ inline vr::VRTextureBounds_t Bounds(const vr::VRTextureBounds_t* bounds)
 // Mirrors an image left to right and/or top to bottom
 void FlipImage(Image& image, bool flipX, bool flipY);
 
-// SubmitWithArrayIndex's slice, for the Invoke calls made on this thread while it's in scope
+// SubmitWithArrayIndex's slice, for the Invoke calls made on this thread while it's in scope (none: a texture of one
+// slice, such as the interop's copy of the slice)
 class SubmitArraySlice {
 public:
-	explicit SubmitArraySlice(uint32_t slice);
+	explicit SubmitArraySlice(std::optional<uint32_t> slice);
 	~SubmitArraySlice();
 	static std::optional<uint32_t> Current();
 
