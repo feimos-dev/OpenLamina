@@ -1454,7 +1454,7 @@ int XrBackend::SetEquirectSkybox(const vr::Texture_t* textures, uint32_t count)
 
 	// Six faces are drawn into one lat-long image on the GPU where the compositor has a pass for it (D3D11). The
 	// swapchain is refilled while no own frame uses it.
-	if (count == 6) {
+	if (count == 6 && textures[0].eType == vr::TextureType_DirectX) {
 		std::lock_guard<std::mutex> owner(frameOwner);
 		std::lock_guard<std::mutex> lock(skyboxLock);
 		if (!skybox.cube)

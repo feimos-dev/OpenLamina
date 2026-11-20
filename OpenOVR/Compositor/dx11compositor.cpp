@@ -67,7 +67,8 @@ float4 ps_fs(psIn inputPS) : SV_TARGET
 })_";
 
 // InvokeCubemap's pass (vs_fs above draws the quad, with offset 0 and scale 1): each texel of the lat-long image
-// samples the cube face its direction points at, as CubeFacesToEquirect (Misc/Equirect.cpp) picks them. t0 holds the
+// samples the cube face its direction points at, as CubeFacesToEquirect (Misc/Equirect.cpp) picks them, filtered
+// linearly where the CPU join takes the nearest texel. t0 holds the
 // faces as slices 0 to 5: front, back, left, right, top, bottom.
 static const char cube_shader_code[] = R"_(
 Texture2DArray faces : register(t0);
@@ -1032,9 +1033,22 @@ void DX11Compositor::MirrorUpdate(const vr::Texture_t* texture, const vr::VRText
 			return;
 		}
 		ID3D11Texture2D* rowsInto = to;
-		ComPtr<ID3D11Texture2D> between;
+		// Kept for the next frame of the same size, format and device, as `resolved` below
+		static std::mutex betweenLock;
+		static ComPtr<ID3D11Texture2D>& between = *new ComPtr<ID3D11Texture2D>(); // never released at exit
+		std::unique_lock<std::mutex> betweenGuard(betweenLock, std::defer_lock);
 		if (area.flipX && area.flipY) {
-			between.Attach(MakeMirrorTexture(device.Get(), width, height, made.Format));
+			betweenGuard.lock();
+			D3D11_TEXTURE2D_DESC have{};
+			ComPtr<ID3D11Device> haveDevice;
+			if (between) {
+				between->GetDesc(&have);
+				between->GetDevice(&haveDevice);
+			}
+			if (!between || have.Width != width || have.Height != height || have.Format != made.Format || haveDevice != device) {
+				between.Reset();
+				between.Attach(MakeMirrorTexture(device.Get(), width, height, made.Format));
+			}
 			if (!between) {
 				OOVR_LOG_ONCE("No texture to turn a mirror frame round in: frame not copied");
 				return;
