@@ -428,7 +428,7 @@ uint32_t PidOf(const Json::Value& v)
 
 bool BaseOverlay::IsLiveOverlay(const OverlayData* overlay)
 {
-	// The overlays are changed under the layers' lock, which is never held while waiting for the session's
+	// The overlays are changed under the layers' lock, taken here only for the check
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	return overlay && validOverlays.count(const_cast<OverlayData*>(overlay)) && overlays.count(overlay->key);
 }
@@ -1754,8 +1754,11 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 				overlay.compositionLayer.quad.subImage = overlay.raw && overlay.raw->Live() ? overlay.raw->SubImage() : XrSwapchainSubImage{};
 			}
 
-			// A texture set before the graphics were configured is put into a swapchain now, by the game's thread
-			if (mayUpload && overlay.texture.handle && CurrentSessionKind() != SessionKind::Overlay
+			// A texture set before the graphics were configured is put into a swapchain now, by the game's thread. Only a
+			// D3D11 texture (referenced) or an OpenGL one (a name): a Vulkan or D3D12 handle points at the game's struct,
+			// gone by now, and waits for the game's next SetOverlayTexture
+			const bool storedUsable = overlay.texture.eType == TextureType_DirectX || overlay.texture.eType == TextureType_OpenGL;
+			if (mayUpload && overlay.texture.handle && storedUsable && CurrentSessionKind() != SessionKind::Overlay
 			    && !overlay.compositor.lock() && BackendManager::Instance().IsGraphicsConfigured())
 				showStoredTexture(overlay);
 
