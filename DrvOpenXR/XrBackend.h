@@ -16,12 +16,12 @@
 #include "XrHMD.h"
 
 #include <atomic>
-#include <thread>
 #include <cmath>
 #include <functional>
 #include <memory>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 #include <mutex>
 
@@ -176,7 +176,6 @@ public:
 	 */
 	void StopOwnFrames(bool forGood = false);
 
-	/** Whether OpenLamina runs frames of its own on this session (RunOwnFramesWhile can show something) */
 	/** Whether own frames can run on the calling thread now: there are some, and on a session whose frames run only
 	 * inside the game's calls, this is its render thread (OpenGL: the session's context is current here; Vulkan: the
 	 * thread that last waited for a frame) */
@@ -207,7 +206,9 @@ private:
 	XrSession playAreaSession = XR_NULL_HANDLE;
 	bool playAreaKnown = false;
 	XrExtent2Df playAreaRect{};
-	void ForgetPlayArea();
+	// Until the stage's change takes effect (its event's changeTime), the bounds are asked each time, not kept
+	XrTime playAreaChangeTime = 0;
+	void ForgetPlayArea(XrTime changeTime = 0);
 	// Replaced when a hand's interaction profile changes, while other threads read input: copied and replaced only
 	// under hands_mutex (Hand), which is held for nothing else
 	std::shared_ptr<XrController> hand_left;
@@ -263,10 +264,12 @@ private:
 	// to, ended for it)
 	std::atomic<bool> repeatLastFrame{ false };
 	// An OpenGL session's context, which its own frames (run only inside the game's calls) need current; else null
-	const void* ownFramesGlContext = nullptr;
+	std::atomic<const void*> ownFramesGlContext{ nullptr };
+	// The game's OpenGL context on Linux, current when its session's binding was made
+	const void* gameGlContext = nullptr;
 	// A Vulkan session's own frames run inside the game's calls on the thread it renders on (the last to wait for a
 	// frame), where OpenVR may use its queue
-	bool ownFramesInCalls = false;
+	std::atomic<bool> ownFramesInCalls{ false };
 	std::atomic<std::thread::id> gameFrameThread{};
 	bool SkyboxShown();
 	// The layers of the frame being ended, under frameOwner

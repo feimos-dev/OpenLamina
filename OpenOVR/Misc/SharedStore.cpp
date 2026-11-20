@@ -521,7 +521,7 @@ std::vector<std::pair<uint64_t, std::function<void(Json::Value&)>>> SharedStore:
 void SharedStore::WriterLoop()
 {
 	std::unique_lock<std::mutex> guard(later->m);
-	int failures = 0;
+	std::map<StoreDoc, int> failures; // tries in a row that wrote nothing, per document
 	while (true) {
 		later->cv.wait(guard, [&] { return later->stop || !later->queue.empty(); });
 		if (later->stop)
@@ -535,16 +535,19 @@ void SharedStore::WriterLoop()
 		later->writing = false;
 		const bool left = std::any_of(later->queue.begin(), later->queue.end(), [&](const Later::Edit& e) { return e.doc == doc; });
 		if (written || !left) {
-			failures = 0;
-		} else if (++failures >= 5) {
+			failures.erase(doc);
+		} else if (++failures[doc] >= 5) {
 			// The store's lock not had for seconds on end (or the document can't be written): these edits are dropped
 			OOVR_LOGF("Store document %d: edits from the frame dropped, it couldn't be written", (int)doc);
 			auto& q = later->queue;
 			q.erase(std::remove_if(q.begin(), q.end(), [&](const Later::Edit& e) { return e.doc == doc; }), q.end());
-			failures = 0;
+			failures.erase(doc);
 		} else {
-			// Tried again shortly, or when there's something new
-			later->cv.wait_for(guard, std::chrono::milliseconds(100), [&] { return later->stop; });
+			// Tried again shortly, after the other documents' edits (moved behind them)
+			auto& q = later->queue;
+			std::stable_partition(q.begin(), q.end(), [&](const Later::Edit& e) { return e.doc != doc; });
+			if (q.front().doc == doc)
+				later->cv.wait_for(guard, std::chrono::milliseconds(100), [&] { return later->stop; });
 		}
 		later->cv.notify_all();
 	}

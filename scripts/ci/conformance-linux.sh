@@ -111,6 +111,7 @@ run --cases message-overlay --script tests/conformance/scripts/message_box_exit.
 run --shipped-defaults --cases message-overlay --script tests/conformance/scripts/message_box.json --expect tests/conformance/expect/message_overlay.json --out "$out"/defaults-message-overlay
 # A game that calls WaitGetPoses without Submit: its frames are ended for it inside the call
 run --cases wait-without-submit --ini tests/conformance/ini/own_frames.ini --expect tests/conformance/expect/wait_without_submit.json --out "$out"/wait-without-submit
+run --cases gfx-vk-wait-without-submit,gfx-gl-wait-without-submit --script tests/conformance/scripts/gfx_all_apis.json --ini tests/conformance/ini/own_frames.ini --expect tests/conformance/expect/gfx_wait_without_submit.json --out "$out"/gfx-wait-without-submit
 # The keyboard, typed on with the laser
 run --cases keyboard --script tests/conformance/scripts/keyboard.json --ini tests/conformance/ini/keyboard_us.ini --expect tests/conformance/expect/keyboard.json --out "$out"/keyboard
 # Frames and overlays from the Vulkan and OpenGL games, as the stand-in reads them back (the Direct3D cases skip)

@@ -74,7 +74,7 @@ std::string HmdManufacturer(uint32_t vendorId, const std::string& runtimeName)
 	// Else the runtime's name, as far as its first word ("Monado" of "Monado(XRT) by Collabora et al ...")
 	std::string name;
 	for (char c : runtimeName) {
-		if (isspace((unsigned char)c) || c == '(' || c == ':')
+		if (isspace((unsigned char)c) || c == '(' || c == ':' || c == '/')
 			break;
 		name += c;
 	}

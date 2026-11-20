@@ -150,6 +150,47 @@ void Basic(CaseContext& c, GfxKind kind, int64_t format, bool dump = false)
 	}
 }
 
+// A game of the API that submits a few frames, then calls WaitGetPoses without Submit: those frames are ended for it
+// inside the call (its last frame again), on the thread it renders on (and, for OpenGL, with its context current)
+void WaitWithoutSubmit(CaseContext& c, GfxKind kind, int64_t format)
+{
+	std::string why;
+	std::unique_ptr<GfxApi> gfx = GfxApi::Create(kind, &why);
+	if (!gfx) {
+		c.Record("frames", Skipped(why));
+		return;
+	}
+	GfxTexture eye = gfx->Pattern(256, 256, format, 0);
+	gfx->Flush();
+	if (!eye.Made() || c.core->Init(vr::VRApplication_Scene, nullptr) != vr::VRInitError_None) {
+		c.Record("Init failed");
+		return;
+	}
+	vr::EVRInitError le = vr::VRInitError_None;
+	auto* comp = (vr::IVRCompositor_029::IVRCompositor*)c.core->GetGenericInterface("IVRCompositor_029", &le);
+	if (!comp) {
+		c.Record("no compositor");
+		c.core->Cleanup();
+		return;
+	}
+	vr::VRTextureBounds_t bounds{ 0, 0, 1, 1 };
+	vr::TrackedDevicePose_t poses[16];
+	for (int frame = 1; frame <= 5; frame++) {
+		comp->WaitGetPoses(poses, 16, nullptr, 0);
+		comp->Submit(vr::Eye_Left, eye.Texture(), &bounds, vr::Submit_Default);
+		comp->Submit(vr::Eye_Right, eye.Texture(), &bounds, vr::Submit_Default);
+	}
+	for (int frame = 1; frame <= 20; frame++)
+		comp->WaitGetPoses(poses, 16, nullptr, 0);
+	c.core->Cleanup();
+	gfx->Flush();
+	Json::Value dump = ReadStandInDump();
+	Json::Value r;
+	r["frames_ended_at_least_22"] = dump["frames_ended"].asInt64() >= 22;
+	r["frame_order_errors"] = dump["frame_order_errors"];
+	c.Record("frames", r);
+}
+
 // The test pattern of eye 0, w x h, as RGBA8 bytes, rows top to bottom
 std::vector<uint8_t> PatternBytes(uint32_t w, uint32_t h)
 {
@@ -823,6 +864,8 @@ const std::map<std::string, CaseFn>& conformance::GfxCases()
 		{ "gfx-vk-basic", [](CaseContext& c) { Basic(c, GfxKind::Vulkan, kVkRGBA8Srgb); } },
 		{ "gfx-gl-basic", [](CaseContext& c) { Basic(c, GfxKind::OpenGL, kGlSRGB8Alpha8); } },
 		{ "gfx-vk-dump-images", [](CaseContext& c) { Basic(c, GfxKind::Vulkan, kVkRGBA8Srgb, true); } },
+		{ "gfx-vk-wait-without-submit", [](CaseContext& c) { WaitWithoutSubmit(c, GfxKind::Vulkan, kVkRGBA8Srgb); } },
+		{ "gfx-gl-wait-without-submit", [](CaseContext& c) { WaitWithoutSubmit(c, GfxKind::OpenGL, kGlSRGB8Alpha8); } },
 		{ "gfx-gl-dump-images", [](CaseContext& c) { Basic(c, GfxKind::OpenGL, kGlSRGB8Alpha8, true); } },
 		{ "gfx-d3d11-formats", [](CaseContext& c) { Formats(c, GfxKind::D3D11, { { "rgba16f", 10 }, { "r11g11b10f", 26 }, { "rgb10a2", 24 }, { "bgrx8", 88 } }); } },
 		{ "gfx-d3d12-formats", [](CaseContext& c) { Formats(c, GfxKind::D3D12, { { "rgba16f", 10 }, { "r11g11b10f", 26 }, { "rgb10a2", 24 }, { "bgrx8", 88 } }); } },

@@ -43,6 +43,7 @@ TEST_CASE("Unknown_system_reports_itself")
 	CHECK(HmdManufacturer(0x045e, "Windows Mixed Reality Runtime") == "WindowsMR");
 	CHECK(HmdManufacturer(42, "Monado(XRT) by Collabora et al 'v21.0.0'") == "Monado");
 	CHECK(HmdManufacturer(0, "").empty());
+	CHECK(HmdManufacturer(1, "SteamVR/OpenXR") == "SteamVR");
 	hmd = HmdIdentity("A headset nobody has heard of");
 	CHECK(hmd.manufacturer == "Oculus"); // nothing to go by: the generic answer
 	CHECK(hmd.serial == "A headset nobody has heard of-head");

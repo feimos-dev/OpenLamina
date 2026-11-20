@@ -748,6 +748,7 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 				None,
 			};
 			// clang-format on
+			gameGlContext = glXGetCurrentContext(); // the game's, which own frames need current: the session's is shared with it
 			binding.glxContext = pfn_glXCreateContextAttribsARB(binding.xDisplay, binding.glxFBConfig, glXGetCurrentContext(), true, contextAttribs);
 			if (!binding.glxContext)
 				return giveUp("glXCreateContextAttribsARB failed");
@@ -1941,9 +1942,11 @@ bool XrBackend::GetPlayAreaPoints(vr::HmdVector3_t* points, int* count)
 			XrResult res = xrGetReferenceSpaceBoundsRect(xr_session.get(), XR_REFERENCE_SPACE_TYPE_STAGE, &asked);
 			playAreaKnown = XR_SUCCEEDED(res) && res != XR_SPACE_BOUNDS_UNAVAILABLE && asked.width > 0 && asked.height > 0;
 			playAreaRect = playAreaKnown ? asked : XrExtent2Df{};
-			// A failed call is asked again next time; an answer (bounds, or none) is kept
-			if (XR_SUCCEEDED(res))
+			// A failed call is asked again next time; an answer (bounds, or none) is kept once the stage's change is in
+			if (XR_SUCCEEDED(res) && (!playAreaChangeTime || xr_time_now() >= playAreaChangeTime)) {
 				playAreaSession = xr_session.get();
+				playAreaChangeTime = 0;
+			}
 		}
 		if (!playAreaKnown)
 			return false; // no play area (set up, or at all)
@@ -1964,10 +1967,11 @@ bool XrBackend::GetPlayAreaPoints(vr::HmdVector3_t* points, int* count)
 
 	return true;
 }
-void XrBackend::ForgetPlayArea()
+void XrBackend::ForgetPlayArea(XrTime changeTime)
 {
 	std::lock_guard<std::mutex> lock(playAreaLock);
 	playAreaSession = XR_NULL_HANDLE;
+	playAreaChangeTime = changeTime;
 }
 
 /** Determine whether the bounds are showing right now **/
@@ -2086,7 +2090,7 @@ void XrBackend::PumpEvents()
 			switch ((int)change->referenceSpaceType) {
 			case (int)XR_REFERENCE_SPACE_TYPE_STAGE:
 			case (int)OC_XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR:
-				ForgetPlayArea(); // the stage's bounds may have changed with it
+				ForgetPlayArea(change->changeTime); // the stage's bounds may change with it
 				OcPostEvent(VREvent_StandingZeroPoseReset, k_unTrackedDeviceIndex_Hmd, VREvent_Data_t{}, false);
 				OcPostEvent(VREvent_ChaperoneUniverseHasChanged, k_unTrackedDeviceIndexInvalid, VREvent_Data_t{}, false);
 				break;
@@ -2347,7 +2351,7 @@ static bool DeviceReadyForOwnFrames(const void* binding)
 // A Vulkan queue or an OpenGL context is the game's own: own frames on its session run only inside the game's calls
 // to OpenLamina (where OpenVR may use the queue, and on the thread where the context is current), with no thread of
 // their own. True for those, with the OpenGL context to look for; false, logged once, for anything else.
-static bool OwnFramesInCallsOnly(const void* binding, const void** glContext)
+static bool OwnFramesInCallsOnly(const void* binding, const void* gameGlContext, const void** glContext)
 {
 	*glContext = nullptr;
 	const auto* header = (const XrBaseInStructure*)binding;
@@ -2362,7 +2366,8 @@ static bool OwnFramesInCallsOnly(const void* binding, const void** glContext)
 		return *glContext != nullptr;
 #elif defined(SUPPORT_GL) && !defined(ANDROID)
 	case XR_TYPE_GRAPHICS_BINDING_OPENGL_XLIB_KHR:
-		*glContext = (const void*)((const XrGraphicsBindingOpenGLXlibKHR*)binding)->glxContext;
+		// The game's context, not the session's (a context of OpenLamina's shared with it)
+		*glContext = gameGlContext;
 		return *glContext != nullptr;
 #endif
 	default:
@@ -2424,7 +2429,7 @@ void XrBackend::OnSessionCreated()
 	OwnFrameLoop::Mode mode = OwnFrameLoop::Mode::WhenAppIdle;
 	if (!DeviceReadyForOwnFrames(binding)) {
 		const void* glContext = nullptr;
-		if (!OwnFramesInCallsOnly(binding, &glContext))
+		if (!OwnFramesInCallsOnly(binding, gameGlContext, &glContext))
 			return;
 		mode = OwnFrameLoop::Mode::InCallsOnly;
 		ownFramesGlContext = glContext;
