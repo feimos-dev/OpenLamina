@@ -2361,6 +2361,11 @@ void XrBackend::OnSessionCreated()
 		    }
 		    if (layers.empty() && haveLastProjection)
 			    layers.push_back((const XrCompositionLayerBaseHeader*)&lastProjection);
+		    // The fade over the scene, as on the game's frames (a game that stalls in a fade to black stays black)
+		    if (!layers.empty()) {
+			    if (XrCompositionLayerBaseHeader* fade = BuildFadeLayer())
+				    layers.push_back(fade);
+		    }
 		    BaseOverlay* overlay = GetUnsafeBaseOverlay();
 		    if (!overlay)
 			    return;
@@ -2375,7 +2380,8 @@ void XrBackend::OnSessionCreated()
 	    },
 	    [this] {
 		    BaseOverlay* overlay = GetUnsafeBaseOverlay();
-		    return SkyboxShown() || (overlay && overlay->_AnyVisible());
+		    return SkyboxShown() || (overlay && overlay->_AnyVisible())
+		        || FadeVisible(CompositorFades::Get().ColourAt(CompositorClockSeconds(), false));
 	    });
 }
 
