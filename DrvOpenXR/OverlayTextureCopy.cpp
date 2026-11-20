@@ -501,17 +501,21 @@ ID3D11Texture2D* OverlayTextureCopy::CopyIn(const vr::Texture_t* tex, const vr::
 		return impl->FromD3D12((const vr::D3D12TextureData_t*)tex->handle, why);
 #endif
 #ifdef SUPPORT_GL
-	case vr::TextureType_OpenGL:
+	case vr::TextureType_OpenGL: {
 		if (!impl->gl)
 			impl->gl = GfxInterop::ForGL(device);
 		if (!impl->gl) {
 			*why = "the program's OpenGL can't share textures with D3D11 (WGL_NV_DX_interop2)";
 			return nullptr;
 		}
-		if (ID3D11Texture2D* copied = impl->gl->CopyIn(tex, bounds))
-			return copied;
-		*why = "the OpenGL texture couldn't be copied";
+		// An overlay's texture: its first layer, as Submit_Default names it
+		const GfxInterop::Copied copied = impl->gl->CopyIn(tex, vr::Submit_Default, 0);
+		// A copy left in OpenGL's row order (a multisampled texture) isn't turned round here: not used
+		if (copied.texture && !copied.upsideDown)
+			return copied.texture;
+		*why = copied.upsideDown ? "the OpenGL texture is multisampled, which can't be copied upright" : "the OpenGL texture couldn't be copied";
 		return nullptr;
+	}
 #endif
 #ifdef SUPPORT_VK
 	case vr::TextureType_Vulkan: {
@@ -525,9 +529,12 @@ ID3D11Texture2D* OverlayTextureCopy::CopyIn(const vr::Texture_t* tex, const vr::
 			*why = "the program's Vulkan device can't share textures with D3D11 (VK_KHR_external_memory_win32, the runtime's adapter)";
 			return nullptr;
 		}
-		if (ID3D11Texture2D* copied = impl->vk->CopyIn(tex, bounds))
-			return copied;
-		*why = "the Vulkan texture couldn't be copied";
+		// An overlay's texture: its first layer, as Submit_Default names it
+		const GfxInterop::Copied copied = impl->vk->CopyIn(tex, vr::Submit_Default, 0);
+		// A copy left in OpenGL's row order (a multisampled texture) isn't turned round here: not used
+		if (copied.texture && !copied.upsideDown)
+			return copied.texture;
+		*why = copied.upsideDown ? "the Vulkan texture is multisampled, which can't be copied upright" : "the Vulkan texture couldn't be copied";
 		return nullptr;
 	}
 #endif
