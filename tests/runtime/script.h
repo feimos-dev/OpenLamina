@@ -3,6 +3,8 @@
 //
 // The script is JSON (comments allowed); every key is optional:
 //   "system_name": "...", "extensions": ["XR_KHR_D3D11_enable", ...], "view_size": [w, h], "fov_deg": 45,
+//               (on Linux the D3D extensions are left out, a script left with no graphics API gets the default one,
+//               and XR_KHR_win32_convert_performance_counter_time is XR_KHR_convert_timespec_time),
 //   "ipd": 0.063, "display_hz": 90, "stage_bounds": [width, depth],
 //   "events":   [{ "frame": 60, "type": "session_state", "state": "LOSS_PENDING" }]
 //               (or { "frame": 10, "type": "refresh_rate", "rate": 120 }: the display changes to that rate, announced
@@ -95,7 +97,12 @@ struct ScriptIpd {
 
 struct Script {
 	std::string systemName = "OpenComposite test runtime";
+	// Without a script: the API OpenLamina makes its own session on (D3D11 on Windows, Vulkan elsewhere)
+#ifdef _WIN32
 	std::set<std::string> extensions = { "XR_KHR_D3D11_enable" };
+#else
+	std::set<std::string> extensions = { "XR_KHR_vulkan_enable" };
+#endif
 	uint32_t viewWidth = 1920, viewHeight = 1920;
 	float fovDeg = 45;
 	float ipd = 0.063f;

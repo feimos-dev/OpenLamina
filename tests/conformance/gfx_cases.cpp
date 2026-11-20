@@ -44,9 +44,15 @@ std::unique_ptr<GfxApi> GfxApi::Create(GfxKind kind, std::string* whyNot)
 	*whyNot = "unknown graphics API";
 	return nullptr;
 #else
-	(void)kind;
-	*whyNot = "the frame cases' graphics are Windows only";
-	return nullptr;
+	switch (kind) {
+	case GfxKind::Vulkan:
+		return MakeVkGfx(whyNot);
+	case GfxKind::OpenGL:
+		return MakeGLGfx(whyNot);
+	default:
+		*whyNot = "Direct3D is Windows only";
+		return nullptr;
+	}
 #endif
 }
 

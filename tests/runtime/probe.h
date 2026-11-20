@@ -20,8 +20,10 @@ struct SwapchainImage {
 	uint32_t index = 0;
 };
 
+#ifdef _WIN32
 // The layout of a DXGI format's texels (D3D11 and D3D12)
 PixelLayout LayoutOfDxgi(int64_t format);
+#endif
 
 // Reads the samples of rect in layer arrayIndex of the image, converted to RGBA8, through the session's API (each
 // API's staging path, RtGfx::read; a 32-bit float depth image's value in every channel). False when it can't be read
