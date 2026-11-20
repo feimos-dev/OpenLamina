@@ -282,6 +282,7 @@ void BaseApplications::SetSceneProcess(SharedStore& store, bool running)
 {
 	uint32_t pid = oc_current_pid();
 	std::string key = running ? CurrentProcessAppKey(store) : std::string();
+	const bool hasDashboard = DashboardButtonFromSetting(oovr_global_configuration.DashboardButton()) != Dashboard::Button::Off;
 	bool changed = false;
 	uint32_t oldPid = 0;
 	// The transition this program was waited on for: it became the new scene application, or was asked to quit
@@ -301,7 +302,7 @@ void BaseApplications::SetSceneProcess(SharedStore& store, bool running)
 			// Whether its lasers reach other programs' overlays (laserMouse): they then don't point themselves
 			scene["points"] = oovr_global_configuration.LaserMouse();
 			// Whether it has a dashboard to show other programs' dashboard overlays in
-			scene["dashboard"] = DashboardButtonFromSetting(oovr_global_configuration.DashboardButton()) != Dashboard::Button::Off;
+			scene["dashboard"] = hasDashboard;
 			scene["app_key"] = key;
 			scene["since_ms"] = (Json::UInt64)NowMs();
 			if (t.state != VRApplicationTransition_None && t.appKey == key)
@@ -356,7 +357,7 @@ void BaseApplications::SetSceneProcess(SharedStore& store, bool running)
 	}
 	// A new scene application's session starts the dashboard overlays flagged to start with the dashboard, where it
 	// has one
-	if (running && changed && DashboardButtonFromSetting(oovr_global_configuration.DashboardButton()) != Dashboard::Button::Off) {
+	if (running && changed && hasDashboard) {
 		BaseApplications apps(store);
 		StartAutolaunchOverlays(apps);
 	}
@@ -519,9 +520,9 @@ EVRApplicationError BaseApplications::AskSceneApplicationToQuit(const std::strin
 		vr::VREvent_Data_t data{};
 		data.process.pid = scenePid;
 		if (!OcPostEventTo(store, scenePid, vr::VREvent_Quit, vr::k_unTrackedDeviceIndexInvalid, data)) {
-			// Not asked after all: nothing to wait for
+			// Not asked after all: nothing to wait for (unless another program has asked since)
 			store.Update(StoreDoc::Scene, [&](Json::Value& doc) {
-				if (doc.isObject())
+				if (doc.isObject() && PidOf(doc["transition"]["old_pid"]) == scenePid && StringOr(doc["transition"]["app_key"]) == appKey)
 					doc.removeMember("transition");
 			});
 			return VRApplicationError_IPCFailed;

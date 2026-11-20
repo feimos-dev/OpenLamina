@@ -282,7 +282,7 @@ TEST_CASE("Each_hand_is_a_mouse_of_its_own_on_a_multi_cursor_overlay")
 		CHECK(e.handle == 7);
 }
 
-TEST_CASE("A_plain_overlay_still_has_one_mouse")
+TEST_CASE("A_plain_overlay_has_one_mouse")
 {
 	LaserMouse mouse;
 	std::vector<PointerTarget> targets = { Square(7, 0, 0, -2) };
