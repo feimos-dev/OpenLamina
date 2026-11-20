@@ -64,6 +64,16 @@ public:
 	 * format (which is read but never written), or the lock wasn't had in time */
 	bool Update(StoreDoc doc, const std::function<void(Json::Value& data)>& edit, Wait wait = Wait::UpToTwoSeconds);
 
+	/** Update from the game's frame: the edit is made on the process's writer thread (one per store), so the frame
+	 * never waits for the store's lock or its file. A later edit with the same non-empty key replaces one not yet
+	 * made (only the last of them is made); edits without a key are all made, in order. Reads in this process see
+	 * the edits not yet made, and an Update of the document makes them first. The edit is kept and called later,
+	 * maybe more than once (each read before it's made): it captures by value. */
+	void UpdateLater(StoreDoc doc, const std::string& key, std::function<void(Json::Value& data)> edit);
+
+	/** Waits, a few seconds at most, until the edits UpdateLater was given so far are made (or given up on) */
+	void Flush();
+
 	/** Changes with every Update of the document, in any process; 0 if the store can't be used */
 	uint64_t Generation(StoreDoc doc);
 
@@ -125,4 +135,11 @@ private:
 	};
 	std::map<StoreDoc, Cached> cache;
 	std::set<uint64_t> ownEvents; // seqs this store posted, which its own polls skip
+
+	// UpdateLater's edits not yet made, and the writer thread that makes them
+	struct Later;
+	std::unique_ptr<Later> later;
+	/** Takes the document's edits not yet made (to be made now), or copies them (peek) */
+	std::vector<std::function<void(Json::Value&)>> PendingEdits(StoreDoc doc, bool peek);
+	void WriterLoop();
 };

@@ -1110,7 +1110,7 @@ void BaseOverlay::_UpdateDashboard()
 			DashboardChanged(d.dashboard.Open(), requestedKey.c_str());
 		} else if (!d.dashboard.Open() && PidOf(doc["scene_pid"]) == self && doc["open"].isBool() && doc["open"].asBool()) {
 			// The document says this program's dashboard is open when it isn't: it is put right
-			store.Update(StoreDoc::Dashboard, [&](Json::Value& written) {
+			store.UpdateLater(StoreDoc::Dashboard, "", [self](Json::Value& written) {
 				if (written.isObject() && PidOf(written["scene_pid"]) == self)
 					written["open"] = false;
 			});
@@ -1190,7 +1190,8 @@ void BaseOverlay::_RecentreIfAsked()
 			// The open dashboard's panel stays where it is in the room
 			const glm::mat4 toNew = glm::affineInverse(S2G_m34(BaseChaperoneSetup::RecentredOrigin(head.mDeviceToAbsoluteTracking)));
 			const uint32_t self = oc_current_pid();
-			SharedStore::Get().Update(StoreDoc::Dashboard, [&](Json::Value& doc) {
+			// Not keyed: each recentre moves the panel on from where the last one left it
+			SharedStore::Get().UpdateLater(StoreDoc::Dashboard, "", [self, toNew](Json::Value& doc) {
 				XrPosef panel{};
 				if (!doc.isObject() || PidOf(doc["scene_pid"]) != self || !PoseFromJson(doc["panel_pose"], panel))
 					return;
@@ -1299,17 +1300,20 @@ void BaseOverlay::DashboardChanged(bool open, const char* overlayKey)
 						active = &t;
 		}
 		const XrPosef panel = AheadOfHead(vr::TrackingUniverseStanding, 1.5f, 0.2f);
-		store.Update(StoreDoc::Dashboard, [&](Json::Value& doc) {
+		const uint32_t activePid = active ? active->pid : 0;
+		const uint64_t activeOverlay = active ? active->handle : 0;
+		// From the frame: written by the store's writer thread, the whole document, so only the last is made
+		store.UpdateLater(StoreDoc::Dashboard, "open", [self, activePid, activeOverlay, panel](Json::Value& doc) {
 			doc = Json::Value(Json::objectValue);
 			doc["open"] = true;
 			doc["scene_pid"] = self;
 			doc["scene_start"] = (Json::UInt64)SharedStore::OwnStartTime();
-			doc["active_pid"] = active ? active->pid : 0;
-			doc["active_overlay"] = (Json::UInt64)(active ? active->handle : 0);
+			doc["active_pid"] = activePid;
+			doc["active_overlay"] = (Json::UInt64)activeOverlay;
 			doc["panel_pose"] = PoseJson(panel);
 		});
 	} else {
-		store.Update(StoreDoc::Dashboard, [&](Json::Value& doc) {
+		store.UpdateLater(StoreDoc::Dashboard, "open", [self](Json::Value& doc) {
 			doc = Json::Value(Json::objectValue);
 			doc["open"] = false;
 			doc["scene_pid"] = self;
@@ -1475,7 +1479,9 @@ void BaseOverlay::_PublishOverlays()
 		return;
 
 	const double wallClock = std::chrono::duration<double>(std::chrono::system_clock::now().time_since_epoch()).count();
-	SharedStore::Get().Update(StoreDoc::Overlays, [&](Json::Value& d) {
+	const std::string appKey = sh.appKey;
+	// Written by the store's writer thread after the frame: only the last list not yet written is
+	SharedStore::Get().UpdateLater(StoreDoc::Overlays, "overlays", [ended, list, helper, self, appKey, wallClock](Json::Value& d) {
 		if (!d.isObject())
 			d = Json::Value(Json::objectValue);
 		for (const std::string& name : d.getMemberNames())
@@ -1488,7 +1494,7 @@ void BaseOverlay::_PublishOverlays()
 		}
 		Json::Value& mine = d[std::to_string(self)];
 		mine = Json::Value(Json::objectValue);
-		mine["app"] = sh.appKey;
+		mine["app"] = appKey;
 		mine["start"] = (Json::UInt64)SharedStore::OwnStartTime();
 		mine["updated"] = wallClock;
 		mine["overlays"] = list;
@@ -1835,7 +1841,7 @@ void BaseOverlay::_UpdatePointer()
 		if (colon != std::string::npos) {
 			const uint32_t pid = (uint32_t)std::strtoul(rest.substr(0, colon).c_str(), nullptr, 10);
 			const uint64_t handle = std::strtoull(rest.substr(colon + 1).c_str(), nullptr, 10);
-			SharedStore::Get().Update(StoreDoc::Dashboard, [&](Json::Value& doc) {
+			SharedStore::Get().UpdateLater(StoreDoc::Dashboard, "tab", [pid, handle](Json::Value& doc) {
 				if (doc.isObject() && doc["open"].isBool() && doc["open"].asBool()) {
 					doc["active_pid"] = pid;
 					doc["active_overlay"] = (Json::UInt64)handle;

@@ -273,7 +273,7 @@ static bool OtherProgramsAround()
 
 // The scene app's frame statistics in the Scene document, for other programs' GetCumulativeStats: at most once a
 // second, and only while another OpenLamina program is around to read them. Written after the frame was handed over,
-// and never waited for: while another program holds the store they're left for the next second.
+// by the store's writer thread, never waited for.
 static void PublishSceneStats()
 {
 	// Called for each eye, maybe from two threads: the compare-exchange lets one of them through each second
@@ -287,14 +287,15 @@ static void PublishSceneStats()
 	OOVR_Compositor_CumulativeStats stats{};
 	FrameStats::Get().Cumulative(oc_current_pid(), &stats, sizeof(stats));
 	const uint32_t self = oc_current_pid();
-	SharedStore::Get().Update(StoreDoc::Scene, [&](Json::Value& scene) {
+	// Written by the store's writer thread: the frame doesn't wait for the file
+	SharedStore::Get().UpdateLater(StoreDoc::Scene, "frame_stats", [self, stats](Json::Value& scene) {
 		// Only while it's this program's
 		if (!scene.isObject() || !scene["pid"].isUInt() || scene["pid"].asUInt() != self)
 			return;
 		scene["frame_stats"]["presents"] = stats.m_nNumFramePresents;
 		scene["frame_stats"]["dropped"] = stats.m_nNumDroppedFrames;
 		scene["frame_stats"]["reprojected"] = stats.m_nNumReprojectedFrames;
-	}, SharedStore::Wait::Never);
+	});
 }
 
 ovr_enum_t BaseCompositor::Submit(EVREye eye, const Texture_t* texture, const VRTextureBounds_t* bounds, EVRSubmitFlags submitFlags)

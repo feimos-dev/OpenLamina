@@ -5,6 +5,8 @@
 #include "Misc/Process.h"
 
 #include <atomic>
+#include <condition_variable>
+#include <algorithm>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -411,6 +413,20 @@ public:
 	const bool held;
 };
 
+struct SharedStore::Later {
+	struct Edit {
+		StoreDoc doc;
+		std::string key;
+		std::function<void(Json::Value&)> edit;
+	};
+	std::mutex m;
+	std::condition_variable cv;
+	std::vector<Edit> queue;
+	std::thread thread;
+	bool stop = false;
+	bool writing = false; // the writer thread is making edits it took
+};
+
 SharedStore& SharedStore::Get()
 {
 	// Never destroyed: the backend writes to it from static destructors at exit, which may run after this one would
@@ -419,7 +435,7 @@ SharedStore& SharedStore::Get()
 }
 
 SharedStore::SharedStore(const fs::path& directory)
-    : dir(directory), platform(std::make_unique<Platform>())
+    : dir(directory), platform(std::make_unique<Platform>()), later(std::make_unique<Later>())
 {
 	std::error_code ec;
 	if (dir.empty())
@@ -459,7 +475,90 @@ SharedStore::SharedStore(const fs::path& directory)
 	state = view;
 }
 
-SharedStore::~SharedStore() = default;
+SharedStore::~SharedStore()
+{
+	// The writer thread ends, and what it hadn't made is made here (Get's store is never destroyed)
+	{
+		std::lock_guard<std::mutex> guard(later->m);
+		later->stop = true;
+	}
+	later->cv.notify_all();
+	if (later->thread.joinable())
+		later->thread.join();
+	for (StoreDoc doc : { StoreDoc::Settings, StoreDoc::Applications, StoreDoc::Chaperone, StoreDoc::Scene, StoreDoc::Dashboard, StoreDoc::Overlays, StoreDoc::Offsets })
+		if (!PendingEdits(doc, true).empty())
+			Update(doc, [](Json::Value&) {});
+}
+
+void SharedStore::UpdateLater(StoreDoc doc, const std::string& key, std::function<void(Json::Value& data)> edit)
+{
+	if (!Usable() || !edit)
+		return;
+	std::lock_guard<std::mutex> guard(later->m);
+	if (later->stop)
+		return;
+	if (!key.empty()) {
+		auto& q = later->queue;
+		q.erase(std::remove_if(q.begin(), q.end(), [&](const Later::Edit& e) { return e.doc == doc && e.key == key; }), q.end());
+	}
+	later->queue.push_back({ doc, key, std::move(edit) });
+	if (!later->thread.joinable())
+		later->thread = std::thread([this] { WriterLoop(); });
+	later->cv.notify_all();
+}
+
+std::vector<std::function<void(Json::Value&)>> SharedStore::PendingEdits(StoreDoc doc, bool peek)
+{
+	std::vector<std::function<void(Json::Value&)>> edits;
+	std::lock_guard<std::mutex> guard(later->m);
+	auto& q = later->queue;
+	for (const Later::Edit& e : q)
+		if (e.doc == doc)
+			edits.push_back(e.edit);
+	if (!peek && !edits.empty()) {
+		q.erase(std::remove_if(q.begin(), q.end(), [&](const Later::Edit& e) { return e.doc == doc; }), q.end());
+		later->cv.notify_all();
+	}
+	return edits;
+}
+
+void SharedStore::WriterLoop()
+{
+	std::unique_lock<std::mutex> guard(later->m);
+	int failures = 0;
+	while (true) {
+		later->cv.wait(guard, [&] { return later->stop || !later->queue.empty(); });
+		if (later->stop)
+			return;
+		const StoreDoc doc = later->queue.front().doc;
+		later->writing = true;
+		guard.unlock();
+		// The document's edits are made by the Update, under the store's lock
+		const bool written = Update(doc, [](Json::Value&) {});
+		guard.lock();
+		later->writing = false;
+		const bool left = std::any_of(later->queue.begin(), later->queue.end(), [&](const Later::Edit& e) { return e.doc == doc; });
+		if (written || !left) {
+			failures = 0;
+		} else if (++failures >= 5) {
+			// The store's lock not had for seconds on end (or the document can't be written): these edits are dropped
+			OOVR_LOGF("Store document %d: edits from the frame dropped, it couldn't be written", (int)doc);
+			auto& q = later->queue;
+			q.erase(std::remove_if(q.begin(), q.end(), [&](const Later::Edit& e) { return e.doc == doc; }), q.end());
+			failures = 0;
+		} else {
+			// Tried again shortly, or when there's something new
+			later->cv.wait_for(guard, std::chrono::milliseconds(100), [&] { return later->stop; });
+		}
+		later->cv.notify_all();
+	}
+}
+
+void SharedStore::Flush()
+{
+	std::unique_lock<std::mutex> guard(later->m);
+	later->cv.wait_for(guard, std::chrono::seconds(5), [&] { return later->queue.empty() && !later->writing; });
+}
 
 SharedStore::Header* SharedStore::header() const
 {
@@ -486,14 +585,40 @@ Json::Value SharedStore::Read(StoreDoc doc)
 	if (!Usable())
 		return Json::Value(Json::objectValue);
 	Refresh(doc);
-	std::lock_guard<std::mutex> guard(lock);
-	return cache[doc].data;
+	Json::Value data;
+	{
+		std::lock_guard<std::mutex> guard(lock);
+		data = cache[doc].data;
+	}
+	// With this process's edits not yet made
+	for (const auto& edit : PendingEdits(doc, true)) {
+		try {
+			edit(data);
+		} catch (const std::exception&) {
+		}
+	}
+	if (!data.isObject())
+		data = Json::Value(Json::objectValue);
+	return data;
 }
 
 Json::Value SharedStore::ReadAt(StoreDoc doc, const std::vector<std::string>& path)
 {
 	if (!Usable())
 		return Json::Value();
+	if (!PendingEdits(doc, true).empty()) {
+		// With this process's edits not yet made
+		const Json::Value data = Read(doc);
+		const Json::Value* v = &data;
+		for (const std::string& name : path) {
+			if (!v->isObject())
+				return Json::Value();
+			v = v->find(name.data(), name.data() + name.size());
+			if (!v)
+				return Json::Value();
+		}
+		return *v;
+	}
 	Refresh(doc);
 	std::lock_guard<std::mutex> guard(lock);
 	const Json::Value* v = &cache[doc].data;
@@ -597,6 +722,15 @@ bool SharedStore::Update(StoreDoc doc, const std::function<void(Json::Value& dat
 	}
 	}
 
+	// This process's edits from the frame first, in the order they were made
+	for (const auto& pending : PendingEdits(doc, false)) {
+		try {
+			pending(data);
+		} catch (const std::exception&) {
+		}
+		if (!data.isObject())
+			data = Json::Value(Json::objectValue);
+	}
 	try {
 		edit(data);
 	} catch (const std::exception&) {
