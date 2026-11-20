@@ -248,3 +248,47 @@ TEST_CASE("Hover_target_stays_when_the_laser_leaves_every_target")
 	mouse.Update({ None(0), Ray(1, 0, 0) }, { Square(8, 0, 0, -2) }, 0.2, events);
 	CHECK(mouse.Hover() == 8);
 }
+
+TEST_CASE("Each_hand_is_a_mouse_of_its_own_on_a_multi_cursor_overlay")
+{
+	LaserMouse mouse;
+	std::vector<PointerTarget> targets = { Square(7, 0, 0, -2, 0, kOverlayFlagMultiCursor) };
+	std::vector<PointerEvent> events;
+	// Both hands on it, at different places; the left presses, then the right, then the left lets go
+	mouse.Update({ Ray(0, -0.25f, -0.25f), Ray(1, 0.25f, 0.25f) }, targets, 0.0, events);
+	mouse.Update({ Ray(0, -0.25f, -0.25f, true), Ray(1, 0.25f, 0.25f) }, targets, 0.1, events);
+	mouse.Update({ Ray(0, -0.25f, -0.25f, true), Ray(1, 0.25f, 0.25f, true) }, targets, 0.2, events);
+	mouse.Update({ Ray(0, -0.25f, -0.25f, false), Ray(1, 0.25f, 0.25f, true) }, targets, 0.3, events);
+
+	std::vector<PointerEvent> m = Only(events, kMouse);
+	REQUIRE(m.size() == 5);
+	// Each hand's moves, at its own place
+	CHECK(m[0].event.eventType == vr::VREvent_MouseMove);
+	CHECK(m[0].event.data.mouse.cursorIndex == 0);
+	CHECK(m[0].event.data.mouse.x == doctest::Approx(25.0f));
+	CHECK(m[1].event.eventType == vr::VREvent_MouseMove);
+	CHECK(m[1].event.data.mouse.cursorIndex == 1);
+	CHECK(m[1].event.data.mouse.x == doctest::Approx(75.0f));
+	CHECK(m[1].event.trackedDeviceIndex == 2);
+	// Each hand's click its own
+	CHECK(m[2].event.eventType == vr::VREvent_MouseButtonDown);
+	CHECK(m[2].event.data.mouse.cursorIndex == 0);
+	CHECK(m[3].event.eventType == vr::VREvent_MouseButtonDown);
+	CHECK(m[3].event.data.mouse.cursorIndex == 1);
+	CHECK(m[4].event.eventType == vr::VREvent_MouseButtonUp);
+	CHECK(m[4].event.data.mouse.cursorIndex == 0);
+	CHECK(m[4].event.data.mouse.x == doctest::Approx(25.0f));
+	for (const PointerEvent& e : m)
+		CHECK(e.handle == 7);
+}
+
+TEST_CASE("A_plain_overlay_still_has_one_mouse")
+{
+	LaserMouse mouse;
+	std::vector<PointerTarget> targets = { Square(7, 0, 0, -2) };
+	std::vector<PointerEvent> events;
+	mouse.Update({ Ray(0, -0.25f, -0.25f), Ray(1, 0.25f, 0.25f) }, targets, 0.0, events);
+	std::vector<PointerEvent> m = Only(events, kMouse);
+	REQUIRE(m.size() == 1); // the right hand's, which drives the mouse
+	CHECK(m[0].event.data.mouse.x == doctest::Approx(75.0f));
+}
