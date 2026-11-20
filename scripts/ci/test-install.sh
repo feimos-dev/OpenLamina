@@ -8,7 +8,7 @@ set -eu
 
 archive=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
 work=$(mktemp -d)
-trap 'rm -rf "$work"' EXIT
+trap 'chmod -R u+w "$work" 2>/dev/null; rm -rf "$work"' EXIT
 fail() {
 	echo "test-install.sh: $*" >&2
 	exit 1
