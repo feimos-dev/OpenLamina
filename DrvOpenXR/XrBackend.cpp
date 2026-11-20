@@ -1910,10 +1910,19 @@ bool XrBackend::GetPlayAreaPoints(vr::HmdVector3_t* points, int* count)
 		return false; // the session is lost
 
 	XrExtent2Df bounds;
-	XrResult res = xrGetReferenceSpaceBoundsRect(xr_session.get(), XR_REFERENCE_SPACE_TYPE_STAGE, &bounds);
-
-	if (res == XR_SPACE_BOUNDS_UNAVAILABLE || XR_FAILED(res))
-		return false; // no play area (set up, or at all)
+	{
+		std::lock_guard<std::mutex> lock(playAreaLock);
+		if (playAreaSession != xr_session.get()) {
+			XrExtent2Df asked{};
+			XrResult res = xrGetReferenceSpaceBoundsRect(xr_session.get(), XR_REFERENCE_SPACE_TYPE_STAGE, &asked);
+			playAreaKnown = XR_SUCCEEDED(res) && res != XR_SPACE_BOUNDS_UNAVAILABLE && asked.width > 0 && asked.height > 0;
+			playAreaRect = playAreaKnown ? asked : XrExtent2Df{};
+			playAreaSession = xr_session.get();
+		}
+		if (!playAreaKnown)
+			return false; // no play area (set up, or at all)
+		bounds = playAreaRect;
+	}
 
 	if (count)
 		*count = 4;
@@ -1929,6 +1938,12 @@ bool XrBackend::GetPlayAreaPoints(vr::HmdVector3_t* points, int* count)
 
 	return true;
 }
+void XrBackend::ForgetPlayArea()
+{
+	std::lock_guard<std::mutex> lock(playAreaLock);
+	playAreaSession = XR_NULL_HANDLE;
+}
+
 /** Determine whether the bounds are showing right now **/
 bool XrBackend::AreBoundsVisible()
 {
@@ -2045,6 +2060,7 @@ void XrBackend::PumpEvents()
 			switch ((int)change->referenceSpaceType) {
 			case (int)XR_REFERENCE_SPACE_TYPE_STAGE:
 			case (int)OC_XR_REFERENCE_SPACE_TYPE_LOCAL_FLOOR:
+				ForgetPlayArea(); // the stage's bounds may have changed with it
 				OcPostEvent(VREvent_StandingZeroPoseReset, k_unTrackedDeviceIndex_Hmd, VREvent_Data_t{}, false);
 				OcPostEvent(VREvent_ChaperoneUniverseHasChanged, k_unTrackedDeviceIndexInvalid, VREvent_Data_t{}, false);
 				break;
@@ -2215,16 +2231,20 @@ void XrBackend::PumpEvents()
 	   Some runtimes (WMR) do not instantly return an interaction profile,
 	   so we will keep tryinig to query it until it does.
 
-	   Note that we check that the session is focused because this means that the application
-	   has already submitted a frame, that frame is visible, and we have input focus.
-	   Waiting until the application has input focus allows us to avoid unnecessarily restarting the
-	   session when we can't even receive input anyway, as well as before the session is restarted for
-	   the temporary session.
+	   Note that we wait for the session to be synchronised because this means that the application
+	   has already waited for a frame: the session isn't the temporary one any more, which avoids
+	   restarting the session unnecessarily.
    */
 	// Not while a session is being ended (ShutdownSession pumps events while it waits, maybe under the input restart)
 	BaseInput* input = GetUnsafeBaseInput();
-	if (input && !exitExpected && !input->AreActionsLoaded() && sessionState == XR_SESSION_STATE_FOCUSED && !Hand(XrController::XCT_LEFT) && !Hand(XrController::XCT_RIGHT)) {
+	// From the game's first frame (SYNCHRONIZED on), not only once it has focus: games look for their controllers in
+	// their first frames, and runtimes can take seconds to give focus. The profile is read straight after, in case
+	// the runtime gives it without an event.
+	const bool framesStarted = sessionState == XR_SESSION_STATE_SYNCHRONIZED || sessionState == XR_SESSION_STATE_VISIBLE
+	    || sessionState == XR_SESSION_STATE_FOCUSED;
+	if (input && !exitExpected && !input->AreActionsLoaded() && framesStarted && !Hand(XrController::XCT_LEFT) && !Hand(XrController::XCT_RIGHT)) {
 		QueryForInteractionProfile();
+		UpdateInteractionProfile();
 	}
 }
 
@@ -2303,6 +2323,7 @@ static bool DeviceReadyForOwnFrames(const void* binding)
 
 void XrBackend::OnSessionCreated()
 {
+	ForgetPlayArea();
 	sessionLost = false;
 	exitExpected = false;
 	toldIpd = NAN; // the new session's first IPD is the one the game has

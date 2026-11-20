@@ -1229,15 +1229,12 @@ void BaseOverlay::_UpdateBounds()
 	auto session = xr_session.lock_shared(); // the play area and the devices' poses are read from the session
 	if (!xr_session.get())
 		return;
-	// The play area: the stage's bounds, else the committed room setup's (Monado reports no stage bounds), read again
-	// at most once a second
+	// The play area the chaperone getters answer with (the stage's bounds, else the committed room setup's: Monado
+	// reports no stage bounds), read again at most once a second
 	const double now = NowSeconds();
 	if (!preview && (b.areaRead < 0 || now - b.areaRead >= 1.0)) {
 		b.areaRead = now;
-		XrExtent2Df extent{};
-		XrResult res = xrGetReferenceSpaceBoundsRect(xr_session.get(), XR_REFERENCE_SPACE_TYPE_STAGE, &extent);
-		const bool known = XR_SUCCEEDED(res) && res != XR_SPACE_BOUNDS_UNAVAILABLE && extent.width > 0 && extent.height > 0;
-		const XrExtent2Df area = BoundsPlayArea(known ? &extent : nullptr, known ? Json::Value() : SharedStore::Get().Read(StoreDoc::Chaperone));
+		const XrExtent2Df area = CurrentPlayArea();
 		b.width = area.width;
 		b.depth = area.height;
 	}

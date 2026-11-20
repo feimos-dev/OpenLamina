@@ -197,6 +197,13 @@ public:
 
 private:
 	std::shared_ptr<XrHMD> hmd = std::make_shared<XrHMD>();
+	// The stage's bounds rectangle, asked of the runtime once per session and again after the stage changes
+	// (XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING); under playAreaLock
+	std::mutex playAreaLock;
+	XrSession playAreaSession = XR_NULL_HANDLE;
+	bool playAreaKnown = false;
+	XrExtent2Df playAreaRect{};
+	void ForgetPlayArea();
 	// Replaced when a hand's interaction profile changes, while other threads read input: copied and replaced only
 	// under hands_mutex (Hand), which is held for nothing else
 	std::shared_ptr<XrController> hand_left;
