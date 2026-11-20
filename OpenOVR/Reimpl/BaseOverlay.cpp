@@ -68,6 +68,8 @@ public:
 	const string key;
 	// The overlay's handle: an id of its own, never another overlay's while the program runs
 	vr::VROverlayHandle_t handle = vr::k_ulOverlayHandleInvalid;
+	// A dashboard overlay's other half: the thumbnail of the main overlay, or the main overlay of the thumbnail
+	vr::VROverlayHandle_t pair = vr::k_ulOverlayHandleInvalid;
 	string name;
 	HmdColor_t colour = { 1, 1, 1, 1 };
 
@@ -432,6 +434,25 @@ namespace {
 // Overlay handles, for this program's overlays and the others' it finds: ids that are never handed out twice
 std::atomic<uint64_t> nextOverlayHandle{ 1 };
 } // namespace
+
+bool KeyOfAnotherProgram(const Json::Value& overlaysDoc, const std::string& key, uint32_t self)
+{
+	if (!overlaysDoc.isObject())
+		return false;
+	for (const std::string& name : overlaysDoc.getMemberNames()) {
+		const Json::Value& program = overlaysDoc[name];
+		const uint32_t pid = (uint32_t)std::strtoul(name.c_str(), nullptr, 10);
+		if (pid == 0 || pid == self || !program.isObject() || !program["overlays"].isArray())
+			continue;
+		bool has = false;
+		for (const Json::Value& o : program["overlays"])
+			has |= o.isObject() && o["key"].isString() && o["key"].asString() == key;
+		const Json::Value& start = program["start"];
+		if (has && SharedStore::IsSameProcessAlive(pid, start.isUInt64() ? start.asUInt64() : 0))
+			return true;
+	}
+	return false;
+}
 
 BaseOverlay::OverlayData* BaseOverlay::OverlayAt(vr::VROverlayHandle_t handle) const
 {
@@ -2020,6 +2041,10 @@ EVROverlayError BaseOverlay::CreateOverlay(const char* pchOverlayKey, const char
 		return VROverlayError_KeyTooLong;
 	if (strlen(pchOverlayName) >= kOverlayMaxNameLength)
 		return VROverlayError_NameTooLong;
+	// A key is one overlay's among all the programs: another running program's overlay may have it (as the store has
+	// them). Not OpenLamina's own keys, which start with \1 and are each program's.
+	if (pchOverlayKey[0] != 1 && KeyOfAnotherProgram(SharedStore::Get().Read(StoreDoc::Overlays), pchOverlayKey, oc_current_pid()))
+		return VROverlayError_KeyInUse;
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	if (overlays.count(pchOverlayKey)) {
 		return VROverlayError_KeyInUse;
@@ -2050,7 +2075,17 @@ EVROverlayError BaseOverlay::DestroyOverlay(VROverlayHandle_t ulOverlayHandle)
 	auto session = xr_session.lock_shared();
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	USEH();
+	// A dashboard overlay goes with its other half
+	OverlayData* pair = OverlayAt(overlay->pair);
+	DestroyLocked(overlay);
+	if (pair)
+		DestroyLocked(pair);
+	return VROverlayError_None;
+}
 
+void BaseOverlay::DestroyLocked(OverlayData* overlay)
+{
+	const VROverlayHandle_t ulOverlayHandle = overlay->handle;
 	if (highQualityOverlay == ulOverlayHandle)
 		highQualityOverlay = vr::k_ulOverlayHandleInvalid;
 	if (gamepadFocusOverlay == ulOverlayHandle)
@@ -2080,12 +2115,10 @@ EVROverlayError BaseOverlay::DestroyOverlay(VROverlayHandle_t ulOverlayHandle)
 	overlays.erase(overlay->key);
 	validOverlays.erase(overlay->handle);
 	delete overlay;
-
-	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::SetHighQualityOverlay(VROverlayHandle_t ulOverlayHandle)
 {
-	USEH();
+	USEH_LOCKED();
 
 	highQualityOverlay = ulOverlayHandle;
 
@@ -3445,7 +3478,7 @@ EVROverlayError BaseOverlay::CreateDashboardOverlay(const char* pchOverlayKey, c
 	if (err != VROverlayError_None)
 		return err;
 	// The thumbnail's key is OpenLamina's own: one no program uses, and short whatever the main key's length
-	const std::string thumbnailKey = std::string(1, (char)1) + "thumbnail:" + std::to_string((uint64_t)*pMainHandle);
+	const std::string thumbnailKey = std::string(1, (char)1) + "thumbnail:" + std::to_string(oc_current_pid()) + ":" + std::to_string((uint64_t)*pMainHandle);
 	err = CreateOverlay(thumbnailKey.c_str(), pchOverlayFriendlyName, pThumbnailHandle);
 	if (err != VROverlayError_None) {
 		DestroyOverlay(*pMainHandle);
@@ -3456,6 +3489,8 @@ EVROverlayError BaseOverlay::CreateDashboardOverlay(const char* pchOverlayKey, c
 	OverlayData* main = OverlayAt(*pMainHandle);
 	OverlayData* thumbnail = OverlayAt(*pThumbnailHandle);
 	main->dashboard = true;
+	main->pair = thumbnail->handle;
+	thumbnail->pair = main->handle;
 	thumbnail->dashboard = true;
 	thumbnail->thumbnail = true;
 	return VROverlayError_None;

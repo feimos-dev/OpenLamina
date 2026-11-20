@@ -145,6 +145,13 @@ class CpuSwapchain;
 // Avoid importing LibOVR just for this
 struct ovrLayerHeader_;
 
+namespace Json {
+class Value;
+}
+
+/** Whether a running program other than self has an overlay with that key, as the store's Overlays document lists them */
+bool KeyOfAnotherProgram(const Json::Value& overlaysDoc, const std::string& key, uint32_t self);
+
 class BaseOverlay {
 private:
 	// These enums are ints
@@ -175,6 +182,8 @@ private:
 	// The overlay a handle is, or nullptr: under the layers' lock (OverlayAt), or taking it for the look-up (LiveOverlay)
 	OverlayData* OverlayAt(vr::VROverlayHandle_t handle) const;
 	OverlayData* LiveOverlay(vr::VROverlayHandle_t handle);
+	// Destroys a live overlay, under the session's and the layers' locks
+	void DestroyLocked(OverlayData* overlay);
 	// Whether the overlay is shown by itself (ShowOverlay, or the dashboard's), and whether every parent it's placed
 	// relative to is. Under the layers' lock.
 	bool ShownOnItsOwn(const OverlayData& o) const;

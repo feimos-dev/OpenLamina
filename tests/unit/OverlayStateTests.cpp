@@ -4,10 +4,15 @@
 #include "stdafx.h"
 
 #include "Misc/Process.h"
+#include "Misc/SharedStore.h"
 #include "Reimpl/BaseOverlay.h"
 
 #include <string>
 #include <vector>
+
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 using namespace vr;
 
@@ -239,4 +244,45 @@ TEST_CASE("A_child_of_a_hidden_parent_is_not_visible")
 	overlays.ShowOverlay(child);
 	CHECK(overlays.DestroyOverlay(parent) == VROverlayError_None);
 	CHECK(overlays.IsOverlayVisible(child));
+}
+
+TEST_CASE("A_dashboard_overlay_goes_with_its_other_half")
+{
+	BaseOverlay overlays;
+	VROverlayHandle_t main = k_ulOverlayHandleInvalid, thumbnail = k_ulOverlayHandleInvalid;
+	if (overlays.CreateDashboardOverlay("oc.test.dash", "Dash", &main, &thumbnail) != VROverlayError_None)
+		return; // a game with no dashboard (dashboardButton off) makes none
+	CHECK(overlays.DestroyOverlay(main) == VROverlayError_None);
+	float alpha = 0;
+	CHECK(overlays.GetOverlayAlpha(thumbnail, &alpha) == VROverlayError_InvalidHandle);
+
+	REQUIRE(overlays.CreateDashboardOverlay("oc.test.dash", "Dash", &main, &thumbnail) == VROverlayError_None);
+	CHECK(overlays.DestroyOverlay(thumbnail) == VROverlayError_None);
+	CHECK(overlays.GetOverlayAlpha(main, &alpha) == VROverlayError_InvalidHandle);
+	// Its key is free again
+	REQUIRE(overlays.CreateDashboardOverlay("oc.test.dash", "Dash", &main, &thumbnail) == VROverlayError_None);
+}
+
+TEST_CASE("An_overlay_key_of_another_running_program_is_in_use")
+{
+	const uint32_t self = oc_current_pid();
+#ifdef _WIN32
+	const uint32_t other = 4; // System, always there
+#else
+	const uint32_t other = (uint32_t)getppid();
+#endif
+	Json::Value doc(Json::objectValue);
+	Json::Value o(Json::objectValue);
+	o["key"] = "oc.test.taken";
+	o["handle"] = (Json::UInt64)1;
+	doc[std::to_string(other)]["overlays"].append(o);
+	CHECK(KeyOfAnotherProgram(doc, "oc.test.taken", self));
+	CHECK_FALSE(KeyOfAnotherProgram(doc, "oc.test.free", self));
+	// Its own overlays are the program's to answer for, and an ended program's keys are free
+	CHECK_FALSE(KeyOfAnotherProgram(doc, "oc.test.taken", other));
+	doc[std::to_string(self)]["overlays"].append(o);
+	CHECK(KeyOfAnotherProgram(doc, "oc.test.taken", other));
+	doc.removeMember(std::to_string(self));
+	doc[std::to_string(other)]["start"] = (Json::UInt64)(SharedStore::ProcessStartTime(other) + 1);
+	CHECK_FALSE(KeyOfAnotherProgram(doc, "oc.test.taken", self));
 }
