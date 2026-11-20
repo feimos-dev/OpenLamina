@@ -97,7 +97,11 @@ def key_of(r):
 class Runner:
     def __init__(self, args):
         self.args = args
-        self.out = Path(args.out)
+        # Absolute: on Linux the children run in a folder of their own (self.work)
+        self.out = Path(args.out).resolve()
+        # Where OpenLamina reads openlamina.ini from: next to the DLL on Windows; on Linux only the working directory,
+        # so there the children run in work/ under --out, which holds it
+        self.work = None if os.name == "nt" else self.out / "work"
         # OC_TEST_NO_STEAMVR: OpenLamina finds no SteamVR or Steam config (its settings, resources and legacy
         # binding files), so a run here answers as on CI's runner, which has none
         # Each child gets its own store (OC_STORE_DIR, see child), so one child's settings and events never reach another
@@ -118,7 +122,7 @@ class Runner:
                 "name": "no runtime", "library_path": str(self.out / "does_not_exist.dll")}}), encoding="utf-8")
             self.manifest = str(none)
         else:
-            self.manifest = args.xr_runtime
+            self.manifest = str(Path(args.xr_runtime).resolve())
         if args.real_runtime and not self.monado:
             self.manifest = None  # SteamVR: no OpenXR involved
         if self.manifest:
@@ -135,18 +139,22 @@ class Runner:
             raise SystemExit(f"--xr-runtime monado: no manifest {self.manifest}")
         self.out.mkdir(parents=True, exist_ok=True)
         (self.out / "raw").mkdir(exist_ok=True)
-        # The openlamina.ini next to the DLL: ini/features_off.ini (the features that are on by default turned off, so
-        # that a case shows one feature at a time), then --ini's keys, which win. --shipped-defaults leaves the first
-        # out. Not for SteamVR itself, whose folder that would be.
+        # The openlamina.ini OpenLamina reads (next to the DLL, or in the children's working directory):
+        # ini/features_off.ini (the features that are on by default turned off, so that a case shows one feature at a
+        # time), then --ini's keys, which win. --shipped-defaults leaves the first out. Not for SteamVR itself, whose
+        # folder that would be.
         parts = []
         if not self.args.shipped_defaults and not (self.args.real_runtime and not self.monado):
             parts.append((HERE / "ini" / "features_off.ini").read_text(encoding="utf-8"))
         if self.args.ini:
             parts.append(Path(self.args.ini).read_text(encoding="utf-8"))
         self.wrote_ini = bool(parts)
+        if self.work:
+            shutil.rmtree(self.work, ignore_errors=True)
+            self.work.mkdir(parents=True)
         if parts:
             # Taken out again when the run ends (Runner.cleanup), with any file that was there put back
-            target = Path(self.runtime).parent / "openlamina.ini"
+            target = self.ini_path()
             self.ini_backup = target.read_bytes() if target.exists() else None
             target.write_text("\n".join(parts), encoding="utf-8", newline="\n")
         if unelevated.integrity_above_medium() and self.manifest:
@@ -157,6 +165,9 @@ class Runner:
             for view in ("/reg:64", "/reg:32"):
                 subprocess.run(["reg", "add", r"HKLM\SOFTWARE\Khronos\OpenXR\1", "/v", "ActiveRuntime", "/t", "REG_SZ",
                                 "/d", self.manifest, "/f", view], check=True, capture_output=True)
+
+    def ini_path(self):
+        return (self.work or Path(self.runtime).parent) / "openlamina.ini"
 
     def child(self, extra, raw, timeout=TIMEOUT, env_extra=None, store=None):
         """Runs oc_conformance with its store in store/<store> under --out: by default the child's own (named after its
@@ -170,10 +181,11 @@ class Runner:
         env.update(self.env)
         env["OC_STORE_DIR"] = str(self.out / "store" / (store or Path(raw).stem))
         env.update(env_extra or {})
+        cwd = str(self.work) if self.work else None
         if unelevated.integrity_above_medium() and not self.args.ci:
-            return unelevated.run_medium(cmd, env, None, timeout)
+            return unelevated.run_medium(cmd, env, cwd, timeout)
         # In a memory-limited job (unelevated.py): a runaway child fails alone
-        return unelevated.run_limited(cmd, env, None, timeout, capture=True)[0]
+        return unelevated.run_limited(cmd, env, cwd, timeout, capture=True)[0]
 
     keep_lock = threading.Lock()
 
@@ -289,7 +301,7 @@ class Runner:
 
     def cleanup(self):
         if getattr(self, "wrote_ini", False):
-            target = Path(self.runtime).parent / "openlamina.ini"
+            target = self.ini_path()
             if getattr(self, "ini_backup", None) is not None:
                 target.write_bytes(self.ini_backup)
             else:
@@ -506,7 +518,8 @@ def main():
     ap.add_argument("--cases")
     ap.add_argument("--cases-only", action="store_true", help="only the cases of --cases, no interfaces")
     ap.add_argument("--manifest", help="the action manifest for the input-manifest case")
-    ap.add_argument("--ini", help="an openlamina.ini whose keys go next to the DLL, after ini/features_off.ini's")
+    ap.add_argument("--ini", help="an openlamina.ini whose keys go where OpenLamina reads them (next to the DLL; on Linux the children's "
+                    "working directory), after ini/features_off.ini's")
     ap.add_argument("--shipped-defaults", action="store_true",
                     help="without ini/features_off.ini: OpenLamina's defaults as they ship, but for --ini's keys")
     ap.add_argument("--jobs", type=int, default=4)
