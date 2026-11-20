@@ -983,22 +983,27 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 	vr::Texture_t copied;
 	vr::VRTextureBounds_t copiedBounds;
 	if (gfxInterop && texture->eType == gfxInterop->Type()) {
-		ID3D11Texture2D* copy = gfxInterop->CopyIn(texture, bounds);
-		if (!copy) {
+		const GfxInterop::Copied copy = gfxInterop->CopyIn(texture, submitFlags, (int)eye);
+		if (!copy.texture) {
 			layer.subImage.swapchain = XR_NULL_HANDLE;
 			return kCompositorRequestFailed;
 		}
 		// An OpenGL texture's rows run bottom-up and its copy's top-down: the bounds' v, which counted from the bottom,
-		// counts from the top of the copy
-		if (bounds && texture->eType == vr::TextureType_OpenGL) {
-			copiedBounds = { bounds->uMin, 1 - bounds->vMax, bounds->uMax, 1 - bounds->vMin };
+		// counts from the top of the copy. A copy left upside down keeps the bounds' v, and the bounds turn it over
+		// (vMin > vMax), which the compositor's pass does.
+		if (texture->eType == vr::TextureType_OpenGL) {
+			const vr::VRTextureBounds_t given = Bounds(bounds);
+			if (copy.upsideDown)
+				copiedBounds = { given.uMin, given.vMax, given.uMax, given.vMin };
+			else
+				copiedBounds = { given.uMin, 1 - given.vMax, given.uMax, 1 - given.vMin };
 			bounds = &copiedBounds;
 		}
-		copied = { copy, vr::TextureType_DirectX, texture->eColorSpace };
+		copied = { copy.texture, vr::TextureType_DirectX, texture->eColorSpace };
 		texture = &copied;
 		// A D3D11 compositor for the interop's texture
 		if (!compositors[eye])
-			compositors[eye] = std::make_unique<DX11Compositor>(copy);
+			compositors[eye] = std::make_unique<DX11Compositor>(copy.texture);
 	}
 #endif
 

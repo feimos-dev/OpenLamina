@@ -122,3 +122,33 @@ TEST_CASE("No_formats_known_keeps_todays_choice")
 	CheckChoice(ChooseSwapchainFormat(GfxApiKind::D3D11, 27, vr::ColorSpace_Gamma, {}), 29, false);
 	CheckChoice(ChooseSwapchainFormat(GfxApiKind::Vulkan, 97, vr::ColorSpace_Auto, {}), 97, false);
 }
+
+TEST_CASE("Same_texels_in_another_api")
+{
+	// Vulkan R8G8B8A8_SRGB and B8G8R8A8_UNORM into DXGI; GL_RGBA16F, GL_R11F_G11F_B10F and GL_RGBA (unsized) into DXGI
+	CHECK(SameTexelsIn(GfxApiKind::Vulkan, 43, GfxApiKind::D3D11) == std::optional<int64_t>(29));
+	CHECK(SameTexelsIn(GfxApiKind::Vulkan, 44, GfxApiKind::D3D11) == std::optional<int64_t>(87));
+	CHECK(SameTexelsIn(GfxApiKind::OpenGL, 0x881A, GfxApiKind::D3D11) == std::optional<int64_t>(10));
+	CHECK(SameTexelsIn(GfxApiKind::OpenGL, 0x8C3A, GfxApiKind::D3D11) == std::optional<int64_t>(26));
+	CHECK(SameTexelsIn(GfxApiKind::OpenGL, 0x1908, GfxApiKind::D3D11) == std::optional<int64_t>(28));
+	// A DXGI typeless format as its linear member
+	CHECK(SameTexelsIn(GfxApiKind::D3D11, 27, GfxApiKind::Vulkan) == std::optional<int64_t>(37));
+	// None in DXGI: Vulkan A2R10G10B10 (BGR order), GL_RGB8; none at all: compressed, integer, unknown
+	CHECK_FALSE(SameTexelsIn(GfxApiKind::Vulkan, 58, GfxApiKind::D3D11).has_value());
+	CHECK_FALSE(SameTexelsIn(GfxApiKind::OpenGL, 0x8051, GfxApiKind::D3D11).has_value());
+	CHECK_FALSE(SameTexelsIn(GfxApiKind::Vulkan, 133, GfxApiKind::D3D11).has_value());
+	CHECK_FALSE(SameTexelsIn(GfxApiKind::Vulkan, 62, GfxApiKind::D3D11).has_value());
+	CHECK_FALSE(SameTexelsIn(GfxApiKind::Vulkan, 4, GfxApiKind::D3D11).has_value());
+}
+
+TEST_CASE("Convertible_colour_in_another_api")
+{
+	// GL_SRGB8 and GL_RGB8 into 8-bit RGBA of the same sRGB-ness; GL_RGB16F and GL_RGB32F into 16-bit float RGBA
+	CHECK(ConvertibleColourIn(GfxApiKind::OpenGL, 0x8C41, GfxApiKind::D3D11) == std::optional<int64_t>(29));
+	CHECK(ConvertibleColourIn(GfxApiKind::OpenGL, 0x8051, GfxApiKind::D3D11) == std::optional<int64_t>(28));
+	CHECK(ConvertibleColourIn(GfxApiKind::OpenGL, 0x881B, GfxApiKind::D3D11) == std::optional<int64_t>(10));
+	CHECK(ConvertibleColourIn(GfxApiKind::OpenGL, 0x8815, GfxApiKind::D3D11) == std::optional<int64_t>(10));
+	// Compressed and unknown formats: none
+	CHECK_FALSE(ConvertibleColourIn(GfxApiKind::OpenGL, 0x83F1, GfxApiKind::D3D11).has_value());
+	CHECK_FALSE(ConvertibleColourIn(GfxApiKind::OpenGL, 0x1234, GfxApiKind::D3D11).has_value());
+}

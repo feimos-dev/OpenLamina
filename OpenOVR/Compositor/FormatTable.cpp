@@ -188,6 +188,29 @@ bool NeverColour(GfxApiKind api, int64_t format)
 
 } // namespace
 
+std::optional<int64_t> SameTexelsIn(GfxApiKind from, int64_t format, GfxApiKind to)
+{
+	const FormatInfo* info = Find(from, format);
+	if (!info || info->integer || info->depth == DepthClass::Compressed)
+		return std::nullopt;
+	const FormatInfo* member = Member(to, info->family, info->kind == K::Srgb ? K::Srgb : K::Linear);
+	if (!member)
+		return std::nullopt;
+	return member->format;
+}
+
+std::optional<int64_t> ConvertibleColourIn(GfxApiKind from, int64_t format, GfxApiKind to)
+{
+	const FormatInfo* info = Find(from, format);
+	if (!info || info->integer || info->depth == DepthClass::Compressed)
+		return std::nullopt;
+	const bool narrow = info->depth == DepthClass::Bits8 || info->depth == DepthClass::Low;
+	const FormatInfo* member = Member(to, narrow ? Family::RGBA8 : Family::RGBA16F, narrow && info->kind == K::Srgb ? K::Srgb : K::Linear);
+	if (!member)
+		return std::nullopt;
+	return member->format;
+}
+
 bool WantsSrgb(GfxApiKind api, int64_t format, vr::EColorSpace colourSpace)
 {
 	switch (colourSpace) {
