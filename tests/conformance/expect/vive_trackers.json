@@ -1,6 +1,6 @@
 {
  "#": "Vive trackers by their role, on the stand-in with scripts/vive_trackers.json (run.py --cases vive-trackers --script scripts/vive_trackers.json --manifest ../unit/data/manifest_trackers.json --expect expect/vive_trackers.json)",
- "vive-trackers/devices before the foot/-/-": {"controller": ["knuckles", "knuckles"], "tracker": ["vive_tracker_waist"]},
- "vive-trackers/devices/-/-": {"controller": ["knuckles", "knuckles"], "tracker": ["vive_tracker_waist", "vive_tracker_left_foot"]},
+ "vive-trackers/devices before the foot/-/-": {"controller": ["knuckles", "knuckles"], "tracker": ["vive_tracker_waist", "vive_tracker_handheld_object"]},
+ "vive-trackers/devices/-/-": {"controller": ["knuckles", "knuckles"], "tracker": ["vive_tracker_waist", "vive_tracker_handheld_object", "vive_tracker_left_foot"]},
  "vive-trackers/waist pose/-/-": {"active": true, "at": [0.1, 0.9, 0.2], "err": 0, "origin_is_the_waist": true, "restricted_to_the_foot": false, "restricted_to_the_waist": true, "valid": true}
 }
