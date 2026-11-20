@@ -1005,7 +1005,7 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 		if (result == kCompositorNone) {
 			KeepForMirror(eye, texture, bounds);
 #if defined(SUPPORT_GL)
-			GLMirrorFrame((int)eye, texture, bounds, submitFlags);
+			GLMirrorFrame((int)eye, submitted, bounds, submitFlags); // the game's GL texture, also under the D3D11 interop
 #endif
 			// The mirror window shows the left eye, read back while it's open
 			Image mirror;

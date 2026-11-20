@@ -405,8 +405,10 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 	submitInfo.commandBufferCount = 1;
 	submitInfo.pCommandBuffers = &currentCommandBuffer;
 
-	if (vkFailed(vkQueueSubmit(tex->m_pQueue, 1, &submitInfo, imageFences.at(currentIndex)), "vkQueueSubmit"))
+	if (!SubmitWithImageFence(tex->m_pQueue, submitInfo, currentIndex)) {
+		OOVR_LOG_ONCE("vkQueueSubmit failed: frame left out");
 		return;
+	}
 
 	// Release the swapchain - OpenXR will use the last-released image in a swapchain
 	SwapchainCallFailed(xrReleaseSwapchainImage(chain, &releaseInfo), "xrReleaseSwapchainImage");
@@ -487,7 +489,7 @@ bool VkCompositor::CopyDepth(const vr::Texture_t* depth)
 	VkSubmitInfo submitInfo = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
 	submitInfo.commandBufferCount = 1;
 	submitInfo.pCommandBuffers = &cmd;
-	if (vkEndCommandBuffer(cmd) != VK_SUCCESS || vkQueueSubmit(appQueue, 1, &submitInfo, imageFences.at(index)) != VK_SUCCESS) {
+	if (vkEndCommandBuffer(cmd) != VK_SUCCESS || !SubmitWithImageFence(appQueue, submitInfo, index)) {
 		xrReleaseSwapchainImage(chain, &releaseInfo);
 		return false;
 	}
@@ -540,12 +542,28 @@ bool VkCompositor::WaitForImageBuffer(uint32_t index)
 	if (index >= imageFences.size())
 		return false;
 	VkFence fence = imageFences[index];
-	if (vkWaitForFences(appDevice, 1, &fence, VK_TRUE, 5000000000ull) != VK_SUCCESS) {
-		OOVR_LOG_ONCE("A Vulkan copy didn't finish within 5 s: frame left out");
+	if (!fence || vkWaitForFences(appDevice, 1, &fence, VK_TRUE, 500000000ull) != VK_SUCCESS) {
+		OOVR_LOG_ONCE("A Vulkan copy didn't finish within 0.5 s: frame left out");
 		return false;
 	}
-	// Unsignalled until the next submission with it
-	return vkResetFences(appDevice, 1, &fence) == VK_SUCCESS;
+	return true;
+}
+
+bool VkCompositor::SubmitWithImageFence(VkQueue queue, const VkSubmitInfo& submitInfo, uint32_t index)
+{
+	// Reset only now, so a failure on the way here leaves it signalled for the next copy with this buffer
+	VkFence& fence = imageFences.at(index);
+	if (vkResetFences(appDevice, 1, &fence) != VK_SUCCESS)
+		return false;
+	if (vkQueueSubmit(queue, 1, &submitInfo, fence) == VK_SUCCESS)
+		return true;
+	// Nothing will signal it now: a signalled one in its place
+	vkDestroyFence(appDevice, fence, nullptr);
+	VkFenceCreateInfo fenceInfo = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+	fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+	if (vkCreateFence(appDevice, &fenceInfo, nullptr, &fence) != VK_SUCCESS)
+		fence = VK_NULL_HANDLE;
+	return false;
 }
 
 uint32_t VkFindMemoryType(VkPhysicalDevice physicalDevice, uint32_t typeBits, VkMemoryPropertyFlags properties)
