@@ -86,6 +86,9 @@ void BaseNotifications::Queue(const Live& n, uint32_t id, uint32_t type)
 	e.event.trackedDeviceIndex = vr::k_unTrackedDeviceIndexInvalid;
 	e.event.data.notification.ulUserValue = n.userValue;
 	e.event.data.notification.notificationId = id;
+	// A program without frames never takes them: the oldest go
+	if (pending.size() >= kMaxLive)
+		pending.erase(pending.begin());
 	pending.push_back(e);
 }
 

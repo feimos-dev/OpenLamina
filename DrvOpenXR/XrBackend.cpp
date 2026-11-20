@@ -2262,7 +2262,7 @@ void XrBackend::StartHelperLoop()
 				    input->SyncPointerActions();
 			    WithStoreDocuments([&] { overlay->_UpdatePointer(); });
 			    // A room setup tool's preview of its play area
-			    overlay->_UpdateBounds();
+			    WithStoreDocuments([&] { overlay->_UpdateBounds(); });
 		    }
 		    return RunOwnFrame(source, wanted);
 	    });

@@ -1232,7 +1232,7 @@ void BaseOverlay::_UpdateBounds()
 	// The play area: the stage's bounds, else the committed room setup's (Monado reports no stage bounds), read again
 	// at most once a second
 	const double now = NowSeconds();
-	if (b.areaRead < 0 || now - b.areaRead >= 1.0) {
+	if (!preview && (b.areaRead < 0 || now - b.areaRead >= 1.0)) {
 		b.areaRead = now;
 		XrExtent2Df extent{};
 		XrResult res = xrGetReferenceSpaceBoundsRect(xr_session.get(), XR_REFERENCE_SPACE_TYPE_STAGE, &extent);
@@ -1257,9 +1257,9 @@ void BaseOverlay::_UpdateBounds()
 	add(BackendManager::Instance().GetDeviceByHand(ITrackedDevice::HAND_LEFT));
 	add(BackendManager::Instance().GetDeviceByHand(ITrackedDevice::HAND_RIGHT));
 	const std::vector<BoundsWall> walls = preview ? BoundsWalls(preview->first, preview->second, points, true) : BoundsWalls(b.width, b.depth, points);
-	b.previewing = preview.has_value();
 
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	b.previewing = preview.has_value();
 	for (bool& s : b.shown)
 		s = false;
 	const vr::ETrackingUniverseOrigin origin = FrameOrigin();

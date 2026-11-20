@@ -147,10 +147,6 @@ class CpuSwapchain;
 // Avoid importing LibOVR just for this
 struct ovrLayerHeader_;
 
-namespace Json {
-class Value;
-}
-
 /** Whether a running program other than self has an overlay with that key, as the store's Overlays document lists them */
 bool KeyOfAnotherProgram(const Json::Value& overlaysDoc, const std::string& key, uint32_t self);
 

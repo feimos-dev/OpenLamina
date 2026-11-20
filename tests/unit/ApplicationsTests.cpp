@@ -1025,3 +1025,25 @@ TEST_CASE("Listing_itself_again_writes_nothing")
 	BaseApplications::AddThisProcess(store);
 	CHECK(store.Generation(StoreDoc::Applications) == generation);
 }
+
+TEST_CASE("Asking_about_a_transition_whose_old_application_runs_writes_nothing")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	BaseApplications apps(store);
+#ifdef _WIN32
+	uint32_t scene = 4; // System, always there
+#else
+	uint32_t scene = (uint32_t)getppid();
+#endif
+	store.Update(StoreDoc::Scene, [&](Json::Value& doc) {
+		doc["transition"]["state"] = VRApplicationTransition_OldAppQuitSent;
+		doc["transition"]["app_key"] = "oc.test.next";
+		doc["transition"]["old_pid"] = scene;
+		doc["transition"]["old_start"] = (Json::UInt64)SharedStore::ProcessStartTime(scene);
+		doc["transition"]["launch"] = true;
+	});
+	const uint64_t generation = store.Generation(StoreDoc::Scene);
+	CHECK(apps.GetTransitionState() == VRApplicationTransition_OldAppQuitSent);
+	CHECK(store.Generation(StoreDoc::Scene) == generation);
+}

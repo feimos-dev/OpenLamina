@@ -387,7 +387,9 @@ void BaseApplications::TakeOverPendingLaunch(SharedStore& store)
 	// An old scene application that ended without its session's end (it crashed, or was killed) launches nothing: the
 	// first program to notice does
 	const Json::Value pending = store.ReadAt(StoreDoc::Scene, { "transition" });
-	if (!pending.isObject() || !BoolOr(pending["launch"], false) || PidOf(pending["old_pid"]) == oc_current_pid())
+	if (!pending.isObject() || !BoolOr(pending["launch"], false) || !pending["state"].isInt()
+	    || pending["state"].asInt() != VRApplicationTransition_OldAppQuitSent || PidOf(pending["old_pid"]) == oc_current_pid()
+	    || SharedStore::IsSameProcessAlive(PidOf(pending["old_pid"]), UInt64Or(pending["old_start"], 0)))
 		return;
 	std::string key;
 	uint32_t oldPid = 0;
@@ -421,7 +423,7 @@ void BaseApplications::AddThisProcess(SharedStore& store)
 	const std::string key = CurrentProcessAppKey(store);
 	UpdateApplications(store, [&](Json::Value& doc) {
 		// IdentifyApplication's entry for this process stays as it is
-		const Json::Value& starts = doc["pid_starts"];
+		const Json::Value starts = doc.get("pid_starts", Json::Value());
 		const bool listed = doc["pids"].isObject() && doc["pids"].isMember(name)
 		    && (!starts.isObject() || UInt64Or(starts[name], 0) == start || !start);
 		const bool automatic = doc["pid_auto"].isObject() && BoolOr(doc["pid_auto"][name], false);

@@ -113,3 +113,17 @@ TEST_CASE("A_notification_removed_while_shown_is_hidden_then_destroyed")
 	CHECK(Types(events) == std::vector<uint32_t>{ vr::VREvent_Notification_Hidden, vr::VREvent_Notification_Destroyed, vr::VREvent_Notification_Shown });
 	CHECK(n.Current()->id == b);
 }
+
+TEST_CASE("Notification_events_never_taken_are_kept_to_a_bound")
+{
+	BaseNotifications n;
+	for (int i = 0; i < 1000; i++) {
+		uint32_t id = 0;
+		REQUIRE(n.Add(0, 0, &id, 5, "x") == vr::VRNotificationError_OK);
+		REQUIRE(n.RemoveNotification(id) == vr::VRNotificationError_OK);
+	}
+	std::vector<BaseNotifications::Event> events;
+	n.Update(1.0, events);
+	CHECK(events.size() <= 256);
+	CHECK_FALSE(events.empty());
+}
