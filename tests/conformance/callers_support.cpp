@@ -30,6 +30,11 @@ Texture::Texture(ArgSet set, CallContext& ctx)
 			tex.handle = t;
 		}
 	}
+#else
+	if (ctx.vulkanTexture) {
+		if (const vr::Texture_t* t = ctx.vulkanTexture())
+			tex = *t;
+	}
 #endif
 	p = &tex;
 }
