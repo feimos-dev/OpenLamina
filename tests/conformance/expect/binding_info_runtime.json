@@ -1,0 +1,4 @@
+{
+ "#": "GetActionBindingInfo without a binding file, on the stand-in with scripts/bound_source_odd.json (run.py --cases binding-info --script scripts/bound_source_odd.json --manifest ../unit/data/manifest_haptic_no_bindings.json --expect expect/binding_info_runtime.json): the vibration from the runtime's bound sources, of which the one that isn't an output is left out",
+ "binding-info/odd source/-/-": { "err": 0, "haptic_bindings": 0 }
+}

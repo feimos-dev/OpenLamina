@@ -62,8 +62,9 @@ run --cases session-events --script tests/conformance/scripts/session_events.jso
 run --cases velocities --script tests/conformance/scripts/velocities.json --expect tests/conformance/expect/velocities.json --out "$out"/velocities
 # The binding evaluator evaluates a toggle_button, and reads a vector3
 run --cases input-frames --script tests/conformance/scripts/input_toggle.json --manifest tests/unit/data/manifest_toggle.json --expect tests/conformance/expect/input_evaluator.json --out "$out"/input-steamvr
-# GetActionBindingInfo from the binding file: poses and vibrations included, sources that aren't input paths left out
+# GetActionBindingInfo from the binding file (poses and vibrations included), and without one a vibration's bound outputs
 run --cases binding-info --script tests/conformance/scripts/bound_source_odd.json --manifest tests/unit/data/manifest_toggle.json --expect tests/conformance/expect/binding_info.json --out "$out"/binding-info
+run --cases binding-info --script tests/conformance/scripts/bound_source_odd.json --manifest tests/unit/data/manifest_haptic_no_bindings.json --expect tests/conformance/expect/binding_info_runtime.json --out "$out"/binding-info-runtime
 # The compositor's calls with every graphics API offered: the Vulkan extension lists with a null buffer
 run --only "IVRCompositor_0(19|2[0-9])" --script tests/conformance/scripts/gfx_all_apis.json --out "$out"/compositor-all-apis
 # Eye-tracked foveation from the eye gaze: with an action manifest and with legacy input, canted views,
