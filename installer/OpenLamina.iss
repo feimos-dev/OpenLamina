@@ -2,6 +2,7 @@
 ; %LOCALAPPDATA%\Programs\OpenLamina, which is then the OpenLamina folder openvrpaths.vrpath names:
 ;
 ;   bin\vrclient_x64.dll, bin\vrclient.dll, bin\version.txt   the runtime (64- and 32-bit games)
+;   bin\rendermodels\                                         the controller models
 ;   OpenLamina.exe, Newtonsoft.Json.dll                     the app: the switch, per-app settings, updates
 ;   SOURCE.txt, LICENSE*.txt                                   the release and its licences
 ;

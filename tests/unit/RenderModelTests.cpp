@@ -8,15 +8,20 @@
 #include "Reimpl/BaseRenderModels.h"
 #include "resources.h"
 
+#include <algorithm>
 #include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
+#include <cstring>
 #include <filesystem>
 #include <fstream>
 #include <iterator>
 #include <string>
 #include <thread>
+
+#include <glm/glm.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 namespace fs = std::filesystem;
 
@@ -615,4 +620,203 @@ TEST_CASE("Render_models_load_asynchronously")
 	BaseRenderModels::WaitForLoads();
 	CHECK((int)rm.LoadRenderModel_Async("no_such_model_here", &model) == 301);
 	CHECK(model == nullptr);
+}
+
+// OpenLamina's own controller models, as the build converts them (scripts/rendermodels.py)
+namespace {
+struct OwnModelsDirForTest {
+	explicit OwnModelsDirForTest(const fs::path& dir)
+	{
+#ifdef _WIN32
+		_wputenv_s(L"OC_TEST_RENDERMODELS_DIR", dir.wstring().c_str());
+#else
+		setenv("OC_TEST_RENDERMODELS_DIR", dir.c_str(), 1);
+#endif
+	}
+	~OwnModelsDirForTest()
+	{
+#ifdef _WIN32
+		_wputenv_s(L"OC_TEST_RENDERMODELS_DIR", L"");
+#else
+		unsetenv("OC_TEST_RENDERMODELS_DIR");
+#endif
+	}
+};
+
+fs::path OwnModels()
+{
+	return fs::path(OC_TEST_RENDERMODELS);
+}
+
+glm::vec3 Apply(const XrPosef& p, glm::vec3 v)
+{
+	glm::quat q(p.orientation.w, p.orientation.x, p.orientation.y, p.orientation.z);
+	return q * v + glm::vec3(p.position.x, p.position.y, p.position.z);
+}
+
+glm::vec3 Pos(const RmVertex& v)
+{
+	return glm::vec3(v.vPosition.v[0], v.vPosition.v[1], v.vPosition.v[2]);
+}
+} // namespace
+
+TEST_CASE("Own_controller_models_are_in_SteamVR_layout")
+{
+	OwnModelsDirForTest dir(OwnModels());
+	const std::vector<std::string>& names = OwnRenderModelNames();
+	// Twelve controllers, both hands
+	REQUIRE(names.size() == 24);
+	CHECK(std::is_sorted(names.begin(), names.end()));
+	for (const std::string& name : names) {
+		CAPTURE(name);
+		std::shared_ptr<const RmModel> model = FindOwnRenderModel(name, XrPosef{ { 0, 0, 0, 1 }, { 0, 0, 0 } });
+		REQUIRE(model);
+		CHECK(Find(*model, "body"));
+		CHECK(Find(*model, "trigger"));
+		// No tip, base or handgrip: those are the profile's, as for any controller (GetComponentState)
+		CHECK_FALSE(Find(*model, "tip"));
+		CHECK_FALSE(Find(*model, "base"));
+		CHECK_FALSE(Find(*model, "handgrip"));
+		for (const RmComponent& c : model->components) {
+			CAPTURE(c.name);
+			std::optional<RmMesh> mesh = LoadRenderModelMesh(*model, c.name);
+			REQUIRE(mesh);
+			CHECK(!mesh->textures.empty());
+			CHECK(LoadRenderModelTextures(mesh->textures));
+		}
+		// The whole model: the components shown at rest
+		std::optional<RmMesh> whole = LoadRenderModelMesh(*model, "");
+		REQUIRE(whole);
+		CHECK(whole->indices.size() % 3 == 0);
+	}
+}
+
+TEST_CASE("Own_controller_models_move_like_SteamVR_ones")
+{
+	OwnModelsDirForTest dir(OwnModels());
+	std::shared_ptr<const RmModel> index = FindOwnRenderModel("valve-index-left", XrPosef{ { 0, 0, 0, 1 }, { 0, 0, 0 } });
+	REQUIRE(index);
+
+	// The trigger turns on the trigger's axis, the grip with its button; the stick with axis 0
+	const RmComponent* trigger = Find(*index, "trigger");
+	REQUIRE(trigger);
+	CHECK(trigger->motionType == "rotate");
+	CHECK(trigger->motion["controller_axis"].asInt() == 1);
+	const RmComponent* stick = Find(*index, "thumbstick");
+	REQUIRE(stick);
+	CHECK(stick->motionType == "joystick");
+	CHECK(stick->motion["controller_axis"].asInt() == 0);
+
+	// The touch dot: hidden until the trackpad's touched
+	const RmComponent* dot = Find(*index, "trackpad_touch");
+	REQUIRE(dot);
+	CHECK(dot->motionType == "trackpad");
+	CHECK_FALSE(ComponentVisible(*dot, false, false));
+	CHECK(ComponentVisible(*dot, true, false));
+	// Touched at the pad's right, it's further right than at its left
+	XrPosef right = ComponentPose(*dot, 0, { { 1, 0 } }), left = ComponentPose(*dot, 0, { { -1, 0 } });
+	glm::vec3 across(right.position.x - left.position.x, right.position.y - left.position.y, right.position.z - left.position.z);
+	CHECK(glm::length(across) > 0.005f);
+}
+
+TEST_CASE("Own_controller_models_are_put_in_the_device_space")
+{
+	OwnModelsDirForTest dir(OwnModels());
+	// A space of its own, so the moved model isn't the cached one at identity
+	TempDir copy("oc_own_models");
+	fs::copy(OwnModels() / "valve-index", copy.path / "valve-index", fs::copy_options::recursive);
+	std::optional<RmModel> files = LoadRenderModelFolder(copy.path / "valve-index", "valve-index-left");
+	REQUIRE(files);
+	RmModel moved = *files;
+	glm::quat q = glm::angleAxis(glm::radians(30.0f), glm::normalize(glm::vec3(1, 0.5f, 0)));
+	moved.space = XrPosef{ { q.x, q.y, q.z, q.w }, { 0.01f, -0.02f, 0.03f } };
+
+	// The vertices: each where the space puts it
+	std::optional<RmMesh> a = LoadRenderModelMesh(*files, "trigger"), b = LoadRenderModelMesh(moved, "trigger");
+	REQUIRE(a);
+	REQUIRE(b);
+	REQUIRE(a->vertices.size() == b->vertices.size());
+	for (size_t i = 0; i < a->vertices.size(); i += 17)
+		CHECK(glm::length(Apply(moved.space, Pos(a->vertices[i])) - Pos(b->vertices[i])) < 1e-5f);
+
+	// The motion with them: the pressed trigger's vertex in the device's space is the files' pressed one, moved
+	const RmComponent* trigger = Find(moved, "trigger");
+	REQUIRE(trigger);
+	XrPosef inFiles = ComponentPose(*trigger, 1, { { 0, 0 } });
+	XrPosef inDevice = ModelComponentPose(moved, *trigger, 1, { { 0, 0 } });
+	for (size_t i = 0; i < a->vertices.size(); i += 17) {
+		glm::vec3 want = Apply(moved.space, Apply(inFiles, Pos(a->vertices[i])));
+		glm::vec3 got = Apply(inDevice, Pos(b->vertices[i]));
+		CHECK(glm::length(want - got) < 1e-5f);
+	}
+	// At rest it doesn't move
+	XrPosef rest = ModelComponentPose(moved, *trigger, 0, { { 0, 0 } });
+	CHECK(std::abs(rest.position.x) + std::abs(rest.position.y) + std::abs(rest.position.z) < 1e-5f);
+}
+
+TEST_CASE("Own_controller_models_textures_can_be_JPEG")
+{
+	OwnModelsDirForTest dir(OwnModels());
+	// The PICO Neo3's texture is a JPEG
+	std::shared_ptr<const RmModel> pico = FindOwnRenderModel("pico-neo3-left", XrPosef{ { 0, 0, 0, 1 }, { 0, 0, 0 } });
+	REQUIRE(pico);
+	std::optional<RmMesh> mesh = LoadRenderModelMesh(*pico, "body");
+	REQUIRE(mesh);
+	REQUIRE(mesh->textures.size() == 1);
+	CHECK(mesh->textures[0].extension() == ".jpg");
+	std::optional<Image> image = LoadRenderModelTexture(mesh->textures[0]);
+	REQUIRE(image);
+	CHECK(image->width > 0);
+	CHECK(image->rgba.size() == (size_t)image->width * image->height * 4);
+	// Not all one colour
+	bool varied = false;
+	for (size_t i = 4; i < image->rgba.size() && !varied; i += 4)
+		varied = memcmp(&image->rgba[i], &image->rgba[0], 3) != 0;
+	CHECK(varied);
+
+	// Bytes that start as a JPEG but aren't one are refused
+	TempDir tmp;
+	WriteFile(tmp.path / "broken.jpg", std::string("\xFF\xD8\xFF\xE0 not really", 15));
+	CHECK_FALSE(LoadRenderModelTexture(tmp.path / "broken.jpg"));
+}
+
+TEST_CASE("Own_controller_models_answer_through_IVRRenderModels")
+{
+	OwnModelsDirForTest dir(OwnModels());
+	BaseRenderModels rm;
+	const char* vive = "htc-vive-right";
+	CHECK(rm.GetComponentCount(vive) == 5); // body, grip, trackpad, trackpad_touch, trigger
+	CHECK(rm.RenderModelHasComponent(vive, "trackpad_touch"));
+	CHECK_FALSE(rm.RenderModelHasComponent(vive, "tip"));
+	char name[128];
+	CHECK(rm.GetComponentRenderModelName(vive, "trigger", name, sizeof(name)) == strlen("htc-vive-right/trigger") + 1);
+	CHECK(std::string(name) == "htc-vive-right/trigger");
+	CHECK(rm.GetComponentButtonMask(vive, "trigger") == vr::ButtonMaskFromId(vr::k_EButton_Axis1));
+	CHECK(rm.GetComponentButtonMask(vive, "grip") == vr::ButtonMaskFromId(vr::k_EButton_Grip));
+
+	// The touch dot shows while the pad's touched
+	vr::VRControllerState_t state{};
+	OOVR_RenderModel_ComponentState_t cs{};
+	REQUIRE(rm.GetComponentState(vive, "trackpad_touch", &state, nullptr, &cs));
+	CHECK((cs.uProperties & 2) == 0); // VRComponentProperty_IsVisible
+	state.ulButtonTouched = vr::ButtonMaskFromId(vr::k_EButton_Axis0);
+	REQUIRE(rm.GetComponentState(vive, "trackpad_touch", &state, nullptr, &cs));
+	CHECK((cs.uProperties & 2) != 0);
+	// Its tip is answered without a controller: where the model is
+	CHECK(rm.GetComponentState(vive, "tip", &state, nullptr, &cs));
+
+	// The model and a component load, with a texture
+	vr::IVRRenderModels_001::RenderModel_t whole{}, part{};
+	REQUIRE(rm.LoadRenderModelInline(vive, &whole));
+	REQUIRE(rm.LoadRenderModelInline("htc-vive-right/trigger", &part));
+	CHECK(whole.unTriangleCount > part.unTriangleCount);
+	CHECK(whole.diffuseTexture.unWidth == 2048);
+	rm.FreeRenderModelInline(&whole);
+	rm.FreeRenderModelInline(&part);
+
+	// The Touch's name, with no controller in the hand: the Touch's model
+	CHECK(rm.GetComponentCount("oculus_quest2_controller_left") > 1);
+	CHECK(rm.RenderModelHasComponent("oculus_quest2_controller_left", "x_button"));
+	// A hand's own model with no controller in it stays the hand
+	CHECK(rm.GetComponentCount("renderLeftHand") == 1);
 }

@@ -56,7 +56,7 @@ $1"
 }
 
 sh "$installer" >"$work/log" || fail "install failed: $(cat "$work/log")"
-for file in bin/linux64/vrclient.so bin/vrclient.so bin/version.txt SOURCE.txt install.sh LICENSE.txt; do
+for file in bin/linux64/vrclient.so bin/vrclient.so bin/version.txt SOURCE.txt install.sh LICENSE.txt LICENSE_webxr-input-profiles.txt bin/rendermodels/valve-index/valve-index-left.json; do
 	[ -f "$copy/$file" ] || fail "the install has no $file."
 done
 expect "$copy

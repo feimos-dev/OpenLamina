@@ -167,6 +167,9 @@ target_compile_definitions(oc_unit_tests PRIVATE ${GRAPHICS_API_SUPPORT_FLAGS} D
 	OC_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/unit/data" OC_ECHO_APP="$<TARGET_FILE:oc_echo_app>")
 # The program the launch test starts
 add_dependencies(oc_unit_tests oc_echo_app)
+# The controller models the render model tests read
+add_dependencies(oc_unit_tests OCRenderModels)
+target_compile_definitions(oc_unit_tests PRIVATE OC_TEST_RENDERMODELS="${OC_RENDERMODELS_DIR}")
 if (NOT WIN32)
 	# The runtime library the entry point tests load
 	add_dependencies(oc_unit_tests OCOVR)

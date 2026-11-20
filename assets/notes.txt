@@ -15,3 +15,11 @@ is licensed under Creative Commons Attribution
 
 The Ubuntu font has been packaged for use with the keyboard, and has been converted via SudoFont
 https://github.com/SudoMike/SudoFont
+
+Controller models
+
+The controllers' models in assets/controllers are the WebXR Input Profiles' assets
+(https://github.com/immersive-web/webxr-input-profiles, packages/assets, version 1.0.20 on npm),
+Copyright (c) 2019 Amazon, under the MIT licence (assets/controllers/LICENSE.md, shipped as
+LICENSE_webxr-input-profiles.txt). They are as published, but for the Valve Index ones, whose textures are
+downscaled to 1024 pixels. scripts/rendermodels.py converts them to SteamVR's render-model layout at build time.

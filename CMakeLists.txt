@@ -298,6 +298,7 @@ endif ()
 set(OVR_PCH_EXCLUDED
 	OpenOVR/Misc/ini.c
 	OpenOVR/Misc/lodepng.cpp
+	OpenOVR/Misc/stb_image.cpp
 )
 
 # Generate version string from git revision, or supplied OC_VERSION setting
@@ -487,6 +488,7 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/Input/PicoInteractionProfile.h
 	OpenOVR/Misc/Input/MsftHandInteractionProfile.h
 	OpenOVR/Misc/lodepng.h
+	OpenOVR/Misc/StbJpeg.h
 	OpenOVR/Misc/ScopeGuard.h
 	OpenOVR/Reimpl/BaseApplications.h
 	OpenOVR/Reimpl/BaseChaperone.h
@@ -781,6 +783,21 @@ get_target_property(output_dir OCOVR LIBRARY_OUTPUT_DIRECTORY)
 add_custom_command(TARGET OCOVR
 	PRE_LINK COMMAND ${CMAKE_COMMAND} -E make_directory ${output_dir})
 
+# The controller models (assets/controllers, the WebXR Input Profiles') in SteamVR's render-model layout, beside the
+# libraries: bin/rendermodels serves bin/ and bin/linux64/. The conversion checks each model's motion as it goes.
+file(GLOB_RECURSE OC_CONTROLLER_ASSETS CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/assets/controllers/*)
+set(OC_RENDERMODELS_DIR ${CMAKE_BINARY_DIR}/bin/rendermodels)
+add_custom_command(
+	OUTPUT ${CMAKE_BINARY_DIR}/rendermodels.stamp
+	COMMAND ${Python_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/rendermodels.py --quiet
+		--assets ${CMAKE_SOURCE_DIR}/assets/controllers --out ${OC_RENDERMODELS_DIR}
+	COMMAND ${CMAKE_COMMAND} -E touch ${CMAKE_BINARY_DIR}/rendermodels.stamp
+	DEPENDS ${CMAKE_SOURCE_DIR}/scripts/rendermodels.py ${OC_CONTROLLER_ASSETS}
+	COMMENT "Converting the controller models"
+)
+add_custom_target(OCRenderModels ALL DEPENDS ${CMAKE_BINARY_DIR}/rendermodels.stamp)
+add_dependencies(OCOVR OCRenderModels)
+
 # Installation
 include(GNUInstallDirs)
 install(TARGETS OCOVR
@@ -792,6 +809,7 @@ install(FILES ${CMAKE_BINARY_DIR}/openvrpaths.vrpath DESTINATION ${PROJECT_NAME}
 install(FILES ${CMAKE_BINARY_DIR}/bin/version.txt
 	DESTINATION "${PROJECT_NAME}/bin"
 )
+install(DIRECTORY ${OC_RENDERMODELS_DIR} DESTINATION "${PROJECT_NAME}/bin")
 
 # === Tests ===
 if (OC_BUILD_TESTS)

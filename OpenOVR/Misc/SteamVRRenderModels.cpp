@@ -7,12 +7,15 @@
 #include "Misc/AppManifest.h"
 #include "Misc/JsonFile.h"
 #include "Misc/Numbers.h"
+#include "Misc/StbJpeg.h"
 #include "Misc/SteamVRPaths.h"
 
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <charconv>
 #include <cmath>
+#include <cstring>
 #include <fstream>
 #include <map>
 #include <mutex>
@@ -21,6 +24,10 @@
 
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
+
+#ifndef _WIN32
+#include <dlfcn.h>
+#endif
 
 namespace fs = std::filesystem;
 
@@ -326,8 +333,19 @@ fs::path SteamVRRenderModelFolder(const fs::path& steamvr, const std::string& na
 
 std::optional<RmModel> LoadSteamVRRenderModel(const fs::path& steamvr, const std::string& name)
 {
+	fs::path folder;
 	try {
-		fs::path folder = SteamVRRenderModelFolder(steamvr, name);
+		folder = SteamVRRenderModelFolder(steamvr, name);
+	} catch (const std::exception& e) {
+		OOVR_LOGF("Render model %s can't be read: %s", name.c_str(), e.what());
+		return std::nullopt;
+	}
+	return LoadRenderModelFolder(folder, name);
+}
+
+std::optional<RmModel> LoadRenderModelFolder(const fs::path& folder, const std::string& name)
+{
+	try {
 		if (folder.empty() || !IsDirectory(folder))
 			return std::nullopt;
 		fs::path stem = PathFromUtf8(FileStem(name));
@@ -644,6 +662,17 @@ std::optional<RmMesh> LoadRenderModelMesh(const RmModel& model, const std::strin
 	if (mesh.indices.empty())
 		return std::nullopt;
 	SetTextures(mesh, vertexTextures);
+	const XrPosef& s = model.space;
+	if (s.orientation.w != 1 || s.position.x != 0 || s.position.y != 0 || s.position.z != 0) {
+		glm::quat rot = glm::normalize(glm::quat(s.orientation.w, s.orientation.x, s.orientation.y, s.orientation.z));
+		glm::vec3 pos(s.position.x, s.position.y, s.position.z);
+		for (RmVertex& v : mesh.vertices) {
+			glm::vec3 p = rot * glm::vec3(v.vPosition.v[0], v.vPosition.v[1], v.vPosition.v[2]) + pos;
+			glm::vec3 n = rot * glm::vec3(v.vNormal.v[0], v.vNormal.v[1], v.vNormal.v[2]);
+			v.vPosition = V3(p);
+			v.vNormal = V3(n);
+		}
+	}
 	return mesh;
 }
 
@@ -732,6 +761,14 @@ std::optional<Image> DecodeTga(const std::string& bytes, std::string* why)
 	return image;
 }
 
+// A file that starts as a JPEG does
+bool IsJpeg(const fs::path& file)
+{
+	std::ifstream in(file, std::ios::binary);
+	unsigned char magic[3] = {};
+	return in.read((char*)magic, 3) && magic[0] == 0xFF && magic[1] == 0xD8 && magic[2] == 0xFF;
+}
+
 bool IsTga(const fs::path& file)
 {
 	std::string ext = PathToUtf8(file.extension());
@@ -747,6 +784,11 @@ std::optional<Image> LoadRenderModelTexture(const fs::path& file)
 	if (IsTga(file)) {
 		std::optional<std::string> bytes = ReadFile(file, kMaxImageFileBytes);
 		image = bytes ? DecodeTga(*bytes, &why) : std::nullopt;
+		if (!bytes)
+			why = "it can't be read, or is too big";
+	} else if (IsJpeg(file)) {
+		std::optional<std::string> bytes = ReadFile(file, kMaxImageFileBytes);
+		image = bytes ? DecodeJpeg(*bytes, &why) : std::nullopt;
 		if (!bytes)
 			why = "it can't be read, or is too big";
 	} else {
@@ -879,6 +921,39 @@ XrPosef ComponentPose(const RmComponent& c, float value, vr::HmdVector2_t axis)
 	return ToPose(r);
 }
 
+namespace {
+Rigid SpaceOf(const RmModel& model)
+{
+	const XrPosef& s = model.space;
+	return Rigid{ glm::normalize(glm::quat(s.orientation.w, s.orientation.x, s.orientation.y, s.orientation.z)),
+		glm::vec3(s.position.x, s.position.y, s.position.z) };
+}
+
+Rigid FromPose(const XrPosef& p)
+{
+	return Rigid{ glm::quat(p.orientation.w, p.orientation.x, p.orientation.y, p.orientation.z),
+		glm::vec3(p.position.x, p.position.y, p.position.z) };
+}
+
+Rigid Inverse(const Rigid& r)
+{
+	glm::quat inv = glm::inverse(r.rot);
+	return Rigid{ inv, -(inv * r.pos) };
+}
+} // namespace
+
+XrPosef ModelComponentPose(const RmModel& model, const RmComponent& c, float value, vr::HmdVector2_t axis)
+{
+	// The motion is in the files' space: there, then back
+	Rigid space = SpaceOf(model);
+	return ToPose(Then(space, Then(FromPose(ComponentPose(c, value, axis)), Inverse(space))));
+}
+
+XrPosef ModelComponentLocal(const RmModel& model, const RmComponent& c)
+{
+	return ToPose(Then(SpaceOf(model), FromPose(c.local)));
+}
+
 bool ComponentVisible(const RmComponent& c, bool touched, bool pressed)
 {
 	const Json::Value& vis = c.visibility;
@@ -935,4 +1010,141 @@ const std::vector<std::string>& SteamVRRenderModelNames()
 	static const std::vector<std::string>& names = *new std::vector<std::string>(
 	    Install() ? ListSteamVRRenderModels(*Install()) : std::vector<std::string>());
 	return names;
+}
+
+namespace {
+// The folder of the library (or program) this code is in; empty if it can't be told
+fs::path LibraryFolder()
+{
+#ifdef _WIN32
+	HMODULE module = nullptr;
+	if (!GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+	        (LPCWSTR)&LibraryFolder, &module))
+		return {};
+	std::wstring buffer(MAX_PATH, L'\0');
+	for (;;) {
+		DWORD n = GetModuleFileNameW(module, buffer.data(), (DWORD)buffer.size());
+		if (n == 0)
+			return {};
+		if (n < buffer.size()) {
+			buffer.resize(n);
+			break;
+		}
+		if (buffer.size() >= 32768)
+			return {};
+		buffer.resize(buffer.size() * 2);
+	}
+	return fs::path(buffer).parent_path();
+#else
+	Dl_info info{};
+	if (!dladdr((void*)&LibraryFolder, &info) || !info.dli_fname)
+		return {};
+	return fs::path(info.dli_fname).parent_path();
+#endif
+}
+} // namespace
+
+fs::path OwnRenderModelsFolder()
+{
+	// A test's folder where it names one; else the one beside the library, found once
+	const char* testDir = getenv("OC_TEST_RENDERMODELS_DIR");
+	if (testDir && *testDir)
+		return PathFromUtf8(testDir);
+	static const fs::path& folder = *[] {
+		auto* found = new fs::path;
+		try {
+			fs::path lib = LibraryFolder();
+			if (!lib.empty()) {
+				lib = fs::absolute(lib);
+				for (const fs::path& candidate : { lib / "rendermodels", lib.parent_path() / "rendermodels" }) {
+					if (IsDirectory(candidate)) {
+						*found = candidate;
+						break;
+					}
+				}
+			}
+		} catch (const std::exception& e) {
+			OOVR_LOGF("OpenLamina's controller models can't be found: %s", e.what());
+		}
+		if (found->empty())
+			OOVR_LOG("OpenLamina's controller models aren't installed beside the library");
+		return found;
+	}();
+	return folder;
+}
+
+namespace {
+// "<profile>-<hand>": the profile's folder, or empty for a name that isn't one
+std::string OwnModelProfile(const std::string& name)
+{
+	for (const char* hand : { "-left", "-right" }) {
+		size_t n = strlen(hand);
+		if (name.size() > n && name.compare(name.size() - n, n, hand) == 0) {
+			std::string profile = name.substr(0, name.size() - n);
+			return IsPlainName(profile) ? profile : std::string();
+		}
+	}
+	return {};
+}
+} // namespace
+
+std::shared_ptr<const RmModel> FindOwnRenderModel(const std::string& name, const XrPosef& space)
+{
+	const fs::path root = OwnRenderModelsFolder();
+	std::string profile = OwnModelProfile(name);
+	if (root.empty() || profile.empty() || !IsPlainName(name))
+		return nullptr;
+	// By folder, name and space: a test can name another folder, and the space is known once there's an instance
+	using Key = std::tuple<fs::path, std::string, std::array<float, 7>>;
+	static std::map<Key, std::shared_ptr<const RmModel>>& cache = *new std::map<Key, std::shared_ptr<const RmModel>>;
+	const Key key(root, name,
+	    std::array<float, 7>{ space.orientation.x, space.orientation.y, space.orientation.z, space.orientation.w,
+	        space.position.x, space.position.y, space.position.z });
+	{
+		std::lock_guard<std::mutex> guard(ModelsLock());
+		auto it = cache.find(key);
+		if (it != cache.end())
+			return it->second;
+	}
+	std::shared_ptr<const RmModel> model;
+	try {
+		std::optional<RmModel> loaded = LoadRenderModelFolder(root / PathFromUtf8(profile), name);
+		if (loaded) {
+			loaded->space = space;
+			model = std::make_shared<const RmModel>(std::move(*loaded));
+		}
+	} catch (const std::exception& e) {
+		OOVR_LOGF("Render model %s can't be read: %s", name.c_str(), e.what());
+	}
+	std::lock_guard<std::mutex> guard(ModelsLock());
+	// Only names that are a model's folder get here: a few dozen at most
+	cache.emplace(key, model);
+	return model;
+}
+
+const std::vector<std::string>& OwnRenderModelNames()
+{
+	// By folder, each read once: a test can name another folder
+	static std::map<fs::path, std::vector<std::string>>& byFolder = *new std::map<fs::path, std::vector<std::string>>;
+	const fs::path root = OwnRenderModelsFolder();
+	std::lock_guard<std::mutex> guard(ModelsLock());
+	auto found = byFolder.find(root);
+	if (found != byFolder.end())
+		return found->second;
+	std::vector<std::string>& all = byFolder[root];
+	if (root.empty())
+		return all;
+	std::error_code ec;
+	for (fs::directory_iterator it(root, ec), end; !ec && it != end; it.increment(ec)) {
+		std::string profile = PathToUtf8(it->path().filename());
+		if (!IsPlainName(profile))
+			continue;
+		for (const char* hand : { "-left", "-right" }) {
+			fs::path json = it->path() / PathFromUtf8(profile + hand + ".json");
+			if (IsFile(json))
+				all.push_back(profile + hand);
+		}
+	}
+	std::sort(all.begin(), all.end());
+	return all;
 }
