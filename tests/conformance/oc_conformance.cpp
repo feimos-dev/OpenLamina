@@ -13,6 +13,8 @@
 #pragma comment(lib, "dxgi.lib") // CreateDXGIFactory1
 #else
 #include <dlfcn.h>
+
+#include "gfx/GfxApi.h"
 #endif
 
 #include <algorithm>
@@ -156,6 +158,18 @@ int main(int argc, char** argv)
 	}
 	if (!ctx.d3d11)
 		D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &ctx.d3d11, nullptr, nullptr);
+#else
+	// A 1024x1024 RGBA8 Vulkan image (the first physical device's), made at the first call that submits one. Never
+	// destroyed: OpenLamina may hold the device until the process ends.
+	ctx.vulkanTexture = []() -> const vr::Texture_t* {
+		static GfxTexture texture = [] {
+			std::string why;
+			GfxApi* vk = GfxApi::Create(GfxKind::Vulkan, &why).release();
+			return vk ? vk->Pattern(1024, 1024, 37 /* VK_FORMAT_R8G8B8A8_UNORM */, 0) : GfxTexture{};
+		}();
+		static const vr::Texture_t* made = texture.Made() ? texture.Texture() : nullptr;
+		return made;
+	};
 #endif
 
 	VRClientCoreFactoryFn factory = LoadFactory(args["--runtime"]);

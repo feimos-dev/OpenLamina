@@ -40,6 +40,8 @@ struct CallContext {
 	ID3D11Device* d3d11 = nullptr;
 #else
 	void* d3d11 = nullptr;
+	// The valid argument set's texture here: a Vulkan one, made the first time it is asked for (nullptr: none can be)
+	const vr::Texture_t* (*vulkanTexture)() = nullptr;
 #endif
 	bool againstRealRuntime = false;
 	std::filesystem::path dataDir;
