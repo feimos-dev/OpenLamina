@@ -64,14 +64,18 @@ int Dashboard::OnInput(bool leftDown, bool rightDown, double now)
 		toggledThisPress = true;
 	}
 	if (button == Button::PressOrHold) {
-		if (down && !toggledThisPress && now - heldSince >= kRecentreHold) {
-			// Held long enough: a recentre, from the hand that began the press if it's still the one held
-			toggledThisPress = true;
+		if (down) {
+			// The hand that began the press if it's still the one held
 			const bool beganHeld = heldHand == 0 ? leftDown : rightDown;
-			recentre = beganHeld ? heldHand : 1 - heldHand;
-		} else if (!down && held && !toggledThisPress) {
-			// Let go before that: a press
-			open = !open;
+			recentreHand = beganHeld ? heldHand : 1 - heldHand;
+		} else if (held && !toggledThisPress) {
+			// Let go: a press before kRecentreHold, a recentre before kPowerOffHold, and after that the controller
+			// was being turned off
+			const double heldFor = now - heldSince;
+			if (heldFor < kRecentreHold)
+				open = !open;
+			else if (heldFor < kPowerOffHold)
+				recentre = recentreHand;
 		}
 	}
 	held = down;
