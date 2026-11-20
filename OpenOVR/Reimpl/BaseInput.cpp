@@ -44,6 +44,7 @@
 
 // Use RenderModels for the pose offsets, which are the same as component positions
 #include "BaseRenderModels.h"
+#include "Misc/Fade.h"
 
 using namespace vr;
 
@@ -1713,8 +1714,8 @@ EVRInputError BaseInput::GetDigitalActionData(VRActionHandle_t action, InputDigi
 	if (EVRInputError err = DigitalReadError(act->type); err != VRInputError_None)
 		return err;
 
-	// Held by the dashboard: inactive (zeroed above)
-	if (HeldByDashboard())
+	// Held by the dashboard or the grid: inactive (zeroed above)
+	if (InputHeld())
 		return VRInputError_None;
 
 	// The evaluators' output, inactive if no active binding writes it
@@ -1746,8 +1747,8 @@ EVRInputError BaseInput::GetAnalogActionData(VRActionHandle_t action, InputAnalo
 		OC_UNSUPPORTED(VRInputError_WrongType, "Invalid action type %d for action %s",
 		    static_cast<int>(act->type), act->fullName.c_str());
 
-	// Held by the dashboard: inactive (zeroed above)
-	if (HeldByDashboard())
+	// Held by the dashboard or the grid: inactive (zeroed above)
+	if (InputHeld())
 		return VRInputError_None;
 
 	// The evaluators' output, inactive if no active binding writes it
@@ -3062,6 +3063,13 @@ void BaseInput::SetHeldByDashboard(bool held)
 bool BaseInput::HeldByDashboard()
 {
 	return heldByDashboard;
+}
+
+bool BaseInput::InputHeld()
+{
+	// The grid fully in and not asked to fade out: once the game asks for that, its input is back as the fade starts
+	const CompositorFades& fades = CompositorFades::Get();
+	return heldByDashboard || (fades.GridWanted() && fades.GridAlphaAt(CompositorClockSeconds()) >= 1.0f);
 }
 
 bool BaseInput::GetDashboardButton(bool system, int hand)

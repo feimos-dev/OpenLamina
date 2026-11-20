@@ -539,6 +539,12 @@ public: // INTERNAL FUNCTIONS
 	 */
 	static void SetHeldByDashboard(bool held);
 	static bool HeldByDashboard();
+	/**
+	 * Whether the game's input is held: by the dashboard, or while the compositor's grid is fully faded in (the game
+	 * is loading, and the user sees the grid, not the game). Held, its digital and analog actions read inactive and its
+	 * old controller states zero.
+	 */
+	static bool InputHeld();
 	/** A vibration on one hand (0 the left, 1 the right), through the old input's haptic action */
 	void TriggerHandHaptic(int hand, float seconds, float frequency, float amplitude);
 

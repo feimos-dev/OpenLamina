@@ -862,8 +862,8 @@ bool BaseSystem::GetControllerState(vr::TrackedDeviceIndex_t controllerDeviceInd
 		input->LoadEmptyManifestIfRequired();
 
 	const bool result = input->GetLegacyControllerState(controllerDeviceIndex, controllerState);
-	// Held by OpenLamina's dashboard: read (the dashboard's button is in it) and zeroed
-	if (BaseInput::HeldByDashboard()) {
+	// Held by OpenLamina's dashboard or the grid: read (the dashboard's button is in it) and zeroed
+	if (BaseInput::InputHeld()) {
 		const uint32_t packet = controllerState->unPacketNum;
 		memset(controllerState, 0, controllerStateSize);
 		controllerState->unPacketNum = packet;

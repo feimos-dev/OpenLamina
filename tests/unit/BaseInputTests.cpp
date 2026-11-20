@@ -3,6 +3,7 @@
 
 #include "stdafx.h"
 
+#include "Misc/Fade.h"
 #include "Reimpl/BaseInput.h"
 
 #include <limits>
@@ -144,4 +145,28 @@ TEST_CASE("Hand_touches_ease_on_their_own_hand")
 
 	// A clock that runs backwards doesn't move it
 	CHECK(hands[0].Step(true, false, start).thumb == doctest::Approx(0.6f));
+}
+
+TEST_CASE("Input_is_held_while_the_grid_is_fully_faded_in")
+{
+	CompositorFades& fades = CompositorFades::Get();
+	fades.Reset();
+	CHECK_FALSE(BaseInput::InputHeld());
+
+	// Fading in over a long time: not yet held part of the way in
+	fades.FadeGrid(CompositorClockSeconds(), 1000.0, true);
+	CHECK_FALSE(BaseInput::InputHeld());
+
+	// Fully in: held; fading out again lets it go at once
+	fades.FadeGrid(CompositorClockSeconds(), 0.0, true);
+	CHECK(BaseInput::InputHeld());
+	fades.FadeGrid(CompositorClockSeconds(), 1000.0, false);
+	CHECK_FALSE(BaseInput::InputHeld());
+
+	// The dashboard holds it on its own
+	fades.Reset();
+	BaseInput::SetHeldByDashboard(true);
+	CHECK(BaseInput::InputHeld());
+	BaseInput::SetHeldByDashboard(false);
+	CHECK_FALSE(BaseInput::InputHeld());
 }
