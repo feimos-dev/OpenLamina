@@ -690,14 +690,15 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 
 	// load all available bindings for known interaction profiles
 	OOVR_LOG("Loading known bindings...");
-	// Map of OpenVR names (i.e. "vive_controller") to interaction profile pointers
-	std::unordered_map<std::string, InteractionProfile*> OpenVRNameToProfile;
+	// Map of OpenVR names (i.e. "vive_controller") to interaction profile pointers: one name may have several profiles
+	// (both Pico controllers are pico_controller)
+	std::unordered_map<std::string, std::vector<InteractionProfile*>> OpenVRNameToProfile;
 	for (const std::unique_ptr<InteractionProfile>& profile : InteractionProfile::GetProfileList()) {
 		if (profile->GetOpenVRName().has_value())
-			OpenVRNameToProfile[profile->GetOpenVRName().value()] = profile.get();
+			OpenVRNameToProfile[profile->GetOpenVRName().value()].push_back(profile.get());
 		else
 			// Add any unrecognized profiles (simple controller) to the end so it still gets assigned a profile
-			OpenVRNameToProfile[profile->GetPath()] = profile.get();
+			OpenVRNameToProfile[profile->GetPath()].push_back(profile.get());
 	}
 
 	// For determining the best path for supported controllers that don't have a profile handled by the game (i.e. khr/simple_controller)
@@ -739,7 +740,8 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 		// have to loop through every binding type because default_bindings is an array for some reason
 		auto iter = OpenVRNameToProfile.find(controller_type);
 		if (iter != OpenVRNameToProfile.end()) {
-			LoadBindingsSet(*(iter->second), path);
+			for (InteractionProfile* profile : iter->second)
+				LoadBindingsSet(*profile, path);
 			// profile has been bound: we don't need it in our map anymore
 			OpenVRNameToProfile.erase(iter);
 		}
@@ -760,11 +762,12 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 	}
 
 	// remaining profiles: the user's own bindings for them if there are any, else our backup path
-	for (auto& [name, profile_ptr] : OpenVRNameToProfile) {
+	for (auto& [name, profiles] : OpenVRNameToProfile) {
 		std::optional<std::filesystem::path> own = FindBindingFile(appKey, name, userBindings, workingDir, {}, "", legacyUserBindings);
 		if (own)
 			OOVR_LOGF("Loading the user's own bindings for controller type %s: %s", name.c_str(), PathToUtf8(*own).c_str());
-		LoadBindingsSet(*profile_ptr, own ? PathToUtf8(*own) : backupPath);
+		for (InteractionProfile* profile : profiles)
+			LoadBindingsSet(*profile, own ? PathToUtf8(*own) : backupPath);
 	}
 
 	// Attach everything to the current session
@@ -1576,8 +1579,8 @@ EVRInputError BaseInput::UpdateActionState(VR_ARRAY_COUNT(unSetCount) VRActiveAc
 	{
 		// The aliases and the hands' profiles are read by other threads' calls under the evaluator lock
 		std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
-		if (dominantHand != requestedDominantHand) {
-			dominantHand = requestedDominantHand;
+		if (dominantHand != requestedDominantHand.load()) {
+			dominantHand = requestedDominantHand.load();
 			ResolveHandAliases();
 		}
 	}
@@ -2337,6 +2340,8 @@ EVRInputError BaseInput::DecompressSkeletalBoneData(const void* pvCompressedBuff
 
 void BaseInput::ApplyHaptic(const PendingHaptic& pulse)
 {
+	if (pulse.action == XR_NULL_HANDLE)
+		return; // its action couldn't be made
 	XrHapticActionInfo info = { XR_TYPE_HAPTIC_ACTION_INFO };
 	info.action = pulse.action;
 	info.subactionPath = pulse.subactionPath;
