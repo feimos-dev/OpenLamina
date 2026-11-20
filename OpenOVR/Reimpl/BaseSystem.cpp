@@ -8,6 +8,7 @@
 #include "BaseOverlay.h"
 #include "BaseSystem.h"
 #include "Misc/ProgramEvents.h"
+#include "Misc/Process.h"
 #include "Misc/SharedStore.h"
 #include "Drivers/Backend.h"
 #include "Misc/Config.h"
@@ -792,9 +793,10 @@ bool BaseSystem::PollNextEventWithPose(ETrackingUniverseOrigin eOrigin, VREvent_
 
 	std::unique_lock lock(events_mutex);
 	for (const StoreEvent& s : others) {
-		// OpenLamina's own (a pointer on an overlay) are taken by those they're for, never the game
-		if (!OcIsPrivateEvent(s.eventType))
-			PushEventLocked(OcUnpackEvent(s.eventType, s.data));
+		// OpenLamina's own (a pointer on an overlay) are taken by those they're for, never the game; those for one
+		// program only by that program
+		if (std::optional<VREvent_t> e = OcEventForProgram(s, oc_current_pid()))
+			PushEventLocked(*e);
 	}
 
 	if (events.empty()) {
