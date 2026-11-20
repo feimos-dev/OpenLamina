@@ -91,6 +91,13 @@ static Script LoadScript()
 		in2.value = i["value"].asFloat();
 		s.inputs.push_back(in2);
 	}
+	for (const Json::Value& t : root["vive_trackers"]) {
+		ScriptViveTracker tracker;
+		tracker.frame = t["frame"].asUInt64();
+		tracker.persistent = t["persistent"].asString();
+		tracker.role = t["role"].asString();
+		s.viveTrackers.push_back(tracker);
+	}
 	for (const Json::Value& p : root["presence"]) {
 		ScriptPresence pr;
 		pr.frame = p["frame"].asUInt64();

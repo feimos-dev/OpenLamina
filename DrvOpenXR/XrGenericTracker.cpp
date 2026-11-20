@@ -5,8 +5,9 @@
 #include "../OpenOVR/Reimpl/BaseInput.h"
 #include "../OpenOVR/convert.h"
 
-XrGenericTracker::XrGenericTracker(const InteractionProfile& profile, XrXDevPropertiesMNDX properties, uint32_t index, XrSpace space)
-    : profile(profile), xdevProperties(properties), genericTrackerIndex(index), genericTrackerSpace(space)
+XrGenericTracker::XrGenericTracker(const InteractionProfile& profile, XrXDevPropertiesMNDX properties, uint32_t index, XrSpace space,
+    std::string controllerType)
+    : profile(profile), xdevProperties(properties), genericTrackerIndex(index), genericTrackerSpace(space), controllerType(std::move(controllerType))
 {
 	InitialiseDevice(index + RESERVED_DEVICE_INDICES);
 }
@@ -92,6 +93,8 @@ DeviceIdentity XrGenericTracker::Identity()
 	DeviceIdentity id = TrackerIdentity(xdevProperties.name, xdevProperties.serial);
 	if (std::optional<const char*> name = GetInteractionProfile()->GetOpenVRName())
 		id.renderModel = *name;
+	if (!controllerType.empty())
+		id.controllerType = controllerType;
 	return id;
 }
 

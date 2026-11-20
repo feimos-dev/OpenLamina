@@ -4,6 +4,7 @@
 // FIXME don't do that, it's ugly and slows down the build when modifying headers
 
 #include "Drivers/Backend.h"
+#include "Misc/Input/ViveTrackerRoles.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -243,6 +244,12 @@ public:
 	typedef OOVR_VRSkeletalSummaryData_t VRSkeletalSummaryData_t;
 
 	XrHandTrackerEXT handTrackers[2] = { XR_NULL_HANDLE, XR_NULL_HANDLE };
+
+	/** With XR_HTCX_vive_tracker_interaction: the one pose action of every tracker role (each role's path is one of
+	 * its subaction paths), in OpenLamina's own action set; null without it or before the actions are made */
+	XrAction TrackerPoseAction() const { return trackerPoseSession != XR_NULL_HANDLE && trackerPoseSession == xr_session.get() ? trackerPoseAction : XR_NULL_HANDLE; }
+	/** Counts the tracker actions made: a new one needs new spaces */
+	uint64_t TrackerPoseActionGeneration() const { return trackerPoseActionGeneration; }
 
 	// ---------------  Handle management   --------------- //
 
@@ -751,6 +758,12 @@ public:
 					return info;
 				}
 			}
+			// A tracker by the path SteamVR binds its pose on: /user/waist, /user/foot/left
+			if (std::optional<ViveTrackerRole> role = ViveTrackerRoleForSteamVRPath(path)) {
+				info.type = InputSource::OTHER;
+				info.devicePath = role->steamvrPath;
+				return info;
+			}
 			// Trackers are named by their role or serial: /user/vive_tracker_htcx/role/waist
 			static const std::string trackerPrefix = "/user/vive_tracker";
 			if (path.starts_with(trackerPrefix)) {
@@ -895,6 +908,19 @@ private:
 	int DominantHandIndex(HandAlias alias) const;
 
 	XrActionSet legacyInputsSet = XR_NULL_HANDLE;
+
+	// In the legacy set when XR_HTCX_vive_tracker_interaction is enabled: every tracker role's grip pose
+	XrAction trackerPoseAction = XR_NULL_HANDLE;
+	std::atomic<XrSession> trackerPoseSession{ XR_NULL_HANDLE }; // the session the action is attached to
+	std::atomic<uint64_t> trackerPoseActionGeneration{ 0 };
+	// The pose actions (manifest names, lower-cased) the game's binding files for trackers bind, and the roles they
+	// bind them on (waist, left_foot...)
+	std::map<std::string, std::vector<std::string>> trackerPoseRoutes;
+	/** A pose action's data from the tracker whose role a tracker's binding file binds it on; false if none does */
+	bool TrackerPoseData(const std::string& action, vr::ETrackingUniverseOrigin origin, const InputValueHandle* restrictToDevice,
+	    InputPoseActionData_t* data);
+	/** The tracker with that role; null if none has it */
+	static std::shared_ptr<ITrackedDevice> TrackerForRole(const ViveTrackerRole& role);
 
 	// In the legacy set when XR_EXT_eye_gaze_interaction is enabled: the gaze pose, and its space in this session
 	XrAction eyeGazeAction = XR_NULL_HANDLE;

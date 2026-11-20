@@ -11,7 +11,9 @@ constexpr int MAX_GENERIC_TRACKERS = vr::k_unMaxTrackedDeviceCount - RESERVED_DE
 
 class XrGenericTracker : public virtual XrTrackedDevice {
 public:
-	explicit XrGenericTracker(const InteractionProfile& profile, XrXDevPropertiesMNDX properties, uint32_t index, XrSpace space);
+	/** controllerType: a Vive tracker's by its role (vive_tracker_waist); empty for the generic tracker's */
+	explicit XrGenericTracker(const InteractionProfile& profile, XrXDevPropertiesMNDX properties, uint32_t index, XrSpace space,
+	    std::string controllerType = {});
 	~XrGenericTracker();
 
 	void GetPose(
@@ -34,10 +36,12 @@ public:
 	// For a space that went with its session: nothing is left to destroy
 	void ForgetSpace() { genericTrackerSpace = XR_NULL_HANDLE; }
 	std::string Serial() const { return xdevProperties.serial; }
+	const std::string& ControllerType() const { return controllerType; }
 
 private:
 	const InteractionProfile& profile;
 	XrXDevPropertiesMNDX xdevProperties;
 	[[maybe_unused]] uint32_t genericTrackerIndex;
 	XrSpace genericTrackerSpace;
+	std::string controllerType;
 };

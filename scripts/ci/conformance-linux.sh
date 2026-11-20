@@ -66,6 +66,12 @@ run --cases input-frames --script tests/conformance/scripts/input_toggle.json --
 # GetActionBindingInfo from the binding file (poses and vibrations included), and without one a vibration's bound outputs
 run --cases binding-info --script tests/conformance/scripts/bound_source_odd.json --manifest tests/unit/data/manifest_toggle.json --expect tests/conformance/expect/binding_info.json --out "$out"/binding-info
 run --cases binding-info --script tests/conformance/scripts/bound_source_odd.json --manifest tests/unit/data/manifest_haptic_no_bindings.json --expect tests/conformance/expect/binding_info_runtime.json --out "$out"/binding-info-runtime
+# Vive trackers by their role: a device per role, and a pose action a tracker's binding file binds read from it
+run --cases vive-trackers --script tests/conformance/scripts/vive_trackers.json --manifest tests/unit/data/manifest_trackers.json --expect tests/conformance/expect/vive_trackers.json --out "$out"/vive-trackers
+# The hands as controllers: through XR_EXT_hand_interaction, with hand tracking alone, and shown as Touch controllers
+run --cases hand-controllers --script tests/conformance/scripts/hand_interaction.json --manifest tests/unit/data/manifest_trackers.json --expect tests/conformance/expect/hand_controllers.json --out "$out"/hand-controllers
+run --cases hand-controllers --script tests/conformance/scripts/hand_tracking_only.json --manifest tests/unit/data/manifest_trackers.json --expect tests/conformance/expect/hand_controllers_tracking.json --out "$out"/hand-controllers-tracking
+run --cases hand-controllers --script tests/conformance/scripts/hand_interaction.json --manifest tests/unit/data/manifest_trackers.json --ini tests/conformance/ini/hand_controller_touch.ini --expect tests/conformance/expect/hand_controllers_touch.json --out "$out"/hand-controllers-touch
 # The compositor's calls with every graphics API offered: the Vulkan extension lists with a null buffer
 run --only "IVRCompositor_0(19|2[0-9])" --script tests/conformance/scripts/gfx_all_apis.json --out "$out"/compositor-all-apis
 # Eye-tracked foveation from the eye gaze: with an action manifest and with legacy input, canted views,

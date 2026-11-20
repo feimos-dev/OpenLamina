@@ -160,6 +160,7 @@ On Windows the app's *Settings* window edits the common options. An unknown opti
 | `laserMouse` | on | Controllers act as a mouse on overlays that take mouse input. |
 | `keyboard` | on | The keyboard games show for typing text. |
 | `keyboardLayout` | from locale | `us` or `uk`. |
+| `handController` | `knuckles` | The controller hands are shown as when no controller is in them (through `XR_EXT_hand_interaction`, or hand tracking alone): `knuckles` (an Index controller), `oculus_touch`, `vive_controller`, or `off` to show none. |
 | `dashboardButton` | `system` | What opens the dashboard: `system`, `system_long`, `menu`, `menu_long` or `off`. With `system`, holding it for a second recentres. |
 | `helperApps` | on | Run overlay and background apps beside the game (needs a runtime with overlay sessions, like Monado). |
 | `overlayLayersPlacement` | `1` | Where an overlay app's layers go among other programs'; higher is on top. |

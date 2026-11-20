@@ -1,0 +1,8 @@
+{
+  "controller_type": "vive_tracker_waist",
+  "bindings": {
+    "/actions/main": {
+      "poses": [{ "output": "/actions/main/in/waist", "path": "/user/waist/pose/raw" }]
+    }
+  }
+}

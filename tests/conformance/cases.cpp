@@ -2299,6 +2299,137 @@ void VelocitiesCase(CaseContext& c)
 	c.core->Cleanup();
 }
 
+// Frames of a game reading the manifest's actions: n frames, each with UpdateActionState on /actions/main
+static void ManifestFrames(CaseContext& c, Frames& f, vr::IVRInput_010::IVRInput* in, vr::VRActionSetHandle_t set, int n)
+{
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	for (int frame = 1; frame <= n; frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+		vr::IVRInput_010::VRActiveActionSet_t active{};
+		active.ulActionSet = set;
+		in->UpdateActionState(&active, sizeof(active), 1);
+		f.comp->Submit(vr::Eye_Left, tex.get(), nullptr, vr::Submit_Default);
+		f.comp->Submit(vr::Eye_Right, tex.get(), nullptr, vr::Submit_Default);
+	}
+}
+
+// The controller type (Prop_ControllerType_String) of each device that has one, by class: "controller" and "tracker"
+static Json::Value DeviceTypes(vr::IVRSystem_022::IVRSystem* sys)
+{
+	Json::Value out(Json::objectValue);
+	for (vr::TrackedDeviceIndex_t i = 1; i < vr::k_unMaxTrackedDeviceCount; i++) {
+		const vr::ETrackedDeviceClass cls = sys->GetTrackedDeviceClass(i);
+		if (cls != vr::TrackedDeviceClass_Controller && cls != vr::TrackedDeviceClass_GenericTracker)
+			continue;
+		char type[256] = {};
+		sys->GetStringTrackedDeviceProperty(i, vr::Prop_ControllerType_String, type, sizeof(type), nullptr);
+		out[cls == vr::TrackedDeviceClass_Controller ? "controller" : "tracker"].append(type);
+	}
+	return out;
+}
+
+// Vive trackers by their role (expect/vive_trackers.json), on the stand-in with scripts/vive_trackers.json and
+// --manifest manifest_trackers.json: a tracker device for each role, with the role's controller type (the left foot's
+// once it connects), and the pose action a waist tracker's binding file binds read from the waist tracker
+void ViveTrackersCase(CaseContext& c)
+{
+	using namespace vr::IVRInput_010;
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	vr::EVRInitError le;
+	auto* in = (IVRInput*)c.core->GetGenericInterface("IVRInput_010", &le);
+	if (!in) {
+		c.Record("no IVRInput_010", Err(le));
+		c.core->Cleanup();
+		return;
+	}
+	in->SetActionManifestPath(c.manifest.c_str());
+	vr::VRActionSetHandle_t set = vr::k_ulInvalidActionSetHandle;
+	vr::VRActionHandle_t waist = 0;
+	in->GetActionSetHandle("/actions/main", &set);
+	in->GetActionHandle("/actions/main/in/waist", &waist);
+	ManifestFrames(c, f, in, set, 10);
+	c.Record("devices before the foot", DeviceTypes(f.sys));
+	ManifestFrames(c, f, in, set, 30);
+	c.Record("devices", DeviceTypes(f.sys));
+
+	Json::Value r;
+	InputPoseActionData_t data{};
+	r["err"] = (int)in->GetPoseActionDataForNextFrame(waist, vr::TrackingUniverseStanding, &data, sizeof(data), vr::k_ulInvalidInputValueHandle);
+	r["active"] = data.bActive;
+	r["valid"] = data.pose.bPoseIsValid;
+	const vr::HmdMatrix34_t& m = data.pose.mDeviceToAbsoluteTracking;
+	r["at"] = ThousandthsOf({ { m.m[0][3], m.m[1][3], m.m[2][3] } });
+	vr::VRInputValueHandle_t waistPath = 0, footPath = 0;
+	in->GetInputSourceHandle("/user/waist", &waistPath);
+	in->GetInputSourceHandle("/user/foot/left", &footPath);
+	r["origin_is_the_waist"] = data.activeOrigin == waistPath && waistPath != vr::k_ulInvalidInputValueHandle;
+	// The origin's device is the waist tracker
+	InputOriginInfo_t origin{};
+	r["origin_info_err"] = (int)in->GetOriginTrackedDeviceInfo(data.activeOrigin, &origin, sizeof(origin));
+	char type[256] = {};
+	f.sys->GetStringTrackedDeviceProperty(origin.trackedDeviceIndex, vr::Prop_ControllerType_String, type, sizeof(type), nullptr);
+	r["origin_device"] = type;
+	// Restricted to the waist it's the same; to the left foot, which the file doesn't bind it on, nothing
+	InputPoseActionData_t restricted{};
+	in->GetPoseActionDataForNextFrame(waist, vr::TrackingUniverseStanding, &restricted, sizeof(restricted), waistPath);
+	r["restricted_to_the_waist"] = restricted.bActive;
+	restricted = {};
+	in->GetPoseActionDataForNextFrame(waist, vr::TrackingUniverseStanding, &restricted, sizeof(restricted), footPath);
+	r["restricted_to_the_foot"] = restricted.bActive;
+	c.Record("waist pose", r);
+	c.core->Cleanup();
+}
+
+// The hands as controllers (expect/hand_controllers*.json), on the stand-in with --manifest manifest_trackers.json:
+// with scripts/hand_interaction.json both hands are Index controllers ("knuckles", or the handController setting's)
+// and the right hand's pinch is the trigger the binding file binds; with scripts/hand_tracking_only.json there is no
+// controller, but the hands' own joints are tracked, and the hands are those controllers all the same
+void HandControllersCase(CaseContext& c)
+{
+	using namespace vr::IVRInput_010;
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	vr::EVRInitError le;
+	auto* in = (IVRInput*)c.core->GetGenericInterface("IVRInput_010", &le);
+	if (!in) {
+		c.Record("no IVRInput_010", Err(le));
+		c.core->Cleanup();
+		return;
+	}
+	in->SetActionManifestPath(c.manifest.c_str());
+	vr::VRActionSetHandle_t set = vr::k_ulInvalidActionSetHandle;
+	vr::VRActionHandle_t squeeze = 0;
+	in->GetActionSetHandle("/actions/main", &set);
+	in->GetActionHandle("/actions/main/in/squeeze", &squeeze);
+	// Hand tracking is checked once a second for a hand without a controller
+	ManifestFrames(c, f, in, set, 30);
+	for (int i = 0; i < 12 && f.sys->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_RightHand) >= 16; i++) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		ManifestFrames(c, f, in, set, 2);
+	}
+	c.Record("devices", DeviceTypes(f.sys));
+	Json::Value r;
+	const vr::TrackedDeviceIndex_t right = f.sys->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_RightHand);
+	r["right_found"] = right < 16;
+	if (right < 16) {
+		char model[256] = {};
+		f.sys->GetStringTrackedDeviceProperty(right, vr::Prop_RenderModelName_String, model, sizeof(model), nullptr);
+		r["render_model"] = model;
+		vr::TrackedDevicePose_t poses[16]{};
+		f.sys->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding, 0, poses, 16);
+		r["pose_valid"] = poses[right].bPoseIsValid;
+	}
+	InputAnalogActionData_t analog{};
+	r["squeeze_err"] = (int)in->GetAnalogActionData(squeeze, &analog, sizeof(analog), vr::k_ulInvalidInputValueHandle);
+	r["squeeze"] = analog.x;
+	c.Record("right hand", r);
+	c.core->Cleanup();
+}
+
 void SubmitEdges(CaseContext& c)
 {
 	Frames f;
@@ -3429,6 +3560,8 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "events-commit", EventsCommitCase },
 		{ "session-events", SessionEventsCase },
 		{ "velocities", VelocitiesCase },
+		{ "vive-trackers", ViveTrackersCase },
+		{ "hand-controllers", HandControllersCase },
 		{ "submit-edges", SubmitEdges },
 		{ "observer", ObserverCase },
 		{ "own-frames", OwnFramesCase },

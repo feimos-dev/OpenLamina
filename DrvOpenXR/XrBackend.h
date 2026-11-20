@@ -209,6 +209,11 @@ public:
 	static void VkGetPhysicalDevice(VkInstance instance, VkPhysicalDevice* out);
 #endif
 
+	/** The tracker action is attached: the trackers by role again */
+	void OnTrackerActionAttached() { CreateGenericTrackers(); }
+	/** A new session is being set up: the trackers' spaces are made again in it */
+	void ForgetTrackerSpaces();
+
 private:
 	std::shared_ptr<XrHMD> hmd = std::make_shared<XrHMD>();
 	// The stage's bounds rectangle, asked of the runtime once per session and again after the stage changes
@@ -235,6 +240,7 @@ private:
 	std::shared_mutex generic_trackers_mutex;
 	// The session the trackers' spaces belong to, and the xdev list generation they were made from
 	XrSession generic_trackers_session = XR_NULL_HANDLE;
+	uint64_t generic_trackers_action_generation = 0; // of the tracker action the role trackers' spaces were made from
 	std::atomic<uint64_t> generic_trackers_generation{ UINT64_MAX };
 	std::atomic<int64_t> generic_trackers_polled_ms{ 0 };
 	// Makes the trackers again when the runtime's list of devices has changed (looked at about once a second)
@@ -322,10 +328,29 @@ private:
 	void UpdateInteractionProfile();
 
 	/**
-	 * Queries xdevs from MNDX_xdev_space, if the runtime supports it. Ignores HMD & Controllers.
+	 * The Vive trackers by role (XR_HTCX_vive_tracker_interaction, their poses from the tracker action) and the xdevs
+	 * (XR_MNDX_xdev_space) the runtime doesn't also list with a role. Ignores HMD & Controllers.
 	 * These "Generic Trackers" act like an HTC vive tracker, but support no bindings.
 	 */
 	void CreateGenericTrackers();
+	/** The hand's profile as a controller (XR_EXT_hand_interaction's) if hand tracking tracks it (0 left, 1 right),
+	 * null if not */
+	const InteractionProfile* HandWithoutController(int hand);
+	/** Once a second: whether a hand without a controller came or went */
+	bool HandsWithoutControllersChanged();
+	std::atomic<int64_t> handsCheckedMs{ 0 };
+	// The checks in a row each hand without a controller wasn't tracked in, and how many it may miss
+	std::atomic<int> handMisses[2] = { 0, 0 };
+	// Whether each hand's controller is the hand itself, shown because hand tracking tracks it
+	std::atomic<bool> handFromTracking[2] = { false, false };
+	// The Vive trackers the runtime listed, to notice one going (no event says so)
+	std::atomic<uint32_t> viveTrackersListed{ 0 };
+	static constexpr int kHandMissesAllowed = 3;
+	/** The xdevs that are trackers, in a list it makes (null if it can't), each passed to add; those whose lower-case
+	 * serial ends one of byRole (the lower-case persistent paths of the Vive trackers listed by role) are left out;
+	 * false if they can't be listed */
+	bool FindXDevTrackers(XrXDevListMNDX& list, const std::vector<std::string>& byRole,
+	    const std::function<void(XrXDevIdMNDX, const XrXDevPropertiesMNDX&)>& add);
 
 	/**
 	 * Attempts to force the runtime to expose an interaction profile

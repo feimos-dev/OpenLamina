@@ -161,6 +161,16 @@ jobs:
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases binding-info --script tests/conformance/scripts/bound_source_odd.json --manifest tests/unit/data/manifest_haptic_no_bindings.json --expect tests/conformance/expect/binding_info_runtime.json --out conformance/binding-info-runtime
           if ($LASTEXITCODE) { $failed++ }
+          # Vive trackers by their role: a device per role, and a pose action a tracker's binding file binds read from it
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases vive-trackers --script tests/conformance/scripts/vive_trackers.json --manifest tests/unit/data/manifest_trackers.json --expect tests/conformance/expect/vive_trackers.json --out conformance/vive-trackers
+          if ($LASTEXITCODE) { $failed++ }
+          # The hands as controllers: through XR_EXT_hand_interaction, with hand tracking alone, and shown as Touch controllers
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases hand-controllers --script tests/conformance/scripts/hand_interaction.json --manifest tests/unit/data/manifest_trackers.json --expect tests/conformance/expect/hand_controllers.json --out conformance/hand-controllers
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases hand-controllers --script tests/conformance/scripts/hand_tracking_only.json --manifest tests/unit/data/manifest_trackers.json --expect tests/conformance/expect/hand_controllers_tracking.json --out conformance/hand-controllers-tracking
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases hand-controllers --script tests/conformance/scripts/hand_interaction.json --manifest tests/unit/data/manifest_trackers.json --ini tests/conformance/ini/hand_controller_touch.ini --expect tests/conformance/expect/hand_controllers_touch.json --out conformance/hand-controllers-touch
+          if ($LASTEXITCODE) { $failed++ }
           # The compositor's calls with every graphics API offered: the Vulkan extension lists with a null buffer
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --only "IVRCompositor_0(19|2[0-9])" --script tests/conformance/scripts/gfx_all_apis.json --out conformance/compositor-all-apis
           if ($LASTEXITCODE) { $failed++ }

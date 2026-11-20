@@ -31,7 +31,11 @@
 //               the velocities are given as they are, always valid: not corrected for poseInActionSpace, nor for the
 //               base space's own motion; "/user/head" places the HMD, at (0, 1.7, 0) without it),
 //   "refresh_rates": [90]   (XR_FB_display_refresh_rate's rates; without it, display_hz alone),
-//   "ipd_change": { "frame": 30, "ipd": 0.07 }   (or a list: the IPD from that frame on)
+//   "ipd_change": { "frame": 30, "ipd": 0.07 }   (or a list: the IPD from that frame on),
+//   "vive_trackers": [{ "persistent": "/devices/htc/vive_trackerLHR-1", "role": "/user/vive_tracker_htcx/role/waist",
+//               "frame": 0 }]   (XR_HTCX_vive_tracker_interaction's trackers, listed from their frame on and announced
+//               with XrEventDataViveTrackerConnectedHTCX at it (from frame 1); an empty role is a tracker without one;
+//               a tracker's pose is the script's pose of <role>/input/grip/pose)
 //
 // The dump (only when OC_TEST_RUNTIME_DUMP is set: without it nothing is recorded or read back) keeps whole layer
 // records for frames 1-64, every 32nd frame after, and the last frame ended, at most kDumpLayerCap records; the
@@ -90,6 +94,11 @@ struct ScriptPose {
 	XrVector3f angular{ 0, 0, 0 };
 };
 
+struct ScriptViveTracker {
+	uint64_t frame = 0;
+	std::string persistent, role;
+};
+
 struct ScriptIpd {
 	uint64_t frame = 0;
 	float ipd = 0.063f;
@@ -122,6 +131,7 @@ struct Script {
 	std::map<std::string, std::vector<ScriptPose>> poses;
 	std::vector<float> refreshRates; // empty: displayHz alone
 	std::vector<ScriptIpd> ipdChanges;
+	std::vector<ScriptViveTracker> viveTrackers;
 };
 
 // The scripted pose of a path at a frame (the last entry whose from_frame has been reached), nullptr if none

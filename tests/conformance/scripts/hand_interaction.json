@@ -1,0 +1,6 @@
+{
+  "#": "The hands as controllers (XR_EXT_hand_interaction), the right hand pinching from frame 5 (hand-controllers)",
+  "extensions": ["XR_KHR_D3D11_enable", "XR_EXT_hand_interaction", "XR_EXT_hand_tracking"],
+  "interaction_profile": "/interaction_profiles/ext/hand_interaction_ext",
+  "inputs": [{ "frame": 5, "path": "/user/hand/right/input/pinch_ext/value", "value": 1.0 }]
+}

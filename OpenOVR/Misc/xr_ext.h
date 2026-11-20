@@ -88,6 +88,22 @@ struct OcXrSystemUserPresencePropertiesEXT {
 	XrBool32 supportsUserPresence;
 };
 
+// XR_HTCX_vive_tracker_interaction, newer than the bundled OpenXR headers: Vive trackers by their role
+#define OC_XR_HTCX_VIVE_TRACKER_INTERACTION_EXTENSION_NAME "XR_HTCX_vive_tracker_interaction"
+static const XrStructureType OC_XR_TYPE_VIVE_TRACKER_PATHS_HTCX = (XrStructureType)1000103000;
+static const XrStructureType OC_XR_TYPE_EVENT_DATA_VIVE_TRACKER_CONNECTED_HTCX = (XrStructureType)1000103001;
+struct OcXrViveTrackerPathsHTCX {
+	XrStructureType type;
+	void* next;
+	XrPath persistentPath;
+	XrPath rolePath;
+};
+typedef XrResult(XRAPI_PTR* OcPFN_xrEnumerateViveTrackerPathsHTCX)(XrInstance instance, uint32_t pathCapacityInput, uint32_t* pathCountOutput,
+    OcXrViveTrackerPathsHTCX* paths);
+
+// XR_EXT_hand_interaction, newer than the bundled OpenXR headers: the hands as controllers (a profile only)
+#define OC_XR_EXT_HAND_INTERACTION_EXTENSION_NAME "XR_EXT_hand_interaction"
+
 // Flag bits for supported graphics apis
 static const XrGraphicsApiSupportedFlags XR_SUPPORTED_GRAPHICS_API_D3D11 = 0x0001;
 static const XrGraphicsApiSupportedFlags XR_SUPPORTED_GRAPHICS_API_D3D12 = 0x0002;
@@ -137,6 +153,14 @@ public:
 		if (!pfnXrGetVisibilityMaskKHR)
 			return XR_ERROR_FUNCTION_UNSUPPORTED; // the runtime lacks the extension; callers check the result
 		return pfnXrGetVisibilityMaskKHR(session, viewConfigurationType, viewIndex, visibilityMaskType, visibilityMask);
+	}
+
+	bool ViveTrackersHTCX_Available() { return pfnXrEnumerateViveTrackerPathsHTCX != nullptr; }
+	XrResult xrEnumerateViveTrackerPathsHTCX(XrInstance instance, uint32_t capacity, uint32_t* count, OcXrViveTrackerPathsHTCX* paths)
+	{
+		if (!pfnXrEnumerateViveTrackerPathsHTCX)
+			return XR_ERROR_FUNCTION_UNSUPPORTED;
+		return pfnXrEnumerateViveTrackerPathsHTCX(instance, capacity, count, paths);
 	}
 
 	bool DisplayRefreshRateFB_Available() { return pfnXrGetDisplayRefreshRateFB != nullptr; }
@@ -318,6 +342,7 @@ private:
 	PFN_xrDestroyXDevListMNDX pfnxrDestroyXDevListMNDX = nullptr;
 	PFN_xrCreateXDevSpaceMNDX pfnxrCreateXDevSpaceMNDX = nullptr;
 
+	OcPFN_xrEnumerateViveTrackerPathsHTCX pfnXrEnumerateViveTrackerPathsHTCX = nullptr;
 	OcPFN_xrGetDisplayRefreshRateFB pfnXrGetDisplayRefreshRateFB = nullptr;
 	OcPFN_xrEnumerateDisplayRefreshRatesFB pfnXrEnumerateDisplayRefreshRatesFB = nullptr;
 	OcPFN_xrRequestDisplayRefreshRateFB pfnXrRequestDisplayRefreshRateFB = nullptr;

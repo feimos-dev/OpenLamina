@@ -1,0 +1,5 @@
+{
+ "#": "The hands as Touch controllers with handController=oculus_touch, on the stand-in with scripts/hand_interaction.json (run.py --cases hand-controllers --script scripts/hand_interaction.json --manifest ../unit/data/manifest_trackers.json --ini ini/hand_controller_touch.ini --expect expect/hand_controllers_touch.json)",
+ "hand-controllers/devices/-/-": {"controller": ["oculus_touch", "oculus_touch"]},
+ "hand-controllers/right hand/-/-": {"pose_valid": true, "render_model": "oculus_quest2_controller_right", "right_found": true, "squeeze": 1.0, "squeeze_err": 0}
+}

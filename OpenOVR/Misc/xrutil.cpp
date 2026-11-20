@@ -89,6 +89,10 @@ XrExt::XrExt(XrGraphicsApiSupportedFlags apis, const std::vector<const char*>& e
 		XR_BIND_OPT(xrRequestDisplayRefreshRateFB, pfnXrRequestDisplayRefreshRateFB);
 	}
 
+	// Vive trackers by their role
+	if (enabledExtensions.contains(OC_XR_HTCX_VIVE_TRACKER_INTERACTION_EXTENSION_NAME))
+		XR_BIND_OPT(xrEnumerateViveTrackerPathsHTCX, pfnXrEnumerateViveTrackerPathsHTCX);
+
 	if (hasHandTracking) {
 		XR_BIND(xrCreateHandTrackerEXT, pfnXrCreateHandTrackerExt);
 		XR_BIND(xrDestroyHandTrackerEXT, pfnXrDestroyHandTrackerExt);

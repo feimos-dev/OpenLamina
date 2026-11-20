@@ -1,0 +1,5 @@
+{
+ "#": "The hands as Index controllers, on the stand-in with scripts/hand_interaction.json (run.py --cases hand-controllers --script scripts/hand_interaction.json --manifest ../unit/data/manifest_trackers.json --expect expect/hand_controllers.json)",
+ "hand-controllers/devices/-/-": {"controller": ["knuckles", "knuckles"]},
+ "hand-controllers/right hand/-/-": {"pose_valid": true, "render_model": "{indexcontroller}valve_controller_knu_1_0_right", "right_found": true, "squeeze": 1.0, "squeeze_err": 0}
+}
