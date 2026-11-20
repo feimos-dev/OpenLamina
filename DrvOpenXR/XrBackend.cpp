@@ -2261,6 +2261,8 @@ void XrBackend::StartHelperLoop()
 			    if (input && overlay->_PointerWanted() && IsInputAvailable())
 				    input->SyncPointerActions();
 			    WithStoreDocuments([&] { overlay->_UpdatePointer(); });
+			    // A room setup tool's preview of its play area
+			    overlay->_UpdateBounds();
 		    }
 		    return RunOwnFrame(source, wanted);
 	    });

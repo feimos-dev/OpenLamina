@@ -420,11 +420,21 @@ void BaseChaperoneSetup::SetWorkingPerimeter(VR_ARRAY_COUNT(unPointCount) const 
 }
 void BaseChaperoneSetup::ShowWorkingSetPreview()
 {
-	// The OpenXR runtime draws its own boundary; there's no preview to show
+	// The working copy's play area, drawn as the bounds' walls (whole, whether or not drawBounds is on) until hidden
+	std::lock_guard guard(lock);
+	previewShown = true;
 }
 void BaseChaperoneSetup::HideWorkingSetPreview()
 {
-	// No preview is shown
+	std::lock_guard guard(lock);
+	previewShown = false;
+}
+std::optional<std::pair<float, float>> BaseChaperoneSetup::PreviewedPlayArea()
+{
+	std::lock_guard guard(lock);
+	if (!previewShown)
+		return std::nullopt;
+	return std::make_pair(Working().playArea[0], Working().playArea[1]);
 }
 void BaseChaperoneSetup::RoomSetupStarting()
 {

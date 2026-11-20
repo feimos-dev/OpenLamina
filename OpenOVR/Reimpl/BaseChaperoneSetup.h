@@ -133,6 +133,14 @@ public:
 	 * says whether either existed. */
 	static ChaperoneData LiveData(bool* found = nullptr);
 
+public:
+	/** The working copy's play area while ShowWorkingSetPreview has it shown (BaseOverlay draws its walls), else
+	 * nothing */
+	std::optional<std::pair<float, float>> PreviewedPlayArea();
+
+private:
+	bool previewShown = false; // lock held
+
 private:
 	// Loaded from LiveData on first use, and by RevertWorkingCopy and ReloadFromDisk; lock held. While LiveData
 	// found neither source, it's loaded again on each use, until editing (a Set*) keeps it.

@@ -371,6 +371,7 @@ struct BaseOverlay::BoundsState {
 	XrPosef pose[4]{};
 	float wallWidth[4] = {}, wallHeight[4] = {};
 	XrCompositionLayerQuad layers[4]{};
+	bool previewing = false; // the walls are ShowWorkingSetPreview's
 };
 
 namespace {
@@ -1208,8 +1209,20 @@ void BaseOverlay::_RecentreIfAsked()
 void BaseOverlay::_UpdateBounds()
 {
 	BoundsState& b = *bounds;
-	if (!oovr_global_configuration.DrawBounds() || BaseClientCore::appType != vr::VRApplication_Scene || IsHelperSession())
+	// A room setup tool's preview of its working copy, in any program with frames; else the play area's walls as
+	// drawBounds asks, in a game
+	BaseChaperoneSetup* setup = GetUnsafeBaseChaperoneSetup();
+	const std::optional<std::pair<float, float>> preview = setup ? setup->PreviewedPlayArea() : std::nullopt;
+	if (!preview && (!oovr_global_configuration.DrawBounds() || BaseClientCore::appType != vr::VRApplication_Scene || IsHelperSession())) {
+		if (b.previewing) {
+			// The preview just hidden
+			std::lock_guard<std::recursive_mutex> lock(layersLock);
+			for (bool& s : b.shown)
+				s = false;
+			b.previewing = false;
+		}
 		return;
+	}
 	auto session = xr_session.lock_shared(); // the play area and the devices' poses are read from the session
 	if (!xr_session.get())
 		return;
@@ -1240,7 +1253,8 @@ void BaseOverlay::_UpdateBounds()
 	add(BackendManager::Instance().GetDevice(vr::k_unTrackedDeviceIndex_Hmd));
 	add(BackendManager::Instance().GetDeviceByHand(ITrackedDevice::HAND_LEFT));
 	add(BackendManager::Instance().GetDeviceByHand(ITrackedDevice::HAND_RIGHT));
-	const std::vector<BoundsWall> walls = BoundsWalls(b.width, b.depth, points);
+	const std::vector<BoundsWall> walls = preview ? BoundsWalls(preview->first, preview->second, points, true) : BoundsWalls(b.width, b.depth, points);
+	b.previewing = preview.has_value();
 
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	for (bool& s : b.shown)
@@ -1838,7 +1852,7 @@ void BaseOverlay::_UpdatePointer()
 bool BaseOverlay::_AnyVisible()
 {
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
-	if (keyboard || pointing->message || dash->shown || pointing->notificationShown)
+	if (keyboard || pointing->message || dash->shown || pointing->notificationShown || bounds->previewing)
 		return true;
 	overlay_maths::Placement shownInDashboard;
 	for (const auto& kv : overlays) {
