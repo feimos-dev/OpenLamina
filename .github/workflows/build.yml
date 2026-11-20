@@ -302,18 +302,24 @@ jobs:
         include:
           - arch: x64
             lib: linux64/vrclient.so
-            tests: true
+            mesa: ''
           - arch: x86
             lib: vrclient.so
+            mesa: ':i386'
     steps:
-      # The packages of scripts/ci/ubuntu.dockerfile, and git for the checkout's submodules.
+      # The packages of scripts/ci/ubuntu.dockerfile, and git for the checkout's submodules. For the tests: Mesa's
+      # software Vulkan (lavapipe) and OpenGL (llvmpipe) drivers of the build's word size, and Xvfb for OpenGL's X
+      # server.
       - name: Build tools
+        env:
+          MESA: ${{ matrix.mesa }}
         run: |
           dpkg --add-architecture i386
           apt-get update
           DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
             ca-certificates git g++ g++-multilib cmake make automake autoconf libtool python3 \
-            libgl-dev libvulkan-dev libgl-dev:i386 libvulkan-dev:i386
+            libgl-dev libvulkan-dev libgl-dev:i386 libvulkan-dev:i386 \
+            xvfb xauth mesa-vulkan-drivers$MESA libgl1-mesa-dri$MESA libglx-mesa0$MESA
 
       - uses: actions/checkout@v7
         with:
@@ -321,34 +327,39 @@ jobs:
 
       # No new hard stop (scripts/fatal_sites.txt lists the ones still allowed)
       - name: Hard stops
-        if: matrix.tests
+        if: matrix.arch == 'x64'
         run: |
           python3 scripts/abort_sites.py --self-test
           python3 scripts/abort_sites.py --check
 
       # The test tools' own checks: the game lister's fixtures, and the regression run's output
       - name: Tool self-tests
-        if: matrix.tests
+        if: matrix.arch == 'x64'
         run: |
           python3 tests/conformance/list_games.py --self-test
           python3 tests/conformance/regress.py --self-test
 
+      # The library, the tests and the unit tests
       - name: Build
-        run: sh scripts/ci/build-linux.sh ${{ matrix.tests && '--tests' || '' }} ${{ matrix.arch }} build "$GITHUB_SHA ($GITHUB_REF_NAME)"
+        run: sh scripts/ci/build-linux.sh --tests ${{ matrix.arch }} build "$GITHUB_SHA ($GITHUB_REF_NAME)"
 
+      # The stand-in OpenXR runtime's own tests, on lavapipe and llvmpipe
+      - name: Stand-in runtime
+        run: xvfb-run -a ctest --test-dir build -L runtime --output-on-failure
+
+      # Nothing may end, crash or hang, and no answer may change from the Linux baselines; then the cases with exact
+      # answers that apply on Linux (scripts/ci/conformance-linux.sh)
       - name: Conformance
-        if: matrix.tests
-        run: |
-          python3 tests/conformance/run.py --runtime build/bin/linux64/vrclient.so --conformance build/tests/oc_conformance --xr-runtime none --out conformance/none
-          python3 tests/conformance/run.py --runtime build/bin/linux64/vrclient.so --conformance build/tests/oc_conformance --xr-runtime none --cases applications --cases-only --expect tests/conformance/expect/applications.json --out conformance/applications
+        run: xvfb-run -a sh scripts/ci/conformance-linux.sh ${{ matrix.arch }} build conformance
 
       - uses: actions/upload-artifact@v7
-        if: always() && matrix.tests
+        if: always()
         with:
-          name: conformance-linux
+          name: conformance-linux-${{ matrix.arch }}
           path: |
             conformance/*/summary.txt
             conformance/*/results.json
+            conformance/**/logs/
 
       - uses: actions/upload-artifact@v7
         with:

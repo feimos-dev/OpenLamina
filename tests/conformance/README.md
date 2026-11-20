@@ -6,7 +6,8 @@ each application type. It also runs named cases that need real handles or frames
 interface version, application type and argument set, and each case, in a child process, and collects what every call
 returned and wrote.
 
-Built with the tests (`-DOC_BUILD_TESTS=ON`, or `scripts\ci\build-windows.ps1 -Tests`).
+Built with the tests (`-DOC_BUILD_TESTS=ON`, or `scripts\ci\build-windows.ps1 -Tests`,
+`scripts/ci/build-linux.sh --tests`).
 
 ## Running it
 
@@ -88,6 +89,28 @@ record: `stand-in-x86.json` holds only the records a 32-bit run answers differen
 passes it after `stand-in.json`. With several, `--accept` writes the last one, so after accepting `stand-in.json` from a
 64-bit run, accept the 32-bit one with `--baseline baseline/stand-in.json --baseline baseline/stand-in-x86.json` from
 a 32-bit build's run (or from `stand-in/results.json` in CI's `conformance-windows-x86` artifact).
+
+## On Linux
+
+The same runs work on Linux, with the stand-in runtime's Vulkan and OpenGL (Xlib and GLX) sessions:
+
+```
+python3 tests/conformance/run.py --runtime build/bin/linux64/vrclient.so --conformance build/tests/oc_conformance --xr-runtime stand-in --out out
+```
+
+Without a script the stand-in offers `XR_KHR_vulkan_enable` there (D3D11 on Windows): the API of OpenLamina's own
+session. A script's D3D extensions are left out on Linux, and one left with no graphics API gets that one
+(`tests/runtime/script.h`). The game's valid texture is a Vulkan image (a D3D11 one on Windows), and the frame cases'
+Vulkan and OpenGL games run; their Direct3D cases skip. OpenLamina reads `openlamina.ini` only from the working
+directory on Linux, so `run.py` runs the children in `work/` under `--out`, with the ini there. The OpenGL cases need
+an X server (`xvfb-run` without a display), and the Vulkan ones a driver (Mesa's lavapipe will do).
+
+`scripts/ci/conformance-linux.sh x64|x86 <build-dir> <out-dir>` makes the Linux CI jobs' runs: the no-runtime and
+stand-in runs compared with `baseline/none-linux.json` and `baseline/stand-in-linux.json` (32-bit:
+`stand-in-linux-x86.json` over it), `xr_failures.py`, and the `--expect` runs that apply on Linux. Their answers differ
+from Windows' in places (structs packed as Linux's OpenVR headers pack them, GCC's enums, background applications
+that get a scene session for Proton), so the Linux baselines are their own; accept them as on Windows, from a Linux
+run (CI's `conformance-linux-x64` and `conformance-linux-x86` artifacts have them).
 
 ## Failed OpenXR calls
 
