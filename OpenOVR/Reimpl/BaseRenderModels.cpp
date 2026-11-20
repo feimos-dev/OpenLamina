@@ -1011,6 +1011,15 @@ bool BaseRenderModels::GetComponentState(const char* pchRenderModelName, const c
 	if (success)
 		return true;
 
+	// A built-in model's tip and handgrip always exist: where the model is, until its device can tell more
+	if (pchRenderModelName && IsOwnRenderModel(pchRenderModelName) && (componentName == "tip" || componentName == "handgrip")) {
+		const glm::mat4 identity = glm::identity<glm::mat4>();
+		pComponentState->mTrackingToComponentRenderModel = G2S_m34(identity);
+		pComponentState->mTrackingToComponentLocal = G2S_m34(identity);
+		pComponentState->uProperties = VRComponentProperty_IsVisible | VRComponentProperty_IsStatic;
+		return true;
+	}
+
 	OOVR_LOG_ONCE("GetComponentState: unknown component");
 	ZeroMemory(pComponentState, sizeof(*pComponentState));
 	return false;
