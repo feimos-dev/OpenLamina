@@ -63,7 +63,7 @@ jobs:
           ${{ matrix.tests && '-Tests' || '' }}
 
       # Every OpenVR interface version Valve has shipped is offered or set aside with a reason (offline: it compares
-      # interfaces.txt with the source)
+      # interfaces.txt with the source), and how_real.txt is what the source gives
       - name: Interface inventory
         if: matrix.tests && matrix.arch == 'x64'
         run: python scripts/openvr_inventory.py --check
@@ -341,6 +341,7 @@ jobs:
         run: |
           python3 tests/conformance/list_games.py --self-test
           python3 tests/conformance/regress.py --self-test
+          python3 scripts/openvr_inventory.py --self-test
 
       # The library, the tests and the unit tests
       - name: Build
