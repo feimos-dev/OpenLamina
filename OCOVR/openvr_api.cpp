@@ -387,37 +387,13 @@ VR_INTERFACE bool VR_CALLTYPE VR_IsHmdPresent()
 	if (oc_is_steam_client_program())
 		return true;
 
-	// At this point, we should NOT be running OpenXR, so setup a new session just for this
+	// An instance from an earlier Init is still up: it found a headset then
 	if (xr_instance != XR_NULL_HANDLE)
-		return true; // an instance from an earlier Init is still up: it found a headset then
-
-	// FIXME copied from DrvOpenXR
-	XrApplicationInfo appInfo{};
-	DrvOpenXR::GetXRAppName(appInfo.applicationName);
-	appInfo.applicationVersion = 1;
-	appInfo.apiVersion = XR_CURRENT_API_VERSION;
-	XrInstanceCreateInfo createInfo{ XR_TYPE_INSTANCE_CREATE_INFO };
-	createInfo.applicationInfo = appInfo;
-	XrInstance tmp_instance;
-	if (xrCreateInstance(&createInfo, &tmp_instance) != XR_SUCCESS) {
-		return false;
-	}
-
-	XrSystemGetInfo systemInfo{};
-	systemInfo.type = XR_TYPE_SYSTEM_GET_INFO;
-	systemInfo.formFactor = XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY;
-	XrSystemId id;
-	XrResult res = xrGetSystem(tmp_instance, &systemInfo, &id);
-
-	xrDestroyInstance(tmp_instance);
-
-	if (res == XR_SUCCESS)
 		return true;
 
-	// FORM_FACTOR_UNAVAILABLE (no headset plugged in) and anything else: no headset to start (upstream #467)
-	if (res != XR_ERROR_FORM_FACTOR_UNAVAILABLE && res != XR_ERROR_FORM_FACTOR_UNSUPPORTED)
-		OOVR_LOGF("Failed to probe for OpenXR systems: return status %d", res);
-	return false;
+	// Asked of OpenXR on an instance that the scene application's session then starts on, so that the runtime sees
+	// one instance, not one for the question and another for the game
+	return DrvOpenXR::ProbeForHmd();
 }
 
 // Necessary for Proton games on Linux: https://github.com/ValveSoftware/Proton/blob/22f40122788d5f65389f59144705309ce9d6d403/vrclient_x64/vrclient_x64/vrclient_main.c#L267
@@ -497,10 +473,13 @@ VR_INTERFACE void VR_CALLTYPE VR_ShutdownInternal()
 		refused_init_count = 0;
 		BaseClientCore::appType = VRApplication_Max;
 		interfaces.clear();
+		DrvOpenXR::ReleaseProbedInstance();
 		return;
 	}
 	if (!running) {
 		OOVR_LOG("Shutdown while not running: ignored");
+		// A headset probe's instance (VR_IsHmdPresent) isn't kept for a session that won't come
+		DrvOpenXR::ReleaseProbedInstance();
 		return;
 	}
 	if (scene_init_count > 1) {

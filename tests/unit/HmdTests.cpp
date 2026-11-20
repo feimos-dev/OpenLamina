@@ -400,3 +400,53 @@ TEST_CASE("The zero poses are identity when nothing better is known")
 				CHECK(m.m[r][c] == (r == c ? 1.0f : 0.0f));
 	}
 }
+
+#include "DrvOpenXR.h"
+
+namespace {
+// A loader and runtime that take OpenXR up to maxMinor (of 1.x), and record the versions asked for
+uint32_t maxMinor = 0;
+std::vector<XrVersion> asked;
+XrResult XRAPI_CALL FakeCreateInstance(const XrInstanceCreateInfo* info, XrInstance* instance)
+{
+	asked.push_back(info->applicationInfo.apiVersion);
+	if (XR_VERSION_MINOR(info->applicationInfo.apiVersion) > maxMinor)
+		return XR_ERROR_API_VERSION_UNSUPPORTED;
+	*instance = (XrInstance)(uintptr_t)1;
+	return XR_SUCCESS;
+}
+XrResult XRAPI_CALL FailingCreateInstance(const XrInstanceCreateInfo* info, XrInstance* instance)
+{
+	asked.push_back(info->applicationInfo.apiVersion);
+	return XR_ERROR_RUNTIME_FAILURE;
+}
+} // namespace
+
+TEST_CASE("The OpenXR instance asks for the newest version the loader and runtime take")
+{
+	XrInstanceCreateInfo info{ XR_TYPE_INSTANCE_CREATE_INFO };
+	XrInstance instance = XR_NULL_HANDLE;
+	XrVersion version = 0;
+
+	// OpenXR 1.1 is taken at once
+	maxMinor = 1;
+	asked.clear();
+	CHECK(DrvOpenXR::CreateInstanceNewestVersion(info, &instance, &version, FakeCreateInstance) == XR_SUCCESS);
+	CHECK(version == XR_MAKE_VERSION(1, 1, 0));
+	CHECK(asked.size() == 1);
+
+	// A 1.0 runtime: refused 1.1, then 1.0
+	maxMinor = 0;
+	asked.clear();
+	CHECK(DrvOpenXR::CreateInstanceNewestVersion(info, &instance, &version, FakeCreateInstance) == XR_SUCCESS);
+	CHECK(version == XR_MAKE_VERSION(1, 0, 0));
+	REQUIRE(asked.size() == 2);
+	CHECK(asked[1] == XR_MAKE_VERSION(1, 0, 0));
+
+	// Any other failure isn't tried again at an older version
+	asked.clear();
+	version = 0;
+	CHECK(DrvOpenXR::CreateInstanceNewestVersion(info, &instance, &version, FailingCreateInstance) == XR_ERROR_RUNTIME_FAILURE);
+	CHECK(asked.size() == 1);
+	CHECK(version == 0);
+}

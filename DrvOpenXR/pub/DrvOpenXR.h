@@ -1,6 +1,8 @@
 #pragma once
 #include "../OpenOVR/Drivers/Backend.h"
 
+#include <openxr/openxr.h>
+
 // Since we're not importing stdafx, add another nasty little hack
 #ifndef _WIN32
 #include "../OpenOVR/linux_funcs.h"
@@ -13,6 +15,15 @@ namespace DrvOpenXR {
 // NoServerForBackgroundApp), also when the runtime fails to start; on Linux a Background app gets a scene session.
 IBackend* CreateOpenXRBackend(const char* startupInfo, vr::EVRInitError* error, vr::EVRApplicationType appType = vr::VRApplication_Scene);
 void GetXRAppName(char (&appName)[128]);
+// Whether the OpenXR runtime has a headset (VR_IsHmdPresent). The instance that found one is kept, and the scene
+// application's session that follows is started on it rather than on a second instance.
+bool ProbeForHmd();
+// Destroys a probe's instance kept for a session that won't come (a program that probed and never started)
+void ReleaseProbedInstance();
+// xrCreateInstance at the newest OpenXR version it takes (1.1, then 1.0, while it answers XR_ERROR_API_VERSION_UNSUPPORTED),
+// through create; *version is the one it took
+XrResult CreateInstanceNewestVersion(XrInstanceCreateInfo createInfo, XrInstance* instance, XrVersion* version,
+    XrResult(XRAPI_PTR* create)(const XrInstanceCreateInfo*, XrInstance*));
 // After the backend is made, on VR_Init's thread: a game whose lasers point at other programs' overlays (laserMouse),
 // or which has a dashboard (dashboardButton) or the play area's walls (drawBounds), gets the overlays' instance now,
 // even if it never asks for IVROverlay
