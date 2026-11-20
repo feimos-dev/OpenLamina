@@ -306,10 +306,13 @@ TEST_CASE("Dragging_across_the_text_selects_and_typing_replaces_it")
 	kb.Select(0, 1);
 	kb.Type(U'\b');
 	CHECK(kb.Text() == "y");
-	kb.Select(0, 1);
-	kb.PressArrow(VRKeyboard::Right);
+	kb.Select(1, 0);
+	kb.PressArrow(VRKeyboard::Right); // to the selection's end
 	CHECK(kb.Selection().first == kb.Selection().second);
 	CHECK(kb.Caret() == 1);
+	kb.Select(1, 0);
+	kb.PressArrow(VRKeyboard::Left); // to its start
+	CHECK(kb.Caret() == 0);
 }
 
 TEST_CASE("A_long_text_scrolls_only_as_the_caret_leaves_the_view")

@@ -229,6 +229,7 @@ void VRKeyboard::Type(char32_t c)
 
 void VRKeyboard::Close()
 {
+	selecting = false;
 	if (closed)
 		return;
 	Finish(false);
@@ -246,12 +247,14 @@ void VRKeyboard::PressArrow(int arrow)
 	auto lineStart = [&](size_t at) { return LineStart(at); };
 	auto lineEnd = [&](size_t at) { return LineEnd(at); };
 	size_t to = caret;
+	const auto [selFrom, selTo] = Selection();
 	switch (arrow) {
 	case Left:
-		to = caret > 0 ? caret - 1 : 0;
+		// A selection collapses to its start
+		to = selFrom != selTo ? selFrom : caret > 0 ? caret - 1 : 0;
 		break;
 	case Right:
-		to = caret < chars.size() ? caret + 1 : caret;
+		to = selFrom != selTo ? selTo : caret < chars.size() ? caret + 1 : caret;
 		break;
 	case Up:
 		if (!multiline) {
@@ -469,6 +472,7 @@ void VRKeyboard::OnPointer(const LaserMouse& mouse, const std::vector<PointerEve
 			break;
 		}
 		case vr::VREvent_FocusLeave:
+			selecting = false;
 			if (hovered != -1 || closeHovered || hoveredArrow != -1) {
 				hovered = -1;
 				closeHovered = false;
