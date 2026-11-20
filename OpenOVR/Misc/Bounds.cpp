@@ -24,7 +24,7 @@ XrExtent2Df BoundsPlayArea(const XrExtent2Df* runtime, const Json::Value& chaper
 	return { 0.0f, 0.0f };
 }
 
-std::vector<BoundsWall> BoundsWalls(float width, float depth, const std::vector<XrVector3f>& points)
+std::vector<BoundsWall> BoundsWalls(float width, float depth, const std::vector<XrVector3f>& points, bool preview)
 {
 	std::vector<BoundsWall> walls;
 	if (!(width > 0.0f) || !(depth > 0.0f))
@@ -44,7 +44,7 @@ std::vector<BoundsWall> BoundsWalls(float width, float depth, const std::vector<
 		{ { 0, kBoundsHeight / 2, -hd }, { 0, 0, 0, 1 }, width }, // -Z, facing +Z
 	};
 	for (int e = 0; e < 4; e++) {
-		float alpha = 0.0f;
+		float alpha = preview ? 1.0f : 0.0f;
 		for (const XrVector3f& p : points) {
 			const float distance = e == 0 ? hw - p.x : e == 1 ? hw + p.x : e == 2 ? hd - p.z : hd + p.z;
 			alpha = std::max(alpha, BoundsAlpha(distance));

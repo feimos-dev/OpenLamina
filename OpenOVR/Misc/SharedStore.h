@@ -15,6 +15,7 @@
 #include <memory>
 #include <mutex>
 #include <set>
+#include <string>
 #include <vector>
 
 enum class StoreDoc { Settings, Applications, Chaperone, Scene, Dashboard, Overlays, Offsets };
@@ -50,6 +51,10 @@ public:
 	/** A copy of the document's data (an empty object if there's none, it doesn't parse, or the store can't be used),
 	 * re-read from disk only when its generation changed */
 	Json::Value Read(StoreDoc doc);
+
+	/** A copy of one value in the document: the member at path (each name an object's member), or null if any step
+	 * isn't there. Copies only that value, not the whole document. */
+	Json::Value ReadAt(StoreDoc doc, const std::vector<std::string>& path);
 
 	/** How long a writer waits for the store's lock, which another program may hold: about two seconds at most, or
 	 * not at all, for a writer in the game's frame, which tries again later instead */
@@ -95,6 +100,8 @@ public:
 private:
 
 	bool Usable() const { return state != nullptr; }
+	/** Brings the document's cached copy up to date; the caller then reads it under lock */
+	void Refresh(StoreDoc doc);
 	std::filesystem::path DocPath(StoreDoc doc) const;
 	Header* header() const;
 	StoreEvent* ring() const;

@@ -4,6 +4,8 @@
 
 #include "BaseApplications.h"
 #include "Misc/Dashboard.h"
+#include "Misc/ProgramEvents.h"
+#include "Misc/SharedStore.h"
 
 // These functions are used in HL:A - See #176
 // Nooping both of these should be fine.
@@ -138,20 +140,17 @@ void BaseControlPanel::SetIPD(float fIPD)
 
 bool BaseControlPanel::QuitProcess(uint32_t pidProcessToQuit)
 {
-	// SteamVR sends the process a quit request and answers true, whatever the process. This process gets VREvent_Quit;
-	// another isn't OpenComposite's to reach
-	if (pidProcessToQuit == oc_current_pid()) {
-		BaseSystem* system = GetUnsafeBaseSystem();
-		if (system) {
-			vr::VREvent_t quit = {};
-			quit.eventType = vr::VREvent_Quit;
-			quit.trackedDeviceIndex = vr::k_unTrackedDeviceIndexInvalid;
-			quit.data.process.pid = pidProcessToQuit;
-			system->_EnqueueEvent(quit);
-		}
+	// SteamVR sends the process a quit request and answers true, whatever the process. This process gets VREvent_Quit,
+	// and so does another OpenLamina program (one listed in the store); any other process isn't OpenLamina's to reach
+	char key[256];
+	if (pidProcessToQuit == oc_current_pid()
+	    || (pidProcessToQuit && BaseApplications().GetApplicationKeyByProcessId(pidProcessToQuit, key, sizeof(key)) == VRApplicationError_None)) {
+		vr::VREvent_Data_t data{};
+		data.process.pid = pidProcessToQuit;
+		OcPostEventTo(SharedStore::Get(), pidProcessToQuit, vr::VREvent_Quit, vr::k_unTrackedDeviceIndexInvalid, data);
 		return true;
 	}
-	OC_UNSUPPORTED(true, "QuitProcess (IVRControlPanel_001): another process isn't OpenComposite's to quit");
+	OC_UNSUPPORTED(true, "QuitProcess (IVRControlPanel_001): a process that isn't an OpenLamina program isn't OpenLamina's to quit");
 }
 
 bool BaseControlPanel::ForceQuitProcess(uint32_t pidProcessToQuit)
@@ -178,5 +177,6 @@ void BaseControlPanel::StartAutolaunchOverlays()
 
 void BaseControlPanel::AbortTransition()
 {
-	// No transition between scene apps is in progress (each runs on its own)
+	// A change of scene application under way stops: the new one isn't started when the old one has gone
+	BaseApplications().AbortTransition();
 }

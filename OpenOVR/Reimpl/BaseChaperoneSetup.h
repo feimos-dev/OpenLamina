@@ -5,8 +5,10 @@
 
 #include "json/json.h"
 
+#include <atomic>
 #include <mutex>
 #include <optional>
+#include <utility>
 
 class LibMonado;
 
@@ -133,6 +135,10 @@ public:
 	 * says whether either existed. */
 	static ChaperoneData LiveData(bool* found = nullptr);
 
+	/** The working copy's play area while ShowWorkingSetPreview has it shown (BaseOverlay draws its walls), else
+	 * nothing */
+	std::optional<std::pair<float, float>> PreviewedPlayArea();
+
 private:
 	// Loaded from LiveData on first use, and by RevertWorkingCopy and ReloadFromDisk; lock held. While LiveData
 	// found neither source, it's loaded again on each use, until editing (a Set*) keeps it.
@@ -143,4 +149,9 @@ private:
 	bool workingKept = false;
 	// The working copy's seated zero pose was set: committing it moves every program's seated origin
 	bool seatedZeroSet = false;
+	// The preview, read on the frames' thread: a flag, and the play area last read under lock, kept for when lock is
+	// held elsewhere (a commit waiting on the store)
+	std::atomic<bool> previewShown{ false };
+	std::pair<float, float> previewedArea{ 0.0f, 0.0f }; // previewLock held
+	std::mutex previewLock;
 };

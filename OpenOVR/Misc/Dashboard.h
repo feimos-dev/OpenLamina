@@ -94,6 +94,12 @@ bool DashboardDocOpen(const Json::Value& doc, const ProcessAlive& alive);
 // A request a scene app adopts: no scene app named, from a program that's still running, under 2 s old at nowWall
 bool DashboardDocRequest(const Json::Value& doc, double nowWall, const ProcessAlive& alive);
 
+// The dashboardButton setting's button (Off for anything it doesn't name)
+Dashboard::Button DashboardButtonFromSetting(const std::string& setting);
+// Whether the Scene document's scene app, if one runs, has a dashboard (dashboardButton not off there); true with
+// none running, or one that didn't say
+bool SceneDocHasDashboard(const Json::Value& scene, const ProcessAlive& alive);
+
 // Starts the installed dashboard overlay programs whose auto-launch flag is set (those already running are left as
 // they are). Returns the app keys of both, the ones started and the ones already running.
 std::vector<std::string> StartAutolaunchOverlays(BaseApplications& apps);

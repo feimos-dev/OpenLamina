@@ -4,9 +4,16 @@
 #include "stdafx.h"
 
 #include "Misc/Process.h"
+#include "Misc/Dashboard.h"
+#include "Misc/SharedStore.h"
 #include "Reimpl/BaseOverlay.h"
 
 #include <string>
+#include <vector>
+
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 using namespace vr;
 
@@ -190,4 +197,114 @@ TEST_CASE("Moving_gamepad_focus_tells_both_overlays")
 	// Destroying the focused overlay leaves none
 	CHECK(overlays.DestroyOverlay(b) == VROverlayError_None);
 	CHECK(overlays.GetGamepadFocusOverlay() == k_ulOverlayHandleInvalid);
+}
+
+TEST_CASE("A_destroyed_overlay_s_handle_stays_invalid")
+{
+	BaseOverlay overlays;
+	std::vector<VROverlayHandle_t> old;
+	for (int i = 0; i < 50; i++) {
+		// The new overlay may well have the memory the destroyed one had: its handle is still another
+		const VROverlayHandle_t h = Make(overlays, "oc.test.again");
+		for (VROverlayHandle_t o : old) {
+			CHECK(o != h);
+			float alpha = 0;
+			CHECK(overlays.GetOverlayAlpha(o, &alpha) == VROverlayError_InvalidHandle);
+		}
+		CHECK(overlays.DestroyOverlay(h) == VROverlayError_None);
+		old.push_back(h);
+	}
+	// A made-up value is no overlay either
+	float alpha = 0;
+	CHECK(overlays.GetOverlayAlpha(0x12345678, &alpha) == VROverlayError_InvalidHandle);
+}
+
+TEST_CASE("A_child_of_a_hidden_parent_is_not_visible")
+{
+	BaseOverlay overlays;
+	const VROverlayHandle_t parent = Make(overlays, "oc.test.parent");
+	const VROverlayHandle_t child = Make(overlays, "oc.test.child");
+	const VROverlayHandle_t grandchild = Make(overlays, "oc.test.grandchild");
+	HmdMatrix34_t identity{ { { 1, 0, 0, 0 }, { 0, 1, 0, 0 }, { 0, 0, 1, 0 } } };
+	REQUIRE(overlays.SetOverlayTransformOverlayRelative(child, parent, &identity) == VROverlayError_None);
+	REQUIRE(overlays.SetOverlayTransformOverlayRelative(grandchild, child, &identity) == VROverlayError_None);
+	overlays.ShowOverlay(child);
+	overlays.ShowOverlay(grandchild);
+	CHECK_FALSE(overlays.IsOverlayVisible(child));
+	CHECK_FALSE(overlays.IsOverlayVisible(grandchild));
+
+	overlays.ShowOverlay(parent);
+	CHECK(overlays.IsOverlayVisible(child));
+	CHECK(overlays.IsOverlayVisible(grandchild));
+
+	overlays.HideOverlay(child);
+	CHECK(overlays.IsOverlayVisible(parent));
+	CHECK_FALSE(overlays.IsOverlayVisible(grandchild));
+
+	// A parent that's gone: placed by nothing, and seen as its own setting says
+	overlays.ShowOverlay(child);
+	CHECK(overlays.DestroyOverlay(parent) == VROverlayError_None);
+	CHECK(overlays.IsOverlayVisible(child));
+}
+
+TEST_CASE("A_dashboard_overlay_goes_with_its_other_half")
+{
+	BaseOverlay overlays;
+	VROverlayHandle_t main = k_ulOverlayHandleInvalid, thumbnail = k_ulOverlayHandleInvalid;
+	if (overlays.CreateDashboardOverlay("oc.test.dash", "Dash", &main, &thumbnail) != VROverlayError_None) {
+		// Only where a game runs on this machine with its dashboardButton off, which has nowhere to show it
+		REQUIRE_FALSE(SceneDocHasDashboard(SharedStore::Get().Read(StoreDoc::Scene), SharedStore::IsSameProcessAlive));
+		return;
+	}
+	CHECK(overlays.DestroyOverlay(main) == VROverlayError_None);
+	float alpha = 0;
+	CHECK(overlays.GetOverlayAlpha(thumbnail, &alpha) == VROverlayError_InvalidHandle);
+
+	REQUIRE(overlays.CreateDashboardOverlay("oc.test.dash", "Dash", &main, &thumbnail) == VROverlayError_None);
+	CHECK(overlays.DestroyOverlay(thumbnail) == VROverlayError_None);
+	CHECK(overlays.GetOverlayAlpha(main, &alpha) == VROverlayError_InvalidHandle);
+	// Its key is free again
+	REQUIRE(overlays.CreateDashboardOverlay("oc.test.dash", "Dash", &main, &thumbnail) == VROverlayError_None);
+}
+
+TEST_CASE("An_overlay_key_of_another_running_program_is_in_use")
+{
+	const uint32_t self = oc_current_pid();
+#ifdef _WIN32
+	const uint32_t other = 4; // System, always there
+#else
+	const uint32_t other = (uint32_t)getppid();
+#endif
+	Json::Value doc(Json::objectValue);
+	Json::Value o(Json::objectValue);
+	o["key"] = "oc.test.taken";
+	o["handle"] = (Json::UInt64)1;
+	doc[std::to_string(other)]["overlays"].append(o);
+	CHECK(KeyOfAnotherProgram(doc, "oc.test.taken", self));
+	CHECK_FALSE(KeyOfAnotherProgram(doc, "oc.test.free", self));
+	// Its own overlays are the program's to answer for, and an ended program's keys are free
+	CHECK_FALSE(KeyOfAnotherProgram(doc, "oc.test.taken", other));
+	doc[std::to_string(self)]["overlays"].append(o);
+	CHECK(KeyOfAnotherProgram(doc, "oc.test.taken", other));
+	doc.removeMember(std::to_string(self));
+	doc[std::to_string(other)]["start"] = (Json::UInt64)(SharedStore::ProcessStartTime(other) + 1);
+	CHECK_FALSE(KeyOfAnotherProgram(doc, "oc.test.taken", self));
+}
+
+TEST_CASE("A_texture_not_copied_yet_has_the_size_it_says")
+{
+	VRVulkanTextureData_t data{};
+	data.m_nWidth = 640;
+	data.m_nHeight = 360;
+	Texture_t vulkan{ &data, TextureType_Vulkan, ColorSpace_Auto };
+	auto size = OverlayTextureSize(vulkan);
+	REQUIRE(size);
+	CHECK(size->first == 640);
+	CHECK(size->second == 360);
+	data.m_nWidth = 0;
+	CHECK_FALSE(OverlayTextureSize(vulkan));
+	Texture_t none{ nullptr, TextureType_Vulkan, ColorSpace_Auto };
+	CHECK_FALSE(OverlayTextureSize(none));
+	Texture_t gl{ (void*)(uintptr_t)1, TextureType_OpenGL, ColorSpace_Auto };
+	CHECK_FALSE(OverlayTextureSize(gl));
 }

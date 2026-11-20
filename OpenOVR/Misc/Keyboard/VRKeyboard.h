@@ -4,8 +4,10 @@
 
 #include <openxr/openxr.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "KeyboardLayout.h"
@@ -45,6 +47,15 @@ public:
 	enum Arrow { Left, Right, Up, Down };
 	void PressArrow(int arrow);
 	size_t Caret() const { return caret; }
+	// The selected characters, [first, second): dragging the laser across the text box selects them, and typing or a
+	// backspace replaces them. Empty (first == second) with none.
+	std::pair<size_t, size_t> Selection() const { return { (std::min)(anchor, caret), (std::max)(anchor, caret) }; }
+	void Select(size_t from, size_t to);
+	// The character boundary nearest a point on the canvas in the text box, as last drawn (the box scrolls with the
+	// caret, and a multiline text shows the caret's line)
+	size_t CharAt(int x) const;
+	// Where the text box's view starts, as last drawn: an index into the text
+	size_t ViewStart() const { return viewStart; }
 	// Closed without Done (its close button, or a click off a modal keyboard): KeyboardClosed
 	void Close();
 	// What it asks for, shown in the empty text box
@@ -111,6 +122,12 @@ private:
 	int KeyAt(int x, int y) const;
 	void Press(const KeyboardLayout::Key& key);
 	void Send(vr::EVREventType type, const std::string& utf8 = "");
+	// Removes the selection, with a backspace event for each character; false if there was none
+	bool DeleteSelection();
+	size_t LineStart(size_t at) const;
+	size_t LineEnd(size_t at) const;
+	// The text shown in the box: the caret's line of a multiline text, stars for a password
+	std::wstring Shown(size_t& from) const;
 
 	const Mode mode;
 	const bool multiline;
@@ -122,6 +139,9 @@ private:
 	std::u32string chars;
 	std::u32string description;
 	size_t caret = 0; // where typing goes: an index into chars
+	size_t anchor = 0; // the selection's other end (caret when there's none)
+	bool selecting = false; // the laser's trigger is held on the text box
+	mutable size_t viewStart = 0; // the first character the text box shows; moved by Draw only when the caret leaves it
 	std::string text; // chars as UTF-8
 	Case caseMode = Case::Lower;
 	bool done = false;

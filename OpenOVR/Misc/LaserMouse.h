@@ -46,6 +46,8 @@ constexpr uint32_t kOverlayFlagDiscreteScroll = 1u << 6;
 constexpr uint32_t kOverlayFlagSmoothScroll = 1u << 17;
 // No cursor drawn where the laser meets the overlay
 constexpr uint32_t kOverlayFlagHideLaserIntersection = 1u << 19;
+// Each hand is a mouse of its own on the overlay (VROverlayFlags_MultiCursor)
+constexpr uint32_t kOverlayFlagMultiCursor = 1u << 28;
 
 class LaserMouse {
 public:
@@ -56,6 +58,8 @@ public:
 	// MouseButtonDown and Up (Left) for its trigger, and ScrollDiscrete or ScrollSmooth for its thumbstick, as the
 	// target's flags ask. A click belongs to the hand that started it until that hand lets go; it stays on the target
 	// it started on.
+	// A target with kOverlayFlagMultiCursor gets a mouse for each hand instead: each hand's MouseMove, MouseButtonDown
+	// and Up, with the hand in the events' cursorIndex (0 the left, 1 the right), and each hand's click its own.
 	void Update(const std::array<PointerRay, 2>& rays, const std::vector<PointerTarget>& targets, double now, std::vector<PointerEvent>& out);
 
 	// Where a hand's laser meets its target (for the cursor), nothing if it points at none
@@ -82,6 +86,10 @@ public:
 		}
 		if (clickTarget == handle)
 			clickOwner = -1;
+		for (Hand& h : hands)
+			for (vr::VROverlayHandle_t* held : { &h.multiClick, &h.multiMovedOn })
+				if (*held == handle)
+					*held = vr::k_ulOverlayHandleInvalid;
 		for (vr::VROverlayHandle_t* held : { &clickTarget, &focus, &hover, &movedOn })
 			if (*held == handle)
 				*held = vr::k_ulOverlayHandleInvalid;
@@ -94,6 +102,10 @@ private:
 		float x = 0, y = 0; // on the target, in its mouse units
 		bool held = false; // the trigger, at the last update
 		double nextScroll = 0; // a held thumbstick's next scroll step
+		// Its own mouse on a target with kOverlayFlagMultiCursor: the target its click is on, and its last MouseMove's
+		vr::VROverlayHandle_t multiClick = vr::k_ulOverlayHandleInvalid;
+		vr::VROverlayHandle_t multiMovedOn = vr::k_ulOverlayHandleInvalid;
+		float multiMovedX = 0, multiMovedY = 0;
 	};
 
 	std::array<Hand, 2> hands;

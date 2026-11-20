@@ -31,6 +31,11 @@ float MouseY(const PointerTarget& t, float v)
 	return (t.yDown ? 1 - v : v) * t.mouseScale.v[1];
 }
 
+bool MultiCursor(const PointerTarget* t)
+{
+	return t && (t->flags & kOverlayFlagMultiCursor);
+}
+
 vr::VREvent_t MakeEvent(uint32_t type, vr::TrackedDeviceIndex_t device)
 {
 	vr::VREvent_t e{};
@@ -53,14 +58,15 @@ void LaserMouse::Update(const std::array<PointerRay, 2>& rays, const std::vector
 		hand.hit.reset();
 		if (!ray.valid)
 			continue;
-		if (clickOwner == h) {
+		if (clickOwner == h || hand.multiClick != vr::k_ulOverlayHandleInvalid) {
 			// A click stays on its target: the hand's laser on that target's plane, even past its edge
-			if (const PointerTarget* t = Find(targets, clickTarget)) {
+			const vr::VROverlayHandle_t held = clickOwner == h ? clickTarget : hand.multiClick;
+			if (const PointerTarget* t = Find(targets, held)) {
 				Hit hit{};
 				hit.distance = -1;
 				Intersect(t->placement, ray.origin, ray.dir, hit);
 				if (hit.distance >= 0) {
-					hand.target = clickTarget;
+					hand.target = held;
 					hand.hit = hit;
 					hand.x = hit.u * t->mouseScale.v[0];
 					hand.y = MouseY(*t, hit.v);
@@ -124,7 +130,8 @@ void LaserMouse::Update(const std::array<PointerRay, 2>& rays, const std::vector
 		focus = newFocus;
 	}
 
-	const bool onTarget = driver.target != vr::k_ulOverlayHandleInvalid;
+	// A target with a mouse for each hand gets the hands' own events (below), not the shared mouse's
+	const bool onTarget = driver.target != vr::k_ulOverlayHandleInvalid && !MultiCursor(Find(targets, driver.target));
 	if (onTarget && (movedOn != driver.target || movedX != driver.x || movedY != driver.y)) {
 		vr::VREvent_t e = MakeEvent(vr::VREvent_MouseMove, device);
 		e.data.mouse.x = driver.x;
@@ -157,6 +164,43 @@ void LaserMouse::Update(const std::array<PointerRay, 2>& rays, const std::vector
 		out.push_back({ clickTarget, e });
 		clickOwner = -1;
 		clickTarget = vr::k_ulOverlayHandleInvalid;
+	}
+
+	// Each hand's own mouse, on a target that has one for each
+	for (int h = 0; h < 2; h++) {
+		Hand& hand = hands[h];
+		const PointerRay& ray = rays[h];
+		const bool on = MultiCursor(Find(targets, hand.target));
+		if (on && (hand.multiMovedOn != hand.target || hand.multiMovedX != hand.x || hand.multiMovedY != hand.y)) {
+			vr::VREvent_t e = MakeEvent(vr::VREvent_MouseMove, ray.device);
+			e.data.mouse.x = hand.x;
+			e.data.mouse.y = hand.y;
+			e.data.mouse.button = hand.multiClick != vr::k_ulOverlayHandleInvalid ? vr::VRMouseButton_Left : 0;
+			e.data.mouse.cursorIndex = (uint32_t)h;
+			out.push_back({ hand.target, e });
+			hand.multiMovedOn = hand.target;
+			hand.multiMovedX = hand.x;
+			hand.multiMovedY = hand.y;
+		}
+		if (hand.multiClick == vr::k_ulOverlayHandleInvalid) {
+			if (on && ray.valid && ray.click && !hand.held && clickOwner != h) {
+				hand.multiClick = hand.target;
+				vr::VREvent_t e = MakeEvent(vr::VREvent_MouseButtonDown, ray.device);
+				e.data.mouse.x = hand.x;
+				e.data.mouse.y = hand.y;
+				e.data.mouse.button = vr::VRMouseButton_Left;
+				e.data.mouse.cursorIndex = (uint32_t)h;
+				out.push_back({ hand.multiClick, e });
+			}
+		} else if (!ray.valid || !ray.click) {
+			vr::VREvent_t e = MakeEvent(vr::VREvent_MouseButtonUp, ray.device);
+			e.data.mouse.x = hand.x;
+			e.data.mouse.y = hand.y;
+			e.data.mouse.button = vr::VRMouseButton_Left;
+			e.data.mouse.cursorIndex = (uint32_t)h;
+			out.push_back({ hand.multiClick, e });
+			hand.multiClick = vr::k_ulOverlayHandleInvalid;
+		}
 	}
 
 	// Scrolling, on the focused target as its flags ask

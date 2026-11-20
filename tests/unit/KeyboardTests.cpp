@@ -7,6 +7,8 @@
 #include "Misc/Keyboard/KeyboardLayout.h"
 #include "Misc/Keyboard/SudoFontMeta.h"
 #include "Misc/Keyboard/VRKeyboard.h"
+#include "Misc/LaserMouse.h"
+#include "Reimpl/BaseOverlay.h"
 
 #include <cstring>
 #include <string>
@@ -257,4 +259,115 @@ TEST_CASE("Keyboard_keeps_its_size_so_its_keys_stay_where_they_were")
 	CHECK(kb.CanvasHeight() == 404);
 	VRKeyboard minimal(VRKeyboard::Mode::Minimal, false, VRKeyboard::kFlagMinimal, "", 0, 0, Us());
 	CHECK(minimal.CanvasHeight() < 404);
+}
+
+namespace {
+// The laser on the keyboard at (x, y) on its canvas
+void Point(VRKeyboard& kb, uint32_t type, int x, int y, bool held)
+{
+	vr::VREvent_t e{};
+	e.eventType = type;
+	e.data.mouse.x = (float)x;
+	e.data.mouse.y = (float)y;
+	e.data.mouse.button = held ? vr::VRMouseButton_Left : 0;
+	LaserMouse mouse;
+	kb.OnPointer(mouse, { PointerEvent{ kb.Handle(), e } });
+}
+} // namespace
+
+TEST_CASE("Dragging_across_the_text_selects_and_typing_replaces_it")
+{
+	REQUIRE(Us());
+	VRKeyboard kb(VRKeyboard::Mode::Normal, false, 0, "hello world", 0, 0, Us());
+	Drawn(kb);
+	kb.TakeEvents();
+	const int y = 20; // in the text box, which is at the top
+	// A click at the box's left edge puts the caret at the start
+	Point(kb, vr::VREvent_MouseButtonDown, 10, y, true);
+	CHECK(kb.Caret() == 0);
+	CHECK(kb.Selection().first == kb.Selection().second);
+	// A drag to the right selects everything (the box ends well past the text)
+	Point(kb, vr::VREvent_MouseMove, 600, y, true);
+	Point(kb, vr::VREvent_MouseButtonUp, 600, y, false);
+	CHECK(kb.Selection() == std::make_pair<size_t, size_t>(0, 11));
+	// Moving after the release selects no more
+	Point(kb, vr::VREvent_MouseMove, 10, y, false);
+	CHECK(kb.Selection() == std::make_pair<size_t, size_t>(0, 11));
+
+	kb.Type(U'x');
+	CHECK(kb.Text() == "x");
+	std::vector<vr::VREvent_t> input = OfType(kb.TakeEvents(), vr::VREvent_KeyboardCharInput);
+	REQUIRE(input.size() == 12); // a backspace for each character, then the one typed
+	CHECK(std::string(input[0].data.keyboard.cNewInput) == "\b");
+	CHECK(std::string(input[11].data.keyboard.cNewInput) == "x");
+
+	// A selection made in code goes with a backspace, and an arrow drops it
+	kb.Type(U'y');
+	kb.Select(0, 1);
+	kb.Type(U'\b');
+	CHECK(kb.Text() == "y");
+	kb.Select(1, 0);
+	kb.PressArrow(VRKeyboard::Right); // to the selection's end
+	CHECK(kb.Selection().first == kb.Selection().second);
+	CHECK(kb.Caret() == 1);
+	kb.Select(1, 0);
+	kb.PressArrow(VRKeyboard::Left); // to its start
+	CHECK(kb.Caret() == 0);
+}
+
+TEST_CASE("A_long_text_scrolls_only_as_the_caret_leaves_the_view")
+{
+	REQUIRE(Us());
+	VRKeyboard kb(VRKeyboard::Mode::Normal, false, 0, std::string(300, 'm'), 0, 0, Us());
+	Drawn(kb);
+	const size_t atEnd = kb.ViewStart();
+	CHECK(atEnd > 0); // the end is shown, with the caret
+	// A step back stays in view: the text doesn't move
+	kb.PressArrow(VRKeyboard::Left);
+	Drawn(kb);
+	CHECK(kb.ViewStart() == atEnd);
+	// To the start: the view follows, and stays there as the caret moves right
+	kb.PressArrow(VRKeyboard::Up);
+	Drawn(kb);
+	CHECK(kb.ViewStart() == 0);
+	kb.PressArrow(VRKeyboard::Right);
+	kb.PressArrow(VRKeyboard::Right);
+	Drawn(kb);
+	CHECK(kb.ViewStart() == 0);
+	// A click lands on the character shown there, not one counted from the text's start
+	kb.PressArrow(VRKeyboard::Down);
+	Drawn(kb);
+	Point(kb, vr::VREvent_MouseButtonDown, 10, 20, true);
+	CHECK(kb.Caret() == kb.ViewStart());
+}
+
+TEST_CASE("A_multiline_text_shows_the_caret_s_line")
+{
+	REQUIRE(Us());
+	VRKeyboard kb(VRKeyboard::Mode::Normal, true, 0, "first line\nsecond", 0, 0, Us());
+	Drawn(kb);
+	CHECK(kb.ViewStart() == 11);
+	Point(kb, vr::VREvent_MouseButtonDown, 10, 20, true);
+	CHECK(kb.Caret() == 11); // the start of the line shown
+	kb.PressArrow(VRKeyboard::Up);
+	Drawn(kb);
+	CHECK(kb.ViewStart() == 0);
+	Point(kb, vr::VREvent_MouseButtonDown, 600, 20, true);
+	CHECK(kb.Caret() == 10); // its end, before the line break
+}
+
+TEST_CASE("Text_wraps_between_words_in_at_most_the_lines_asked")
+{
+	Canvas canvas(1, 1);
+	const int width = canvas.TextWidth(L"hello world");
+	std::vector<std::wstring> lines = WrapText(canvas, L"hello world hello world", width, 3);
+	REQUIRE(lines.size() == 2);
+	CHECK(lines[0] == L"hello world");
+	CHECK(lines[1] == L"hello world");
+	CHECK(WrapText(canvas, L"one\ntwo", 1000, 3) == std::vector<std::wstring>{ L"one", L"two" });
+	CHECK(WrapText(canvas, L"a b c d", canvas.TextWidth(L"a"), 2).size() == 2);
+	// A word wider than a line is cut
+	lines = WrapText(canvas, L"abcdefgh", canvas.TextWidth(L"abcd"), 3);
+	REQUIRE(lines.size() == 2);
+	CHECK(lines[0] == L"abcd");
 }

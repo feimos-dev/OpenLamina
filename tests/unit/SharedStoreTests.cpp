@@ -55,6 +55,25 @@ TEST_CASE("Store_round_trip")
 	CHECK(fs::exists(dir.path / "settings.json"));
 }
 
+TEST_CASE("Store_reads_one_value")
+{
+	TempDir dir;
+	SharedStore a(dir.path), b(dir.path);
+	CHECK(a.ReadAt(StoreDoc::Settings, { "steamvr", "supersample" }).isNull());
+	CHECK(b.Update(StoreDoc::Settings, [](Json::Value& data) {
+		data["steamvr"]["supersample"] = 1.5;
+		data["flat"] = 3;
+	}));
+	CHECK(a.ReadAt(StoreDoc::Settings, { "steamvr", "supersample" }).asDouble() == 1.5);
+	CHECK(a.ReadAt(StoreDoc::Settings, { "steamvr" })["supersample"].asDouble() == 1.5);
+	CHECK(a.ReadAt(StoreDoc::Settings, { "steamvr", "missing" }).isNull());
+	CHECK(a.ReadAt(StoreDoc::Settings, { "flat", "inside" }).isNull()); // a number has no members
+	CHECK(a.ReadAt(StoreDoc::Settings, {}).isObject());
+	// A later change is seen
+	CHECK(b.Update(StoreDoc::Settings, [](Json::Value& data) { data["steamvr"]["supersample"] = 2.0; }));
+	CHECK(a.ReadAt(StoreDoc::Settings, { "steamvr", "supersample" }).asDouble() == 2.0);
+}
+
 TEST_CASE("Store_two_instances_see_each_others_updates")
 {
 	TempDir dir;
