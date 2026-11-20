@@ -4,6 +4,7 @@
 #include "stdafx.h"
 
 #include "Misc/Process.h"
+#include "Misc/Dashboard.h"
 #include "Misc/SharedStore.h"
 #include "Reimpl/BaseOverlay.h"
 
@@ -250,8 +251,11 @@ TEST_CASE("A_dashboard_overlay_goes_with_its_other_half")
 {
 	BaseOverlay overlays;
 	VROverlayHandle_t main = k_ulOverlayHandleInvalid, thumbnail = k_ulOverlayHandleInvalid;
-	if (overlays.CreateDashboardOverlay("oc.test.dash", "Dash", &main, &thumbnail) != VROverlayError_None)
-		return; // a game with no dashboard (dashboardButton off) makes none
+	if (overlays.CreateDashboardOverlay("oc.test.dash", "Dash", &main, &thumbnail) != VROverlayError_None) {
+		// Only where a game runs on this machine with its dashboardButton off, which has nowhere to show it
+		REQUIRE_FALSE(SceneDocHasDashboard(SharedStore::Get().Read(StoreDoc::Scene), SharedStore::IsSameProcessAlive));
+		return;
+	}
 	CHECK(overlays.DestroyOverlay(main) == VROverlayError_None);
 	float alpha = 0;
 	CHECK(overlays.GetOverlayAlpha(thumbnail, &alpha) == VROverlayError_InvalidHandle);

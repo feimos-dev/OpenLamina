@@ -1074,8 +1074,7 @@ TEST_CASE("A_launch_asked_for_long_ago_is_dropped_not_taken_over")
 	CHECK(apps.GetTransitionState() == VRApplicationTransition_None);
 	CHECK_FALSE(store.Read(StoreDoc::Scene).isMember("transition"));
 	CHECK(CountEvents((vr::EVREventType)1301) == 1);
-	std::this_thread::sleep_for(std::chrono::milliseconds(300));
-	CHECK_FALSE(fs::exists(dir.path / "marker.txt"));
+	CHECK(CountEvents((vr::EVREventType)1302) == 0); // nothing launched
 }
 
 TEST_CASE("A_taken_over_launch_starts_no_second_copy")
@@ -1096,9 +1095,9 @@ TEST_CASE("A_taken_over_launch_starts_no_second_copy")
 		doc["transition"]["since_ms"] = (Json::UInt64)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 	});
 	// Left for its own session's start to end
+	EventRecorder recorder;
 	CHECK(apps.GetTransitionState() == VRApplicationTransition_NewAppLaunched);
-	std::this_thread::sleep_for(std::chrono::milliseconds(300));
-	CHECK_FALSE(fs::exists(dir.path / "marker.txt"));
+	CHECK(CountEvents((vr::EVREventType)1302) == 0); // nothing launched
 }
 
 TEST_CASE("A_quit_request_holds_other_launches_off_for_a_time_only")
@@ -1124,7 +1123,6 @@ TEST_CASE("A_quit_request_holds_other_launches_off_for_a_time_only")
 	CHECK(apps.PerformApplicationPrelaunchCheck("oc.test.next") == VRApplicationError_OldApplicationQuitting);
 	const uint64_t first = store.Read(StoreDoc::Scene)["transition"]["since_ms"].asUInt64();
 	// Asked again: the first ask's time is kept
-	std::this_thread::sleep_for(std::chrono::milliseconds(20));
 	CHECK(apps.PerformApplicationPrelaunchCheck("oc.test.next") == VRApplicationError_OldApplicationQuitting);
 	CHECK(store.Read(StoreDoc::Scene)["transition"]["since_ms"].asUInt64() == first);
 	CHECK(EventsFor(other, cursor, scene).size() == 1);

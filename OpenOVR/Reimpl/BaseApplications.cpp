@@ -518,7 +518,14 @@ EVRApplicationError BaseApplications::AskSceneApplicationToQuit(const std::strin
 		// To the scene application alone: every other program carries on
 		vr::VREvent_Data_t data{};
 		data.process.pid = scenePid;
-		OcPostEventTo(store, scenePid, vr::VREvent_Quit, vr::k_unTrackedDeviceIndexInvalid, data);
+		if (!OcPostEventTo(store, scenePid, vr::VREvent_Quit, vr::k_unTrackedDeviceIndexInvalid, data)) {
+			// Not asked after all: nothing to wait for
+			store.Update(StoreDoc::Scene, [&](Json::Value& doc) {
+				if (doc.isObject())
+					doc.removeMember("transition");
+			});
+			return VRApplicationError_IPCFailed;
+		}
 		data.process.oldPid = scenePid;
 		data.process.pid = 0;
 		OcPostEvent(kTransitionStarted, vr::k_unTrackedDeviceIndexInvalid, data, true);
