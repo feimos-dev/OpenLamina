@@ -197,6 +197,8 @@ public:
 
 	/** The tracker action is attached: the trackers by role again */
 	void OnTrackerActionAttached() { CreateGenericTrackers(); }
+	/** A new session is being set up: the trackers' spaces are made again in it */
+	void ForgetTrackerSpaces();
 
 private:
 	std::shared_ptr<XrHMD> hmd = std::make_shared<XrHMD>();
@@ -301,17 +303,18 @@ private:
 	const InteractionProfile* HandWithoutController(int hand);
 	/** Once a second: whether a hand without a controller came or went */
 	bool HandsWithoutControllersChanged();
-	int64_t handsCheckedMs = 0;
+	std::atomic<int64_t> handsCheckedMs{ 0 };
 	// The checks in a row each hand without a controller wasn't tracked in, and how many it may miss
 	int handMisses[2] = { 0, 0 };
 	// Whether each hand's controller is the hand itself, shown because hand tracking tracks it
 	bool handFromTracking[2] = { false, false };
 	// The Vive trackers the runtime listed, to notice one going (no event says so)
-	uint32_t viveTrackersListed = 0;
+	std::atomic<uint32_t> viveTrackersListed{ 0 };
 	static constexpr int kHandMissesAllowed = 3;
 	/** The xdevs that are trackers, in a list it makes (null if it can't), each passed to add; those whose lower-case
-	 * serial is in one of byRole (the lower-case persistent paths of the Vive trackers listed by role) are left out */
-	void FindXDevTrackers(XrXDevListMNDX& list, const std::vector<std::string>& byRole,
+	 * serial is in one of byRole (the lower-case persistent paths of the Vive trackers listed by role) are left out;
+	 * false if they can't be listed */
+	bool FindXDevTrackers(XrXDevListMNDX& list, const std::vector<std::string>& byRole,
 	    const std::function<void(XrXDevIdMNDX, const XrXDevPropertiesMNDX&)>& add);
 
 	/**

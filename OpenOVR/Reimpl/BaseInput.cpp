@@ -426,6 +426,8 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 		legacyInputsSet = XR_NULL_HANDLE;
 		eyeGazeAction = XR_NULL_HANDLE;
 		eyeGazeSpace = XR_NULL_HANDLE;
+		trackerPoseAction = XR_NULL_HANDLE;
+		trackerPoseActionAttached = false;
 		if (rawInputsSet != XR_NULL_HANDLE)
 			OC_XR_LOG(xrDestroyActionSet(rawInputsSet));
 		rawInputsSet = XR_NULL_HANDLE;

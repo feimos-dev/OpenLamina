@@ -651,6 +651,8 @@ XrResult DrvOpenXR::SetupSession()
 	OOVR_LOGF("Started OpenXR session on runtime '%s', hand tracking supported: %d",
 	    xr_gbl->systemProperties.systemName, xr_gbl->handTrackingProperties.supportsHandTracking);
 
+	currentBackend->ForgetTrackerSpaces();
+
 	// If required, re-setup the input system for this new session
 	BaseInput* input = GetUnsafeBaseInput();
 	if (input)
