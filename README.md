@@ -15,10 +15,10 @@ OpenLamina runs a game's OpenVR calls directly on your headset's OpenXR runtime 
 Pimax, Varjo and others), so the game runs as if it were a native OpenXR game. That means no SteamVR install, no
 SteamVR startup, and often less stutter.
 
-It is a fork of [OpenComposite](https://gitlab.com/znixian/OpenOVR) by ZNix and its contributors. Upstream hasn't
-merged anything since July 2025, so OpenLamina picks up its open merge requests and goes well beyond them.
+It is a fork of [OpenComposite](https://gitlab.com/znixian/OpenOVR) by ZNix and its contributors. They haven't
+merged anything since July 2025, so OpenLamina picks up its open merge requests and continues from there.
 
-**Report bugs [here](https://github.com/feimos-dev/OpenLamina/issues)**, not on upstream's GitLab or Discord.
+**Report bugs [here](https://github.com/feimos-dev/OpenLamina/issues)**, not on OpenComposite's GitLab or Discord.
 
 ## Benefits over OpenComposite
 
@@ -56,9 +56,10 @@ Ahmed), [!114](https://gitlab.com/znixian/OpenOVR/-/merge_requests/114) (Manuel 
 (Faye Salwin), [!190](https://gitlab.com/znixian/OpenOVR/-/merge_requests/190) and
 [!191](https://gitlab.com/znixian/OpenOVR/-/merge_requests/191) (arealjim).
 
-The [OpenComposite FAQ](https://mbucchia.github.io/OpenXR-Toolkit/opencomposite.html) and
+The [OpenComposite FAQ](https://mbucchia.github.io/OpenXR-Toolkit/opencomposite.html)
+mostly applies here. Games listed as failing under the 
 [game compatibility list](https://docs.google.com/spreadsheets/d/1s2SSuRt0oHm91RUZB-R-ef5BrfOtvP_jwDwb6FuMF9Q/edit#gid=2068512515)
-mostly apply here too. Games listed there as failing with a missing interface should work now.
+should all work now.
 
 ## Installing
 
@@ -71,12 +72,12 @@ Run `OpenLamina-Setup.exe`. It installs for your user only, no administrator nee
 Windows says it "protected your PC", choose *More info*, then *Run anyway*. Leave *Use OpenLamina for OpenVR games
 now* ticked.
 
-The **OpenLamina** app in the Start menu can:
+The **OpenLamina** app can:
 
-- switch between OpenLamina and SteamVR (starting SteamVR from Steam switches back to SteamVR too),
-- send single games to SteamVR or OpenLamina,
-- change the common settings,
-- update to a new release (checked against its SHA-256; nothing updates by itself).
+- switch between OpenLamina and SteamVR (starting SteamVR from Steam switches back to SteamVR too)
+- configure specific games to use SteamVR or OpenLamina
+- change common settings
+- update to a new release
 
 Uninstall from Windows' *Installed apps*. For scripts: `OpenLamina-Setup.exe /VERYSILENT /SWITCH`, and
 `OpenLamina.exe --use-openlamina`, `--use-steamvr` or `--remove`.
@@ -100,7 +101,7 @@ OpenXR runtime needs (see [Linux notes](#linux-notes)). Needs `python3`, not roo
 ~/.local/share/OpenLamina/install.sh --uninstall
 ```
 
-Flatpak Steam is detected on its own; with both kinds installed, add `--flatpak` for the Flatpak one. Files you put
+Flatpak Steam is detected on its own. With both kinds installed, add `--flatpak` for the Flatpak one. Files you put
 in `bin/` (like `openlamina.ini`) survive updates. The Linux builds need glibc 2.38 or later.
 
 ### By hand
@@ -191,7 +192,7 @@ the OpenLamina version, what happened, and the game's log. Each program writes i
 git clone --recursive https://github.com/feimos-dev/OpenLamina.git
 ```
 
-It's a CMake project. Pull requests are built on Windows and Linux, 32- and 64-bit, with warnings as errors.
+Pull requests are built on Windows and Linux, 32- and 64-bit, with warnings as errors.
 
 **Windows:** Visual Studio 2022 (or its Build Tools) with the C++ x64/x86 tools and ATL, Python 3, and the Vulkan
 headers and loader (for example `vcpkg install vulkan-headers vulkan-loader --triplet x64-windows`). In PowerShell 7:
@@ -216,7 +217,7 @@ versions; `scripts/openvr_inventory.py --check` lists what's still missing.
 
 OpenLamina is free software under the [GNU GPL version 3](https://www.gnu.org/licenses/gpl-3.0-standalone.html) or
 later (`LICENSE.txt`). It is a modified version of [OpenComposite](https://gitlab.com/znixian/OpenOVR); the changes
-since upstream's commit `cff07db` are in this repository's history.
+since OpenComposite's commit `cff07db` are in this repository's history.
 
 It includes:
 
