@@ -1,4 +1,4 @@
-; OpenLamina-Setup.exe: installs OpenLamina for the current user, without an administrator, in
+; OpenLamina-Windows-Installer.exe: installs OpenLamina for the current user, without an administrator, in
 ; %LOCALAPPDATA%\Programs\OpenLamina, which is then the OpenLamina folder openvrpaths.vrpath names:
 ;
 ;   bin\vrclient_x64.dll, bin\vrclient.dll, bin\version.txt   the runtime (64- and 32-bit games)
@@ -7,7 +7,7 @@
 ;
 ; Built by scripts/ci/build-installer.ps1, which passes:
 ;   /DAppVersion=2026.11.06 /DNumericVersion=2026.11.6.0 /DFolder=<the OpenLamina folder, as in the zip>
-;   /DSwitcher=<RuntimeSwitcher's build output> /DOutput=<folder for OpenLamina-Setup.exe>
+;   /DSwitcher=<RuntimeSwitcher's build output> /DOutput=<folder for OpenLamina-Windows-Installer.exe>
 ;
 ; Command line, besides Inno Setup's own (/SILENT, /VERYSILENT, /SUPPRESSMSGBOXES, ...):
 ;   /SWITCH         with /SILENT or /VERYSILENT: OpenVR games use OpenLamina afterwards; if that fails, Setup
@@ -64,7 +64,7 @@ DisableProgramGroupPage=yes
 DefaultGroupName=OpenLamina
 MinVersion=10.0
 OutputDir={#Output}
-OutputBaseFilename=OpenLamina-Setup
+OutputBaseFilename=OpenLamina-Windows-Installer
 SetupIconFile=..\RuntimeSwitcher\icon.ico
 UninstallDisplayIcon={app}\OpenLamina.exe
 UninstallDisplayName=OpenLamina

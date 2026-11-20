@@ -305,7 +305,7 @@ namespace RuntimeSwitcher
             _update.Enabled = true;
         }
 
-        /// <summary>Downloads the release's OpenLamina-Setup.exe, checks it, and runs it; the window closes.</summary>
+        /// <summary>Downloads the release's OpenLamina-Windows-Installer.exe, checks it, and runs it; the window closes.</summary>
         private async Task UpdateAsync()
         {
             Release release = _pending;

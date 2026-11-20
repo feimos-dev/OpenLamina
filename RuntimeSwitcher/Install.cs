@@ -14,7 +14,7 @@ namespace RuntimeSwitcher
     /// </summary>
     internal static class Install
     {
-        public const string SetupAssetName = "OpenLamina-Setup.exe";
+        public const string SetupAssetName = "OpenLamina-Windows-Installer.exe";
 
         public static string Folder { get; } = RuntimeList.Normalize(AppDomain.CurrentDomain.BaseDirectory);
 

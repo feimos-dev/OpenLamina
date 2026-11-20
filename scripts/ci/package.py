@@ -2,18 +2,18 @@
 """Packs OpenLamina's release archives from the release workflow's build artifacts.
 
     scripts/ci/package.py --version VERSION --artifacts DIR --out DIR [--os windows linux] [--repository OWNER/NAME]
-                          [--installer OpenLamina-Setup.exe]
+                          [--installer OpenLamina-Windows-Installer.exe]
     scripts/ci/package.py --version VERSION --artifacts DIR --windows-folder DIR [--repository OWNER/NAME]
 
 DIR of --artifacts has a folder per build, named as the workflow's artifacts: windows-x64 (vrclient_x64.dll),
 windows-x86 (vrclient.dll), linux-x64 and linux-x86 (vrclient.so each). Made in --out:
 
-    OpenLamina-windows.zip    OpenLamina/bin/vrclient_x64.dll and bin/vrclient.dll
-    OpenLamina-linux.tar.gz   OpenLamina/bin/linux64/vrclient.so and bin/vrclient.so, and install.sh
-    OpenLamina-source.tar.gz  this commit's source, submodules included
-    OpenLamina-Setup.exe      with --installer: that file (scripts/ci/build-installer.ps1 builds it)
-    SHA256SUMS.txt               of the others
-    RELEASE_NOTES.md             the release's description
+    OpenLamina-Windows-Portable.zip   OpenLamina/bin/vrclient_x64.dll and bin/vrclient.dll
+    OpenLamina-Linux.tar.gz           OpenLamina/bin/linux64/vrclient.so and bin/vrclient.so, and install.sh
+    OpenLamina-Source.tar.gz          this commit's source, submodules included
+    OpenLamina-Windows-Installer.exe  with --installer: that file (scripts/ci/build-installer.ps1 builds it)
+    SHA256SUMS.txt                    of the others
+    RELEASE_NOTES.md                  the release's description
 
 --windows-folder writes the Windows archive's OpenLamina folder into DIR instead, unpacked, for the installer.
 
@@ -75,7 +75,7 @@ def source_text(version: str, commit: str, repository: str) -> str:
         f"OpenLamina {version}, commit {commit}\n"
         f"From https://github.com/{repository}, a fork of OpenComposite (https://gitlab.com/znixian/OpenOVR).\n"
         "GPL-3.0-or-later (LICENSE.txt); the other licence files are those of what is built into it.\n"
-        "Its source, submodules included, is OpenLamina-source.tar.gz, which comes with this archive,\n"
+        "Its source, submodules included, is OpenLamina-Source.tar.gz, which comes with this archive,\n"
         f"and https://github.com/{repository}/tree/{commit}\n"
         "Built by .github/workflows/build.yml: Release, warnings as errors; Windows with the C runtime linked in,\n"
         "Linux with the crash backtrace.\n"
@@ -185,29 +185,29 @@ def write_source_tar(out: Path, prefix: str, mtime: int) -> None:
 
 def notes(version: str, commit: str, repository: str, sums: str, installer: bool) -> str:
     setup_row = (
-        "| `OpenLamina-Setup.exe` | Windows installer: OpenLamina and its app to switch OpenVR games between it and SteamVR |\n"
+        "| **Windows** (most people) | `OpenLamina-Windows-Installer.exe` |\n"
         if installer
         else ""
     )
     windows = (
-        "**Windows:** run `OpenLamina-Setup.exe` (for your user, no administrator needed). It isn't signed, so Windows "
-        "may say it protected your PC: choose *More info*, then *Run anyway*. Its last page switches OpenVR games to "
-        "OpenLamina; the OpenLamina app in the Start menu switches them back, and updates OpenLamina.\n\n"
+        "**Windows:** run `OpenLamina-Windows-Installer.exe`. No administrator needed. It isn't signed yet, so if Windows "
+        "says it protected your PC, choose *More info*, then *Run anyway*. The OpenLamina app in the Start menu switches "
+        "between OpenLamina and SteamVR, and updates OpenLamina.\n\n"
         if installer
         else ""
     )
     return f"""OpenLamina {version}, built from [{commit[:12]}](https://github.com/{repository}/commit/{commit}).
 
-| File | What |
+| You have | Download |
 |---|---|
-{setup_row}| `OpenLamina-windows.zip` | `bin\\vrclient_x64.dll` (64-bit games) and `bin\\vrclient.dll` (32-bit) |
-| `OpenLamina-linux.tar.gz` | `bin/linux64/vrclient.so` (64-bit games), `bin/vrclient.so` (32-bit) and `install.sh` |
-| `OpenLamina-source.tar.gz` | the source of this build, submodules included |
-| `SHA256SUMS.txt` | checksums of the others |
+{setup_row}| **Linux** | `OpenLamina-Linux.tar.gz` |
+| Windows, installing by hand or for one game | `OpenLamina-Windows-Portable.zip` |
+| Source code | `OpenLamina-Source.tar.gz` |
+| Checksums | `SHA256SUMS.txt` |
 
-{windows}**Linux:** unpack the archive and run `OpenLamina/install.sh`: it copies OpenLamina to `~/.local/share/OpenLamina` (or Flatpak Steam's folder) and switches OpenVR games to it. `install.sh --help` lists the rest: switching back, updating, uninstalling, and Steam launch options for games in the Steam Runtime.
+{windows}**Linux:** unpack the archive and run `OpenLamina/install.sh`. `install.sh --help` lists the rest: switching back, updating, uninstalling, and Steam launch options.
 
-**By hand, and for one game only:** see the README's [Installing](https://github.com/{repository}#installing) section.
+**By hand:** see the README's [Installing](https://github.com/{repository}#installing) section.
 
 OpenLamina is a fork of [OpenComposite](https://gitlab.com/znixian/OpenOVR), GPL-3.0-or-later like it; each archive has its licences and a `SOURCE.txt`.
 
@@ -225,7 +225,7 @@ def main() -> None:
     output.add_argument("--windows-folder", type=Path)
     parser.add_argument("--os", nargs="+", choices=["windows", "linux"], default=["windows", "linux"])
     parser.add_argument("--repository", default="feimos-dev/OpenLamina")
-    parser.add_argument("--installer", type=Path, help="OpenLamina-Setup.exe, to put with the archives")
+    parser.add_argument("--installer", type=Path, help="OpenLamina-Windows-Installer.exe, to put with the archives")
     args = parser.parse_args()
 
     commit = git("rev-parse", "HEAD").strip()
@@ -238,18 +238,18 @@ def main() -> None:
 
     made = []
     if "windows" in args.os:
-        out = args.out / "OpenLamina-windows.zip"
+        out = args.out / "OpenLamina-Windows-Portable.zip"
         write_zip(out, "OpenLamina", binary_files("windows", args.artifacts, args.version, commit, args.repository), mtime)
         made.append(out)
     if "linux" in args.os:
-        out = args.out / "OpenLamina-linux.tar.gz"
+        out = args.out / "OpenLamina-Linux.tar.gz"
         write_binary_tar(out, "OpenLamina", binary_files("linux", args.artifacts, args.version, commit, args.repository), mtime)
         made.append(out)
-    out = args.out / "OpenLamina-source.tar.gz"
+    out = args.out / "OpenLamina-Source.tar.gz"
     write_source_tar(out, f"OpenLamina-{args.version}", mtime)
     made.append(out)
     if args.installer:
-        out = args.out / "OpenLamina-Setup.exe"
+        out = args.out / "OpenLamina-Windows-Installer.exe"
         out.write_bytes(args.installer.read_bytes())
         made.append(out)
 

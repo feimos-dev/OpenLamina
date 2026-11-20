@@ -2,7 +2,7 @@
 # Tries the Linux archive's install.sh on a scratch home folder: install, switch both ways, keep the owner's files,
 # uninstall, and the paths file's other keys kept throughout. No network, no Steam.
 #
-#   scripts/ci/test-install.sh dist/OpenLamina-linux.tar.gz
+#   scripts/ci/test-install.sh dist/OpenLamina-Linux.tar.gz
 set -eu
 
 archive=$(cd "$(dirname "$1")" && pwd)/$(basename "$1")
