@@ -191,24 +191,14 @@ static std::string ProgramName()
 	return name.empty() ? "program" : name;
 }
 
-static std::ofstream init_stream()
+std::string oovr_log_folder()
 {
-	std::ofstream stream;
-	// One file per program, by its executable's name: a game and the tools beside it each keep their own
-	string outputFilePath = "openlamina." + ProgramName() + ".log";
-
-	// Try and write to standard location
-	// fall back to exe dir if can't create dir
-	// OC_LOG_DIR (used by the tests) replaces the standard location
+	// The standard location; OC_LOG_DIR (used by the tests) replaces it
 	string overrideFolder = GetEnv("OC_LOG_DIR");
 #ifdef _WIN32
 	string outputFolder = GetEnv("LOCALAPPDATA");
 	if (!outputFolder.empty())
 		outputFolder = outputFolder + "\\OpenLamina\\logs";
-	if (!overrideFolder.empty())
-		outputFolder = overrideFolder;
-	if (!outputFolder.empty() && makePath(outputFolder))
-		outputFilePath = outputFolder + "\\" + outputFilePath;
 #else
 	string outputFolder = GetEnv("XDG_STATE_HOME");
 	if (outputFolder.empty()) {
@@ -218,9 +208,28 @@ static std::ofstream init_stream()
 	}
 	if (!outputFolder.empty())
 		outputFolder = outputFolder + "/OpenLamina/logs";
+#endif
 	if (!overrideFolder.empty())
 		outputFolder = overrideFolder;
 	if (!outputFolder.empty() && makePath(outputFolder))
+		return outputFolder;
+	return {};
+}
+
+static std::ofstream init_stream()
+{
+	std::ofstream stream;
+	// One file per program, by its executable's name: a game and the tools beside it each keep their own
+	string outputFilePath = "openlamina." + ProgramName() + ".log";
+
+	// Try and write to standard location
+	// fall back to exe dir if can't create dir
+	const string outputFolder = oovr_log_folder();
+#ifdef _WIN32
+	if (!outputFolder.empty())
+		outputFilePath = outputFolder + "\\" + outputFilePath;
+#else
+	if (!outputFolder.empty())
 		outputFilePath = outputFolder + "/" + outputFilePath;
 #endif
 

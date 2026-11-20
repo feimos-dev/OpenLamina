@@ -1,0 +1,5 @@
+{
+ "#": "CompositorDumpImages: each eye's next submitted image, read back and written as a PNG to the log folder (run.py --cases gfx-vk-dump-images,gfx-gl-dump-images --script scripts/gfx_all_apis.json --expect expect/dump_images.json)",
+ "gfx-vk-dump-images/dump images/-/-": { "left_png": true, "right_png": true },
+ "gfx-gl-dump-images/dump images/-/-": { "left_png": true, "right_png": true }
+}

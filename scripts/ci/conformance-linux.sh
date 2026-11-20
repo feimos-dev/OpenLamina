@@ -108,6 +108,8 @@ run --cases keyboard --script tests/conformance/scripts/keyboard.json --ini test
 # Frames and overlays from the Vulkan and OpenGL games, as the stand-in reads them back (the Direct3D cases skip)
 d3d='gfx-d3d1[012]-.*|overlay-(raw|texture-readback)-d3d1[12]|overlay-images'
 run --cases overlay-images,gfx-d3d11-basic,gfx-d3d12-basic,gfx-vk-basic,gfx-gl-basic,gfx-d3d10-basic,gfx-d3d11-odd,gfx-d3d11-bounds,gfx-d3d12-bounds,gfx-vk-bounds,gfx-gl-bounds,overlay-raw-d3d11,overlay-raw-d3d12,overlay-raw-vk,overlay-raw-gl,overlay-texture-readback-d3d11,overlay-texture-readback-d3d12,overlay-texture-readback-vk,overlay-texture-readback-gl --script tests/conformance/scripts/gfx_all_apis.json --expect tests/conformance/expect/gfx.json --allow-skip "$d3d" --out "$out"/gfx
+# CompositorDumpImages: the eyes' next images as PNGs in the log folder
+run --cases gfx-vk-dump-images,gfx-gl-dump-images --script tests/conformance/scripts/gfx_all_apis.json --expect tests/conformance/expect/dump_images.json --out "$out"/dump-images
 # Formats the runtime doesn't offer (it has RGBA8 sRGB only), converted into the one it has
 run --cases gfx-d3d11-formats,gfx-d3d12-formats,gfx-vk-formats,gfx-gl-formats --script tests/conformance/scripts/gfx_rgba8_only.json --expect tests/conformance/expect/gfx_formats.json --allow-skip "$d3d" --out "$out"/gfx-formats
 # The pose and depth a frame was submitted with: used with useSubmittedPose and submitDepth on, not without

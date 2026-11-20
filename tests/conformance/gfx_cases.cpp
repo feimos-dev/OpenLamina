@@ -23,6 +23,10 @@
 #include <map>
 #include <chrono>
 #include <cstring>
+#include <cstdlib>
+#ifndef _WIN32
+#include <unistd.h>
+#endif
 
 using namespace conformance;
 
@@ -74,7 +78,18 @@ Json::Value Skipped(const std::string& why)
 }
 
 // 1024x1024 per eye, full bounds, kFrames frames
-void Basic(CaseContext& c, GfxKind kind, int64_t format)
+// The file OpenLamina's CompositorDumpImages writes an eye's image to (BaseCompositor::DumpImageName)
+std::string BaseCompositorDumpName(vr::EVREye eye)
+{
+#ifdef _WIN32
+	const unsigned long pid = GetCurrentProcessId();
+#else
+	const unsigned long pid = (unsigned long)getpid();
+#endif
+	return "compositor-dump." + std::to_string(pid) + (eye == vr::Eye_Left ? ".left.png" : ".right.png");
+}
+
+void Basic(CaseContext& c, GfxKind kind, int64_t format, bool dump = false)
 {
 	std::string why;
 	std::unique_ptr<GfxApi> gfx = GfxApi::Create(kind, &why);
@@ -111,6 +126,9 @@ void Basic(CaseContext& c, GfxKind kind, int64_t format)
 		r["wait"] = (int)comp->WaitGetPoses(poses, 16, nullptr, 0);
 		r["left"] = (int)comp->Submit(vr::Eye_Left, left.Texture(), &bounds, vr::Submit_Default);
 		r["right"] = (int)comp->Submit(vr::Eye_Right, right.Texture(), &bounds, vr::Submit_Default);
+		// CompositorDumpImages: the next frame's eyes, as PNGs in the log folder
+		if (dump && frame == 2)
+			comp->CompositorDumpImages();
 	}
 	r["frames"] = kFrames;
 	r["dump_join"] = "last_projection";
@@ -118,6 +136,18 @@ void Basic(CaseContext& c, GfxKind kind, int64_t format)
 	// OpenLamina first, then the textures and the device (OpenVR's rule for every API)
 	c.core->Cleanup();
 	gfx->Flush();
+	if (dump) {
+		Json::Value d;
+		const char* logs = std::getenv("OC_LOG_DIR");
+		const std::filesystem::path folder = logs ? logs : ".";
+		for (vr::EVREye eye : { vr::Eye_Left, vr::Eye_Right }) {
+			std::error_code ec;
+			const std::filesystem::path png = folder / BaseCompositorDumpName(eye);
+			const auto size = std::filesystem::file_size(png, ec);
+			d[eye == vr::Eye_Left ? "left_png" : "right_png"] = !ec && size > 1000;
+		}
+		c.Record("dump images", d);
+	}
 }
 
 // The test pattern of eye 0, w x h, as RGBA8 bytes, rows top to bottom
@@ -792,6 +822,8 @@ const std::map<std::string, CaseFn>& conformance::GfxCases()
 		{ "gfx-d3d12-basic", [](CaseContext& c) { Basic(c, GfxKind::D3D12, kDxgiRGBA8Srgb); } },
 		{ "gfx-vk-basic", [](CaseContext& c) { Basic(c, GfxKind::Vulkan, kVkRGBA8Srgb); } },
 		{ "gfx-gl-basic", [](CaseContext& c) { Basic(c, GfxKind::OpenGL, kGlSRGB8Alpha8); } },
+		{ "gfx-vk-dump-images", [](CaseContext& c) { Basic(c, GfxKind::Vulkan, kVkRGBA8Srgb, true); } },
+		{ "gfx-gl-dump-images", [](CaseContext& c) { Basic(c, GfxKind::OpenGL, kGlSRGB8Alpha8, true); } },
 		{ "gfx-d3d11-formats", [](CaseContext& c) { Formats(c, GfxKind::D3D11, { { "rgba16f", 10 }, { "r11g11b10f", 26 }, { "rgb10a2", 24 }, { "bgrx8", 88 } }); } },
 		{ "gfx-d3d12-formats", [](CaseContext& c) { Formats(c, GfxKind::D3D12, { { "rgba16f", 10 }, { "r11g11b10f", 26 }, { "rgb10a2", 24 }, { "bgrx8", 88 } }); } },
 		{ "gfx-vk-formats", [](CaseContext& c) { Formats(c, GfxKind::Vulkan, { { "rgba16f", 97 }, { "r11g11b10f", 122 }, { "rgb10a2", 64 }, { "bgra8", 44 } }); } },

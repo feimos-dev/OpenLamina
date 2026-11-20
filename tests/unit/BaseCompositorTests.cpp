@@ -98,13 +98,12 @@ TEST_CASE("A_frame_with_one_eye_shows_it_in_both")
 	CHECK(source[1] == -1);
 }
 
-TEST_CASE("Submit_ends_the_frame_unless_the_game_ends_it_with_PostPresentHandoff")
+TEST_CASE("Submit_ends_the_frame_unless_the_timing_mode_says_PostPresentHandoff_does")
 {
-	CHECK(BaseCompositor::SubmitEndsFrame(VRCompositorTimingMode_Implicit, false));
-	CHECK(BaseCompositor::SubmitEndsFrame(VRCompositorTimingMode_Explicit_RuntimePerformsPostPresentHandoff, false));
-	CHECK_FALSE(BaseCompositor::SubmitEndsFrame(VRCompositorTimingMode_Explicit_ApplicationPerformsPostPresentHandoff, false));
-	// A game that calls it ends its frames there in any mode
-	CHECK_FALSE(BaseCompositor::SubmitEndsFrame(VRCompositorTimingMode_Implicit, true));
+	// By the mode the game set alone, whether or not it has called PostPresentHandoff before
+	CHECK(BaseCompositor::SubmitEndsFrame(VRCompositorTimingMode_Implicit));
+	CHECK(BaseCompositor::SubmitEndsFrame(VRCompositorTimingMode_Explicit_RuntimePerformsPostPresentHandoff));
+	CHECK_FALSE(BaseCompositor::SubmitEndsFrame(VRCompositorTimingMode_Explicit_ApplicationPerformsPostPresentHandoff));
 }
 
 TEST_CASE("Submitted_bounds_with_a_NaN_are_not_bounds")

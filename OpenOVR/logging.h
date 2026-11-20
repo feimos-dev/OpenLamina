@@ -31,6 +31,10 @@ OC_NORETURN void oovr_abort_raw(const char* file, long line, const char* func, c
 
 std::string GetEnv(const std::string& var);
 
+// The folder the log file is written to (made if it isn't there); empty if there's none, the log then being in the
+// working directory
+std::string oovr_log_folder();
+
 #define OOVR_ABORT(msg)                                        \
 	do {                                                       \
 		oovr_abort_raw(__FILE__, __LINE__, __FUNCTION__, msg); \
