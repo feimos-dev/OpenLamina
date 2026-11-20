@@ -385,7 +385,7 @@ void BaseApplications::LaunchForTransition(SharedStore& store, const std::string
 		return;
 	}
 	store.Update(StoreDoc::Scene, [&](Json::Value& scene) {
-		if (scene.isObject())
+		if (scene.isObject() && StringOr(scene["transition"]["app_key"]) == appKey)
 			scene.removeMember("transition");
 	});
 	OcPostEvent(kTransitionAborted, vr::k_unTrackedDeviceIndexInvalid, vr::VREvent_Data_t{}, true);
@@ -520,7 +520,7 @@ EVRApplicationError BaseApplications::AskSceneApplicationToQuit(const std::strin
 		vr::VREvent_Data_t data{};
 		data.process.pid = scenePid;
 		if (!OcPostEventTo(store, scenePid, vr::VREvent_Quit, vr::k_unTrackedDeviceIndexInvalid, data)) {
-			// Not asked after all: nothing to wait for (unless another program has asked since)
+			// Not asked after all: nothing to wait for (a transition for another application or scene app stays)
 			store.Update(StoreDoc::Scene, [&](Json::Value& doc) {
 				if (doc.isObject() && PidOf(doc["transition"]["old_pid"]) == scenePid && StringOr(doc["transition"]["app_key"]) == appKey)
 					doc.removeMember("transition");
