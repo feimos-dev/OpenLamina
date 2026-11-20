@@ -81,6 +81,9 @@
 using namespace vr;
 
 std::mutex inputRestartMutex;
+// This thread is a helper program's loop making its lost session again, between its passes: its loop and thread are
+// kept through the rebuild (not stopped, nor started again)
+static thread_local bool recoveringInHelperLoop = false;
 std::unique_ptr<TemporaryGraphics> XrBackend::temporaryGraphics = nullptr;
 
 // Runs a step that reads the store's documents. They are files that another program, or another build, wrote: a value
@@ -850,8 +853,6 @@ void XrBackend::WaitForTrackingData()
 		xr_gbl->nextPredictedFrameTime = state.predictedDisplayTime;
 		frameShouldRender = state.shouldRender != XR_FALSE;
 		frameAwaitingBegin = true;
-		if (usingApplicationGraphicsAPI && framesOnGameDevice < kFramesBeforeInfoSet)
-			framesOnGameDevice++;
 
 		// The frame's index counts display periods, as SteamVR's does; a count of frames where the runtime gives no period
 		const uint64_t slot = NextDisplaySlot(displaySlot, displaySlotTime, state.predictedDisplayTime, state.predictedDisplayPeriod);
@@ -2056,7 +2057,7 @@ bool XrBackend::InputsMayAttach()
 		return true;
 	BackendManager* manager = BackendManager::InstancePtr();
 	auto* backend = manager ? (XrBackend*)manager->GetBackendInstance() : nullptr;
-	return !backend || backend->usingApplicationGraphicsAPI || backend->appGraphicsUnusable;
+	return !backend || backend->usingApplicationGraphicsAPI || backend->appGraphicsUnusable || backend->inputFocusHad;
 }
 
 // The devices the game knows of now: the headset, the hands that have a controller, and the trackers
@@ -2337,10 +2338,8 @@ void XrBackend::PumpEvents()
    */
 	// Not while a session is being ended (ShutdownSession pumps events while it waits, maybe under the input restart)
 	BaseInput* input = GetUnsafeBaseInput();
-	// Only on the game's device, and only once the game has had a while to load its manifest: either would mean another
-	// session restart for the game's actions
-	const bool infoSetDue = InputsMayAttach() && (IsHelperSession() || framesOnGameDevice >= kFramesBeforeInfoSet);
-	if (input && !exitExpected && infoSetDue && !input->AreActionsLoaded() && sessionState == XR_SESSION_STATE_FOCUSED && !Hand(XrController::XCT_LEFT)
+	// Not before the game's device is known (InputsMayAttach): another session restart for it would follow
+	if (input && !exitExpected && InputsMayAttach() && !input->AreActionsLoaded() && sessionState == XR_SESSION_STATE_FOCUSED && !Hand(XrController::XCT_LEFT)
 	    && !Hand(XrController::XCT_RIGHT)) {
 		QueryForInteractionProfile();
 	}
@@ -2378,6 +2377,8 @@ void XrBackend::OnSessionLost()
 		return;
 	if (quitting)
 		return;
+	// An EXITING after the loss is the lost session's, not the user quitting
+	sawStopping = false;
 	OOVR_LOG("The OpenXR session is lost: making it again once the system is back");
 	// The headset and controllers go away until then, as SteamVR's do when their driver goes
 	if (!devicesDeactivated.exchange(true)) {
@@ -2445,29 +2446,38 @@ static void AskGraphicsRequirements(const void* binding)
 	}
 }
 
-void XrBackend::RecoverLostSession()
+void XrBackend::RecoverLostSession(std::mutex* passLock)
 {
-	if (!sessionLost || quitting)
+	if (!sessionLost || quitting || ownFramesStopped)
 		return;
 	// One thread tries at a time; the others carry on without a session
 	std::unique_lock<std::mutex> guard(recoveryLock, std::try_to_lock);
 	if (!guard.owns_lock())
 		return;
-	const auto now = std::chrono::steady_clock::now();
-	if (!RecoveryDue(lastRecoveryTry, now))
+	using clock = std::chrono::steady_clock;
+	const auto now = clock::now();
+	if (!RecoveryDue(clock::time_point(clock::duration(lastRecoveryTry.load())), now))
 		return;
-	lastRecoveryTry = now;
+	lastRecoveryTry = now.time_since_epoch().count();
 
+	// The session lock, then the helper loop's pass (the order its passes take them in)
 	auto lock = xr_session.lock();
+	std::unique_lock<std::mutex> pass;
+	if (passLock)
+		pass = std::unique_lock<std::mutex>(*passLock);
 	if (!sessionLost || quitting)
 		return;
-	// The lost session first, once: its handles are no use any more. With a lost instance, the game's actions go
-	// too (forgotten: they went with it), and are made again on the new one.
+	// With a lost instance, the game's actions go first (forgotten: they went with it, and are made again on the new
+	// one), with the paths and the trackers' list of devices made on it. The info set goes with the session.
+	if (instanceLost) {
+		if (BaseInput* input = GetUnsafeBaseInput())
+			input->_ForgetInstance();
+		subactionPaths[0] = subactionPaths[1] = XR_NULL_PATH;
+		generic_trackers_generation = UINT64_MAX;
+		generic_trackers_session = XR_NULL_HANDLE;
+	}
+	// The lost session, once: its handles are no use any more
 	if (!lostSessionDestroyed) {
-		if (instanceLost) {
-			if (BaseInput* input = GetUnsafeBaseInput())
-				input->_ForgetInstance();
-		}
 		if (xr_gbl || xr_session.get())
 			DrvOpenXR::ShutdownSession();
 		lostSessionDestroyed = true;
@@ -2476,14 +2486,10 @@ void XrBackend::RecoverLostSession()
 		if (XR_FAILED(DrvOpenXR::RemakeInstance()))
 			return; // no runtime or headset yet: the next try in a second
 		instanceLost = false;
-		// What was made on the old instance: the info set and its paths, and the trackers' list of devices
-		infoSet = XR_NULL_HANDLE;
-		infoAction = XR_NULL_HANDLE;
-		subactionPaths[0] = subactionPaths[1] = XR_NULL_PATH;
-		generic_trackers_generation = UINT64_MAX;
-		generic_trackers_session = XR_NULL_HANDLE;
 		AskGraphicsRequirements(GetCurrentGraphicsBinding());
-	} else if (XR_FAILED(DrvOpenXR::FindSystem())) {
+	} else if (XrResult res = DrvOpenXR::FindSystem(); XR_FAILED(res)) {
+		if (res == XR_ERROR_INSTANCE_LOST)
+			instanceLost = true; // the instance went too while the session was lost: made again at the next try
 		return; // no headset yet: the next try in a second
 	}
 	if (XR_FAILED(RebuildSession(RebuildReason::Loss)) || sessionLost)
@@ -2492,10 +2498,6 @@ void XrBackend::RecoverLostSession()
 	if (BaseInput* input = GetUnsafeBaseInput())
 		input->_RebuildForNewInstance();
 	OOVR_LOG("The OpenXR session is back");
-	if (devicesDeactivated.exchange(false)) {
-		for (TrackedDeviceIndex_t i : PresentDevices(*this))
-			OcPostEvent(VREvent_TrackedDeviceActivated, i, VREvent_Data_t{}, false);
-	}
 }
 
 // Own frames call xrEndFrame on their own thread, where the runtime may use the session's device while the game's
@@ -2544,7 +2546,12 @@ void XrBackend::OnSessionCreated()
 	exitExpected = false;
 	sawStopping = false;
 	lostSessionDestroyed = false;
-	lastRecoveryTry = {};
+	lastRecoveryTry = 0;
+	// The devices are back, whichever path made the session after a loss
+	if (devicesDeactivated.exchange(false)) {
+		for (TrackedDeviceIndex_t i : PresentDevices(*this))
+			OcPostEvent(VREvent_TrackedDeviceActivated, i, VREvent_Data_t{}, false);
+	}
 	toldIpd = NAN; // the new session's first IPD is the one the game has
 	// The gap from the old session's last frame isn't dropped frames
 	RestartFrameTiming();
@@ -2642,9 +2649,8 @@ void XrBackend::StartHelperLoop()
 		    // thread of a helper program runs frames to do it. Its loop and thread are kept through the rebuild.
 		    if (sessionLost) {
 			    if (!quitting) {
-				    std::lock_guard<std::mutex> pass(helperPassLock);
 				    recoveringInHelperLoop = true;
-				    RecoverLostSession();
+				    RecoverLostSession(&helperPassLock);
 				    recoveringInHelperLoop = false;
 			    }
 			    PumpEvents();
