@@ -892,6 +892,7 @@ void BaseCompositor::UnlockGLSharedTextureForAccess(glSharedTextureHandle_t glSh
 
 uint32_t BaseCompositor::GetVulkanInstanceExtensionsRequired(char* pchValue, uint32_t unBufferSize)
 {
+	auto lock = xr_session.lock_shared(); // held while asking: a new instance waits for it
 	if (pchValue && unBufferSize)
 		pchValue[0] = 0;
 #if defined(SUPPORT_VK)
@@ -914,6 +915,7 @@ uint32_t BaseCompositor::GetVulkanInstanceExtensionsRequired(char* pchValue, uin
 
 uint32_t BaseCompositor::GetVulkanDeviceExtensionsRequired(VkPhysicalDevice_T* pPhysicalDevice, char* pchValue, uint32_t unBufferSize)
 {
+	auto lock = xr_session.lock_shared(); // held while asking: a new instance waits for it
 	if (pchValue && unBufferSize)
 		pchValue[0] = 0;
 #if defined(SUPPORT_VK)

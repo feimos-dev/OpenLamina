@@ -788,6 +788,8 @@ void BaseInput::DropActions(bool destroyHandles)
 void BaseInput::_ForgetInstance()
 {
 	auto sessionLock = xr_session.lock();
+	// Paths are the instance's own too: looked up again on the new one
+	pathsStale = true;
 	if (!hasLoadedActions)
 		return;
 	{
@@ -807,14 +809,31 @@ void BaseInput::_RebuildForNewInstance()
 {
 	// Exclusive to the end, as a manifest's loading is
 	auto sessionLock = xr_session.lock();
+	if (pathsStale) {
+		pathsStale = false;
+		for (size_t i = 0; i < allSubactionPathNames.size() && i < allSubactionPaths.size(); i++) {
+			allSubactionPaths[i] = XR_NULL_PATH;
+			OC_XR_LOG(xrStringToPath(xr_instance, allSubactionPathNames[i].c_str(), &allSubactionPaths[i]));
+		}
+		std::fill(handInteractionProfiles.begin(), handInteractionProfiles.end(), nullptr);
+		std::lock_guard<std::mutex> registryGuard(inputHandleRegistryLock);
+		for (auto& [name, handle] : inputHandleRegistry) {
+			handle->devicePath = XR_NULL_PATH;
+			if (!handle->devicePathString.empty())
+				OC_XR_LOG(xrStringToPath(xr_instance, handle->devicePathString.c_str(), &handle->devicePath));
+		}
+	}
 	if (!rebuildPending)
 		return;
 	rebuildPending = false;
 	OOVR_LOG("Making the game's actions again on the new OpenXR instance");
-	if (manifestToRebuild.empty())
-		LoadEmptyManifestIfRequired();
-	else
-		SetActionManifestPath(manifestToRebuild.c_str());
+	if (!manifestToRebuild.empty()) {
+		if (EVRInputError err = SetActionManifestPath(manifestToRebuild.c_str()); err == vr::VRInputError_None)
+			return;
+		else
+			OOVR_LOGF("The game's manifest couldn't be loaded again (%d): legacy input instead", (int)err);
+	}
+	LoadEmptyManifestIfRequired();
 }
 
 void BaseInput::LoadEmptyManifestIfRequired()

@@ -102,6 +102,15 @@
    "frames_ended_min": 20
   }
  },
+ "instance_lost_input": {
+  "cases": [
+   "input-frames"
+  ],
+  "rebuilt_actions": [
+   "haptic",
+   "legacy-right-trigger"
+  ]
+ },
  "exiting": {
   "cases": [
    "frame-loop"

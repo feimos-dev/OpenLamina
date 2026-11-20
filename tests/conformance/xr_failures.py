@@ -96,6 +96,19 @@ def check(name, want, out):
                 misses.append(f"overlay-app-loss: {key.removesuffix('_min')} {r.get(key.removesuffix('_min'))}, expected at least {value}")
             elif key in ("sessions_lost", "instances_lost") and r.get(key) != value:
                 misses.append(f"overlay-app-loss: {key} {r.get(key)}, expected {value}")
+    if "rebuilt_actions" in want:
+        # Case input-frames through an instance loss: the last instance has the game's manifest's actions and their
+        # bindings
+        path = out / "raw" / "case-input-frames.dump.json"
+        dump = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        if dump.get("instances_lost") != 1 or dump.get("instances_created", 0) < 2:
+            misses.append(f"input-frames: {dump.get('instances_lost')} instances lost and {dump.get('instances_created')} made, expected 1 and at least 2")
+        names = {a.get("name") for a in dump.get("actions", [])}
+        missing = [n for n in want["rebuilt_actions"] if n not in names]
+        if missing:
+            misses.append(f"input-frames: the new instance has no actions {missing}")
+        if not dump.get("suggested_bindings"):
+            misses.append("input-frames: the new instance had no bindings suggested")
     if "old_event_quits" in want:
         # IVRSystem_009's events (case old-events): the quit arrives, and nothing is written past the 32-byte event
         olds = [r for r in records if r.get("case") == "old-events" and str(r.get("method", "")).startswith("frame ")]

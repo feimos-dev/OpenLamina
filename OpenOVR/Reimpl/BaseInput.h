@@ -523,6 +523,7 @@ private:
 	// lock
 	std::string manifestToRebuild;
 	bool rebuildPending = false;
+	bool pathsStale = false; // the cached paths are the lost instance's
 
 public:
 	/** One hand's laser for pointing at overlays (LaserMouse) */

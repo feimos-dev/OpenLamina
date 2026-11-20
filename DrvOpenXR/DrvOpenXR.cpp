@@ -189,6 +189,9 @@ struct InstancePlan {
 	XrGraphicsApiSupportedFlags apiFlags = 0;
 };
 
+// The running instance's plan, set once at start-up: an instance made again after a loss has the same
+static InstancePlan currentPlan;
+
 // The extensions OpenLamina enables, of those available, for a session of that kind
 InstancePlan PlanInstance(const std::set<std::string>& available, SessionKind kind)
 {
@@ -358,9 +361,6 @@ XrResult MakeInstance(const InstancePlan& plan, XrInstance* instance, XrVersion*
 
 // The instance VR_IsHmdPresent made, with the extensions it was made with, for the scene application's session
 std::mutex probeLock;
-// The extensions and graphics APIs of the running instance, for one made again after a loss
-InstancePlan currentPlan;
-
 XrInstance probedInstance = XR_NULL_HANDLE;
 XrVersion probedVersion = 0;
 std::vector<std::string> probedExtensions;
@@ -666,18 +666,23 @@ XrResult DrvOpenXR::RemakeInstance()
 	// It went with the old instance
 	dbgMessenger = NULL;
 #endif
-	if (xr_instance) {
-		if (XR_FAILED(xrDestroyInstance(xr_instance)))
-			OOVR_LOG("xrDestroyInstance of the lost instance failed");
-		xr_instance = XR_NULL_HANDLE;
+	// A new instance made at an earlier try is kept while the headset isn't there yet
+	static bool madeAgain = false;
+	if (!madeAgain) {
+		if (xr_instance) {
+			if (XR_FAILED(xrDestroyInstance(xr_instance)))
+				OOVR_LOG("xrDestroyInstance of the lost instance failed");
+			xr_instance = XR_NULL_HANDLE;
+		}
+		if (XrResult res = MakeInstance(currentPlan, &xr_instance, &xr_instance_version); XR_FAILED(res)) {
+			OOVR_LOGF("The OpenXR instance can't be made again yet: %d", (int)res);
+			xr_instance = XR_NULL_HANDLE;
+			return res;
+		}
+		// The old function table isn't freed: a thread outside the session lock may still be reading it
+		xr_ext = new XrExt(currentPlan.apiFlags, currentPlan.extensions);
+		madeAgain = true;
 	}
-	if (XrResult res = MakeInstance(currentPlan, &xr_instance, &xr_instance_version); XR_FAILED(res)) {
-		OOVR_LOGF("The OpenXR instance can't be made again yet: %d", (int)res);
-		xr_instance = XR_NULL_HANDLE;
-		return res;
-	}
-	delete xr_ext;
-	xr_ext = new XrExt(currentPlan.apiFlags, currentPlan.extensions);
 	if (XrResult res = CreateSystemID(); XR_FAILED(res))
 		return res;
 	uint32_t viewCount = 0;
@@ -690,6 +695,7 @@ XrResult DrvOpenXR::RemakeInstance()
 	if (viewCount != XruEyeCount)
 		return XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED;
 	xr_views_list = views;
+	madeAgain = false; // the next loss makes another
 	OOVR_LOG("Made the OpenXR instance again");
 	return XR_SUCCESS;
 }

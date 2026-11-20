@@ -2104,6 +2104,10 @@ void XrBackend::PumpEvents()
 	std::unique_lock<std::mutex> pumpLock(pumping, std::try_to_lock);
 	if (!pumpLock.owns_lock())
 		return;
+	// Nor while another thread makes the instance or session again (it holds the session lock, and pumps itself)
+	SessionLock sessionLock(xr_session, SessionLock::TryShared{});
+	if (!sessionLock.IsHeld())
+		return;
 
 	// Poll for OpenXR events
 	while (true) {
@@ -2401,14 +2405,14 @@ static void AskGraphicsRequirements(const void* binding)
 	if (!header)
 		return;
 	switch (header->type) {
-#if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+#if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX11)
 	case XR_TYPE_GRAPHICS_BINDING_D3D11_KHR: {
 		XrGraphicsRequirementsD3D11KHR requirements{ XR_TYPE_GRAPHICS_REQUIREMENTS_D3D11_KHR };
 		OC_XR_LOG(xr_ext->xrGetD3D11GraphicsRequirementsKHR(xr_instance, xr_system, &requirements));
 		break;
 	}
 #endif
-#if defined(SUPPORT_DX) && defined(SUPPORT_DX12)
+#if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX12)
 	case XR_TYPE_GRAPHICS_BINDING_D3D12_KHR: {
 		XrGraphicsRequirementsD3D12KHR requirements{ XR_TYPE_GRAPHICS_REQUIREMENTS_D3D12_KHR };
 		OC_XR_LOG(xr_ext->xrGetD3D12GraphicsRequirementsKHR(xr_instance, xr_system, &requirements));
@@ -2419,6 +2423,11 @@ static void AskGraphicsRequirements(const void* binding)
 	case XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR: {
 		XrGraphicsRequirementsVulkanKHR requirements{ XR_TYPE_GRAPHICS_REQUIREMENTS_VULKAN_KHR };
 		OC_XR_LOG(xr_ext->xrGetVulkanGraphicsRequirementsKHR(xr_instance, xr_system, &requirements));
+		// The session's device must be the one the new instance names
+		const auto* vk = (const XrGraphicsBindingVulkanKHR*)binding;
+		VkPhysicalDevice wanted = VK_NULL_HANDLE;
+		if (XR_SUCCEEDED(xr_ext->xrGetVulkanGraphicsDeviceKHR(xr_instance, xr_system, vk->instance, &wanted)) && wanted != vk->physicalDevice)
+			OOVR_LOG("The new OpenXR instance wants another Vulkan device than the session's: its session may fail");
 		break;
 	}
 #endif

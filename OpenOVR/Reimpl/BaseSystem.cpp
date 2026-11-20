@@ -180,6 +180,7 @@ bool BaseSystem::GetTimeSinceLastVsync(float* pfSecondsSinceLastVsync, uint64_t*
 bool BaseSystem::_RuntimeAdapterLuid(uint64_t* luid)
 {
 #ifdef SUPPORT_DX
+	auto lock = xr_session.lock_shared(); // held while asking: a new instance waits for it
 	if (!xr_ext || xr_instance == XR_NULL_HANDLE)
 		return false;
 	auto pack = [luid](const LUID& l) {

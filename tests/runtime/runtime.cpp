@@ -297,6 +297,10 @@ XrResult XRAPI_CALL CreateInstance(const XrInstanceCreateInfo* info, XrInstance*
 	}
 	St().instanceAlive = true;
 	St().requirementsQueried.clear();
+	// Each instance's paths are its own, as a real runtime's: a later instance's atoms start further on, so a client
+	// that keeps a lost instance's paths gets wrong ones
+	St().pathIds.clear();
+	St().paths.assign(1 + 1000 * St().instancesMade++, "");
 	St().enabledExtensions = enabled;
 	{
 		Dump& d = GetDump();
@@ -399,7 +403,7 @@ XrResult XRAPI_CALL StringToPath(XrInstance, const char* str, XrPath* path)
 XrResult XRAPI_CALL PathToString(XrInstance, XrPath path, uint32_t capacity, uint32_t* count, char* buffer)
 {
 	std::lock_guard<std::recursive_mutex> g(St().lock);
-	if (path == XR_NULL_PATH || path >= St().paths.size())
+	if (path == XR_NULL_PATH || path >= St().paths.size() || St().paths[(size_t)path].empty())
 		return XR_ERROR_PATH_INVALID;
 	const std::string& s = St().paths[(size_t)path];
 	*count = (uint32_t)s.size() + 1;
