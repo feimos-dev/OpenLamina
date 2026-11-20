@@ -36,6 +36,26 @@ PicoInteractionProfile::PicoInteractionProfile(Model model)
 		"/output/haptic",
 	};
 
+	// The G3's inputs, on either hand it's held in: only those its profile lists
+	const char* g3Paths[] = {
+		"/input/trigger/click",
+		"/input/trigger/value",
+		"/input/menu/click",
+		"/input/thumbstick",
+		"/input/thumbstick/click",
+		"/input/grip/pose",
+		"/input/aim/pose",
+	};
+	if (model == Model::G3) {
+		for (const char* str : g3Paths) {
+			validInputPaths.insert("/user/hand/left" + std::string(str));
+			validInputPaths.insert("/user/hand/right" + std::string(str));
+		}
+		rawSourceNames = { { "thumbstick", "joystick" }, { "menu", "application_menu" } };
+		propertiesMap = { { vr::Prop_ControllerType_String, { GetOpenVRName().value() } } };
+		return;
+	}
+
 	for (const char* str : leftPaths)
 		validInputPaths.insert(str);
 	for (const char* str : rightPaths)
@@ -55,9 +75,10 @@ PicoInteractionProfile::PicoInteractionProfile(Model model)
 
 const std::string& PicoInteractionProfile::GetPath() const
 {
-	static std::string neo3 = "/interaction_profiles/bytedance/pico_neo3_controller";
-	static std::string pico4 = "/interaction_profiles/bytedance/pico4_controller";
-	return model == Model::Neo3 ? neo3 : pico4;
+	static const std::string neo3 = "/interaction_profiles/bytedance/pico_neo3_controller";
+	static const std::string pico4 = "/interaction_profiles/bytedance/pico4_controller";
+	static const std::string g3 = "/interaction_profiles/bytedance/pico_g3_controller";
+	return model == Model::Neo3 ? neo3 : model == Model::Pico4 ? pico4 : g3;
 }
 
 std::optional<const char*> PicoInteractionProfile::GetLeftHandRenderModelName() const
@@ -82,6 +103,20 @@ std::optional<vr::EVRSkeletalTrackingLevel> PicoInteractionProfile::GetOpenVRTra
 
 const InteractionProfile::LegacyBindings* PicoInteractionProfile::GetLegacyBindings(const std::string& handPath) const
 {
+	if (model == Model::G3) {
+		// The trigger, and the menu button as SteamVR's menu
+		static LegacyBindings g3 = {};
+		if (!g3.system) {
+			g3.trigger = "input/trigger/value";
+			g3.triggerClick = "input/trigger/click";
+			g3.stickBtn = "input/thumbstick/click";
+			g3.gripPoseAction = "input/grip/pose";
+			g3.aimPoseAction = "input/aim/pose";
+			g3.system = "input/menu/click";
+		}
+		return &g3;
+	}
+
 	static LegacyBindings allBindings[2] = { {}, {} };
 	int hand = handPath == "/user/hand/left" ? vr::Eye_Left : vr::Eye_Right;
 	LegacyBindings& bindings = allBindings[hand];

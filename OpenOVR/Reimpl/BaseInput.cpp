@@ -1161,6 +1161,9 @@ void BaseInput::CreateLegacyActions()
 		create(&ctrl.trigger, "trigger", "Trigger", XR_ACTION_TYPE_FLOAT_INPUT);
 		create(&ctrl.triggerTouch, "trigger-touch", "Trigger (Touch)", XR_ACTION_TYPE_BOOLEAN_INPUT);
 		create(&ctrl.triggerClick, "trigger-click", "Trigger (Digital)", XR_ACTION_TYPE_BOOLEAN_INPUT);
+		create(&ctrl.triggerProximity, "trigger-proximity", "Trigger (Finger Near)", XR_ACTION_TYPE_BOOLEAN_INPUT);
+		create(&ctrl.thumbProximity, "thumb-proximity", "Thumb Buttons (Thumb Near)", XR_ACTION_TYPE_BOOLEAN_INPUT);
+		create(&ctrl.triggerCurl, "trigger-curl", "Trigger (Finger Curl)", XR_ACTION_TYPE_FLOAT_INPUT);
 
 		create(&ctrl.haptic, "haptic", "Vibration Haptics", XR_ACTION_TYPE_VIBRATION_OUTPUT);
 
@@ -1259,8 +1262,7 @@ bool BaseInput::SuggestRawBindings(const InteractionProfile& profile, const std:
 {
 	// The binding file chosen for this controller; turned into one for this controller if it's another's
 	BindingFile file = LoadBindingFile(PathFromUtf8(bindingsPath));
-	// The simple controller is the one profile with no OpenVR controller type of its own
-	const std::string type = profile.GetOpenVRName().value_or("khr_simple_controller");
+	const std::string type = profile.BindingConversionType();
 	if (!file.controllerType.empty() && lowerStr(file.controllerType) != type) {
 		OOVR_LOGF("Binding file: %s's bindings converted for %s", file.controllerType.c_str(), type.c_str());
 		file = ConvertBindingFile(file, type);

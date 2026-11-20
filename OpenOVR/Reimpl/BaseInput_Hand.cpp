@@ -357,6 +357,17 @@ static auto GetInterpolatedControllerState(const LegacyControllerActions& contro
 	actionRes = xrGetActionStateBoolean(xr_session.get(), &info, &stateBool);
 	bool triggerTouch = XR_SUCCEEDED(actionRes) && stateBool.currentState;
 
+	// Where the controller tells it: the index finger's curl on the trigger, and the finger near the trigger, which
+	// keeps it from pointing until it's lifted away
+	info.action = controller.triggerCurl;
+	if (info.action != XR_NULL_HANDLE && XR_SUCCEEDED(xrGetActionStateFloat(xr_session.get(), &info, &state)) && state.isActive
+	    && state.currentState >= simulateCurlThreshold)
+		output.triggerPct = std::max(output.triggerPct, state.currentState);
+	info.action = controller.triggerProximity;
+	if (info.action != XR_NULL_HANDLE && XR_SUCCEEDED(xrGetActionStateBoolean(xr_session.get(), &info, &stateBool)) && stateBool.isActive
+	    && stateBool.currentState)
+		triggerTouch = true;
+
 	// Force touch to true when trigger is being pressed
 	if (output.triggerPct != 0.0f)
 		triggerTouch = true;
@@ -377,6 +388,12 @@ static auto GetInterpolatedControllerState(const LegacyControllerActions& contro
 			hasThumbInput = true;
 		}
 	}
+
+	// The thumb near its buttons keeps it down
+	info.action = controller.thumbProximity;
+	if (info.action != XR_NULL_HANDLE && XR_SUCCEEDED(xrGetActionStateBoolean(xr_session.get(), &info, &stateBool)) && stateBool.isActive
+	    && stateBool.currentState)
+		thumbTouch = true;
 
 	// Allow for straightening the thumb on controllers with no touch inputs
 	if (!hasThumbInput) {

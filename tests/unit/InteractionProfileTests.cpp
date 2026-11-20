@@ -4,8 +4,12 @@
 #include "stdafx.h"
 
 #include "../DrvOpenXR/DeviceIdentity.h"
+#include "Misc/Input/Bindings/Conversion.h"
+#include "Misc/Input/HolographicInteractionProfile.h"
 #include "Misc/Input/IndexControllerInteractionProfile.h"
+#include "Misc/Input/KhrSimpleInteractionProfile.h"
 #include "Misc/Input/InteractionProfile.h"
+#include "Misc/Input/MsftHandInteractionProfile.h"
 #include "Misc/Input/OculusInteractionProfile.h"
 #include "Misc/Input/PicoInteractionProfile.h"
 #include "Misc/Input/ViveCosmosInteractionProfile.h"
@@ -142,4 +146,104 @@ TEST_CASE("Lighthouse_devices_name_their_tracking_system_as_SteamVR_does")
 	}
 	CHECK(tracker.GetProperty<std::string>(vr::Prop_TrackingSystemName_String, HAND_LEFT) == "lighthouse");
 	CHECK(touch.GetProperty<std::string>(vr::Prop_TrackingSystemName_String, HAND_LEFT) == "oculus");
+}
+
+TEST_CASE("More_extension_profiles_only_with_their_extension")
+{
+	const std::string pro = "/interaction_profiles/facebook/touch_controller_pro";
+	const std::string plus = "/interaction_profiles/meta/touch_controller_plus";
+	const std::string odyssey = "/interaction_profiles/samsung/odyssey_controller";
+	const std::string hands = "/interaction_profiles/microsoft/hand_interaction";
+	const std::string g3 = "/interaction_profiles/bytedance/pico_g3_controller";
+
+	XrExt without(0, {});
+	for (const std::string& path : { pro, plus, odyssey, hands, g3 })
+		CHECK_FALSE(HasProfile(InteractionProfile::CreateProfiles(without), path));
+
+	XrExt with(0, { "XR_FB_touch_controller_pro", "XR_META_touch_controller_plus", "XR_EXT_samsung_odyssey_controller",
+	                  "XR_MSFT_hand_interaction", "XR_BD_controller_interaction" });
+	for (const std::string& path : { pro, plus, odyssey, hands, g3 })
+		CHECK(HasProfile(InteractionProfile::CreateProfiles(with), path));
+}
+
+TEST_CASE("Touch_profiles_share_the_OpenVR_name_and_add_their_inputs")
+{
+	using Touch = OculusTouchInteractionProfile;
+	Touch touch, withProximity(Touch::Model::Touch, true), pro(Touch::Model::TouchPro), plus(Touch::Model::TouchPlus);
+	for (const Touch* t : { &touch, &withProximity, &pro, &plus })
+		CHECK(std::string(*t->GetOpenVRName()) == "oculus_touch");
+	CHECK(pro.GetPath() == "/interaction_profiles/facebook/touch_controller_pro");
+	CHECK(plus.GetPath() == "/interaction_profiles/meta/touch_controller_plus");
+
+	// The finger proximity only with its extension
+	CHECK_FALSE(touch.IsInputPathValid("/user/hand/left/input/thumb_fb/proximity_fb"));
+	CHECK(withProximity.IsInputPathValid("/user/hand/left/input/thumb_fb/proximity_fb"));
+	CHECK(withProximity.IsInputPathValid("/user/hand/right/input/trigger/proximity_fb"));
+
+	// The Pro's thumbrest force, stylus, trigger curl and slide, and trigger haptic; the Plus's names its own
+	for (const char* path : { "/input/thumbrest/force", "/input/stylus_fb/force", "/input/trigger/curl_fb", "/input/trigger/slide_fb",
+	         "/output/haptic_trigger_fb", "/input/trigger/proximity_fb" }) {
+		CHECK(pro.IsInputPathValid(std::string("/user/hand/right") + path));
+		CHECK_FALSE(plus.IsInputPathValid(std::string("/user/hand/right") + path));
+	}
+	for (const char* path : { "/input/trigger/force", "/input/trigger/curl_meta", "/input/trigger/slide_meta", "/input/thumb_meta/proximity_meta" })
+		CHECK(plus.IsInputPathValid(std::string("/user/hand/left") + path));
+
+	// Everything the Touch has, they have
+	for (const std::string& path : touch.GetValidInputPaths()) {
+		CHECK(pro.IsInputPathValid(path));
+		CHECK(plus.IsInputPathValid(path));
+	}
+
+	// The forces are raw inputs for the binding evaluator; the curl isn't one of SteamVR's
+	auto raw = pro.RawComponents();
+	CHECK(std::find(raw.begin(), raw.end(), std::make_pair(std::string("/user/hand/left/input/thumbrest/force"), std::string("/user/hand/left/input/thumbrest/force"))) != raw.end());
+	CHECK(std::none_of(raw.begin(), raw.end(), [](const auto& r) { return r.first.find("curl") != std::string::npos; }));
+
+	using enum ITrackedDevice::TrackedDeviceType;
+	CHECK(pro.GetProperty<std::string>(vr::Prop_ModelNumber_String, HAND_LEFT) == "Meta Quest Pro (Left Controller)");
+	CHECK(touch.GetProperty<std::string>(vr::Prop_ModelNumber_String, HAND_RIGHT) == "Oculus Quest (Right Controller)");
+}
+
+TEST_CASE("Odyssey_and_hand_profiles")
+{
+	HolographicInteractionProfile wmr, odyssey(true);
+	CHECK(odyssey.GetPath() == "/interaction_profiles/samsung/odyssey_controller");
+	CHECK(std::string(*odyssey.GetOpenVRName()) == "holographic_controller");
+	CHECK(odyssey.GetValidInputPaths() == wmr.GetValidInputPaths());
+
+	// The hands: a pinch and a grasp, read as the trigger and the grip, converted from another controller's bindings
+	MsftHandInteractionProfile hands;
+	CHECK_FALSE(hands.GetOpenVRName().has_value());
+	CHECK(hands.BindingConversionType() == "hand_interaction");
+	CHECK(hands.IsInputPathValid("/user/hand/left/input/select/value"));
+	CHECK(hands.IsInputPathValid("/user/hand/right/input/squeeze/value"));
+	CHECK_FALSE(hands.IsInputPathValid("/user/hand/right/output/haptic"));
+	auto raw = hands.RawComponents();
+	CHECK(std::find(raw.begin(), raw.end(), std::make_pair(std::string("/user/hand/right/input/select/value"), std::string("/user/hand/right/input/trigger/value"))) != raw.end());
+
+	BindingFile index = ParseBindingFile(R"({ "controller_type": "knuckles", "bindings": { "/actions/main": { "sources": [
+		{ "path": "/user/hand/right/input/trigger", "mode": "trigger", "inputs": { "pull": { "output": "/actions/main/in/fire" } } },
+		{ "path": "/user/hand/right/input/a", "mode": "button", "inputs": { "click": { "output": "/actions/main/in/jump" } } } ] } } })");
+	BindingFile converted = ConvertBindingFile(index, hands.BindingConversionType());
+	const auto& sources = converted.sets.at("/actions/main").sources;
+	CHECK(std::any_of(sources.begin(), sources.end(), [](const SourceBinding& b) { return b.path == "/user/hand/right/input/trigger"; }));
+	CHECK(std::none_of(sources.begin(), sources.end(), [](const SourceBinding& b) { return b.path == "/user/hand/right/input/a"; }));
+
+	// The simple controller keeps its own
+	KhrSimpleInteractionProfile simple;
+	CHECK(simple.BindingConversionType() == "khr_simple_controller");
+}
+
+TEST_CASE("Pico_g3_profile_has_its_own_few_inputs")
+{
+	PicoInteractionProfile g3(PicoInteractionProfile::Model::G3);
+	CHECK(g3.GetPath() == "/interaction_profiles/bytedance/pico_g3_controller");
+	CHECK(std::string(*g3.GetOpenVRName()) == "pico_controller");
+	CHECK(g3.IsInputPathValid("/user/hand/right/input/trigger/click"));
+	CHECK(g3.IsInputPathValid("/user/hand/left/input/menu/click"));
+	CHECK(g3.IsInputPathValid("/user/hand/left/input/thumbstick/click"));
+	CHECK_FALSE(g3.IsInputPathValid("/user/hand/right/input/a/click"));
+	CHECK_FALSE(g3.IsInputPathValid("/user/hand/right/input/squeeze/value"));
+	CHECK_FALSE(g3.IsInputPathValid("/user/hand/right/output/haptic"));
 }

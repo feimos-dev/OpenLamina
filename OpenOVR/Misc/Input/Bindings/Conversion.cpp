@@ -53,6 +53,8 @@ const std::map<std::string, ControllerInputs>& kConversions()
 		    { { { Role::Trigger, { "trigger", "trigger" } }, { Role::Grip, { "grip", "grip" } },
 		        { Role::Menu, { "application_menu", "application_menu" } }, { Role::System, { "system", "system" } },
 		        { Role::Pad, { "trackpad", "trackpad" } }, { Role::Stick, { "joystick", "joystick" } } } } },
+		{ "hand_interaction",
+		    { { { Role::Trigger, { "trigger", "trigger" } }, { Role::Grip, { "grip", "grip" } } } } },
 		{ "khr_simple_controller",
 		    { { { Role::Trigger, { "trigger", "trigger" } }, { Role::Menu, { "application_menu", "application_menu" } } } } },
 		{ "generic",

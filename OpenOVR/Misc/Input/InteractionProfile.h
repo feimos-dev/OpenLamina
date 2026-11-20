@@ -117,6 +117,12 @@ public:
 	virtual std::optional<const char*> GetOpenVRName() const = 0;
 
 	/**
+	 * The controller type a game's binding file for another controller is converted for (ConvertBindingFile): the
+	 * profile's OpenVR name, or for a profile without one the one it's closest to.
+	 */
+	virtual std::string BindingConversionType() const { return GetOpenVRName().value_or("khr_simple_controller"); }
+
+	/**
 	 * Returns the skeletal fidelity for the controller type.
 	 */
 	virtual std::optional<vr::EVRSkeletalTrackingLevel> GetOpenVRTrackinglevel() const = 0;
@@ -205,6 +211,8 @@ protected:
 		           *stickX = nullptr, *stickY = nullptr, *stickBtn = nullptr, *stickBtnTouch = nullptr;
 
 		const char *trigger = nullptr, *triggerClick = nullptr, *triggerTouch = nullptr;
+		// A finger near the trigger or the thumb's buttons, and how far the index finger curls on the trigger
+		const char *triggerProximity = nullptr, *thumbProximity = nullptr, *triggerCurl = nullptr;
 		const char* grip = nullptr;
 
 		const char* haptic = nullptr;
