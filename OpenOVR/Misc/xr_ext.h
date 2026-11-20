@@ -98,11 +98,6 @@ struct OcXrViveTrackerPathsHTCX {
 	XrPath persistentPath;
 	XrPath rolePath;
 };
-struct OcXrEventDataViveTrackerConnectedHTCX {
-	XrStructureType type;
-	const void* next;
-	OcXrViveTrackerPathsHTCX* paths;
-};
 typedef XrResult(XRAPI_PTR* OcPFN_xrEnumerateViveTrackerPathsHTCX)(XrInstance instance, uint32_t pathCapacityInput, uint32_t* pathCountOutput,
     OcXrViveTrackerPathsHTCX* paths);
 

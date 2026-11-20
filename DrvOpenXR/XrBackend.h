@@ -212,7 +212,7 @@ private:
 	std::shared_mutex generic_trackers_mutex;
 	// The session the trackers' spaces belong to, and the xdev list generation they were made from
 	XrSession generic_trackers_session = XR_NULL_HANDLE;
-	XrAction generic_trackers_action = XR_NULL_HANDLE; // the tracker action the role trackers' spaces were made from
+	uint64_t generic_trackers_action_generation = 0; // of the tracker action the role trackers' spaces were made from
 	std::atomic<uint64_t> generic_trackers_generation{ UINT64_MAX };
 	std::atomic<int64_t> generic_trackers_polled_ms{ 0 };
 	// Makes the trackers again when the runtime's list of devices has changed (looked at about once a second)
@@ -299,8 +299,11 @@ private:
 	/** Once a second: whether a hand without a controller came or went */
 	bool HandsWithoutControllersChanged();
 	int64_t handsCheckedMs = 0;
-	/** The xdevs that are trackers, in a list it makes (null if it can't), each passed to add; those whose serial is
-	 * in one of byRole (the persistent paths of the Vive trackers listed by role) are left out */
+	// The checks in a row each hand without a controller wasn't tracked in, and how many it may miss
+	int handMisses[2] = { 0, 0 };
+	static constexpr int kHandMissesAllowed = 3;
+	/** The xdevs that are trackers, in a list it makes (null if it can't), each passed to add; those whose lower-case
+	 * serial is in one of byRole (the lower-case persistent paths of the Vive trackers listed by role) are left out */
 	void FindXDevTrackers(XrXDevListMNDX& list, const std::vector<std::string>& byRole,
 	    const std::function<void(XrXDevIdMNDX, const XrXDevPropertiesMNDX&)>& add);
 

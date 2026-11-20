@@ -153,12 +153,12 @@ static string parse_layout(string orig, string name, int line)
 	return val;
 }
 
-// handController: knuckles, oculus_touch or vive_controller
+// handController: knuckles, oculus_touch, vive_controller or off
 static string parse_handController(string orig, string name, int line)
 {
 	string val = str_tolower(orig);
-	if (val != "knuckles" && val != "oculus_touch" && val != "vive_controller") {
-		BAD_VALUE("Value " + orig + " for " + name + " on line " + to_string(line) + " is none of knuckles, oculus_touch and vive_controller");
+	if (val != "knuckles" && val != "oculus_touch" && val != "vive_controller" && val != "off") {
+		BAD_VALUE("Value " + orig + " for " + name + " on line " + to_string(line) + " is none of knuckles, oculus_touch, vive_controller and off");
 	}
 	OOVR_LOGF("Setting config param %s to %s", name.c_str(), val.c_str());
 	return val;

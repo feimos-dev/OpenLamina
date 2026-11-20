@@ -905,11 +905,18 @@ void BaseInput::BindInputsForSession()
 	XrSessionActionSetsAttachInfo attachInfo = { XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO };
 	attachInfo.actionSets = sets.data();
 	attachInfo.countActionSets = sets.size();
-	OC_XR_LOG(xrAttachSessionActionSets(xr_session.get(), &attachInfo));
+	const XrResult attached = xrAttachSessionActionSets(xr_session.get(), &attachInfo);
+	OC_XR_LOG(attached);
+	trackerPoseActionAttached = XR_SUCCEEDED(attached) && trackerPoseAction != XR_NULL_HANDLE;
 
 	// Setup hand tracking if supported
 	if (xr_gbl->handTrackingProperties.supportsHandTracking) {
 		XrHandTrackerCreateInfoEXT createInfo = { XR_TYPE_HAND_TRACKER_CREATE_INFO_EXT };
+		// Joints from the hand itself and from a controller, each told apart (XR_EXT_hand_tracking_data_source)
+		int32_t sources[] = { OC_XR_HAND_TRACKING_DATA_SOURCE_UNOBSTRUCTED_EXT, OC_XR_HAND_TRACKING_DATA_SOURCE_CONTROLLER_EXT };
+		OcXrHandTrackingDataSourceInfoEXT sourceInfo = { OC_XR_TYPE_HAND_TRACKING_DATA_SOURCE_INFO_EXT, nullptr, 2, sources };
+		if (xr_ext->ExtensionEnabled(OC_XR_EXT_HAND_TRACKING_DATA_SOURCE_EXTENSION_NAME))
+			createInfo.next = &sourceInfo;
 		for (int i = 0; i < 2; i++) {
 			createInfo.hand = i == 0 ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT;
 			createInfo.handJointSet = XR_HAND_JOINT_SET_DEFAULT_EXT;
@@ -1116,7 +1123,46 @@ XrResult BaseInput::SuggestBindings(XrInteractionProfileSuggestedBinding& sugges
 	return xr_suggest_bindings_logged(suggested);
 }
 
-static XrAction CreateTrackerPoseAction(XrActionSet set);
+// With XR_HTCX_vive_tracker_interaction: one pose action for every tracker role, each role a subaction path, bound to
+// each role's grip pose. Its profile is the trackers' own (no binding file is loaded for it), so it's suggested here.
+static XrAction CreateTrackerPoseAction(XrActionSet set)
+{
+	if (!xr_ext->ViveTrackersHTCX_Available())
+		return XR_NULL_HANDLE;
+	std::vector<XrPath> roles;
+	std::vector<XrPath> poses;
+	for (const ViveTrackerRole& role : ViveTrackerRoles()) {
+		XrPath rolePath = XR_NULL_PATH, posePath = XR_NULL_PATH;
+		OC_XR_LOG(xrStringToPath(xr_instance, ViveTrackerRolePath(role).c_str(), &rolePath));
+		OC_XR_LOG(xrStringToPath(xr_instance, (ViveTrackerRolePath(role) + "/input/grip/pose").c_str(), &posePath));
+		if (rolePath == XR_NULL_PATH || posePath == XR_NULL_PATH)
+			continue;
+		roles.push_back(rolePath);
+		poses.push_back(posePath);
+	}
+	XrActionCreateInfo info = { XR_TYPE_ACTION_CREATE_INFO };
+	info.actionType = XR_ACTION_TYPE_POSE_INPUT;
+	strcpy_arr(info.actionName, "tracker-pose");
+	strcpy_arr(info.localizedActionName, "Tracker Pose");
+	info.countSubactionPaths = (uint32_t)roles.size();
+	info.subactionPaths = roles.data();
+	XrAction action = XR_NULL_HANDLE;
+	OC_XR_LOG(xrCreateAction(set, &info, &action));
+	if (action == XR_NULL_HANDLE)
+		return XR_NULL_HANDLE;
+
+	XrPath profile = XR_NULL_PATH;
+	OC_XR_LOG(xrStringToPath(xr_instance, "/interaction_profiles/htc/vive_tracker_htcx", &profile));
+	std::vector<XrActionSuggestedBinding> bindings;
+	for (XrPath pose : poses)
+		bindings.push_back({ action, pose });
+	XrInteractionProfileSuggestedBinding suggested = { XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
+	suggested.interactionProfile = profile;
+	suggested.suggestedBindings = bindings.data();
+	suggested.countSuggestedBindings = (uint32_t)bindings.size();
+	OC_XR_LOG(xr_suggest_bindings_logged(suggested));
+	return action;
+}
 
 void BaseInput::CreateLegacyActions()
 {
@@ -1206,48 +1252,9 @@ void BaseInput::CreateLegacyActions()
 		OC_XR_LOG(xr_suggest_bindings_logged(suggested));
 	}
 
+	trackerPoseActionAttached = false;
 	trackerPoseAction = CreateTrackerPoseAction(legacyInputsSet);
-}
-
-// With XR_HTCX_vive_tracker_interaction: one pose action for every tracker role, each role a subaction path, bound to
-// each role's grip pose. Its profile is the trackers' own (no binding file is loaded for it), so it's suggested here.
-static XrAction CreateTrackerPoseAction(XrActionSet set)
-{
-	if (!xr_ext->ViveTrackersHTCX_Available())
-		return XR_NULL_HANDLE;
-	std::vector<XrPath> roles;
-	std::vector<XrPath> poses;
-	for (const ViveTrackerRole& role : ViveTrackerRoles()) {
-		XrPath rolePath = XR_NULL_PATH, posePath = XR_NULL_PATH;
-		OC_XR_LOG(xrStringToPath(xr_instance, ViveTrackerRolePath(role).c_str(), &rolePath));
-		OC_XR_LOG(xrStringToPath(xr_instance, (ViveTrackerRolePath(role) + "/input/grip/pose").c_str(), &posePath));
-		if (rolePath == XR_NULL_PATH || posePath == XR_NULL_PATH)
-			continue;
-		roles.push_back(rolePath);
-		poses.push_back(posePath);
-	}
-	XrActionCreateInfo info = { XR_TYPE_ACTION_CREATE_INFO };
-	info.actionType = XR_ACTION_TYPE_POSE_INPUT;
-	strcpy_arr(info.actionName, "tracker-pose");
-	strcpy_arr(info.localizedActionName, "Tracker Pose");
-	info.countSubactionPaths = (uint32_t)roles.size();
-	info.subactionPaths = roles.data();
-	XrAction action = XR_NULL_HANDLE;
-	OC_XR_LOG(xrCreateAction(set, &info, &action));
-	if (action == XR_NULL_HANDLE)
-		return XR_NULL_HANDLE;
-
-	XrPath profile = XR_NULL_PATH;
-	OC_XR_LOG(xrStringToPath(xr_instance, "/interaction_profiles/htc/vive_tracker_htcx", &profile));
-	std::vector<XrActionSuggestedBinding> bindings;
-	for (XrPath pose : poses)
-		bindings.push_back({ action, pose });
-	XrInteractionProfileSuggestedBinding suggested = { XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
-	suggested.interactionProfile = profile;
-	suggested.suggestedBindings = bindings.data();
-	suggested.countSuggestedBindings = (uint32_t)bindings.size();
-	OC_XR_LOG(xr_suggest_bindings_logged(suggested));
-	return action;
+	trackerPoseActionGeneration++;
 }
 
 // The evaluators' clock: seconds, for the modes' delays and the actions' change times

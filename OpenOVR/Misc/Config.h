@@ -57,7 +57,7 @@ public:
 	/** The keyboard's layout: "us", "uk", or empty to choose by the user's locale (UK for en-GB, else US) */
 	const std::string& KeyboardLayout() const { return Loaded().keyboardLayout; }
 	/** The controller the hands are shown as when no controller is in them: "knuckles" (an Index controller),
-	 * "oculus_touch" or "vive_controller" */
+	 * "oculus_touch", "vive_controller", or "off" for none */
 	const std::string& HandController() const { return Loaded().handController; }
 
 private:

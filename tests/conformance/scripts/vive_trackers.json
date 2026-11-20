@@ -1,10 +1,11 @@
 {
-  "#": "Vive trackers by their role (XR_HTCX_vive_tracker_interaction): one on the waist from the start, at (0.1, 0.9, 0.2), and one on the left foot from frame 20; an Index controller in each hand (vive-trackers)",
-  "extensions": ["XR_KHR_D3D11_enable", "XR_HTCX_vive_tracker_interaction"],
+  "#": "Vive trackers by their role (XR_HTCX_vive_tracker_interaction): one on the waist from the start, at (0.1, 0.9, 0.2), and one on the left foot from frame 20, and one without a role that is also the runtime's xdev (TEST-0001), so a generic tracker; an Index controller in each hand (vive-trackers)",
+  "extensions": ["XR_KHR_D3D11_enable", "XR_HTCX_vive_tracker_interaction", "XR_MNDX_xdev_space"],
   "interaction_profile": "/interaction_profiles/valve/index_controller",
   "vive_trackers": [
     { "persistent": "/devices/htc/vive_trackerlhr-waist", "role": "/user/vive_tracker_htcx/role/waist", "frame": 0 },
-    { "persistent": "/devices/htc/vive_trackerlhr-foot", "role": "/user/vive_tracker_htcx/role/left_foot", "frame": 20 }
+    { "persistent": "/devices/htc/vive_trackerlhr-foot", "role": "/user/vive_tracker_htcx/role/left_foot", "frame": 20 },
+    { "persistent": "/devices/htc/vive_trackertest-0001", "role": "", "frame": 0 }
   ],
   "poses": {
     "/user/vive_tracker_htcx/role/waist/input/grip/pose": { "p": [0.1, 0.9, 0.2], "q": [0, 0, 0, 1] }

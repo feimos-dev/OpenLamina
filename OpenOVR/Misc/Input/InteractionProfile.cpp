@@ -172,9 +172,9 @@ InteractionProfile::ProfileList InteractionProfile::CreateProfiles(XrExt& ext)
 	// The hands as a controller: XR_EXT_hand_interaction's profile, also a hand's while hand tracking runs and no
 	// controller is in it
 	const bool handInteraction = ext.ExtensionEnabled(OC_XR_EXT_HAND_INTERACTION_EXTENSION_NAME);
-	if (handInteraction || ext.ExtensionEnabled(XR_EXT_HAND_TRACKING_EXTENSION_NAME)) {
+	const std::string& type = oovr_global_configuration.HandController();
+	if (type != "off" && (handInteraction || ext.ExtensionEnabled(XR_EXT_HAND_TRACKING_EXTENSION_NAME))) {
 		std::unique_ptr<InteractionProfile> emulated;
-		const std::string& type = oovr_global_configuration.HandController();
 		if (type == "oculus_touch")
 			emulated = std::make_unique<Touch>(Touch::Model::Touch);
 		else if (type == "vive_controller")
