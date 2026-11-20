@@ -294,7 +294,8 @@ private:
 	void UpdateInteractionProfile();
 
 	/**
-	 * Queries xdevs from MNDX_xdev_space, if the runtime supports it. Ignores HMD & Controllers.
+	 * The Vive trackers by role (XR_HTCX_vive_tracker_interaction, their poses from the tracker action) and the xdevs
+	 * (XR_MNDX_xdev_space) the runtime doesn't also list with a role. Ignores HMD & Controllers.
 	 * These "Generic Trackers" act like an HTC vive tracker, but support no bindings.
 	 */
 	void CreateGenericTrackers();
