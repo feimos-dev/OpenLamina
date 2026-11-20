@@ -313,8 +313,7 @@ HandTouchEase::Eased HandTouchEase::Step(bool thumbTouch, bool triggerTouch, Clo
 	return eased;
 }
 
-static auto GetInterpolatedControllerState(const LegacyControllerActions& controller, HandTouchEase& touches)
-{
+static auto GetInterpolatedControllerState(const LegacyControllerActions& controller, HandTouchEase& touches) {
 	struct ControllerState {
 		float triggerPct;
 		float gripPct;

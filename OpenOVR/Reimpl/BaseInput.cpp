@@ -39,12 +39,12 @@
 #include <set>
 #include <utility>
 
+#include "Misc/Fade.h"
 #include "Misc/JsonFile.h"
 #include "Misc/xrmoreutils.h"
 
 // Use RenderModels for the pose offsets, which are the same as component positions
 #include "BaseRenderModels.h"
-#include "Misc/Fade.h"
 
 using namespace vr;
 
@@ -1260,18 +1260,16 @@ void BaseInput::SuggestRawInputs(const InteractionProfile& profile, std::vector<
 
 bool BaseInput::SuggestRawBindings(const InteractionProfile& profile, const std::string& bindingsPath, std::vector<XrActionSuggestedBinding>& bindings)
 {
-	// The binding file chosen for this controller; turned into one for this controller if it's another's
-	BindingFile file = LoadBindingFile(PathFromUtf8(bindingsPath));
+	// The binding file chosen for this controller; turned into one for this controller if it's another's. Paths on
+	// the primary and secondary hand go to the dominant hand and the other one, again when it changes.
+	const BindingFile loaded = LoadBindingFile(PathFromUtf8(bindingsPath));
 	const std::string type = profile.BindingConversionType();
-	if (!file.controllerType.empty() && lowerStr(file.controllerType) != type) {
-		OOVR_LOGF("Binding file: %s's bindings converted for %s", file.controllerType.c_str(), type.c_str());
-		file = ConvertBindingFile(file, type);
-	}
-	// Paths on the primary and secondary hand go to the dominant hand and the other one, again when it changes
-	if (HasHandAliases(file)) {
-		aliasedBindingFiles[&profile] = file;
-		file = ::ResolveHandAliases(file, allSubactionPathNames[DominantHandIndex(HandAlias::PRIMARY)]);
-	}
+	if (!loaded.controllerType.empty() && lowerStr(loaded.controllerType) != type)
+		OOVR_LOGF("Binding file: %s's bindings converted for %s", loaded.controllerType.c_str(), type.c_str());
+	BindingFile file = BindingFileForController(loaded, type, allSubactionPathNames[DominantHandIndex(HandAlias::PRIMARY)]);
+	std::optional<AliasedBindingFile> aliased;
+	if (HasHandAliases(loaded))
+		aliased = AliasedBindingFile{ loaded, type };
 
 	// Whether the file binds an input this controller has to an action of the manifest, or a haptic was suggested
 	auto bindsSomething = [&] {
@@ -1285,9 +1283,15 @@ bool BaseInput::SuggestRawBindings(const InteractionProfile& profile, const std:
 			return actionSets.LookupItem(setPath) && action && action->type != ActionType::EyeTracking;
 		});
 	};
-	if (!bindsSomething())
+	if (!bindsSomething()) {
+		aliasedBindingFiles.erase(&profile);
 		return false;
+	}
 	bindingFiles[&profile] = file;
+	if (aliased)
+		aliasedBindingFiles[&profile] = std::move(*aliased);
+	else
+		aliasedBindingFiles.erase(&profile);
 
 	if (rawInputsSet == XR_NULL_HANDLE)
 		return true;
@@ -1425,7 +1429,7 @@ const BindingEvaluator* BaseInput::LegacyEvaluatorFor(const InteractionProfile* 
 	if (!profile || !profile->CanHaveBindings() || rawInputsSet == XR_NULL_HANDLE)
 		return nullptr;
 	std::string type = profile->GetOpenVRName().value_or("generic");
-	LegacyEvaluator& legacy = legacyEvaluators[type];
+	LegacyEvaluator& legacy = legacyEvaluators[profile];
 	if (!legacy.evaluator) {
 		const BindingFile* file = LoadLegacyBindings(type);
 		if (!file)
@@ -1561,11 +1565,15 @@ void BaseInput::ResolveHandAliases()
 void BaseInput::ResolveBindingFileHands()
 {
 	const std::string& primary = allSubactionPathNames[DominantHandIndex(HandAlias::PRIMARY)];
+	// The evaluators replaced here may be among the last sync's: none is read again until the next one
+	evaluatedThisSync.clear();
 	for (const auto& [profile, aliased] : aliasedBindingFiles) {
-		BindingFile& file = bindingFiles[profile];
-		file = ::ResolveHandAliases(aliased, primary);
+		auto file = bindingFiles.find(profile);
+		if (file == bindingFiles.end())
+			continue;
+		file->second = BindingFileForController(aliased.file, aliased.controllerType, primary);
 		if (evaluators.count(profile))
-			evaluators[profile] = std::make_unique<BindingEvaluator>(file);
+			evaluators[profile] = std::make_unique<BindingEvaluator>(file->second);
 	}
 }
 
@@ -3071,7 +3079,7 @@ bool BaseInput::InputHeld()
 {
 	// The grid fully in and not asked to fade out: once the game asks for that, its input is back as the fade starts
 	const CompositorFades& fades = CompositorFades::Get();
-	return heldByDashboard || (fades.GridWanted() && fades.GridAlphaAt(CompositorClockSeconds()) >= 1.0f);
+	return HeldByDashboard() || (fades.GridWanted() && fades.GridAlphaAt(CompositorClockSeconds()) >= 1.0f);
 }
 
 bool BaseInput::GetDashboardButton(bool system, int hand)

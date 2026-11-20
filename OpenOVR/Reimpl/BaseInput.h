@@ -910,8 +910,13 @@ private:
 	std::vector<const BindingEvaluator*> evaluatedThisSync;
 	// Each profile's binding file: what GetActionBindingInfo and GetActionOrigins answer
 	std::map<const InteractionProfile*, BindingFile> bindingFiles;
-	// The binding files that name a hand by dominance, as they are: bindingFiles has them on the dominant hand
-	std::map<const InteractionProfile*, BindingFile> aliasedBindingFiles;
+	// The binding files that name a hand by dominance, as they are, with the controller type they're used for:
+	// bindingFiles has them on the dominant hand
+	struct AliasedBindingFile {
+		BindingFile file;
+		std::string controllerType;
+	};
+	std::map<const InteractionProfile*, AliasedBindingFile> aliasedBindingFiles;
 	/** Puts the files of aliasedBindingFiles, and their evaluators, on the dominant hand. Call it with evaluatorLock held. */
 	void ResolveBindingFileHands();
 	// Guards everything above and the legacy evaluators: a game reads input on its own thread while OpenComposite
@@ -939,7 +944,8 @@ private:
 		uint64_t evaluatedAt = 0;
 		bool evaluated = false;
 	};
-	std::map<std::string, LegacyEvaluator> legacyEvaluators; // by controller type
+	// By profile: profiles of one controller type (the Touch models) read their own hands
+	std::map<const InteractionProfile*, LegacyEvaluator> legacyEvaluators;
 	void UpdateEvaluators(const VRActiveActionSet_t* sets, uint32_t count);
 	/** Writes a device's pose with a render model component's offset (none for a null or unknown name) into out */
 	void ApplyPoseComponent(const vr::TrackedDevicePose_t& rawPose, ITrackedDevice::TrackedDeviceType hand, const char* componentName, vr::TrackedDevicePose_t& out);

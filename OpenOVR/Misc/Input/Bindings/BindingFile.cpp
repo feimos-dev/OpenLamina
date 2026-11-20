@@ -268,7 +268,7 @@ bool HasHandAliases(const BindingFile& file)
 	return found;
 }
 
-BindingFile ResolveHandAliases(const BindingFile& file, const std::string& primaryHand)
+BindingFile ResolveDominantHandPaths(const BindingFile& file, const std::string& primaryHand)
 {
 	const std::string secondaryHand = primaryHand == "/user/hand/left" ? "/user/hand/right" : "/user/hand/left";
 	BindingFile resolved = file;

@@ -299,7 +299,7 @@ TEST_CASE("Bindings_on_the_primary_hand_follow_the_dominant_hand")
 	CHECK(HasHandAliases(f));
 
 	// The right hand dominant: the right hand's A fires, the left's reloads
-	BindingFile right = ResolveHandAliases(f, "/user/hand/right");
+	BindingFile right = ResolveDominantHandPaths(f, "/user/hand/right");
 	CHECK_FALSE(HasHandAliases(right));
 	const ActionSetBindings& set = right.sets.at("/actions/main");
 	CHECK(set.haptics.at(0).path == "/user/hand/right/output/haptic");
@@ -313,7 +313,7 @@ TEST_CASE("Bindings_on_the_primary_hand_follow_the_dominant_hand")
 	CHECK(e.OutputsOn("/user/hand/right") != nullptr);
 
 	// The left hand dominant: the same press reloads
-	BindingEvaluator left(ResolveHandAliases(f, "/user/hand/left"));
+	BindingEvaluator left(ResolveDominantHandPaths(f, "/user/hand/left"));
 	left.SetActiveActionSets({ { "/actions/main", 0 } });
 	left.Update(Raw({ { kA + "/click", 1 }, { kLeftA + "/click", 0 } }));
 	CHECK_FALSE(left.Outputs().digital.at("/actions/main/in/fire").state);
@@ -324,5 +324,5 @@ TEST_CASE("Bindings_on_the_primary_hand_follow_the_dominant_hand")
 	BindingFile plain = ParseBindingFile(R"({ "bindings": { "/actions/main": { "sources": [
 		{ "path": "/user/hand/primaryish/input/a", "mode": "button", "inputs": { "click": { "output": "/actions/main/in/fire" } } } ] } } })");
 	CHECK_FALSE(HasHandAliases(plain));
-	CHECK(ResolveHandAliases(plain, "/user/hand/left").sets.at("/actions/main").sources.at(0).path == "/user/hand/primaryish/input/a");
+	CHECK(ResolveDominantHandPaths(plain, "/user/hand/left").sets.at("/actions/main").sources.at(0).path == "/user/hand/primaryish/input/a");
 }

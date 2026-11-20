@@ -67,7 +67,7 @@ bool HasHandAliases(const BindingFile& file);
 
 /** The file with its paths on /user/hand/primary on primaryHand and those on /user/hand/secondary on the other one
  * (primaryHand is "/user/hand/left" or "/user/hand/right"): every source, pose, haptic, skeleton and chord path */
-BindingFile ResolveHandAliases(const BindingFile& file, const std::string& primaryHand);
+BindingFile ResolveDominantHandPaths(const BindingFile& file, const std::string& primaryHand);
 
 /** The names an action manifest's "localization" tables and "localization_files" give, for the table of the language
  * closest to language (a tag such as "en_US"): lower-cased action and action set path ("/actions/main/in/fire") to

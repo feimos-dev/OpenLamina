@@ -123,3 +123,25 @@ TEST_CASE("Touch_to_the_simple_controller")
 	CHECK_FALSE(f.warnings.empty()); // its face buttons and stick have no counterpart
 	CHECK(Bound(f, "/actions/main/in/left_primary") == nullptr);
 }
+
+TEST_CASE("Primary_hand_sources_survive_conversion_to_another_controller")
+{
+	BindingFile knuckles = ParseBindingFile(R"({ "controller_type": "knuckles", "bindings": { "/actions/main": { "sources": [
+		{ "path": "/user/hand/primary/input/trigger", "mode": "button", "inputs": { "click": { "output": "/actions/main/in/fire" } } },
+		{ "path": "/user/hand/secondary/input/a", "mode": "button", "inputs": { "click": { "output": "/actions/main/in/jump" } } } ] } } })");
+
+	// Left dominant: the trigger on the left, Index's a on the right is Touch's a
+	BindingFile left = BindingFileForController(knuckles, "oculus_touch", "/user/hand/left");
+	const auto& sources = left.sets.at("/actions/main").sources;
+	REQUIRE(sources.size() == 2);
+	CHECK(sources[0].path == "/user/hand/left/input/trigger");
+	CHECK(sources[1].path == "/user/hand/right/input/a");
+
+	// Right dominant: the secondary hand's a is Touch's x
+	BindingFile right = BindingFileForController(knuckles, "oculus_touch", "/user/hand/right");
+	CHECK(right.sets.at("/actions/main").sources.at(1).path == "/user/hand/left/input/x");
+
+	// The same controller: only resolved
+	BindingFile same = BindingFileForController(knuckles, "knuckles", "/user/hand/right");
+	CHECK(same.sets.at("/actions/main").sources.at(0).path == "/user/hand/right/input/trigger");
+}

@@ -12,6 +12,11 @@
 
 BindingFile ConvertBindingFile(const BindingFile& from, const std::string& toControllerType);
 
+/** A game's binding file as a controller of controllerType uses it: its paths on the primary and secondary hand put on
+ * primaryHand ("/user/hand/left" or "/user/hand/right") and the other one, then converted if it's another
+ * controller's */
+BindingFile BindingFileForController(const BindingFile& file, const std::string& controllerType, const std::string& primaryHand);
+
 /** One input source path (/user/hand/left/input/x) of fromType's on toType: nothing if toType has no counterpart, or
  * either type is one the table doesn't know */
 std::optional<std::string> ConvertSourcePath(const std::string& path, const std::string& fromType, const std::string& toType);
