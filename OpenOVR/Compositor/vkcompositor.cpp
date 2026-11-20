@@ -405,10 +405,8 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 	submitInfo.commandBufferCount = 1;
 	submitInfo.pCommandBuffers = &currentCommandBuffer;
 
-	if (!SubmitWithImageFence(tex->m_pQueue, submitInfo, currentIndex)) {
-		OOVR_LOG_ONCE("vkQueueSubmit failed: frame left out");
+	if (vkFailed(SubmitWithImageFence(tex->m_pQueue, submitInfo, currentIndex) ? VK_SUCCESS : VK_ERROR_UNKNOWN, "vkQueueSubmit"))
 		return;
-	}
 
 	// Release the swapchain - OpenXR will use the last-released image in a swapchain
 	SwapchainCallFailed(xrReleaseSwapchainImage(chain, &releaseInfo), "xrReleaseSwapchainImage");
