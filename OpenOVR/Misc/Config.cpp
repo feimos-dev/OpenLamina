@@ -330,7 +330,7 @@ void Config::Read()
 		found++;
 		if (err > 0) {
 			// err is the line number of the first line ini_parse couldn't read; it read the rest
-			OOVR_LOGF("Warning: the config file can't be read on line %d; that line is ignored", err);
+			OOVR_LOGF("Warning: the %s config file can't be read on line %d; that line is ignored", what, err);
 		}
 	};
 
