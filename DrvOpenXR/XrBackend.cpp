@@ -859,6 +859,7 @@ void XrBackend::WaitForTrackingData()
 		frameSlot = slot ? (uint32_t)slot : 0;
 		vsyncsToFirstView = VsyncsToDisplay(state.predictedDisplayTime, state.predictedDisplayPeriod, xr_time_now());
 		frameStart = waitCall;
+		frameWaitReturned = waitReturned;
 		frameSubmitMs = 0.0f;
 		frameNewFrameReadyMs = 0.0f;
 
@@ -1168,6 +1169,7 @@ void XrBackend::SubmitFrames(bool showSkybox)
 	if (!sessionActive)
 		return;
 	const bool hadEyeTextures = submittedEyeTextures;
+	const bool withDepth = submittedEyeTextures && (projectionViews[0].next || projectionViews[1].next);
 
 	XrFrameEndInfo info{ XR_TYPE_FRAME_END_INFO };
 	info.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
@@ -1307,7 +1309,19 @@ void XrBackend::SubmitFrames(bool showSkybox)
 		FrameStats::Get().OnAppPresent();
 		BaseApplications::SetSceneDrawn();
 	}
-	FrameStats::Get().OnAppFrameEnd(nFrameIndex, frameSubmitMs, presentMs, frameNewFrameReadyMs, hadEyeTextures, presented);
+	FrameStats::FrameEnd ended;
+	ended.frameIndex = nFrameIndex;
+	ended.submitMs = frameSubmitMs;
+	ended.presentMs = presentMs;
+	ended.newFrameReadyMs = frameNewFrameReadyMs;
+	ended.cpuMs = frameWaitReturned != std::chrono::steady_clock::time_point{}
+	    ? std::chrono::duration<float, std::milli>(endCall - frameWaitReturned).count()
+	    : 0.0f;
+	ended.targetMs = displayPeriodMs;
+	ended.submitted = hadEyeTextures;
+	ended.presented = presented;
+	ended.withDepth = withDepth;
+	FrameStats::Get().OnAppFrameEnd(ended);
 	lastSubmitMs = frameSubmitMs;
 	lastPresentMs = presentMs;
 	lastNewFrameReadyMs = frameNewFrameReadyMs;

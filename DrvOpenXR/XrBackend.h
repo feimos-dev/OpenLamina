@@ -394,7 +394,7 @@ private:
 	// The display periods from xrWaitFrame's return to the frame's display
 	uint32_t vsyncsToFirstView = 0;
 	// The frame's xrWaitFrame call, the time it has spent in Submit and when its last eye came (from its start)
-	std::chrono::steady_clock::time_point frameStart{};
+	std::chrono::steady_clock::time_point frameStart{}, frameWaitReturned{};
 	float frameSubmitMs = 0.0f, frameNewFrameReadyMs = 0.0f;
 	// The last ended frame's, for GetFrameTiming
 	float lastSubmitMs = 0.0f, lastPresentMs = 0.0f, lastNewFrameReadyMs = 0.0f;

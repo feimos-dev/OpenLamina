@@ -26,7 +26,15 @@ TEST_CASE("FrameStats: counts the game's frames shown, its own frames and the dr
 		s.OnAppFrame(Timing(i), i == 3 || i == 7 ? 1 : 0, now, 11.1);
 		if (i < 10)
 			s.OnAppPresent();
-		s.OnAppFrameEnd(i, 0.0f, 0.0f, 0.0f, i < 11, i < 10);
+		FrameStats::FrameEnd end;
+		end.frameIndex = i;
+		end.submitted = i < 11;
+		end.presented = i < 10;
+		end.withDepth = i < 4;
+		end.cpuMs = 2.0f;
+		end.targetMs = 11.0f;
+		end.presentMs = 0.5f;
+		s.OnAppFrameEnd(end);
 	}
 	s.OnOwnFrame();
 	OOVR_Compositor_CumulativeStats c{};
@@ -48,7 +56,13 @@ TEST_CASE("FrameStats: counts the game's frames shown, its own frames and the dr
 	CHECK(big[0] == 42);
 	for (size_t i = sizeof(c) / 4; i < big.size(); i++)
 		CHECK(big[i] == 0);
-	CHECK(((OOVR_Compositor_CumulativeStats*)big.data())->m_nNumFrameSubmits == 11);
+	const auto* full = (OOVR_Compositor_CumulativeStats*)big.data();
+	CHECK(full->m_nNumFrameSubmits == 11);
+	CHECK(full->m_nNumFramesWithDepth == 4);
+	CHECK(full->m_flSumApplicationCPUTimeMS == doctest::Approx(22.0));
+	CHECK(full->m_flSumTargetFrameTimes == doctest::Approx(121.0));
+	CHECK(full->m_flSumCompositorCPUTimeMS == doctest::Approx(5.5));
+	CHECK(full->m_flSumApplicationGPUTimeMS == 0.0);
 }
 
 TEST_CASE("FrameStats: timings oldest first, at most the history kept")
@@ -81,7 +95,13 @@ TEST_CASE("FrameStats: a frame's submit and present times are filled in when it 
 	s.OnAppFrame(t, 0, now, 11.1);
 	s.OnAppFrame(Timing(8), 0, now, 11.1);
 	// Frame 7 ends late, after 8 has started; its own record is the one filled in
-	s.OnAppFrameEnd(7, 0.5f, 1.25f, 9.0f, true, false);
+	FrameStats::FrameEnd end;
+	end.frameIndex = 7;
+	end.submitMs = 0.5f;
+	end.presentMs = 1.25f;
+	end.newFrameReadyMs = 9.0f;
+	end.submitted = true;
+	s.OnAppFrameEnd(end);
 	std::vector<OOVR_Compositor_FrameTiming> out(2);
 	out[0].m_nSize = sizeof(OOVR_Compositor_FrameTiming);
 	REQUIRE(s.Timings(out.data(), 2) == 2);
@@ -92,7 +112,9 @@ TEST_CASE("FrameStats: a frame's submit and present times are filled in when it 
 	CHECK(out[0].m_nNumFramePresents == 0);
 	CHECK(out[1].m_flSubmitFrameMs == 0.0f);
 	// A frame no longer kept changes nothing
-	s.OnAppFrameEnd(3, 1.0f, 1.0f, 1.0f, true, true);
+	end.frameIndex = 3;
+	end.submitMs = 1.0f;
+	s.OnAppFrameEnd(end);
 	REQUIRE(s.Timings(out.data(), 2) == 2);
 	CHECK(out[1].m_nFrameIndex == 8);
 	CHECK(out[1].m_flSubmitFrameMs == 0.0f);
