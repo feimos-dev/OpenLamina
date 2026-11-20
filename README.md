@@ -343,7 +343,7 @@ are not case-sensitive, so `Enabled` or `tRUe` work fine.
 [tool](https://developer.mozilla.org/en-US/docs/Web/CSS/CSS_Colors/Color_picker_tool) to help with this. Again, it's case-insensitive.
 * float - a floating point (decimal) number above 0, eg `123.456`. An empty value, zero or a negative number is refused.
 * whole number - digits only, `0` or more, eg `1`.
-* string - the text after the `=`, as it is. `dashboardButton`, `inputEvaluator` and `keyboardLayout` take only the words
+* string - the text after the `=`, as it is. `dashboardButton` and `keyboardLayout` take only the words
 listed with them (not case-sensitive); `bindingEditor` takes any text.
 
 A value that isn't of its option's type is logged as a warning and the option keeps its default.
