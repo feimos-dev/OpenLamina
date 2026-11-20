@@ -10,6 +10,7 @@
 
 #include <chrono>
 #include <cmath>
+#include <cstdio>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
@@ -497,6 +498,11 @@ TEST_CASE("Render_model_textures_can_be_TGA")
 	CHECK_FALSE(LoadRenderModelTexture(tmp.path / "mapped.tga").has_value());
 	WriteFile(tmp.path / "sixteen.tga", Tga(2, 1, 1, 16, 0, std::string("\x00\x00", 2)));
 	CHECK_FALSE(LoadRenderModelTexture(tmp.path / "sixteen.tga").has_value());
+	// A header that claims the largest size with no pixels after it, plain or run-length encoded
+	WriteFile(tmp.path / "empty.tga", Tga(2, 8192, 8192, 32, 0, ""));
+	CHECK_FALSE(LoadRenderModelTexture(tmp.path / "empty.tga").has_value());
+	WriteFile(tmp.path / "empty_rle.tga", Tga(10, 8192, 8192, 32, 0, std::string("\xff\x00\x00\x00\x00", 5)));
+	CHECK_FALSE(LoadRenderModelTexture(tmp.path / "empty_rle.tga").has_value());
 }
 
 TEST_CASE("Render_model_with_several_materials_gets_their_atlas")
@@ -552,6 +558,20 @@ TEST_CASE("Render_model_with_several_materials_gets_their_atlas")
 	CHECK(diffuse == "red.tga");
 }
 
+TEST_CASE("Render_model_atlas_refuses_textures_too_big_together")
+{
+	TempDir tmp;
+	// Two greyscale images of 8192x4097, run-length encoded: small files, each just over half the largest image
+	const size_t pixels = (size_t)8192 * 4097;
+	std::string runs;
+	for (size_t done = 0; done < pixels; done += 128)
+		runs += std::string("\xff\x40", 2);
+	WriteFile(tmp.path / "a.tga", Tga(11, 8192, 4097, 8, 0x20, runs));
+	WriteFile(tmp.path / "b.tga", Tga(11, 8192, 4097, 8, 0x20, runs));
+	REQUIRE(LoadRenderModelTexture(tmp.path / "a.tga").has_value());
+	CHECK_FALSE(LoadRenderModelTextures({ tmp.path / "a.tga", tmp.path / "b.tga" }).has_value());
+}
+
 TEST_CASE("Built_in_render_models_are_read_by_the_OBJ_reader")
 {
 	for (int id : { RES_O_HAND_LEFT, RES_O_HAND_RIGHT, RES_O_VIVE_TRACKER }) {
@@ -581,6 +601,12 @@ TEST_CASE("Render_models_load_asynchronously")
 	rm.FreeRenderModel(model);
 	model = nullptr;
 	CHECK((int)rm.LoadRenderModel_Async("renderLeftHand", &model) == 0);
+	rm.FreeRenderModel(model);
+
+	// Waited for: the model in one call
+	model = nullptr;
+	CHECK((int)rm.LoadRenderModelNow("renderRightHand", &model) == 0);
+	REQUIRE(model != nullptr);
 	rm.FreeRenderModel(model);
 
 	// A name with no model: loading, then not one

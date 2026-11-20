@@ -96,7 +96,8 @@ std::optional<Image> LoadRenderModelTexture(const std::filesystem::path& file);
 
 /** A mesh's textures (RmMesh::textures) as one image: the texture itself for one; for several their atlas, each
  * resampled to the widest's width and a band of the same height, from the top in order, no taller in all than
- * kMaxImageFileSide. nullopt if any can't be read. */
+ * kMaxImageFileSide. nullopt if any can't be read, or if together they're larger than one image of kMaxImageFileSide
+ * squared. */
 std::optional<Image> LoadRenderModelTextures(const std::vector<std::filesystem::path>& files);
 
 /** The image at another size, each pixel the nearest of the original's. An empty image if either size is 0 or the

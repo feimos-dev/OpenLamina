@@ -10,6 +10,7 @@
 #include "Misc/SteamVRPaths.h"
 
 #include <algorithm>
+#include <cctype>
 #include <charconv>
 #include <cmath>
 #include <fstream>
@@ -672,6 +673,11 @@ std::optional<Image> DecodeTga(const std::string& bytes, std::string* why)
 		return fail("its TGA size is empty or too big");
 	const size_t pixelBytes = bits / 8;
 	size_t pos = 18 + idLength;
+	// The least data that can hold that many pixels (run-length encoded: a packet of 128 per header and pixel)
+	const size_t count = (size_t)width * height;
+	const size_t least = rle ? (count + 127) / 128 * (1 + pixelBytes) : count * pixelBytes;
+	if (pos > bytes.size() || bytes.size() - pos < least)
+		return fail("its TGA data is cut short");
 	Image image;
 	image.width = width;
 	image.height = height;
@@ -688,7 +694,6 @@ std::optional<Image> DecodeTga(const std::string& bytes, std::string* why)
 			out[3] = pixelBytes == 4 ? u8(from + 3) : 255;
 		}
 	};
-	const size_t count = (size_t)width * height;
 	size_t done = 0;
 	while (done < count) {
 		size_t run = 1;
@@ -756,12 +761,19 @@ std::optional<Image> LoadRenderModelTextures(const std::vector<fs::path>& files)
 {
 	if (files.size() == 1)
 		return LoadRenderModelTexture(files.front());
+	// The textures are all held while their atlas is made: together no larger than one image may be
 	std::vector<Image> images;
 	uint32_t width = 0, height = 0;
+	uint64_t bytes = 0;
 	for (const fs::path& file : files) {
 		std::optional<Image> image = LoadRenderModelTexture(file);
 		if (!image)
 			return std::nullopt;
+		bytes += image->rgba.size();
+		if (bytes > (uint64_t)kMaxImageFileSide * kMaxImageFileSide * 4) {
+			OOVR_LOGF("Render model textures from %s on are too big together for one atlas; the model has no texture", PathToUtf8(file).c_str());
+			return std::nullopt;
+		}
 		width = (std::max)(width, image->width);
 		height = (std::max)(height, image->height);
 		images.push_back(std::move(*image));

@@ -23,7 +23,6 @@
 #include <map>
 #include <mutex>
 #include <set>
-#include <sstream>
 #include <string>
 #include <vector>
 
@@ -410,8 +409,11 @@ struct LoadedModel {
 };
 
 // The models being loaded and loaded, by name. A load runs on a thread of its own; LoadRenderModel_Async answers
-// Loading until it's done. Never freed: a load can still be running when the program exits.
+// Loading until it's done. A name's answer, a failure too, is kept for the process. Never freed: a load can still be
+// running when the program exits.
 struct ModelLoads {
+	// More names than SteamVR has models and components: past it, a name isn't loaded
+	static constexpr size_t kMaxNames = 4096;
 	std::mutex lock;
 	std::map<string, std::shared_future<std::shared_ptr<const LoadedModel>>> byName;
 };
@@ -438,8 +440,16 @@ EVRRenderModelError BaseRenderModels::LoadRenderModel_Async(const char* pchRende
 		std::lock_guard<std::mutex> guard(loads.lock);
 		auto it = loads.byName.find(name);
 		if (it == loads.byName.end()) {
+			if (loads.byName.size() >= ModelLoads::kMaxNames)
+				OC_UNSUPPORTED(VRRenderModelError_NotSupported, "LoadRenderModel_Async: too many model names, '%s' isn't loaded", pchRenderModelName);
 			OOVR_LOGF("LoadRenderModel_Async %s", pchRenderModelName);
-			loads.byName.emplace(name, std::async(std::launch::async, LoadModel, name).share());
+			std::shared_future<std::shared_ptr<const LoadedModel>> started;
+			try {
+				started = std::async(std::launch::async, LoadModel, name).share();
+			} catch (const std::exception& e) {
+				OC_UNSUPPORTED(VRRenderModelError_NotSupported, "LoadRenderModel_Async: can't start loading '%s': %s", pchRenderModelName, e.what());
+			}
+			loads.byName.emplace(name, std::move(started));
 			return VRRenderModelError_Loading;
 		}
 		load = it->second;
@@ -458,6 +468,14 @@ EVRRenderModelError BaseRenderModels::LoadRenderModel_Async(const char* pchRende
 		return loaded->error;
 	*renderModel = MakeRenderModel(loaded->vertices, loaded->indices, loaded->texture);
 	return VRRenderModelError_None;
+}
+
+EVRRenderModelError BaseRenderModels::LoadRenderModelNow(const char* pchRenderModelName, RenderModel_t** renderModel)
+{
+	EVRRenderModelError err;
+	while ((err = LoadRenderModel_Async(pchRenderModelName, renderModel)) == VRRenderModelError_Loading)
+		WaitForLoads();
+	return err;
 }
 
 void BaseRenderModels::WaitForLoads()
@@ -481,7 +499,7 @@ BaseRenderModels::~BaseRenderModels()
 
 // The model of a name, on a load's thread: SteamVR's of that name, as SteamVR answers it; else (no SteamVR, or a
 // model it can't load) OpenLamina's own
-static std::shared_ptr<const LoadedModel> LoadModel(const string& name)
+static std::shared_ptr<const LoadedModel> BuildModel(const string& name)
 {
 	auto loaded = std::make_shared<LoadedModel>();
 	if (std::optional<RmMesh> mesh = SteamVRMesh(name)) {
@@ -537,6 +555,19 @@ static std::shared_ptr<const LoadedModel> LoadModel(const string& name)
 	return loaded;
 }
 
+// BuildModel, with a model it can't build (out of memory) as one it doesn't support
+static std::shared_ptr<const LoadedModel> LoadModel(const string& name)
+{
+	try {
+		return BuildModel(name);
+	} catch (const std::exception& e) {
+		OOVR_LOGF("Render model %s can't be loaded: %s", name.c_str(), e.what());
+		auto failed = std::make_shared<LoadedModel>();
+		failed->error = VRRenderModelError_NotSupported;
+		return failed;
+	}
+}
+
 void BaseRenderModels::FreeRenderModel(RenderModel_t* renderModel)
 {
 	if (!renderModel || !TakeLive(LiveModels(), renderModel)) {
@@ -573,12 +604,9 @@ bool BaseRenderModels::LoadRenderModelInline(const char* pchRenderModelName, vr:
 		return false;
 	*pRenderModel = {};
 
-	// One call answers the whole model: its load is waited for
+	// One call answers the whole model
 	RenderModel_t* model = nullptr;
-	EVRRenderModelError err;
-	while ((err = LoadRenderModel_Async(pchRenderModelName, &model)) == VRRenderModelError_Loading)
-		WaitForLoads();
-	if (err != VRRenderModelError_None || !model)
+	if (LoadRenderModelNow(pchRenderModelName, &model) != VRRenderModelError_None || !model)
 		return false;
 	RenderModel_TextureMap_t* texture = nullptr;
 	if (LoadTexture_Async(model->diffuseTextureId >= 0 ? model->diffuseTextureId : kOwnTextureId, &texture) != VRRenderModelError_None || !texture) {
