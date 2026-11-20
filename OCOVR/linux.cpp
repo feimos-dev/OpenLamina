@@ -9,6 +9,7 @@
 alternativeCoreFactory_t PlatformGetAlternativeCoreFactory()
 {
 	// The per-app runtime choice is Windows-only (BaseClientCore::CheckAppEnabled), so this isn't reached
-	OOVR_LOG("Choosing SteamVR per app isn't supported on Linux; using OpenLamina");
+	OOVR_LOG("No per-app runtime list on Linux; using OpenLamina. To start one game on SteamVR, set its launch options to "
+	         "VR_OVERRIDE=<dir> %command%, where <dir> is SteamVR's folder");
 	return nullptr;
 }

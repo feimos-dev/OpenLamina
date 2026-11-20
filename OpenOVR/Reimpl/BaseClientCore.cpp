@@ -98,7 +98,9 @@ enum Runtime {
 bool BaseClientCore::CheckAppEnabled()
 {
 #ifndef _WIN32
-	OOVR_LOG_ONCE("Launcher configuration not yet supported on Linux");
+	// No per-app runtime list on Linux: a game's runtime is chosen with VR_OVERRIDE in its launch options
+	OOVR_LOG_ONCE("Choosing a runtime per game on Linux: set the game's launch options to VR_OVERRIDE=<dir> %command%, "
+	              "where <dir> is the runtime's folder (OpenLamina's install, or SteamVR's)");
 	return true;
 #else
 	wstring dlldir = GetDllDir();
