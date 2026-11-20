@@ -244,8 +244,6 @@ void VRKeyboard::PressArrow(int arrow)
 		return;
 	}
 	// Up and down move by lines in a multiline text; in a single line they go to its start and end
-	auto lineStart = [&](size_t at) { return LineStart(at); };
-	auto lineEnd = [&](size_t at) { return LineEnd(at); };
 	size_t to = caret;
 	const auto [selFrom, selTo] = Selection();
 	switch (arrow) {
@@ -260,10 +258,10 @@ void VRKeyboard::PressArrow(int arrow)
 		if (!multiline) {
 			to = 0;
 		} else {
-			const size_t start = lineStart(caret);
+			const size_t start = LineStart(caret);
 			if (start > 0) {
 				const size_t column = caret - start;
-				const size_t previousStart = lineStart(start - 1);
+				const size_t previousStart = LineStart(start - 1);
 				to = previousStart + std::min(column, start - 1 - previousStart);
 			}
 		}
@@ -272,11 +270,11 @@ void VRKeyboard::PressArrow(int arrow)
 		if (!multiline) {
 			to = chars.size();
 		} else {
-			const size_t end = lineEnd(caret);
+			const size_t end = LineEnd(caret);
 			if (end < chars.size()) {
-				const size_t column = caret - lineStart(caret);
+				const size_t column = caret - LineStart(caret);
 				const size_t nextStart = end + 1;
-				to = nextStart + std::min(column, lineEnd(nextStart) - nextStart);
+				to = nextStart + std::min(column, LineEnd(nextStart) - nextStart);
 			}
 		}
 		break;
