@@ -6,8 +6,8 @@
 
 #include <algorithm>
 #include <cstdint>
-#include <utility>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "KeyboardLayout.h"

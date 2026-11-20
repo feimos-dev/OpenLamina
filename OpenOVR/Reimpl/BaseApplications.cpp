@@ -3,11 +3,11 @@
 #define BASE_IMPL
 #include "BaseApplications.h"
 #include "BaseClientCore.h"
-#include "Misc/ProgramEvents.h"
 #include "Misc/AppManifest.h"
 #include "Misc/Config.h"
 #include "Misc/Dashboard.h"
 #include "Misc/Process.h"
+#include "Misc/ProgramEvents.h"
 #include "Misc/SharedStore.h"
 
 #include <algorithm>

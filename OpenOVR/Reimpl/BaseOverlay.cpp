@@ -17,14 +17,17 @@
 #if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
 #include "Compositor/dxcompositor.h"
 #endif
+#include "BaseClientCore.h"
+#include "BaseInput.h"
+#include "BaseNotifications.h"
 #include "Drivers/Backend.h"
 #include "Misc/AppManifest.h"
 #include "Misc/Bounds.h"
+#include "Misc/Canvas.h"
 #include "Misc/Config.h"
 #include "Misc/Dashboard.h"
 #include "Misc/Image.h"
 #include "Misc/Input/InteractionProfile.h"
-#include "Misc/Canvas.h"
 #include "Misc/Keyboard/KeyboardLayout.h"
 #include "Misc/LaserMouse.h"
 #include "Misc/OverlayMaths.h"
@@ -33,9 +36,6 @@
 #include "Misc/RemotePointer.h"
 #include "Misc/ScopeGuard.h"
 #include "Misc/SharedStore.h"
-#include "BaseClientCore.h"
-#include "BaseInput.h"
-#include "BaseNotifications.h"
 #include "convert.h"
 #include "generated/static_bases.gen.h"
 #include <glm/gtc/matrix_inverse.hpp>
@@ -282,7 +282,7 @@ public:
 
 // TODO don't pass around handles, as it will cause
 // crashes when we should merely return VROverlayError_InvalidHandle
-#define USEH()                                         \
+#define USEH()                                           \
 	OverlayData* overlay = LiveOverlay(ulOverlayHandle); \
 	if (!overlay) {                                      \
 		return VROverlayError_InvalidHandle;             \
@@ -293,7 +293,7 @@ public:
 	std::lock_guard<std::recursive_mutex> layersGuard(layersLock); \
 	USEH()
 
-#define USEHB()                                        \
+#define USEHB()                                          \
 	OverlayData* overlay = LiveOverlay(ulOverlayHandle); \
 	if (!overlay) {                                      \
 		return false;                                    \

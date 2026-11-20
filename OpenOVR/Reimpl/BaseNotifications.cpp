@@ -3,8 +3,8 @@
 #include "BaseNotifications.h"
 #include "BaseOverlay.h"
 
-#include <algorithm>
 #include "generated/static_bases.gen.h"
+#include <algorithm>
 
 // EVRNotificationType_Persistent and _Transient_SystemWithUserValue
 static constexpr OOVR_EVRNotificationType kTypePersistent = 1;
