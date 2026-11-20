@@ -231,6 +231,57 @@ bool BindsRawInput(const BindingFile& file, const std::vector<std::string>& rawP
 }
 
 namespace {
+const std::string kPrimaryHand = "/user/hand/primary";
+const std::string kSecondaryHand = "/user/hand/secondary";
+
+bool OnHandPath(const std::string& path, const std::string& hand)
+{
+	return path.compare(0, hand.size(), hand) == 0 && (path.size() == hand.size() || path[hand.size()] == '/');
+}
+
+// Calls f on every path of the file (a BindingFile, const or not)
+template <typename File, typename F>
+void ForEachPath(File& file, F&& f)
+{
+	for (auto& [name, set] : file.sets) {
+		for (auto& b : set.sources)
+			f(b.path);
+		for (auto& b : set.poses)
+			f(b.path);
+		for (auto& b : set.haptics)
+			f(b.path);
+		for (auto& b : set.skeleton)
+			f(b.path);
+		for (auto& chord : set.chords)
+			for (auto& [path, input] : chord.inputs)
+				f(path);
+	}
+}
+} // namespace
+
+bool HasHandAliases(const BindingFile& file)
+{
+	bool found = false;
+	ForEachPath(file, [&](const std::string& path) {
+		found = found || OnHandPath(path, kPrimaryHand) || OnHandPath(path, kSecondaryHand);
+	});
+	return found;
+}
+
+BindingFile ResolveHandAliases(const BindingFile& file, const std::string& primaryHand)
+{
+	const std::string secondaryHand = primaryHand == "/user/hand/left" ? "/user/hand/right" : "/user/hand/left";
+	BindingFile resolved = file;
+	ForEachPath(resolved, [&](std::string& path) {
+		if (OnHandPath(path, kPrimaryHand))
+			path = primaryHand + path.substr(kPrimaryHand.size());
+		else if (OnHandPath(path, kSecondaryHand))
+			path = secondaryHand + path.substr(kSecondaryHand.size());
+	});
+	return resolved;
+}
+
+namespace {
 std::string LanguageKey(std::string tag)
 {
 	std::replace(tag.begin(), tag.end(), '-', '_');

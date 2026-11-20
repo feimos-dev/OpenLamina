@@ -62,6 +62,13 @@ BindingFile LoadBindingFile(const std::filesystem::path& path);
 bool BindsRawInput(const BindingFile& file, const std::vector<std::string>& rawPaths,
     const std::function<bool(const std::string& setPath, const std::string& output)>& wanted);
 
+/** Whether the file names a hand by dominance: a path on /user/hand/primary or /user/hand/secondary */
+bool HasHandAliases(const BindingFile& file);
+
+/** The file with its paths on /user/hand/primary on primaryHand and those on /user/hand/secondary on the other one
+ * (primaryHand is "/user/hand/left" or "/user/hand/right"): every source, pose, haptic, skeleton and chord path */
+BindingFile ResolveHandAliases(const BindingFile& file, const std::string& primaryHand);
+
 /** The names an action manifest's "localization" tables and "localization_files" give, for the table of the language
  * closest to language (a tag such as "en_US"): lower-cased action and action set path ("/actions/main/in/fire") to
  * its text. Files are read from manifestDir. A table or file that can't be used is skipped, never an error. */

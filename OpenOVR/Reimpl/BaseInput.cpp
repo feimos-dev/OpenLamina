@@ -432,6 +432,7 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 		rawComponents.clear();
 		evaluators.clear();
 		bindingFiles.clear();
+		aliasedBindingFiles.clear();
 		evaluatedThisSync.clear();
 		legacyEvaluators.clear();
 		{
@@ -971,7 +972,17 @@ void BaseInput::LoadBindingsSet(const InteractionProfile& profile, const std::st
 			// we're left with pose/raw.
 			std::string withoutPrefix = specPath;
 			info.hand = ParseAndRemoveHandPrefix(withoutPrefix);
+			HandAlias alias = HandAlias::NONE;
 			if (info.hand == ITrackedDevice::HAND_NONE) {
+				// A hand named by dominance follows the dominant hand when the pose is read
+				for (auto [prefix, named] : { std::pair<const char*, HandAlias>{ "/user/hand/primary/", HandAlias::PRIMARY }, { "/user/hand/secondary/", HandAlias::SECONDARY } }) {
+					if (withoutPrefix.starts_with(prefix)) {
+						withoutPrefix.erase(0, strlen(prefix));
+						alias = named;
+					}
+				}
+			}
+			if (info.hand == ITrackedDevice::HAND_NONE && alias == HandAlias::NONE) {
 				OOVR_LOGF("WARNING: Ignoring invalid pose binding '%s' for %s, bad hand prefix", specPath.c_str(), action->fullName.c_str());
 				continue;
 			}
@@ -998,7 +1009,9 @@ void BaseInput::LoadBindingsSet(const InteractionProfile& profile, const std::st
 
 			// We only accommodate one binding per hand, since having multiple doesn't make sense - either
 			// a hand is tracked or not, since we derive everything from the grip pose.
-			if (info.hand == ITrackedDevice::HAND_LEFT) {
+			if (alias != HandAlias::NONE) {
+				(alias == HandAlias::PRIMARY ? action->poseBindingsPrimary : action->poseBindingsSecondary)[&profile] = info;
+			} else if (info.hand == ITrackedDevice::HAND_LEFT) {
 				action->poseBindingsLeft[&profile] = info;
 			} else {
 				action->poseBindingsRight[&profile] = info;
@@ -1022,14 +1035,24 @@ void BaseInput::LoadBindingsSet(const InteractionProfile& profile, const std::st
 				continue;
 			}
 
-			if (!profile.IsInputPathValid(pathStr)) {
-				OOVR_LOGF("Warning: skipping haptic binding to invalid path %s for action %s", pathStr.c_str(), actionName.c_str());
-				continue;
+			// On a hand named by dominance it's suggested on both hands: the evaluator sends it to the dominant one
+			std::vector<std::string> paths = { pathStr };
+			for (const char* named : { "/user/hand/primary/", "/user/hand/secondary/" }) {
+				if (pathStr.starts_with(named)) {
+					std::string rest = pathStr.substr(strlen(named));
+					paths = { "/user/hand/left/" + rest, "/user/hand/right/" + rest };
+				}
 			}
+			for (const std::string& onHand : paths) {
+				if (!profile.IsInputPathValid(onHand)) {
+					OOVR_LOGF("Warning: skipping haptic binding to invalid path %s for action %s", onHand.c_str(), actionName.c_str());
+					continue;
+				}
 
-			XrPath path = XR_NULL_PATH;
-			OC_XR_LOG(xrStringToPath(xr_instance, pathStr.c_str(), &path));
-			AddSuggestedBinding(bindings, action->xr, path);
+				XrPath path = XR_NULL_PATH;
+				OC_XR_LOG(xrStringToPath(xr_instance, onHand.c_str(), &path));
+				AddSuggestedBinding(bindings, action->xr, path);
+			}
 		} catch (const std::exception& e) {
 			OOVR_SOFT_ABORTF("Skipping a haptic binding of bindings file '%s': %s", bindingsPath.c_str(), e.what());
 		}
@@ -1240,6 +1263,11 @@ bool BaseInput::SuggestRawBindings(const InteractionProfile& profile, const std:
 	if (!file.controllerType.empty() && lowerStr(file.controllerType) != type) {
 		OOVR_LOGF("Binding file: %s's bindings converted for %s", file.controllerType.c_str(), type.c_str());
 		file = ConvertBindingFile(file, type);
+	}
+	// Paths on the primary and secondary hand go to the dominant hand and the other one, again when it changes
+	if (HasHandAliases(file)) {
+		aliasedBindingFiles[&profile] = file;
+		file = ::ResolveHandAliases(file, allSubactionPathNames[DominantHandIndex(HandAlias::PRIMARY)]);
 	}
 
 	// Whether the file binds an input this controller has to an action of the manifest, or a haptic was suggested
@@ -1527,6 +1555,17 @@ void BaseInput::ResolveHandAliases()
 	}
 }
 
+void BaseInput::ResolveBindingFileHands()
+{
+	const std::string& primary = allSubactionPathNames[DominantHandIndex(HandAlias::PRIMARY)];
+	for (const auto& [profile, aliased] : aliasedBindingFiles) {
+		BindingFile& file = bindingFiles[profile];
+		file = ::ResolveHandAliases(aliased, primary);
+		if (evaluators.count(profile))
+			evaluators[profile] = std::make_unique<BindingEvaluator>(file);
+	}
+}
+
 EVRInputError BaseInput::GetInputSourceHandle(const char* pchInputSourcePath, VRInputValueHandle_t* pHandle)
 {
 	// Get the existing InputValueHandle if it already exists, or make a new one otherwise. Applications can
@@ -1582,6 +1621,7 @@ EVRInputError BaseInput::UpdateActionState(VR_ARRAY_COUNT(unSetCount) VRActiveAc
 		if (dominantHand != requestedDominantHand.load()) {
 			dominantHand = requestedDominantHand.load();
 			ResolveHandAliases();
+			ResolveBindingFileHands();
 		}
 	}
 
@@ -1816,11 +1856,21 @@ EVRInputError BaseInput::GetPoseActionData(VRActionHandle_t action, ETrackingUni
 		if (!profile)
 			continue;
 
-		const auto& bindings = handType == ITrackedDevice::HAND_LEFT ? act->poseBindingsLeft : act->poseBindingsRight;
-		const auto bindingIter = bindings.find(profile);
-		if (bindingIter == bindings.end())
+		const PoseBindingInfo* found = nullptr;
+		{
+			const auto& bindings = handType == ITrackedDevice::HAND_LEFT ? act->poseBindingsLeft : act->poseBindingsRight;
+			const auto& byDominance = DominantHandIndex(HandAlias::PRIMARY) == handNum ? act->poseBindingsPrimary : act->poseBindingsSecondary;
+			for (const auto* map : { &bindings, &byDominance }) {
+				auto it = map->find(profile);
+				if (it != map->end()) {
+					found = &it->second;
+					break;
+				}
+			}
+		}
+		if (!found)
 			continue;
-		const PoseBindingInfo& binding = bindingIter->second;
+		const PoseBindingInfo& binding = *found;
 
 		// TODO use predicted time
 

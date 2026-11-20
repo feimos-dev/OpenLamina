@@ -686,6 +686,8 @@ private:
 		// If this is a pose action, we calculate it from the legacy pose inputs rather than giving it
 		// it's own OpenXR action, since it may need some special transforms to make it line up properly.
 		std::unordered_map<const InteractionProfile*, PoseBindingInfo> poseBindingsLeft, poseBindingsRight;
+		// Those on a hand named by dominance (/user/hand/primary/pose/raw), on whichever hand that is when it's read
+		std::unordered_map<const InteractionProfile*, PoseBindingInfo> poseBindingsPrimary, poseBindingsSecondary;
 	};
 
 public:
@@ -902,6 +904,10 @@ private:
 	std::vector<const BindingEvaluator*> evaluatedThisSync;
 	// Each profile's binding file: what GetActionBindingInfo and GetActionOrigins answer
 	std::map<const InteractionProfile*, BindingFile> bindingFiles;
+	// The binding files that name a hand by dominance, as they are: bindingFiles has them on the dominant hand
+	std::map<const InteractionProfile*, BindingFile> aliasedBindingFiles;
+	/** Puts the files of aliasedBindingFiles, and their evaluators, on the dominant hand. Call it with evaluatorLock held. */
+	void ResolveBindingFileHands();
 	// Guards everything above and the legacy evaluators: a game reads input on its own thread while OpenComposite
 	// reads the old input after each frame on the thread that submits.
 	// Lock order: the session lock (xr_session, shared or exclusive) is taken before evaluatorLock, never after. Every
