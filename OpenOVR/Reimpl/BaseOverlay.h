@@ -8,6 +8,7 @@
 #include <optional>
 #include <queue>
 #include <set>
+#include <string>
 #include <vector>
 
 namespace Json {
@@ -157,6 +158,11 @@ bool KeyOfAnotherProgram(const Json::Value& overlaysDoc, const std::string& key,
  * doesn't (an OpenGL texture) */
 std::optional<std::pair<uint32_t, uint32_t>> OverlayTextureSize(const vr::Texture_t& texture);
 
+class Canvas;
+/** Text in lines no wider than width on the canvas, broken between words (a word wider than a line, anywhere), at most
+ * maxLines of them */
+std::vector<std::wstring> WrapText(const Canvas& canvas, const std::wstring& text, int width, size_t maxLines);
+
 class BaseOverlay {
 private:
 	// These enums are ints
@@ -277,6 +283,9 @@ public:
 	// keyboard, while the session is focused: their events, the cursor, and the keyboard's typing and drawing. On the
 	// game's thread before its frame's layers are built (it fills swapchains from memory), not holding _LayersLock().
 	void _UpdatePointer();
+	// The notification shown now (IVRNotifications): its panel drawn, and its events queued on its overlay; on the
+	// frames' thread, from _UpdatePointer
+	void UpdateNotifications();
 
 	// Whether the handle is one of this program's overlays
 	bool _IsOwnOverlay(vr::VROverlayHandle_t handle);

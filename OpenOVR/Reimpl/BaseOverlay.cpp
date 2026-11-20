@@ -35,6 +35,7 @@
 #include "Misc/SharedStore.h"
 #include "BaseClientCore.h"
 #include "BaseInput.h"
+#include "BaseNotifications.h"
 #include "convert.h"
 #include "generated/static_bases.gen.h"
 #include <glm/gtc/matrix_inverse.hpp>
@@ -741,6 +742,10 @@ constexpr float kPanelMetresPerPixel = 0.001f;
 constexpr int kPanelMargin = 40, kButtonGap = 20, kButtonHeight = 70, kButtonBottom = 40;
 constexpr float kPanelDistance = 1.5f;
 
+// A notification: a panel of up to three lines of text, ahead of the head and below where it looks
+constexpr int kNotificationWidth = 600, kNotificationHeight = 160, kNotificationMargin = 24;
+constexpr float kNotificationDistance = 1.2f, kNotificationBelow = 0.35f;
+
 // The keyboard: ahead of the head and below it
 constexpr float kKeyboardDistance = 1.0f, kKeyboardBelow = 0.4f;
 // The pulse on the controller whose system button was held for a recentre
@@ -982,6 +987,12 @@ public:
 
 	// The layers built from them for a frame, valid until it has ended
 	XrCompositionLayerQuad keyboardLayer{}, messageLayer{}, cursorLayer{};
+	// The notification shown now (IVRNotifications): its panel, the id it was drawn for, and where it is
+	std::unique_ptr<CpuSwapchain> notificationChain;
+	uint32_t notificationDrawn = 0;
+	bool notificationShown = false;
+	XrPosef notificationPose{ { 0, 0, 0, 1 }, { 0, 0, 0 } };
+	XrCompositionLayerQuad notificationLayer{};
 
 	// The cursor shown at a point on a target, facing out of it: its swapchain made and filled on the game's thread
 	void ShowCursor(const XrPosef& point)
@@ -1492,11 +1503,97 @@ bool BaseOverlay::_PointerWanted()
 	return false;
 }
 
+void BaseOverlay::UpdateNotifications()
+{
+	BaseNotifications* notifications = GetUnsafeBaseNotifications();
+	if (!notifications)
+		return;
+	std::vector<BaseNotifications::Event> events;
+	notifications->Update(NowSeconds(), events);
+	const std::optional<BaseNotifications::Showing> current = notifications->Current();
+
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
+	for (const BaseNotifications::Event& e : events)
+		if (OverlayData* o = OverlayAt(e.overlay))
+			o->QueueEvent(e.event);
+	Pointing& p = *pointing;
+	if (!current) {
+		p.notificationShown = false;
+		p.notificationDrawn = 0;
+		return;
+	}
+	if (current->id != p.notificationDrawn || !p.notificationChain || !p.notificationChain->Live()) {
+		Canvas canvas(kNotificationWidth, kNotificationHeight);
+		canvas.FillRect(0, 0, kNotificationWidth, kNotificationHeight, 0x2b2f36f0, 24);
+		const std::vector<std::wstring> lines = WrapText(canvas, WideText(current->text.c_str()), kNotificationWidth - 2 * kNotificationMargin, 3);
+		const int line = Canvas::LineHeight();
+		int y = (kNotificationHeight - (int)lines.size() * line) / 2;
+		for (const std::wstring& l : lines) {
+			canvas.Text(kNotificationMargin, y, l, 0xffffffff);
+			y += line;
+		}
+		if (!p.notificationChain)
+			p.notificationChain = CpuSwapchain::Create(kNotificationWidth, kNotificationHeight);
+		if (p.notificationChain && p.notificationChain->Upload(canvas.Pixels())) {
+			p.notificationDrawn = current->id;
+			p.notificationPose = AheadOfHead(FrameOrigin(), kNotificationDistance, kNotificationBelow);
+		}
+	}
+	p.notificationShown = p.notificationChain && p.notificationChain->Live() && p.notificationDrawn == current->id;
+}
+
+std::vector<std::wstring> WrapText(const Canvas& canvas, const std::wstring& text, int width, size_t maxLines)
+{
+	std::vector<std::wstring> lines;
+	std::wstring current;
+	size_t i = 0;
+	while (i < text.size() && lines.size() < maxLines) {
+		if (text[i] == L'\n') {
+			lines.push_back(current);
+			current.clear();
+			i++;
+			continue;
+		}
+		// The next word, with the spaces before it
+		size_t end = i;
+		while (end < text.size() && text[end] == L' ')
+			end++;
+		while (end < text.size() && text[end] != L' ' && text[end] != L'\n')
+			end++;
+		const std::wstring word = text.substr(i, end - i);
+		if (!current.empty() && canvas.TextWidth(current + word) > width) {
+			lines.push_back(current);
+			current.clear();
+			// A line starts at the word, not its spaces
+			size_t skip = 0;
+			while (skip < word.size() && word[skip] == L' ')
+				skip++;
+			i += skip;
+			continue;
+		}
+		// A word wider than the line is cut
+		for (wchar_t c : word) {
+			if (!current.empty() && canvas.TextWidth(current + c) > width) {
+				lines.push_back(current);
+				current.clear();
+				if (lines.size() >= maxLines)
+					break;
+			}
+			current += c;
+		}
+		i = end;
+	}
+	if (!current.empty() && lines.size() < maxLines)
+		lines.push_back(current);
+	return lines;
+}
+
 void BaseOverlay::_UpdatePointer()
 {
 	// Swapchains are filled and input read under the session lock
 	auto session = xr_session.lock_shared();
 	auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
+	UpdateNotifications();
 
 	// Overlays that take mouse input are pointed at only with the laserMouse key (the keyboard and the message box
 	// have their own); the game's own HandleControllerOverlayInteractionAsMouse always
@@ -1746,7 +1843,7 @@ void BaseOverlay::_UpdatePointer()
 bool BaseOverlay::_AnyVisible()
 {
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
-	if (keyboard || pointing->message || dash->shown)
+	if (keyboard || pointing->message || dash->shown || pointing->notificationShown)
 		return true;
 	overlay_maths::Placement shownInDashboard;
 	for (const auto& kv : overlays) {
@@ -1948,6 +2045,11 @@ int BaseOverlay::_BuildLayers(XrCompositionLayerBaseHeader* sceneLayer, XrCompos
 		const overlay_maths::Placement& at = p.message->placement;
 		p.messageLayer = OwnQuad(*p.message->chain, at.pose, at.width, at.height);
 		layerHeaders.push_back((XrCompositionLayerBaseHeader*)&p.messageLayer);
+	}
+	if (p.notificationShown && p.notificationChain && p.notificationChain->Live()) {
+		p.notificationLayer = OwnQuad(*p.notificationChain, p.notificationPose, kNotificationWidth * kPanelMetresPerPixel,
+		    kNotificationHeight * kPanelMetresPerPixel);
+		layerHeaders.push_back((XrCompositionLayerBaseHeader*)&p.notificationLayer);
 	}
 	if (p.cursorShown && p.cursorChain && p.cursorChain->Live()) {
 		p.cursorLayer = OwnQuad(*p.cursorChain, p.cursorPose, kCursorMetres, kCursorMetres);

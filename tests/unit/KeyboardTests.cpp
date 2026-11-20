@@ -8,6 +8,7 @@
 #include "Misc/Keyboard/SudoFontMeta.h"
 #include "Misc/Keyboard/VRKeyboard.h"
 #include "Misc/LaserMouse.h"
+#include "Reimpl/BaseOverlay.h"
 
 #include <cstring>
 #include <string>
@@ -350,4 +351,20 @@ TEST_CASE("A_multiline_text_shows_the_caret_s_line")
 	CHECK(kb.ViewStart() == 0);
 	Point(kb, vr::VREvent_MouseButtonDown, 600, 20, true);
 	CHECK(kb.Caret() == 10); // its end, before the line break
+}
+
+TEST_CASE("Text_wraps_between_words_in_at_most_the_lines_asked")
+{
+	Canvas canvas(1, 1);
+	const int width = canvas.TextWidth(L"hello world");
+	std::vector<std::wstring> lines = WrapText(canvas, L"hello world hello world", width, 3);
+	REQUIRE(lines.size() == 2);
+	CHECK(lines[0] == L"hello world");
+	CHECK(lines[1] == L"hello world");
+	CHECK(WrapText(canvas, L"one\ntwo", 1000, 3) == std::vector<std::wstring>{ L"one", L"two" });
+	CHECK(WrapText(canvas, L"a b c d", canvas.TextWidth(L"a"), 2).size() == 2);
+	// A word wider than a line is cut
+	lines = WrapText(canvas, L"abcdefgh", canvas.TextWidth(L"abcd"), 3);
+	REQUIRE(lines.size() == 2);
+	CHECK(lines[0] == L"abcd");
 }
