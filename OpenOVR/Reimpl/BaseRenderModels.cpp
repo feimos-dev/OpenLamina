@@ -982,6 +982,15 @@ bool BaseRenderModels::GetComponentState(const char* pchRenderModelName, const c
 		return true;
 	}
 
+	// A built-in model's one component, named after the model: where the model is, shown and still
+	if (pchRenderModelName && pchComponentName && IsOwnRenderModel(pchRenderModelName) && strcmp(pchRenderModelName, pchComponentName) == 0) {
+		const glm::mat4 identity = glm::identity<glm::mat4>();
+		pComponentState->mTrackingToComponentRenderModel = G2S_m34(identity);
+		pComponentState->mTrackingToComponentLocal = G2S_m34(identity);
+		pComponentState->uProperties = VRComponentProperty_IsVisible | VRComponentProperty_IsStatic;
+		return true;
+	}
+
 	ITrackedDevice::TrackedDeviceType hand = ITrackedDevice::HAND_NONE;
 	if (pchRenderModelName) {
 		std::string renderModelName = pchRenderModelName;
