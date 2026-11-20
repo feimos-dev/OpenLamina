@@ -932,8 +932,8 @@ private:
 	 * controller has to one of the manifest's actions or bindings holds a haptic; false (nothing done) if not */
 	bool SuggestRawBindings(const InteractionProfile& profile, const std::string& bindingsPath, std::vector<XrActionSuggestedBinding>& bindings);
 	/** An input action's bindings on the controllers in use, from their binding files; nothing if no controller in
-	 * use has one, or for a pose, a skeleton or a vibration. Takes evaluatorLock. */
-	std::optional<std::vector<ActionBinding>> BindingsFromFiles(const Action& action);
+	 * use has one, or for a pose, a skeleton or a vibration unless allTypes. Takes evaluatorLock. */
+	std::optional<std::vector<ActionBinding>> BindingsFromFiles(const Action& action, bool allTypes = false);
 	/** One hand's raw inputs (index into allSubactionPaths) on a profile, by SteamVR path, into state */
 	void ReadRawInputs(size_t hand, const InteractionProfile& profile, RawInputState& state);
 	/** The old input's evaluator for a controller's profile, evaluated once per sync; null if it has none.
