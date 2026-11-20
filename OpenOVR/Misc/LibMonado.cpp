@@ -100,6 +100,9 @@ LibMonado& LibMonado::Get()
 	std::lock_guard<std::mutex> guard(mutex);
 	if (xr_instance == XR_NULL_HANDLE)
 		return *none;
+	// Properties are read every frame: the runtime is asked only when the instance changes
+	if (current && xr_instance == currentInstance)
+		return *current;
 	std::string runtime = RuntimeNameOfInstance();
 	if (!current || xr_instance != currentInstance || runtime != currentRuntime) {
 		current = new LibMonado(runtime);
