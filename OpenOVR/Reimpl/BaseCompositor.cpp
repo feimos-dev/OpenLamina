@@ -90,8 +90,13 @@ ovr_enum_t BaseCompositor::WaitGetPoses(TrackedDevicePose_t* renderPoseArray, ui
 
 	ovr_enum_t result = GetLastPoses(renderPoseArray, renderPoseArrayCount, gamePoseArray, gamePoseArrayCount);
 	if (renderPoseArray && renderPoseArrayCount) {
+		// The frame's id is its index, which counts display periods; a count of frames where the runtime can't say
+		BackendManager* backends = BackendManager::InstancePtr();
+		IBackend* backend = backends ? backends->GetBackendInstance() : nullptr;
+		const uint32_t frameId = backend ? backend->CurrentFrameId() : 0;
 		std::lock_guard<std::mutex> lock(posesLock);
-		FramePoses& kept = recentPoses[++lastPoseId % std::size(recentPoses)];
+		lastPoseId = frameId && (lastPoseId == 0 || (int32_t)(frameId - lastPoseId) > 0) ? frameId : lastPoseId + 1;
+		FramePoses& kept = recentPoses[lastPoseId % std::size(recentPoses)];
 		kept.id = lastPoseId;
 		kept.poses.assign(renderPoseArray, renderPoseArray + renderPoseArrayCount);
 	}
@@ -906,13 +911,28 @@ ovr_enum_t BaseCompositor::GetPosesForFrame(uint32_t unPosePredictionID, Tracked
 {
 	if (pPoseArray)
 		memset(pPoseArray, 0, sizeof(TrackedDevicePose_t) * unPoseArrayCount);
-	std::lock_guard<std::mutex> lock(posesLock);
-	for (const FramePoses& kept : recentPoses) {
-		if (kept.id == 0 || kept.id != unPosePredictionID)
-			continue;
-		if (pPoseArray)
-			memcpy(pPoseArray, kept.poses.data(), sizeof(TrackedDevicePose_t) * std::min<size_t>(unPoseArrayCount, kept.poses.size()));
-		return VRCompositorError_None;
+	int32_t ahead = 0;
+	{
+		std::lock_guard<std::mutex> lock(posesLock);
+		for (const FramePoses& kept : recentPoses) {
+			if (kept.id == 0 || kept.id != unPosePredictionID)
+				continue;
+			if (pPoseArray)
+				memcpy(pPoseArray, kept.poses.data(), sizeof(TrackedDevicePose_t) * std::min<size_t>(unPoseArrayCount, kept.poses.size()));
+			return VRCompositorError_None;
+		}
+		ahead = lastPoseId ? (int32_t)(unPosePredictionID - lastPoseId) : 0;
+	}
+	// A frame to come, a few display periods ahead: the poses predicted for its display
+	BackendManager* backends = BackendManager::InstancePtr();
+	IBackend* backend = backends ? backends->GetBackendInstance() : nullptr;
+	if (ahead > 0 && ahead <= (int32_t)std::size(recentPoses) && backend && backend->CurrentFrameId()) {
+		const float seconds = backend->SecondsToFrame(unPosePredictionID);
+		if (std::isfinite(seconds)) {
+			if (pPoseArray && unPoseArrayCount)
+				backends->GetDeviceToAbsoluteTrackingPose(GetTrackingSpace(), seconds, pPoseArray, unPoseArrayCount);
+			return VRCompositorError_None;
+		}
 	}
 	// Older than the last few frames, or never given
 	return VRCompositorError_IndexOutOfRange;

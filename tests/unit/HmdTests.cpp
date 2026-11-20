@@ -2,6 +2,7 @@
 
 #include "stdafx.h"
 
+#include "XrBackend.h"
 #include "XrHMD.h"
 #include "Reimpl/BaseSystem.h"
 #include "logging.h"
@@ -234,6 +235,44 @@ TEST_CASE("A time's place on the vsync grid")
 	CHECK_FALSE(XrHMD::VsyncPhase(0, 1000000000, period, &since, &count));
 	CHECK_FALSE(XrHMD::VsyncPhase(1000000000, 1, period, &since, &count));
 	CHECK(XrHMD::VsyncPhase(1000000000, 1000000000, period, nullptr, nullptr));
+}
+
+TEST_CASE("Frame ids count display periods, and frames to come are located ahead by whole periods")
+{
+	const XrDuration period = 10000000; // 10 ms
+	const XrTime display = 1000000000 + 3000000;
+	// The same count GetTimeSinceLastVsync gives at the frame's display
+	uint64_t count = 0;
+	CHECK(XrHMD::VsyncPhase(display, display, period, nullptr, &count));
+	CHECK(XrBackend::DisplaySlot(display, period) == count);
+	CHECK(XrBackend::DisplaySlot(display + period, period) == count + 1);
+	CHECK(XrBackend::DisplaySlot(display, 0) == 0);
+	CHECK(XrBackend::DisplaySlot(1, period) == 0);
+
+	// The frame in flight shows 12 ms from now; the two after it, a period later each
+	const uint32_t slot = (uint32_t)count;
+	const XrTime now = display - 12000000;
+	CHECK(XrBackend::SecondsToSlot(slot, slot, display, period, now) == doctest::Approx(0.012));
+	CHECK(XrBackend::SecondsToSlot(slot + 2, slot, display, period, now) == doctest::Approx(0.032));
+	// Counted across the 32-bit wrap
+	CHECK(XrBackend::SecondsToSlot(1u, 0xffffffffu, display, period, now) == doctest::Approx(0.032));
+	CHECK(std::isnan(XrBackend::SecondsToSlot(slot, 0, display, period, now)));
+	CHECK(std::isnan(XrBackend::SecondsToSlot(slot, slot, display, 0, now)));
+	CHECK(std::isnan(XrBackend::SecondsToSlot(slot, slot, display, period, 0)));
+
+	// Counted on from the frame before: the periods between them, at least one, also across a change of rate
+	CHECK(XrBackend::NextDisplaySlot(0, 0, display, period) == count);
+	CHECK(XrBackend::NextDisplaySlot(count, display, display + 2 * period, period) == count + 2);
+	const XrDuration slower = 13888889; // 72 Hz
+	CHECK(XrBackend::NextDisplaySlot(count, display, display + slower, slower) == count + 1);
+	CHECK(XrBackend::NextDisplaySlot(count, display, display, period) == count + 1);
+	CHECK(XrBackend::NextDisplaySlot(count, display, display + period, 0) == 0);
+
+	// The periods from the poses to the display: whole ones, at least one
+	CHECK(XrBackend::VsyncsToDisplay(display, period, now) == 2);
+	CHECK(XrBackend::VsyncsToDisplay(display, period, display - period) == 1);
+	CHECK(XrBackend::VsyncsToDisplay(display, period, display + 1) == 1);
+	CHECK(XrBackend::VsyncsToDisplay(display, 0, now) == 0);
 }
 
 TEST_CASE("Without a session the vsync time is unknown and still written")

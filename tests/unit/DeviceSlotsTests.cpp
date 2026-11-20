@@ -3,6 +3,7 @@
 #include "stdafx.h"
 
 #include "Drivers/Backend.h"
+#include "Reimpl/BaseCompositor.h"
 #include "Reimpl/BaseSystem.h"
 
 #include <map>
@@ -35,6 +36,10 @@ public:
 	std::map<vr::TrackedDeviceIndex_t, std::shared_ptr<FakeDevice>> devices;
 	bool lost = false;
 	bool strained = false;
+	uint32_t frameId = 0;
+	float predictedSeconds = -1.0f;
+	uint32_t CurrentFrameId() override { return frameId; }
+	float SecondsToFrame(uint32_t id) override { return frameId ? (float)(int32_t)(id - frameId) * 0.01f : NAN; }
 
 	std::shared_ptr<IHMD> GetPrimaryHMD() override { return nullptr; }
 	std::shared_ptr<ITrackedDevice> GetDevice(vr::TrackedDeviceIndex_t index) override
@@ -43,7 +48,12 @@ public:
 		return it == devices.end() ? nullptr : it->second;
 	}
 	std::shared_ptr<ITrackedDevice> GetDeviceByHand(ITrackedDevice::TrackedDeviceType) override { return nullptr; }
-	void GetDeviceToAbsoluteTrackingPose(vr::ETrackingUniverseOrigin, float, vr::TrackedDevicePose_t*, uint32_t) override {}
+	void GetDeviceToAbsoluteTrackingPose(vr::ETrackingUniverseOrigin, float seconds, vr::TrackedDevicePose_t* poses, uint32_t count) override
+	{
+		predictedSeconds = seconds;
+		for (uint32_t i = 0; i < count; i++)
+			poses[i].bPoseIsValid = true;
+	}
 	void WaitForTrackingData() override {}
 	IBackend::openvr_enum_t StoreEyeTexture(vr::EVREye, const vr::Texture_t*, const vr::VRTextureBounds_t*, vr::EVRSubmitFlags, bool) override { return 0; }
 	void SubmitFrames(bool) override {}
@@ -298,4 +308,32 @@ TEST_CASE("The application is told to reduce its rendering when the runtime is s
 	slots.backend->strained = true;
 	CHECK(system.ShouldApplicationReduceRenderingWork());
 	CHECK_FALSE(system.ShouldApplicationPause());
+}
+
+TEST_CASE("Pose prediction ids are the frames' indices, and a frame to come gets poses predicted for it")
+{
+	WithSlots slots;
+	BaseCompositor compositor;
+	vr::TrackedDevicePose_t poses[2] = {};
+
+	// Without a frame index from the runtime the ids count frames
+	compositor.WaitGetPoses(poses, 2, nullptr, 0);
+	uint32_t render = 0, game = 0;
+	compositor.GetLastPosePredictionIDs(&render, &game);
+	CHECK(render == 1);
+
+	slots.backend->frameId = 5000;
+	compositor.WaitGetPoses(poses, 2, nullptr, 0);
+	compositor.GetLastPosePredictionIDs(&render, &game);
+	CHECK(render == 5000);
+	CHECK(compositor.GetPosesForFrame(5000, poses, 2) == 0);
+
+	// Two frames ahead: predicted for its display
+	vr::TrackedDevicePose_t ahead[2] = {};
+	CHECK(compositor.GetPosesForFrame(5002, ahead, 2) == 0);
+	CHECK(slots.backend->predictedSeconds == doctest::Approx(0.02f));
+	CHECK(ahead[1].bPoseIsValid);
+	// Too far ahead, or long gone
+	CHECK(compositor.GetPosesForFrame(5100, ahead, 2) == 107 /* IndexOutOfRange */);
+	CHECK(compositor.GetPosesForFrame(4000, ahead, 2) == 107 /* IndexOutOfRange */);
 }

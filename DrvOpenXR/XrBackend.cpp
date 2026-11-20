@@ -46,6 +46,7 @@
 #include "../OpenOVR/Misc/FrameStats.h"
 #include "../OpenOVR/Misc/MirrorWindow.h"
 #include "../OpenOVR/Misc/Process.h"
+#include "../OpenOVR/Misc/ScopeGuard.h"
 #include "../OpenOVR/Misc/xrmoreutils.h"
 #include "../OpenOVR/Misc/ProgramEvents.h"
 #include "../OpenOVR/Misc/SharedStore.h"
@@ -845,6 +846,21 @@ void XrBackend::WaitForTrackingData()
 		frameShouldRender = state.shouldRender != XR_FALSE;
 		frameAwaitingBegin = true;
 
+		// The frame's index counts display periods, as SteamVR's does; a count of frames where the runtime gives no period
+		const uint64_t slot = NextDisplaySlot(displaySlot, displaySlotTime, state.predictedDisplayTime, state.predictedDisplayPeriod);
+		if (slot) {
+			displaySlot = slot;
+			displaySlotTime = state.predictedDisplayTime;
+		}
+		nFrameIndex = slot ? (uint32_t)slot : nFrameIndex + 1;
+		frameDisplayTime = state.predictedDisplayTime;
+		frameDisplayPeriod = state.predictedDisplayPeriod;
+		frameSlot = slot ? (uint32_t)slot : 0;
+		vsyncsToFirstView = VsyncsToDisplay(state.predictedDisplayTime, state.predictedDisplayPeriod, xr_time_now());
+		frameStart = waitCall;
+		frameSubmitMs = 0.0f;
+		frameNewFrameReadyMs = 0.0f;
+
 		FrameStats::Get().OnFrameStart();
 		OOVR_Compositor_FrameTiming timing{};
 		timing.m_nSize = sizeof(timing);
@@ -924,6 +940,15 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 	if (eye != vr::Eye_Left && eye != vr::Eye_Right)
 		return kCompositorInvalidTexture;
 
+	// The time spent in Submit, for the frame's timing; the last eye's is when the frame was ready
+	auto submitCall = std::chrono::steady_clock::now();
+	ScopeGuard timeSubmit([&] {
+		const auto now = std::chrono::steady_clock::now();
+		frameSubmitMs += std::chrono::duration<float, std::milli>(now - submitCall).count();
+		if (frameStart != std::chrono::steady_clock::time_point{} && eyeSubmitted[vr::Eye_Left] && eyeSubmitted[vr::Eye_Right])
+			frameNewFrameReadyMs = std::chrono::duration<float, std::milli>(now - frameStart).count();
+	});
+
 	if (!CheckOrInitCompositors(texture)) {
 		// A texture OpenComposite can't use (logged): this eye is left out of the frame
 		projectionViews[eye].subImage.swapchain = XR_NULL_HANDLE;
@@ -935,6 +960,7 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 	if (sessionActive && !renderingFrame) {
 		deferredRenderingStart = false;
 		WaitForTrackingData();
+		submitCall = std::chrono::steady_clock::now(); // the wait for the frame isn't time in Submit
 	}
 
 	if (submitFlags & vr::Submit_LensDistortionAlreadyApplied)
@@ -1126,6 +1152,7 @@ void XrBackend::SubmitFrames(bool showSkybox)
 	// renderingFrame will still be false so this won't be a problem in that case.
 	if (!sessionActive)
 		return;
+	const bool hadEyeTextures = submittedEyeTextures;
 
 	XrFrameEndInfo info{ XR_TYPE_FRAME_END_INFO };
 	info.environmentBlendMode = XR_ENVIRONMENT_BLEND_MODE_OPAQUE;
@@ -1224,6 +1251,7 @@ void XrBackend::SubmitFrames(bool showSkybox)
 	info.layers = headers;
 	info.layerCount = layer_count;
 
+	const auto endCall = std::chrono::steady_clock::now();
 	XrResult endResult = xrEndFrame(xr_session.get(), &info);
 	if (XR_FAILED(endResult) && sceneShown && layer_count > 1) {
 		// A layer of the overlays' was refused. The game's frame isn't dropped for it: ended without each of those
@@ -1254,10 +1282,18 @@ void XrBackend::SubmitFrames(bool showSkybox)
 		    without > 0 ? "one of the overlays' layers" : "all the overlays' layers", without, (int)quad->type,
 		    quad->subImage.imageRect.extent.width, quad->subImage.imageRect.extent.height);
 	}
+	const float presentMs = std::chrono::duration<float, std::milli>(std::chrono::steady_clock::now() - endCall).count();
 	OOVR_FAILED_XR_SOFT_ABORT(endResult);
 	// A present: the game's eye textures shown
-	if (XR_SUCCEEDED(endResult) && app_layer && frameShouldRender)
+	const bool presented = XR_SUCCEEDED(endResult) && app_layer && sceneShown && frameShouldRender;
+	if (presented)
 		FrameStats::Get().OnAppPresent();
+	FrameStats::Get().OnAppFrameEnd(nFrameIndex, frameSubmitMs, presentMs, frameNewFrameReadyMs, hadEyeTextures, presented);
+	lastSubmitMs = frameSubmitMs;
+	lastPresentMs = presentMs;
+	lastNewFrameReadyMs = frameNewFrameReadyMs;
+	frameSubmitMs = 0.0f;
+	frameNewFrameReadyMs = 0.0f;
 	frameBegun = false;
 	if (overlayLock.owns_lock())
 		overlayLock.unlock();
@@ -1279,8 +1315,6 @@ void XrBackend::SubmitFrames(bool showSkybox)
 
 	auto now = std::chrono::system_clock::now().time_since_epoch();
 	frameSubmitTimeUs = (double)std::chrono::duration_cast<std::chrono::microseconds>(now).count() / 1000000.0;
-
-	nFrameIndex++;
 }
 
 XrCompositionLayerBaseHeader* XrBackend::BuildFadeLayer()
@@ -1599,6 +1633,51 @@ void XrBackend::RecordFrameTiming(std::chrono::steady_clock::time_point callTime
 	lastPredictedDisplayTime = predictedDisplayTime;
 }
 
+uint64_t XrBackend::NextDisplaySlot(uint64_t previous, XrTime previousTime, XrTime displayTime, XrDuration period)
+{
+	if (displayTime <= 1 || period <= 0)
+		return 0;
+	if (previous == 0 || previousTime <= 1)
+		return DisplaySlot(displayTime, period);
+	const XrDuration periods = displayTime > previousTime ? (displayTime - previousTime + period / 2) / period : 0;
+	return previous + (uint64_t)(std::max<XrDuration>)(1, periods);
+}
+
+uint64_t XrBackend::DisplaySlot(XrTime displayTime, XrDuration period)
+{
+	if (displayTime <= 1 || period <= 0)
+		return 0;
+	// As GetTimeSinceLastVsync counts the vsync at a frame's display time (XrHMD::VsyncPhase)
+	return (uint64_t)(displayTime / period);
+}
+
+double XrBackend::SecondsToSlot(uint32_t slot, uint32_t frameSlot, XrTime frameDisplayTime, XrDuration period, XrTime now)
+{
+	if (frameSlot == 0 || frameDisplayTime <= 1 || period <= 0 || now <= 0)
+		return NAN;
+	const int32_t ahead = (int32_t)(slot - frameSlot);
+	return ((double)(frameDisplayTime - now) + (double)ahead * (double)period) / 1e9;
+}
+
+uint32_t XrBackend::VsyncsToDisplay(XrTime displayTime, XrDuration period, XrTime now)
+{
+	if (displayTime <= 1 || period <= 0 || now <= 0)
+		return 0;
+	if (displayTime <= now)
+		return 1;
+	return (uint32_t)std::max<XrDuration>(1, (displayTime - now + period - 1) / period);
+}
+
+uint32_t XrBackend::CurrentFrameId()
+{
+	return frameSlot;
+}
+
+float XrBackend::SecondsToFrame(uint32_t frameId)
+{
+	return (float)SecondsToSlot(frameId, frameSlot, frameDisplayTime, frameDisplayPeriod, xr_time_now());
+}
+
 /**
  * Get frame timing information to be passed to the application
  *
@@ -1661,20 +1740,25 @@ bool XrBackend::GetFrameTiming(OOVR_Compositor_FrameTiming* pTiming, uint32_t un
 
 		/** Miscellaneous measured intervals. */
 		pTiming->m_flClientFrameIntervalMs = measuredIntervalMs > 0.0f ? measuredIntervalMs : 11.1f; // time between calls to WaitGetPoses
-		pTiming->m_flPresentCallCpuMs = 0.0f; // time blocked on call to present (usually 0.0, but can go long)
+		// Measured on the CPU for the last frame that ended (a frame's own are filled into its record when it ends)
+		pTiming->m_flPresentCallCpuMs = lastPresentMs; // time in xrEndFrame
 		pTiming->m_flWaitForPresentCpuMs = 0.0f; // time spent spin-waiting for frame index to change (not near-zero indicates wait object failure)
-		pTiming->m_flSubmitFrameMs = 0.0f; // time spent in IVRCompositor::Submit (not near-zero indicates driver issue)
+		pTiming->m_flSubmitFrameMs = lastSubmitMs; // time spent in IVRCompositor::Submit
 
 		/** The following are all relative to this frame's SystemTimeInSeconds */
 		pTiming->m_flWaitGetPosesCalledMs = 0.0f;
 		pTiming->m_flNewPosesReadyMs = measuredWaitMs; // when xrWaitFrame returned
-		pTiming->m_flNewFrameReadyMs = 0.0f; // second call to IVRCompositor::Submit
+		pTiming->m_flNewFrameReadyMs = lastNewFrameReadyMs; // the last eye's Submit, from WaitGetPoses
 		pTiming->m_flCompositorUpdateStartMs = 0.0f;
 		pTiming->m_flCompositorUpdateEndMs = 0.0f;
 		pTiming->m_flCompositorRenderStartMs = 0.0f;
 
 		const auto space = BaseSystem::currentSpace == XR_REFERENCE_SPACE_TYPE_LOCAL ? vr::TrackingUniverseSeated : vr::TrackingUniverseStanding;
 		GetPrimaryHMD()->GetPose(space, &pTiming->m_HmdPose, ETrackingStateType::TrackingStateType_Rendering);
+
+		// Newer SDKs' fields: the display periods from the poses to the frame's display
+		if (size >= offsetof(OOVR_Compositor_FrameTiming, m_nNumVSyncsToFirstView) + sizeof(uint32_t))
+			pTiming->m_nNumVSyncsToFirstView = vsyncsToFirstView;
 
 		return true;
 	}

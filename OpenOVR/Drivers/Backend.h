@@ -1,6 +1,7 @@
 #pragma once
 #include "../OpenOVR/custom_types.h" // TODO move this into the OpenVR tree
 #include "generated/interfaces/vrtypes.h"
+#include <cmath>
 #include <memory>
 
 // for OOVR_Compositor_FrameTiming
@@ -250,6 +251,11 @@ public:
 	typedef int openvr_enum_t;
 
 	DECLARE_BACKEND_FUNCS(virtual, = 0)
+
+	/** The game's frame in flight, as a count of display periods (its frame index); 0 where unknown */
+	virtual uint32_t CurrentFrameId() { return 0; }
+	/** Seconds from now to the display of frame frameId (CurrentFrameId or a later one); NaN where unknown */
+	virtual float SecondsToFrame(uint32_t frameId) { return NAN; }
 
 	// Virtual Destructor
 	virtual ~IBackend();

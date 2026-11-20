@@ -31,6 +31,21 @@ class XrBackend : public IBackend {
 public:
 	DECLARE_BACKEND_FUNCS(virtual, override)
 
+	uint32_t CurrentFrameId() override;
+	float SecondsToFrame(uint32_t frameId) override;
+
+	/** The display slot (count of display periods) a display time falls in; 0 where the period is unknown */
+	static uint64_t DisplaySlot(XrTime displayTime, XrDuration period);
+	/** The display slot of a frame after one at previous (shown at previousTime; 0 for none): the display periods
+	 * between them on, at least one, so that a change of the display's rate doesn't move the count back or far on.
+	 * The first is DisplaySlot's; 0 where the period is unknown. */
+	static uint64_t NextDisplaySlot(uint64_t previous, XrTime previousTime, XrTime displayTime, XrDuration period);
+	/** Seconds from now to the display of the frame `slot`, from the frame in flight's slot and display time; NaN where
+	 * unknown. Slots are compared as 32-bit frame ids. */
+	static double SecondsToSlot(uint32_t slot, uint32_t frameSlot, XrTime frameDisplayTime, XrDuration period, XrTime now);
+	/** The display periods from now to a frame's display, at least one; 0 where unknown */
+	static uint32_t VsyncsToDisplay(XrTime displayTime, XrDuration period, XrTime now);
+
 	XrBackend(bool useVulkanTmpGfx, bool useD3D11TmpGfx);
 	~XrBackend() override;
 
@@ -351,8 +366,21 @@ private:
 	std::atomic<bool> sceneCleared{ false };
 	std::atomic<bool> renderingSuspended{ false };
 
-	// Number of frames rendered for use in frame timing data
+	// The game's frame in flight: its index (display slot where the runtime gives a display period, else a count of
+	// frames), the slot's display time and the display period
 	uint32_t nFrameIndex = 0;
+	std::atomic<uint32_t> frameSlot{ 0 };
+	uint64_t displaySlot = 0; // the last frame's, counted on by NextDisplaySlot
+	XrTime displaySlotTime = 0;
+	std::atomic<XrTime> frameDisplayTime{ 0 };
+	std::atomic<XrDuration> frameDisplayPeriod{ 0 };
+	// The display periods from xrWaitFrame's return to the frame's display
+	uint32_t vsyncsToFirstView = 0;
+	// The frame's xrWaitFrame call, the time it has spent in Submit and when its last eye came (from its start)
+	std::chrono::steady_clock::time_point frameStart{};
+	float frameSubmitMs = 0.0f, frameNewFrameReadyMs = 0.0f;
+	// The last ended frame's, for GetFrameTiming
+	float lastSubmitMs = 0.0f, lastPresentMs = 0.0f, lastNewFrameReadyMs = 0.0f;
 
 	double frameSubmitTimeUs = 0.0;
 

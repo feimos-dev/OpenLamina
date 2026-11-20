@@ -44,6 +44,24 @@ void FrameStats::OnAppPresent()
 	appPresents++;
 }
 
+void FrameStats::OnAppFrameEnd(uint32_t frameIndex, float submitMs, float presentMs, float newFrameReadyMs, bool submitted, bool presented)
+{
+	std::lock_guard<std::mutex> g(lock);
+	if (submitted)
+		appSubmits++;
+	for (OOVR_Compositor_FrameTiming& t : history) {
+		if (t.m_nFrameIndex != frameIndex)
+			continue;
+		t.m_flSubmitFrameMs = submitMs;
+		t.m_flPresentCallCpuMs = presentMs;
+		t.m_flNewFrameReadyMs = newFrameReadyMs;
+		t.m_nNumFramePresents = presented ? 1 : 0;
+		if (!presented)
+			t.m_nNumMisPresented = 0;
+		return;
+	}
+}
+
 void FrameStats::OnOwnFrame()
 {
 	std::lock_guard<std::mutex> g(lock);
@@ -60,7 +78,7 @@ void FrameStats::Cumulative(uint32_t pid, OOVR_Compositor_CumulativeStats* out, 
 		std::lock_guard<std::mutex> g(lock);
 		stats.m_nNumFramePresents = presents;
 		stats.m_nNumDroppedFrames = dropped;
-		stats.m_nNumFrameSubmits = appPresents;
+		stats.m_nNumFrameSubmits = appSubmits;
 	}
 	memset(out, 0, size);
 	memcpy(out, &stats, std::min<size_t>(size, sizeof(stats)));
