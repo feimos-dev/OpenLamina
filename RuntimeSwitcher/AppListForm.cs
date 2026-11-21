@@ -47,7 +47,7 @@ namespace RuntimeSwitcher
 
             foreach (KeyValuePair<string, JObject> item in map)
             {
-                if (!_config.ContainsKey(item.Key))
+                if (!_config.TryGetValue(item.Key, out JObject existing) || existing == null)
                 {
                     _config[item.Key] = new JObject();
                 }
@@ -61,7 +61,7 @@ namespace RuntimeSwitcher
             appsList.Groups.AddRange(new[] {_groupOpenComposite, _groupSteamVr});
 
             // Get the global config data
-            if (!_config.ContainsKey(KeyGlobalConfig))
+            if (!_config.TryGetValue(KeyGlobalConfig, out JObject global) || global == null)
                 _config[KeyGlobalConfig] = new JObject();
             _globalConfig = _config[KeyGlobalConfig];
 
@@ -182,7 +182,7 @@ namespace RuntimeSwitcher
             if (e.Button != MouseButtons.Right)
                 return;
 
-            if (!appsList.FocusedItem.Bounds.Contains(e.Location))
+            if (appsList.FocusedItem == null || !appsList.FocusedItem.Bounds.Contains(e.Location))
                 return;
 
             contextMenuStrip1.Show(Cursor.Position);
@@ -263,7 +263,7 @@ namespace RuntimeSwitcher
             {
                 get => _config.ContainsKey("name")
                     ? _config["name"].ToString()
-                    : FileName.Substring(0, FileName.LastIndexOf('.'));
+                    : FileName.LastIndexOf('.') < 0 ? FileName : FileName.Substring(0, FileName.LastIndexOf('.'));
                 set
                 {
                     if (value == null)

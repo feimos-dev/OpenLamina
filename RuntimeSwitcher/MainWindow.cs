@@ -234,8 +234,10 @@ namespace RuntimeSwitcher
                 _appList.Show(this);
             }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException ||
-                                      e is Newtonsoft.Json.JsonException)
+                                      e is Newtonsoft.Json.JsonException || e is ArgumentException ||
+                                      e is FormatException || e is InvalidCastException)
             {
+                // A file of another shape, as a hand edit can make: said, instead of the crash dialog.
                 MessageBox.Show(this, e.Message, "OpenLamina", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
