@@ -2174,6 +2174,14 @@ XrBackend::StateOutcome XrBackend::OutcomeOfState(XrSessionState state, bool saw
 	return StateOutcome::Ignored;
 }
 
+bool XrBackend::ControllerQueryDue(XrSessionState state, bool exitExpected, bool restartingForInputs, bool actionsLoaded,
+    bool legacyInputAsked, bool handFound)
+{
+	if (exitExpected || restartingForInputs || actionsLoaded || legacyInputAsked || handFound)
+		return false;
+	return state == XR_SESSION_STATE_SYNCHRONIZED || state == XR_SESSION_STATE_VISIBLE || state == XR_SESSION_STATE_FOCUSED;
+}
+
 bool XrBackend::RecoveryDue(std::chrono::steady_clock::time_point lastTry, std::chrono::steady_clock::time_point now)
 {
 	return lastTry == std::chrono::steady_clock::time_point{} || now - lastTry >= kRecoveryInterval;
@@ -2516,10 +2524,12 @@ void XrBackend::PumpEvents()
 	// their first frames, and runtimes can take seconds to give focus. The profile is read straight after, in case
 	// the runtime gives it without an event. Not before the game's device is known (InputsMayAttach): another session
 	// restart for it would follow.
-	const bool framesStarted = sessionState == XR_SESSION_STATE_SYNCHRONIZED || sessionState == XR_SESSION_STATE_VISIBLE
-	    || sessionState == XR_SESSION_STATE_FOCUSED;
-	if (input && !exitExpected && !input->AreActionsLoaded() && !input->LegacyInputAsked() && framesStarted
-	    && !Hand(XrController::XCT_LEFT) && !Hand(XrController::XCT_RIGHT) && InputsMayAttach()) {
+	// Nor while the session is made again for the game's actions (a headless session is FOCUSED as soon as it has
+	// begun, inside that restart's own pump): the info set on the new session would keep the game's actions off it.
+	if (input
+	    && ControllerQueryDue(sessionState, exitExpected, restartingForInputs, input->AreActionsLoaded(), input->LegacyInputAsked(),
+	        Hand(XrController::XCT_LEFT) || Hand(XrController::XCT_RIGHT))
+	    && InputsMayAttach()) {
 		// Under the session lock (shared, if it's free): not while another thread makes and binds the game's actions
 		SessionLock sessionLock(xr_session, SessionLock::TryShared{});
 		if (sessionLock.IsHeld() && !input->AreActionsLoaded()) {
@@ -3875,6 +3885,9 @@ void XrBackend::MaybeRestartForInputs()
 	// A lost session isn't restarted: the one made again has the game's actions bound
 	if (!backend || backend->IsSessionLost())
 		return;
+	// The new session's event pump runs on this thread, under inputRestartMutex: it leaves the controllers alone
+	backend->restartingForInputs = true;
+	ScopeGuard restarted([backend] { backend->restartingForInputs = false; });
 	if (XR_FAILED(backend->RebuildSession(RebuildReason::Inputs))) {
 		// No session to put the actions on: lost until one can be made
 		backend->OnSessionLost();

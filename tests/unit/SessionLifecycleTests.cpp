@@ -24,6 +24,27 @@ TEST_CASE("A lost session is made again, and only the user quitting quits")
 	CHECK(XrBackend::OutcomeOfState(XR_SESSION_STATE_IDLE, true, false) == Outcome::Ignored);
 }
 
+TEST_CASE("The event pump looks for the controllers only on a running session nothing else has input on")
+{
+	// From the session's first frames on, with no actions, no legacy input and no hand found
+	CHECK(XrBackend::ControllerQueryDue(XR_SESSION_STATE_SYNCHRONIZED, false, false, false, false, false));
+	CHECK(XrBackend::ControllerQueryDue(XR_SESSION_STATE_VISIBLE, false, false, false, false, false));
+	CHECK(XrBackend::ControllerQueryDue(XR_SESSION_STATE_FOCUSED, false, false, false, false, false));
+	CHECK_FALSE(XrBackend::ControllerQueryDue(XR_SESSION_STATE_UNKNOWN, false, false, false, false, false));
+	CHECK_FALSE(XrBackend::ControllerQueryDue(XR_SESSION_STATE_IDLE, false, false, false, false, false));
+	CHECK_FALSE(XrBackend::ControllerQueryDue(XR_SESSION_STATE_READY, false, false, false, false, false));
+	CHECK_FALSE(XrBackend::ControllerQueryDue(XR_SESSION_STATE_STOPPING, false, false, false, false, false));
+	// Not while the session is being ended
+	CHECK_FALSE(XrBackend::ControllerQueryDue(XR_SESSION_STATE_FOCUSED, true, false, false, false, false));
+	// Not on a session being made for the game's actions, even one that is focused as soon as it begins
+	CHECK_FALSE(XrBackend::ControllerQueryDue(XR_SESSION_STATE_FOCUSED, false, true, false, false, false));
+	CHECK_FALSE(XrBackend::ControllerQueryDue(XR_SESSION_STATE_SYNCHRONIZED, false, true, false, false, false));
+	// Not once the game has its own input, or a hand has its controller
+	CHECK_FALSE(XrBackend::ControllerQueryDue(XR_SESSION_STATE_FOCUSED, false, false, true, false, false));
+	CHECK_FALSE(XrBackend::ControllerQueryDue(XR_SESSION_STATE_FOCUSED, false, false, false, true, false));
+	CHECK_FALSE(XrBackend::ControllerQueryDue(XR_SESSION_STATE_FOCUSED, false, false, false, false, true));
+}
+
 TEST_CASE("The system is asked for at once after a loss, then about once a second")
 {
 	using clock = std::chrono::steady_clock;

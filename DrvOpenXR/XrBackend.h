@@ -162,6 +162,17 @@ public:
 	 */
 	static StateOutcome OutcomeOfState(XrSessionState state, bool sawStopping, bool exitExpected);
 
+	/**
+	 * Whether the event pump looks for the controllers itself, with the info set: on a session whose frames have
+	 * started (SYNCHRONIZED on), for a game that has loaded no actions and asked for no legacy input, while neither
+	 * hand has a controller. Not while OpenLamina ends the session (exitExpected), nor while it makes the session
+	 * again for the game's actions (restartingForInputs).
+	 */
+	static bool ControllerQueryDue(XrSessionState state, bool exitExpected, bool restartingForInputs, bool actionsLoaded,
+	    bool legacyInputAsked, bool handFound);
+	// MaybeRestartForInputs is making the session again, on the thread that holds the session lock
+	std::atomic<bool> restartingForInputs{ false };
+
 	/** The wait between tries to find the system again after a loss */
 	static constexpr std::chrono::milliseconds kRecoveryInterval{ 1000 };
 	/** Whether a try is due at now: the first at once, then one each kRecoveryInterval (lastTry is {} before the first) */
