@@ -339,9 +339,11 @@ struct Stick {
 };
 Stick ReadStick(const RawInputState& in, const std::string& path, bool& forceClick)
 {
+	// An axis past the end (infinite) is at its end, and one with no number centred, so the position stays a number
+	auto axis = [](float v) { return std::isnan(v) ? 0.0f : std::isinf(v) ? std::copysign(1.0f, v) : v; };
 	Stick s;
-	s.x = in.Get(path + "/x").value_or(0);
-	s.y = in.Get(path + "/y").value_or(0);
+	s.x = axis(in.Get(path + "/x").value_or(0));
+	s.y = axis(in.Get(path + "/y").value_or(0));
 	std::optional<float> click = in.Get(path + "/click"), force = in.Get(path + "/force");
 	if (click)
 		s.clicked = *click >= 0.5f;

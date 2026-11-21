@@ -6,6 +6,7 @@
 #include "Misc/Input/Bindings/Modes.h"
 
 #include <cmath>
+#include <limits>
 
 namespace {
 const std::string kSrc = "/user/hand/right/input/trigger";
@@ -432,4 +433,17 @@ TEST_CASE("Radial_segments_clamped")
 	none.Step(At(kPad, 0, -0.9f));
 	CHECK(none.Digital("/all"));
 	CHECK_FALSE(none.mode->DigitalInput("1").has_value());
+}
+
+TEST_CASE("Joystick_at_an_infinite_axis_is_at_its_end")
+{
+	Runner r(Source("joystick", { { "position", "/move" } }, {}, kStick));
+	const float inf = std::numeric_limits<float>::infinity();
+	r.Step(At(kStick, inf, 0));
+	CHECK(r.out.analog["/move"].x == doctest::Approx(1.0f));
+	CHECK(r.out.analog["/move"].y == 0.0f);
+	r.Step(At(kStick, -inf, inf));
+	CHECK(std::isfinite(r.out.analog["/move"].x));
+	CHECK(r.out.analog["/move"].x == doctest::Approx(-1.0f / std::sqrt(2.0f)).epsilon(0.001));
+	CHECK(r.out.analog["/move"].y == doctest::Approx(1.0f / std::sqrt(2.0f)).epsilon(0.001));
 }
