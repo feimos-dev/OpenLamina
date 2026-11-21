@@ -27,11 +27,12 @@ struct BadConfigValue {
 
 static string str_tolower(std::string val)
 {
-	transform(val.begin(), val.end(), val.begin(), ::tolower);
+	// Through unsigned char: tolower of a negative char (a byte of a non-ASCII value) is undefined
+	transform(val.begin(), val.end(), val.begin(), [](unsigned char c) { return (char)::tolower(c); });
 	return val;
 }
 
-unsigned char hexval(unsigned char c)
+static unsigned char hexval(unsigned char c)
 {
 	if ('0' <= c && c <= '9')
 		return c - '0';
