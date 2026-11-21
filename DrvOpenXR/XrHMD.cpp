@@ -301,6 +301,7 @@ bool XrHMD::GetTimeSinceLastVsync(float* pfSecondsSinceLastVsync, uint64_t* pulF
 
 vr::HiddenAreaMesh_t XrHMD::GetHiddenAreaMesh(vr::EVREye eEye, vr::EHiddenAreaMeshType type)
 {
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	if (!xr_ext->xrGetVisibilityMaskKHR_Available()) {
 		// This is what the docs say we should return if the mask is unavailable
 		return HiddenAreaMesh(nullptr, 0);
