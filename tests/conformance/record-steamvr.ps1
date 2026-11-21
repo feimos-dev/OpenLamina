@@ -75,7 +75,9 @@ $manifest = foreach ($f in $files) {
         Path   = $f
         Exists = Test-Path -LiteralPath $f
         Hash   = if (Test-Path -LiteralPath $f) { (Get-FileHash -LiteralPath $f -Algorithm SHA256).Hash } else { $null }
-        Copy   = Join-Path $backup ([IO.Path]::GetFileName($f) + '.' + [Math]::Abs($f.GetHashCode()))
+        # Named after the path, the same in every run
+        Copy   = Join-Path $backup ([IO.Path]::GetFileName($f) + '.' + [Convert]::ToHexString(
+                [Security.Cryptography.SHA256]::HashData([Text.Encoding]::UTF8.GetBytes($f.ToLowerInvariant()))).Substring(0, 16))
     }
 }
 $appconfigDir = Join-Path $config 'vrappconfig'
@@ -124,6 +126,12 @@ if ($WhatIf) {
     return
 }
 
+# A backup an earlier run didn't put back (it was stopped before the end): backing up again would keep the test state
+# as the user's
+$pending = Join-Path $backup 'manifest.json'
+if (Test-Path -LiteralPath $pending) {
+    throw "An earlier run's backup was never put back: copy each file in $pending from its Copy to its Path (removing the Paths that didn't exist), then delete $pending"
+}
 New-Item -ItemType Directory -Force -Path $backup | Out-Null
 foreach ($m in $manifest) { if ($m.Exists) { Copy-Item -LiteralPath $m.Path -Destination $m.Copy -Force } }
 $manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $backup 'manifest.json') -Encoding utf8
@@ -219,6 +227,7 @@ finally {
         }
     }
     if ($mismatch) { throw "NOT put back exactly (backups in $backup): $($mismatch -join ', ')" }
+    Move-Item -LiteralPath $pending -Destination (Join-Path $backup 'manifest.restored.json') -Force
     Write-Host "Every file put back; SHA-256s match ($backup). The active OpenXR runtime is the one before."
 }
 if ($failed) { throw 'The recording failed; files were put back.' }
