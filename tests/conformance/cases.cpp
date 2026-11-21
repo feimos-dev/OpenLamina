@@ -4042,6 +4042,74 @@ void TrackerRestartCase(CaseContext& c)
 	c.Record("tracker", r);
 }
 
+// A Vive tracker by its role that the game knows before it loads its action manifest (expect/role_tracker_restart.json,
+// on the stand-in with scripts/vive_trackers.json and --manifest manifest_trackers.json): the session is made again for
+// the manifest's actions, and the waist's tracker stays the device it was, never told to the game as gone
+void RoleTrackerRestartCase(CaseContext& c)
+{
+	using namespace vr::IVRInput_010;
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	vr::EVRInitError le;
+	auto* in = (IVRInput*)c.core->GetGenericInterface("IVRInput_010", &le);
+	if (!in) {
+		c.Record("no IVRInput_010", Err(le));
+		c.core->Cleanup();
+		return;
+	}
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	// The device whose controller type is the waist tracker's; -1 if there's none
+	auto waist = [&] {
+		for (vr::TrackedDeviceIndex_t i = 1; i < vr::k_unMaxTrackedDeviceCount; i++) {
+			char type[256] = {};
+			f.sys->GetStringTrackedDeviceProperty(i, vr::Prop_ControllerType_String, type, sizeof(type), nullptr);
+			if (f.sys->GetTrackedDeviceClass(i) == vr::TrackedDeviceClass_GenericTracker && std::string(type) == "vive_tracker_waist")
+				return (int)i;
+		}
+		return -1;
+	};
+	int deactivations = 0;
+	auto poll = [&] {
+		vr::VREvent_t ev{};
+		for (int n = 0; n < 256 && f.sys->PollNextEvent(&ev, sizeof(ev)); n++)
+			deactivations += ev.eventType == vr::VREvent_TrackedDeviceDeactivated && f.sys->GetTrackedDeviceClass(ev.trackedDeviceIndex) != vr::TrackedDeviceClass_Controller;
+	};
+	// Frames with the old input read: its actions, and the trackers' with them, are on the session
+	for (int frame = 0; frame < 15; frame++) {
+		vr::VRControllerState_t state{};
+		f.sys->GetControllerState(1, &state, sizeof(state));
+		GameFrame(f, tex.get());
+		poll();
+	}
+	Json::Value r;
+	const int before = waist();
+	r["waist_known_before_the_manifest"] = before > 0;
+	r["SetActionManifestPath"] = (int)in->SetActionManifestPath(c.manifest.c_str());
+	vr::VRActionSetHandle_t set = vr::k_ulInvalidActionSetHandle;
+	in->GetActionSetHandle("/actions/main", &set);
+	for (int frame = 0; frame < 10; frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+		VRActiveActionSet_t active{};
+		active.ulActionSet = set;
+		in->UpdateActionState(&active, sizeof(active), 1);
+		f.comp->Submit(vr::Eye_Left, tex.get(), nullptr, vr::Submit_Default);
+		f.comp->Submit(vr::Eye_Right, tex.get(), nullptr, vr::Submit_Default);
+		poll();
+	}
+	r["waist_is_the_same_device"] = before > 0 && waist() == before;
+	vr::TrackedDevicePose_t poses[16]{};
+	f.sys->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding, 0, poses, 16);
+	r["waist_pose_valid"] = before > 0 && before < 16 && poses[before].bPoseIsValid;
+	r["tracker_deactivations"] = deactivations;
+	c.core->Cleanup();
+	Json::Value dump = ReadStandInDump();
+	if (!dump.isNull())
+		r["sessions_created"] = dump["sessions_created"];
+	c.Record("tracker", r);
+}
+
 } // namespace
 
 const std::map<std::string, CaseFn>& conformance::Cases()
@@ -4102,6 +4170,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "manifest-mid-frame", ManifestMidFrameCase },
 		{ "seated-zero-kept-frame", SeatedZeroKeptFrameCase },
 		{ "tracker-restart", TrackerRestartCase },
+		{ "role-tracker-restart", RoleTrackerRestartCase },
 	};
 	static const std::map<std::string, CaseFn> all = [] {
 		std::map<std::string, CaseFn> m = cases;

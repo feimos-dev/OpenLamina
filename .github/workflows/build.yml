@@ -312,6 +312,8 @@ jobs:
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases tracker-restart --script tests/conformance/scripts/xdev_tracker.json --expect tests/conformance/expect/tracker_restart.json --out conformance/tracker-restart
           if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases role-tracker-restart --script tests/conformance/scripts/vive_trackers.json --manifest tests/unit/data/manifest_trackers.json --expect tests/conformance/expect/role_tracker_restart.json --out conformance/role-tracker-restart
+          if ($LASTEXITCODE) { $failed++ }
           # Controllers found from the game's first frames
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases controllers-early --script tests/conformance/scripts/controllers_early.json --expect tests/conformance/expect/controllers_early.json --out conformance/controllers-early
           if ($LASTEXITCODE) { $failed++ }

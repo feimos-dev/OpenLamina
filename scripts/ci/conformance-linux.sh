@@ -156,6 +156,7 @@ run --cases helper-app-controllers --script tests/conformance/scripts/helper_app
 run --cases manifest-mid-frame --manifest tests/unit/data/manifest_basic.json --expect tests/conformance/expect/manifest_mid_frame.json --out "$out"/manifest-mid-frame
 run --cases seated-zero-kept-frame --ini tests/conformance/ini/own_frames.ini --expect tests/conformance/expect/seated_zero_kept_frame.json --out "$out"/seated-zero-kept-frame
 run --cases tracker-restart --script tests/conformance/scripts/xdev_tracker.json --expect tests/conformance/expect/tracker_restart.json --out "$out"/tracker-restart
+run --cases role-tracker-restart --script tests/conformance/scripts/vive_trackers.json --manifest tests/unit/data/manifest_trackers.json --expect tests/conformance/expect/role_tracker_restart.json --out "$out"/role-tracker-restart
 
 echo "$failed failed"
 exit $((failed > 0))
