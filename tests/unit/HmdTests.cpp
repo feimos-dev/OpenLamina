@@ -466,6 +466,29 @@ TEST_CASE("The OpenXR instance asks for the newest version the loader and runtim
 	CHECK(version == 0);
 }
 
+TEST_CASE("The startup info's action manifest path is read only from a JSON object with a string in it")
+{
+	using Path = std::optional<std::string>;
+	CHECK(DrvOpenXR::ManifestPathFromStartupInfo("{\"action_manifest_path\": \"C:/game/actions.json\"}") == Path("C:/game/actions.json"));
+	CHECK_FALSE(DrvOpenXR::ManifestPathFromStartupInfo("{\"other\": 1}").has_value());
+	CHECK_FALSE(DrvOpenXR::ManifestPathFromStartupInfo(nullptr).has_value());
+	CHECK_FALSE(DrvOpenXR::ManifestPathFromStartupInfo("").has_value());
+	CHECK_FALSE(DrvOpenXR::ManifestPathFromStartupInfo("not json").has_value());
+	// JSON of another shape than the one expected is no path, and nothing is thrown at the game
+	CHECK_NOTHROW(DrvOpenXR::ManifestPathFromStartupInfo("[]"));
+	CHECK_FALSE(DrvOpenXR::ManifestPathFromStartupInfo("[]").has_value());
+	CHECK_FALSE(DrvOpenXR::ManifestPathFromStartupInfo("5").has_value());
+	CHECK_FALSE(DrvOpenXR::ManifestPathFromStartupInfo("\"action_manifest_path\"").has_value());
+	CHECK_FALSE(DrvOpenXR::ManifestPathFromStartupInfo("null").has_value());
+	CHECK_FALSE(DrvOpenXR::ManifestPathFromStartupInfo("{\"action_manifest_path\": [1, 2]}").has_value());
+	CHECK_FALSE(DrvOpenXR::ManifestPathFromStartupInfo("{\"action_manifest_path\": {\"a\": 1}}").has_value());
+	CHECK_FALSE(DrvOpenXR::ManifestPathFromStartupInfo("{\"action_manifest_path\": 7}").has_value());
+	// Nested deeper than the parser goes
+	const std::string deep(2000, '[');
+	CHECK_NOTHROW(DrvOpenXR::ManifestPathFromStartupInfo(deep.c_str()));
+	CHECK_FALSE(DrvOpenXR::ManifestPathFromStartupInfo(deep.c_str()).has_value());
+}
+
 TEST_CASE("The preferred refresh rate asks for the display's nearest one")
 {
 	const std::vector<float> rates = { 72.0f, 90.0f, 120.0f };

@@ -135,32 +135,44 @@ static IBackend* StartupFailed(vr::EVRInitError* error, vr::EVRInitError e)
 	return nullptr;
 }
 
-static void handleStartupInfo(const char* startupInfo)
+std::optional<std::string> DrvOpenXR::ManifestPathFromStartupInfo(const char* startupInfo)
 {
 	// According to some Proton code (vrclient_x64/json_converter.cpp::json_convert_startup_info), the startup info is json.
-	if (!startupInfo) {
-		return;
-	}
+	if (!startupInfo)
+		return std::nullopt;
 
 	std::string info(startupInfo);
-	OOVR_LOGF("got startup info: %s", startupInfo);
-
 	Json::CharReaderBuilder builder;
 	auto reader = std::unique_ptr<Json::CharReader>(builder.newCharReader());
 	Json::Value root;
 	std::string errs;
-	if (!reader->parse(info.data(), info.data() + info.size(), &root, &errs)) {
-		OOVR_LOGF("WARNING: Failed to parse startupInfo: %s (%c)", errs.c_str(), errs.back());
-		return;
+	// The text is the game's: jsoncpp throws for text nested too deeply, and anything but an object with a string in
+	// it has no path
+	try {
+		if (!reader->parse(info.data(), info.data() + info.size(), &root, &errs)) {
+			OOVR_LOGF("WARNING: Failed to parse startupInfo: %s", errs.c_str());
+			return std::nullopt;
+		}
+		if (!root.isObject() || !root["action_manifest_path"].isString())
+			return std::nullopt;
+		return root["action_manifest_path"].asString();
+	} catch (const std::exception& e) {
+		OOVR_LOGF("WARNING: Failed to read startupInfo: %s", e.what());
+		return std::nullopt;
 	}
+}
 
-	if (!root.isMember("action_manifest_path")) {
+static void handleStartupInfo(const char* startupInfo)
+{
+	if (!startupInfo)
 		return;
-	}
+	OOVR_LOGF("got startup info: %s", startupInfo);
 
-	std::string manifest = root["action_manifest_path"].asString();
-	OOVR_LOGF("Got action manifest path: %s", manifest.c_str());
-	BaseInput::setStartupManifest(manifest);
+	std::optional<std::string> manifest = DrvOpenXR::ManifestPathFromStartupInfo(startupInfo);
+	if (!manifest)
+		return;
+	OOVR_LOGF("Got action manifest path: %s", manifest->c_str());
+	BaseInput::setStartupManifest(*manifest);
 }
 
 namespace {
