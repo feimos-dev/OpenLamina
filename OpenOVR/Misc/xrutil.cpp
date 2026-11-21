@@ -79,8 +79,10 @@ XrExt::XrExt(XrGraphicsApiSupportedFlags apis, const std::vector<const char*>& e
 	const bool vulkanEnable2 = enabledExtensions.count(XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME) != 0;
 #endif
 
-#define XR_BIND(name, function) OOVR_FAILED_XR_ABORT(xrGetInstanceProcAddr(xr_instance, #name, (PFN_xrVoidFunction*)&this->function))
-#define XR_BIND_OPT(name, function) xrGetInstanceProcAddr(xr_instance, #name, (PFN_xrVoidFunction*)&this->function)
+// A function the runtime doesn't give stays null, and its wrapper answers XR_ERROR_FUNCTION_UNSUPPORTED, which every
+// caller takes: some loaders list an extension without forwarding its functions. XR_BIND says so in the log.
+#define XR_BIND_OPT(name, function)                                                                      	do {                                                                                                 		if (XR_FAILED(xrGetInstanceProcAddr(xr_instance, #name, (PFN_xrVoidFunction*)&this->function))) 			this->function = nullptr;                                                                    	} while (0)
+#define XR_BIND(name, function)                                                                	do {                                                                                       		XR_BIND_OPT(name, function);                                                           		if (!this->function)                                                                   			OOVR_LOG("The OpenXR runtime lists the extension of " #name " without the function"); 	} while (0)
 
 	if (hasVisMask)
 		XR_BIND_OPT(xrGetVisibilityMaskKHR, pfnXrGetVisibilityMaskKHR);

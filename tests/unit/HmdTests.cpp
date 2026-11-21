@@ -2,6 +2,7 @@
 
 #include "stdafx.h"
 
+#include "Misc/xr_ext.h"
 #include "XrBackend.h"
 #include "XrHMD.h"
 #include "Reimpl/BaseSystem.h"
@@ -487,6 +488,18 @@ TEST_CASE("The startup info's action manifest path is read only from a JSON obje
 	const std::string deep(2000, '[');
 	CHECK_NOTHROW(DrvOpenXR::ManifestPathFromStartupInfo(deep.c_str()));
 	CHECK_FALSE(DrvOpenXR::ManifestPathFromStartupInfo(deep.c_str()).has_value());
+}
+
+TEST_CASE("An extension whose functions the runtime doesn't give is left unavailable")
+{
+	// Without an instance every function lookup fails, as for an extension a loader lists and doesn't forward
+	XrExt ext(XR_SUPPORTED_GRAPHICS_API_D3D11 | XR_SUPPORTED_GRAPHICS_API_D3D12 | XR_SUPPORTED_GRAPHICS_API_VK | XR_SUPPORTED_GRAPHICS_API_GL,
+	    { XR_EXT_HAND_TRACKING_EXTENSION_NAME, XR_KHR_VISIBILITY_MASK_EXTENSION_NAME });
+	CHECK_FALSE(ext.handTrackingExtensionAvailable());
+	CHECK_FALSE(ext.xrGetVisibilityMaskKHR_Available());
+	XrHandTrackerEXT tracker = XR_NULL_HANDLE;
+	CHECK(ext.xrCreateHandTrackerEXT(XR_NULL_HANDLE, nullptr, &tracker) == XR_ERROR_FUNCTION_UNSUPPORTED);
+	CHECK(ext.xrDestroyHandTrackerEXT(tracker) == XR_ERROR_FUNCTION_UNSUPPORTED);
 }
 
 TEST_CASE("The preferred refresh rate asks for the display's nearest one")
