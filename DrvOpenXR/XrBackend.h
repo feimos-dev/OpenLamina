@@ -621,13 +621,15 @@ private:
 	// A wrapper around a graphics binding type, subclassing BindingBase
 	// It is templated to allow storing any of the possible graphics bindings and getting a void* to it,
 	// as necessary for xrCreateSession (in DrvOpenXR::SetupSession)
+	// keep: what holds the binding's device alive (a D3D device's reference), let go of with the binding
 	template <typename T>
 	class BindingWrapper : public BindingBase {
 		const T data;
+		const std::shared_ptr<void> keep;
 
 	public:
-		BindingWrapper(T data)
-		    : data(data) {}
+		BindingWrapper(T data, std::shared_ptr<void> keep = nullptr)
+		    : data(data), keep(std::move(keep)) {}
 		~BindingWrapper() override
 		{
 #if defined(SUPPORT_GL) && !defined(_WIN32)
@@ -638,8 +640,10 @@ private:
 		const void* asVoid() override { return &data; }
 	};
 
-	// The current graphics binding, used for restarting the session
-	inline static std::unique_ptr<BindingBase> graphicsBinding = nullptr;
+	// The current graphics binding, used for restarting the session: later sessions (for the game's inputs, after a
+	// loss) are made on its device too, which a D3D binding therefore holds a reference to. A Vulkan device or an
+	// OpenGL context can't be held: the game keeps those alive while it uses OpenVR.
+	std::unique_ptr<BindingBase> graphicsBinding;
 	// OpenGL or Vulkan frames copied through D3D11, whose device graphicsBinding has (GfxInterop.h)
 	std::unique_ptr<class GfxInterop> gfxInterop;
 	static std::unique_ptr<class TemporaryGraphics> temporaryGraphics;

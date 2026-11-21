@@ -611,11 +611,10 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex, bool moveToNewD
 			XrGraphicsBindingD3D11KHR d3dInfo{};
 			d3dInfo.type = XR_TYPE_GRAPHICS_BINDING_D3D11_KHR;
 			d3dInfo.device = dev;
-			graphicsBinding = std::make_unique<BindingWrapper<XrGraphicsBindingD3D11KHR>>(d3dInfo);
-			XrResult made = RebuildSession(RebuildReason::AppGraphics);
-
-			dev->Release();
-			if (XR_FAILED(made))
+			// The binding takes over the device's reference
+			std::shared_ptr<void> keep(dev, [](void* device) { ((ID3D11Device*)device)->Release(); });
+			graphicsBinding = std::make_unique<BindingWrapper<XrGraphicsBindingD3D11KHR>>(d3dInfo, std::move(keep));
+			if (XR_FAILED(RebuildSession(RebuildReason::AppGraphics)))
 				return giveUp("the OpenXR runtime refused a session on the game's D3D11 device");
 			break;
 		}
@@ -637,11 +636,11 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex, bool moveToNewD
 			d3dInfo.type = XR_TYPE_GRAPHICS_BINDING_D3D12_KHR;
 			d3dInfo.device = device.Get();
 			d3dInfo.queue = d3dTexData->m_pCommandQueue;
-			graphicsBinding = std::make_unique<BindingWrapper<XrGraphicsBindingD3D12KHR>>(d3dInfo);
+			// The binding holds the device and the queue
+			auto keep = std::make_shared<std::pair<ComPtr<ID3D12Device>, ComPtr<ID3D12CommandQueue>>>(device, d3dTexData->m_pCommandQueue);
+			graphicsBinding = std::make_unique<BindingWrapper<XrGraphicsBindingD3D12KHR>>(d3dInfo, std::move(keep));
 			if (XR_FAILED(RebuildSession(RebuildReason::AppGraphics)))
 				return giveUp("the OpenXR runtime refused a session on the game's D3D12 device");
-
-			// The ComPtr releases the device: no explicit Release here
 			break;
 		}
 #endif
