@@ -51,6 +51,10 @@ struct FakeLibMonado {
 		SetEnv("FAKE_MND_BATTERY", nullptr);
 		SetEnv("FAKE_MND_SAME_NAMES", nullptr);
 		SetEnv("FAKE_MND_NO_BATTERY", nullptr);
+		// Also those a test sets for part of it, in case a failed REQUIRE skipped its own reset
+		SetEnv("FAKE_MND_NO_GET", nullptr);
+		SetEnv("FAKE_MND_NO_SET", nullptr);
+		SetEnv("FAKE_MND_NO_OFFSETS", nullptr);
 	}
 };
 } // namespace
