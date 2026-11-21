@@ -122,8 +122,14 @@ bool DX12Compositor::ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTexture
 {
 	// The game's texture is in PIXEL_SHADER_RESOURCE (as OpenVR's D3D12 textures are given), and is put back there
 	auto* input = tex ? (D3D12TextureData_t*)tex->handle : nullptr;
-	if (!input || !input->m_pResource || !input->m_pCommandQueue)
+	if (!input || !input->m_pResource || !input->m_pCommandQueue || !device || !queue)
 		return false;
+	// Only a texture of this compositor's device can be copied with its lists
+	ComPtr<ID3D12Device> textureDevice;
+	if (FAILED(input->m_pResource->GetDevice(IID_PPV_ARGS(&textureDevice))) || textureDevice.Get() != device.Get()) {
+		OOVR_LOG_ONCE("A D3D12 texture of another device can't be read back here");
+		return false;
+	}
 	D3D12_RESOURCE_DESC desc = input->m_pResource->GetDesc();
 	const TexelLayout layout = TexelLayoutOfDxgi(desc.Format);
 	if (layout == TexelLayout::Unknown || desc.Dimension != D3D12_RESOURCE_DIMENSION_TEXTURE2D) {
@@ -397,7 +403,7 @@ bool DX12Compositor::CopyDepth(const vr::Texture_t* depth)
 	// The game's depth texture is in PIXEL_SHADER_RESOURCE (as its colour is) and is put back there; the runtime's
 	// depth images are in DEPTH_WRITE whenever it has them
 	auto* input = (D3D12TextureData_t*)depth->handle;
-	if (!input->m_pResource)
+	if (!input || !input->m_pResource || !device || !queue)
 		return false;
 	D3D12_RESOURCE_DESC desc = input->m_pResource->GetDesc();
 	if (desc.SampleDesc.Count > 1) {
