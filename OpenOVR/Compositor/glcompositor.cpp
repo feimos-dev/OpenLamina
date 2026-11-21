@@ -93,6 +93,12 @@ static PFNGLFRAMEBUFFERRENDERBUFFERPROC glFramebufferRenderbuffer = nullptr;
 #ifndef GL_TEXTURE_2D_ARRAY
 #define GL_TEXTURE_2D_ARRAY 0x8C1A
 #endif
+#ifndef GL_TEXTURE_BINDING_2D_ARRAY
+#define GL_TEXTURE_BINDING_2D_ARRAY 0x8C1D
+#endif
+#ifndef GL_TEXTURE_BINDING_2D_MULTISAMPLE
+#define GL_TEXTURE_BINDING_2D_MULTISAMPLE 0x9104
+#endif
 #ifndef GL_TEXTURE_DEPTH
 #define GL_TEXTURE_DEPTH 0x8071
 #endif
@@ -245,13 +251,19 @@ void GLBaseCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::V
 			glBindRenderbuffer(GL_RENDERBUFFER, (GLuint)previous);
 			return;
 		}
+		// The game's binding of the target is put back after
+		const GLenum binding = target == GL_TEXTURE_2D_ARRAY ? GL_TEXTURE_BINDING_2D_ARRAY
+		    : target == GL_TEXTURE_2D_MULTISAMPLE           ? GL_TEXTURE_BINDING_2D_MULTISAMPLE
+		                                                    : GL_TEXTURE_BINDING_2D;
+		GLint previous = 0;
+		glGetIntegerv(binding, &previous);
 		glBindTexture(target, src); // Sadly even GLES3.2 doesn't have glGetTextureLevelParameteriv which takes the image directly
 		glGetTexLevelParameteriv(target, 0, GL_TEXTURE_WIDTH, &inputWidth);
 		glGetTexLevelParameteriv(target, 0, GL_TEXTURE_HEIGHT, &inputHeight);
 		glGetTexLevelParameteriv(target, 0, GL_TEXTURE_INTERNAL_FORMAT, &rawFormat);
 		if (array)
 			glGetTexLevelParameteriv(target, 0, GL_TEXTURE_DEPTH, &layers);
-		glBindTexture(target, 0);
+		glBindTexture(target, (GLuint)previous);
 	};
 	query();
 	if (!renderbuffer && !array && inputWidth <= 0) {
