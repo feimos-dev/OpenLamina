@@ -27,7 +27,6 @@
 
 // On Linux these seem to already be defined
 #ifdef _WIN32
-typedef void(APIENTRY* PFNGLGETTEXTURELEVELPARAMETERIVPROC)(GLuint texture, GLint level, GLenum pname, GLint* params);
 typedef void(APIENTRY* PFNGLCOPYIMAGESUBDATAPROC)(GLuint srcName, GLenum srcTarget, GLint srcLevel, GLint srcX, GLint srcY, GLint srcZ,
     GLuint dstName, GLenum dstTarget, GLint dstLevel, GLint dstX, GLint dstY, GLint dstZ, GLsizei srcWidth, GLsizei srcHeight, GLsizei srcDepth);
 typedef void(APIENTRY* PFNGLGENFRAMEBUFFERSPROC)(GLsizei n, GLuint* framebuffers);
@@ -45,9 +44,10 @@ typedef void(APIENTRY* PFNGLFRAMEBUFFERRENDERBUFFERPROC)(GLenum target, GLenum a
 #define GL_COLOR_ATTACHMENT0 0x8CE0
 #endif
 
-static PFNGLGETTEXTURELEVELPARAMETERIVPROC glGetTextureLevelParameteriv = nullptr;
-// Set if the driver lacks one of the functions below (GLCompositor's constructor)
+// Set if the driver lacks one of the functions below (GLCompositor's constructor, which tries again until it has them
+// all: a first try may have run with no context current)
 static bool glFunctionsMissing = false;
+static bool glFunctionsLoaded = false;
 static PFNGLCOPYIMAGESUBDATAPROC glCopyImageSubData = nullptr;
 static PFNGLBINDFRAMEBUFFERPROC glBindFramebuffer = nullptr;
 static PFNGLGENFRAMEBUFFERSPROC glGenFramebuffers = nullptr;
@@ -110,14 +110,14 @@ static void* getGlProcAddr(const char* name)
 }
 GLCompositor::GLCompositor(GLuint initialTexture)
 {
-	if (!glGetTextureLevelParameteriv) {
+	if (!glFunctionsLoaded) {
 		// A function the driver doesn't have: no OpenGL copies (Submit answers RequestFailed), nothing ends
+		bool missing = false;
 #define LOAD_FUNC(x)                                    \
 	if (!(*(void**)& x = (void*)getGlProcAddr(#x))) { \
-		OOVR_LOG("Could not get function " #x);         \
-		glFunctionsMissing = true;                      \
+		OOVR_LOG_ONCE("Could not get function " #x);    \
+		missing = true;                                 \
 	}
-		LOAD_FUNC(glGetTextureLevelParameteriv);
 		LOAD_FUNC(glCopyImageSubData);
 		LOAD_FUNC(glBindFramebuffer);
 		LOAD_FUNC(glGenFramebuffers);
@@ -128,6 +128,8 @@ GLCompositor::GLCompositor(GLuint initialTexture)
 		LOAD_FUNC(glBindRenderbuffer);
 		LOAD_FUNC(glGetRenderbufferParameteriv);
 		LOAD_FUNC(glFramebufferRenderbuffer);
+		glFunctionsMissing = missing;
+		glFunctionsLoaded = !missing;
 	}
 #undef LOAD_FUNC
 	if (glFunctionsMissing)
