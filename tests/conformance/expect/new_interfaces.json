@@ -1,5 +1,5 @@
 {
- "#": "The interfaces the fork never had, on the stand-in (run.py --cases new-interfaces --expect expect/new_interfaces.json). An anchor given back as created and through its descriptor; one driver named by the runtime's first word (the stand-in is 'OpenLamina test runtime'); no camera. IVRPaths through FnTable:IVRPaths_002: paths kept; a batch names a container there isn't (5, InvalidDevice, as SteamVR answers), its entries untouched.",
+ "#": "The interfaces the fork never had, on the stand-in (run.py --cases new-interfaces --expect expect/new_interfaces.json). An anchor given back as created and through its descriptor; one driver named by the runtime's first word (the stand-in is 'OpenLamina test runtime'); no camera. IVRPaths through FnTable:IVRPaths_002: paths kept; a batch names a container there isn't (5, InvalidDevice, as SteamVR answers), each entry marked UnknownProperty (4).",
  "new-interfaces/IVRSpatialAnchors_001 round trip/-/-": {
   "create": 0,
   "get": 0,
@@ -31,9 +31,9 @@
   "used": 21,
   "small buffer": 3,
   "read": 5,
-  "entry errors": 0,
+  "entry errors": 44,
   "write": 5,
-  "write entry errors": 0,
+  "write entry errors": 44,
   "stride kept": true
  }
 }
