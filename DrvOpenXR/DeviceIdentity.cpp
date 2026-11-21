@@ -54,6 +54,35 @@ uint64_t ButtonsForComponent(const std::string& component)
 	return 0;
 }
 
+// SteamVR's input profile and registered device type prefix (followed by the serial) per OpenVR controller type
+struct ControllerRow {
+	const char* inputProfilePath;
+	const char* registeredPrefix; // null: the Oculus driver's form stays
+};
+
+const ControllerRow* ControllerRowFor(const std::string& controllerType)
+{
+	static const std::map<std::string, ControllerRow> rows = {
+		{ "knuckles", { "{indexcontroller}/input/index_controller_profile.json", "valve/index_controller" } },
+		{ "vive_controller", { "{htc}/input/vive_controller_profile.json", nullptr } },
+		{ "oculus_touch", { "{oculus}/input/touch_profile.json", nullptr } },
+	};
+	auto it = rows.find(controllerType);
+	return it == rows.end() ? nullptr : &it->second;
+}
+
+// The maker a runtime's device name starts with ("Pimax Dream Air"), as SteamVR's drivers name it
+std::string MakerOfDeviceName(const std::string& deviceName)
+{
+	static const std::map<std::string, std::string> makers = {
+		{ "Pimax", "Pimax" },
+		{ "Valve", "Valve" },
+	};
+	size_t end = deviceName.find(' ');
+	auto it = makers.find(deviceName.substr(0, end));
+	return it == makers.end() ? std::string() : it->second;
+}
+
 } // namespace
 
 std::string HmdManufacturer(uint32_t vendorId, const std::string& runtimeName)
@@ -90,8 +119,13 @@ DeviceIdentity HmdIdentity(const std::string& xrSystemName, const RuntimeDevice&
 	DeviceIdentity id = DefaultHmd();
 	if (xrSystemName.empty())
 		return id;
-	// Who made it from the system's vendor ID (the system name is its model), else the runtime's name
-	std::string maker = HmdManufacturer(vendorId, runtimeName);
+	// Who made it from the system's vendor ID (the system name is its model), else from the start of the device's name
+	// (libmonado's, for a known maker), else the runtime's name
+	std::string maker = HmdManufacturer(vendorId, std::string());
+	if (maker.empty())
+		maker = MakerOfDeviceName(device.name);
+	if (maker.empty())
+		maker = HmdManufacturer(vendorId, runtimeName);
 	if (!maker.empty())
 		id.manufacturer = maker;
 	id.modelNumber = device.name.empty() ? xrSystemName : device.name;
@@ -136,6 +170,11 @@ DeviceIdentity ControllerIdentity(const InteractionProfile& profile, vr::ETracke
 		std::optional<const char*> model = left ? profile.GetLeftHandRenderModelName() : profile.GetRightHandRenderModelName();
 		id.renderModel = model ? *model : (left ? "renderLeftHand" : "renderRightHand");
 		id.registeredDeviceType = left ? "oculus/F00BAAF00F_Controller_Left" : "oculus/F00BAAF00F_Controller_Right";
+		if (const ControllerRow* row = ControllerRowFor(id.controllerType)) {
+			id.inputProfilePath = row->inputProfilePath;
+			if (row->registeredPrefix)
+				id.registeredDeviceType = row->registeredPrefix + id.serial;
+		}
 	} else {
 		id.renderModel = "renderObject0";
 	}
