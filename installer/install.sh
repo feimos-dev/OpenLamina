@@ -134,6 +134,13 @@ def load(file):
 # Written next to the real file (a symlink stays a symlink), with its permissions, after a backup named by the date and
 # time (an earlier backup is never overwritten). A file that can't be written, as when made read-only to keep SteamVR
 # from changing it, is refused and left as it is.
+def discard(temp):
+    try:
+        if os.path.isfile(temp):
+            os.remove(temp)
+    except OSError:
+        pass
+
 def save(file, data, old):
     file = os.path.realpath(file)
     folder = os.path.dirname(file)
@@ -159,14 +166,17 @@ def save(file, data, old):
             shutil.copymode(file, temp)
         os.replace(temp, file)
     except PermissionError as e:
-        if os.path.exists(temp):
-            os.remove(temp)
+        discard(temp)
         # A read-only file, else its folder (temporary and backup files go there too)
         name = file if e.filename == file else folder
         what = "file" if name == file else "folder"
         sys.exit(f"install.sh: {name} can't be written (it or its folder is read-only), so {'it' if name == file else file} was left as it is.\n"
                  f"To let install.sh change it, make the {what} writable (chmod u+w {shlex.quote(name)}) and run this again; "
                  f"SteamVR can then change it too. Or leave it, and choose the runtime per game with VR_OVERRIDE (README, \"Linux notes\").")
+    except OSError as e:
+        # A full disk, say: the temporary file goes, the real one is as it was
+        discard(temp)
+        sys.exit(f"install.sh: {file} can't be written ({e.strerror or e}), so it was left as it is.")
 
 def version_key(v):
     m = re.fullmatch(r"(\d+(?:\.\d+)*)(?:-([0-9A-Za-z.-]+))?", v or "")
