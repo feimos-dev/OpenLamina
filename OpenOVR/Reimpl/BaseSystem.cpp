@@ -431,7 +431,9 @@ uint32_t BaseSystem::GetSortedTrackedDeviceIndicesOfClass(ETrackedDeviceClass ta
 
 EDeviceActivityLevel BaseSystem::GetTrackedDeviceActivityLevel(vr::TrackedDeviceIndex_t unDeviceId)
 {
-	// TODO implement
+	// Unknown where there's no device, as SteamVR answers; a device that is there counts as in use
+	if (!BackendManager::Instance().GetDevice(unDeviceId))
+		return k_EDeviceActivityLevel_Unknown;
 	return k_EDeviceActivityLevel_UserInteraction;
 }
 
