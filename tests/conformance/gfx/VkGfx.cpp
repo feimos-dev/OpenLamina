@@ -532,6 +532,7 @@ public:
 	VkCommandPool busyPool = VK_NULL_HANDLE;
 	VkCommandBuffer busyCommands = VK_NULL_HANDLE;
 	VkFence busyFence = VK_NULL_HANDLE;
+	bool busyStuck = false;
 
 	void Busy(int n) override
 	{
@@ -553,12 +554,14 @@ public:
 			ai.commandBufferCount = 1;
 			D<PFN_vkAllocateCommandBuffers>("vkAllocateCommandBuffers")(device, &ai, &busyCommands);
 		}
-		if (!busyCommands)
+		if (!busyCommands || busyStuck)
 			return;
-		// The last round's clears are over before the command buffer is recorded again; a fence a failed submit never
-		// signals isn't waited for past ten seconds, and the round is left out
-		if (D<PFN_vkWaitForFences>("vkWaitForFences")(device, 1, &busyFence, VK_TRUE, 10'000'000'000ull) != VK_SUCCESS)
+		// The last round's clears are over before the command buffer is recorded again; a fence that a failed submit
+		// never signals isn't waited for past ten seconds, and no round is made after it
+		if (D<PFN_vkWaitForFences>("vkWaitForFences")(device, 1, &busyFence, VK_TRUE, 10'000'000'000ull) != VK_SUCCESS) {
+			busyStuck = true;
 			return;
+		}
 		D<PFN_vkResetFences>("vkResetFences")(device, 1, &busyFence);
 		VkCommandBufferBeginInfo bi{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
 		bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
