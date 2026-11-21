@@ -44,10 +44,10 @@
 #include <atomic>
 #include <chrono>
 #include <climits>
-#include <codecvt>
 #include <locale>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 
 using glm::mat4;
@@ -920,21 +920,12 @@ std::array<PointerRay, 2> ReadRays(bool available)
 	return rays;
 }
 
-// UTF-8 as the font draws it (characters it can't decode as '?')
+// UTF-8 as the font draws it (what isn't UTF-8 left out; a character beyond 16 bits doesn't spoil the rest)
 std::wstring WideText(const char* utf8)
 {
 	if (!utf8)
 		return {};
-	try {
-		// Its own converter: the shared one isn't thread-safe, and a message box is built on the caller's thread
-		std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
-		return converter.from_bytes(utf8);
-	} catch (const std::range_error&) {
-		std::wstring out;
-		for (const char* c = utf8; *c; c++)
-			out += (unsigned char)*c < 0x80 ? (wchar_t)*c : L'?';
-		return out;
-	}
+	return VRKeyboard::Utf8ToWide(utf8);
 }
 
 // Text broken into lines no wider than width, at spaces and newlines (a word wider than a line, at a character)

@@ -189,6 +189,15 @@ TEST_CASE("Wide_and_UTF8_strings_convert_both_ways")
 	CHECK(VRKeyboard::WideToUtf8(L"").empty());
 }
 
+TEST_CASE("Text_that_is_not_UTF8_characters_is_left_out")
+{
+	// An overlong '/', an encoded surrogate, a value beyond U+10FFFF; then a 4-byte character, which stays
+	CHECK(VRKeyboard::Utf8ToWide("a\xC0\xAF" "b") == L"ab");
+	CHECK(VRKeyboard::Utf8ToWide("a\xED\xA0\x80" "b") == L"ab");
+	CHECK(VRKeyboard::Utf8ToWide("a\xF4\x90\x80\x80" "b") == L"ab");
+	CHECK(VRKeyboard::WideToUtf8(VRKeyboard::Utf8ToWide("a\xF0\x9F\x98\x80" "b")) == "a\xF0\x9F\x98\x80" "b");
+}
+
 TEST_CASE("Caret_inserts_and_deletes_where_it_is")
 {
 	REQUIRE(Us());

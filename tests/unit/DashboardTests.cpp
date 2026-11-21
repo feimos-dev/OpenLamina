@@ -228,6 +228,21 @@ TEST_CASE("Dashboard_tabs_of_a_document_of_another_shape")
 	REQUIRE_NOTHROW(d.Draw(canvas, Json::Value(Json::objectValue), doc));
 }
 
+TEST_CASE("A_tab_label_is_kept_short_and_its_characters_whole")
+{
+	Dashboard d(Dashboard::Button::MenuLong);
+	d.isAlive = [](uint32_t, uint64_t) { return true; };
+	Json::Value doc = OverlaysWithDashboard(222, 77);
+	// A long name, and one character beyond 16 bits, which used to turn the whole label into question marks
+	doc["222"]["overlays"][0]["name"] = std::string(100000, 'x');
+	doc["222"]["overlays"][1]["thumbnail"] = false;
+	doc["222"]["overlays"][1]["name"] = "\xC3\xA9t\xC3\xA9 \xF0\x9F\x98\x80";
+	std::vector<Dashboard::Tab> tabs = d.Tabs(doc);
+	REQUIRE(tabs.size() == 2);
+	CHECK(tabs[0].label.size() == 256);
+	CHECK(tabs[1].label.substr(0, 4) == L"\xE9t\xE9 ");
+}
+
 TEST_CASE("Quit_click_returns_quit")
 {
 	Dashboard d(Dashboard::Button::MenuLong);
