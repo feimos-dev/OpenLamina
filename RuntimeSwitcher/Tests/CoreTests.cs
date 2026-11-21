@@ -311,20 +311,13 @@ namespace RuntimeSwitcher.Tests
             Assert.Throws<InvalidDataException>(() => Releases.Parse(json));
         }
 
+        /// <summary>tests/version_order.json's rows, which install.sh's version order is checked against too.</summary>
+        public static IEnumerable<object[]> VersionOrder() =>
+            Newtonsoft.Json.Linq.JObject.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "version_order.json")))
+                ["rows"].Select(row => new object[] { (string)row[0], (string)row[1], (int)row[2] });
+
         [Theory]
-        [InlineData("2026.11.06", "2026.11.6", 0)]
-        [InlineData("2026.11.10", "2026.11.9", 1)]
-        [InlineData("2026.12.01", "2026.11.30", 1)]
-        [InlineData("2026.11.06.1", "2026.11.06", 1)]
-        [InlineData("0.0.0-test.1", "0.0.0", -1)]
-        [InlineData("0.0.0-test.2", "0.0.0-test.1", 1)]
-        [InlineData("1.0.0-rc.10", "1.0.0-rc.2", 1)]
-        [InlineData("1.0.0-rc.1", "1.0.0-rc", 1)]
-        [InlineData("1.0.0-beta", "1.0.0-2", 1)]
-        [InlineData("1.0.0-beta.2", "1.0.0-alpha.10", 1)]
-        [InlineData("1.0.0-rc.1", "1.0.0-rc.1", 0)]
-        [InlineData("1.0.0-rc.a-1", "1.0.0-rc.1", 1)]
-        [InlineData("not-a-version", "2026.11.06", -1)]
+        [MemberData(nameof(VersionOrder))]
         public void VersionsCompareAsNumbers(string a, string b, int sign)
         {
             Assert.Equal(sign, Math.Sign(ReleaseVersion.Compare(a, b)));

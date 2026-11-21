@@ -619,6 +619,7 @@ jobs:
       - name: Try install.sh
         run: |
           shellcheck -s sh installer/install.sh scripts/ci/test-install.sh
+          python3 scripts/ci/check_version_order.py
           sh scripts/ci/test-install.sh dist/OpenLamina-Linux.tar.gz
 
       - uses: actions/upload-artifact@v7
