@@ -70,7 +70,19 @@ public:
 	DEF_PRINT_RESULT(float, "%f", result)
 	DEF_PRINT_RESULT(int32_t, "%" PRIi32, result)
 	DEF_PRINT_RESULT(uint64_t, "%" PRIu64, result)
-	DEF_PRINT_RESULT(char*, "%s", result ? result : "(no buffer)")
+
+	// The game's buffer is printed only as far as the call wrote it: on an error or a short buffer it holds whatever
+	// the game left there, maybe without a terminator
+	void print_string(const char* buffer, uint32_t bufferSize, uint32_t written, const vr::ETrackedPropertyError* error)
+	{
+		if (!oovr_global_configuration.LogGetTrackedProperty())
+			return;
+		if (!buffer || written == 0 || written > bufferSize || (error && *error != vr::TrackedProp_Success)) {
+			OOVR_LOGF("dev: %u | prop: %u | result: (not written, size %" PRIu32 ")", idx, prop, written);
+			return;
+		}
+		OOVR_LOGF("dev: %u | prop: %u | result: %.*s", idx, prop, (int)(written - 1), buffer);
+	}
 
 	void print_result(HmdMatrix34_t result)
 	{
@@ -583,10 +595,12 @@ uint32_t BaseSystem::GetArrayTrackedDeviceProperty(vr::TrackedDeviceIndex_t unDe
 
 	uint32_t ret = dev->GetArrayTrackedDeviceProperty(prop, propType, pBuffer, unBufferSize, pError);
 	if (oovr_global_configuration.LogGetTrackedProperty()) {
-#define ARRAY_CASE(tag_type, actual_type)                         \
-	case k_un##tag_type##PropertyTag: {                           \
-		actual_type* buffer = static_cast<actual_type*>(pBuffer); \
-		p.print_result(buffer, ret <= unBufferSize ? ret : 0);    \
+		// Nothing was written on an error: the buffer holds what the game left there
+		const bool written = !pError || *pError == TrackedProp_Success;
+#define ARRAY_CASE(tag_type, actual_type)                                 \
+	case k_un##tag_type##PropertyTag: {                                   \
+		actual_type* buffer = static_cast<actual_type*>(pBuffer);         \
+		p.print_result(buffer, ret <= unBufferSize && written ? ret : 0); \
 	} break
 		switch (propType) {
 			ARRAY_CASE(Float, float);
@@ -615,7 +629,7 @@ uint32_t BaseSystem::GetStringTrackedDeviceProperty(vr::TrackedDeviceIndex_t unD
 	}
 
 	uint32_t ret = dev->GetStringTrackedDeviceProperty(prop, value, bufferSize, pErrorL);
-	p.print_result(value);
+	p.print_string(value, bufferSize, ret, pErrorL);
 	return ret;
 }
 
