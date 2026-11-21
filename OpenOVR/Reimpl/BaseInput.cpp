@@ -2400,8 +2400,9 @@ EVRInputError BaseInput::GetSkeletalBoneData(VRActionHandle_t actionHandle, EVRS
 	bool isRight = (action->skeletalHand == ITrackedDevice::HAND_RIGHT);
 	const InteractionProfile* profile = dev->GetInteractionProfile();
 
-	// Retrieve the appropriate hand transform to account for the SteamVR pose being different from OpenXR grip
-	glm::mat4 transform = profile->GetGripToSteamVRTransform(hand);
+	// Retrieve the appropriate hand transform to account for the SteamVR pose being different from OpenXR grip (none
+	// before the runtime names a profile)
+	glm::mat4 transform = profile ? profile->GetGripToSteamVRTransform(hand) : glm::mat4(1.0f);
 
 	if (!XrHandJointsToSkeleton(jointLocations, isRight, pTransformArray, transform))
 		return getEstimatedBoneData(hand, eTransformSpace, eMotionRange, std::span<VRBoneTransform_t, eBone_Count>(pTransformArray, eBone_Count));
