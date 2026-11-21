@@ -85,6 +85,12 @@ else {
 
 # 3. A clean build of the DLL only (OpenLamina.exe and the installer are build-installer.ps1's).
 if (Test-Path -LiteralPath $Out) {
+    # Only a folder that is empty or a build folder (it has a CMakeCache.txt) is deleted: never the checkout or another
+    # folder named by mistake.
+    if ((Get-ChildItem -LiteralPath $Out -Force | Select-Object -First 1) -and
+        -not (Test-Path -LiteralPath (Join-Path $Out 'CMakeCache.txt'))) {
+        throw "$Out isn't a build folder (it has files but no CMakeCache.txt): name an empty or new folder with -Out."
+    }
     Remove-Item -LiteralPath $Out -Recurse -Force
 }
 $testsFlag = $Tests ? 'ON' : 'OFF'

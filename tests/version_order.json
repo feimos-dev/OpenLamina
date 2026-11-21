@@ -1,0 +1,22 @@
+{
+ "#": "Release versions in order, one rule for the app's updater (RuntimeSwitcher/Core/Releases.cs, ReleaseVersion.Compare) and install.sh --update (version_key): [a, b, sign of a compared with b]. Read by RuntimeSwitcher/Tests and scripts/ci/check_version_order.py.",
+ "rows": [
+  ["2026.11.06", "2026.11.6", 0],
+  ["2026.11.10", "2026.11.9", 1],
+  ["2026.12.01", "2026.11.30", 1],
+  ["2026.11.06.1", "2026.11.06", 1],
+  ["0.0.0-test.1", "0.0.0", -1],
+  ["0.0.0-test.2", "0.0.0-test.1", 1],
+  ["1.0.0-rc.10", "1.0.0-rc.2", 1],
+  ["1.0.0-rc.1", "1.0.0-rc", 1],
+  ["1.0.0-beta", "1.0.0-2", 1],
+  ["1.0.0-beta.2", "1.0.0-alpha.10", 1],
+  ["1.0.0-rc.1", "1.0.0-rc.1", 0],
+  ["1.0.0-rc.a-1", "1.0.0-rc.1", 1],
+  ["1.0.1", "1.0.0", 1],
+  ["1.1", "1.0.9", 1],
+  ["2.0.0", "1.99.99", 1],
+  ["1.0.0", "1.0.0-rc.99", 1],
+  ["not-a-version", "2026.11.06", -1]
+ ]
+}
