@@ -555,8 +555,10 @@ public:
 		}
 		if (!busyCommands)
 			return;
-		// The last round's clears are over before the command buffer is recorded again
-		D<PFN_vkWaitForFences>("vkWaitForFences")(device, 1, &busyFence, VK_TRUE, UINT64_MAX);
+		// The last round's clears are over before the command buffer is recorded again; a fence a failed submit never
+		// signals isn't waited for past ten seconds, and the round is left out
+		if (D<PFN_vkWaitForFences>("vkWaitForFences")(device, 1, &busyFence, VK_TRUE, 10'000'000'000ull) != VK_SUCCESS)
+			return;
 		D<PFN_vkResetFences>("vkResetFences")(device, 1, &busyFence);
 		VkCommandBufferBeginInfo bi{ VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
 		bi.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;

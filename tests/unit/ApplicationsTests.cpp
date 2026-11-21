@@ -80,9 +80,12 @@ uint32_t ExitedProcessId()
 	si.cb = sizeof(si);
 	PROCESS_INFORMATION pi{};
 	REQUIRE(CreateProcessW(nullptr, cmd, nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi));
-	WaitForSingleObject(pi.hProcess, INFINITE);
+	const DWORD wait = WaitForSingleObject(pi.hProcess, 10000);
+	if (wait != WAIT_OBJECT_0)
+		TerminateProcess(pi.hProcess, 1);
 	CloseHandle(pi.hThread);
 	CloseHandle(pi.hProcess); // the last handle: the id is the ended process's no more
+	REQUIRE(wait == WAIT_OBJECT_0);
 	return (uint32_t)pi.dwProcessId;
 #else
 	pid_t pid = fork();
