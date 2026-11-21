@@ -767,6 +767,8 @@ void DrvOpenXR::ShutdownSession()
 	if (xr_session.get() && XR_FAILED(xrDestroySession(xr_session.get())))
 		OOVR_LOG("xrDestroySession failed");
 	xr_session.reset();
+	// The trackers' spaces went with it
+	currentBackend->ForgetTrackerSpaces();
 	currentBackend->sessionState = XR_SESSION_STATE_UNKNOWN;
 
 	CreateSystemID();

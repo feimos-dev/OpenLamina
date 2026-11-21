@@ -297,7 +297,8 @@ public:
 
 	/** The tracker action is attached: the trackers by role again */
 	void OnTrackerActionAttached() { CreateGenericTrackers(); }
-	/** A new session is being set up: the trackers' spaces are made again in it */
+	/** The session ended, or a new one is being set up: the trackers' spaces went with the old one, and are made again
+	 * in the new. The caller holds the session lock exclusively. */
 	void ForgetTrackerSpaces();
 
 private:

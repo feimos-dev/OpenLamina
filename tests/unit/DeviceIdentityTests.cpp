@@ -222,15 +222,29 @@ TEST_CASE("Each_unknown_property_is_logged_once")
 	CHECK(oc_soft_sites().size() == before + 2);
 }
 
-TEST_CASE("A tracker without a space reports a valid pose at the origin")
+TEST_CASE("A tracker without a space is connected and has no pose")
 {
 	XrXDevPropertiesMNDX properties = {};
 	KhrSimpleInteractionProfile profile;
 	XrGenericTracker tracker(profile, properties, 0, XR_NULL_HANDLE);
 	vr::TrackedDevicePose_t pose = {};
+	pose.bPoseIsValid = true;
 	tracker.GetPose(vr::TrackingUniverseStanding, &pose, TrackingStateType_Rendering);
-	CHECK(pose.bPoseIsValid);
-	for (int r = 0; r < 3; r++)
-		for (int c = 0; c < 4; c++)
-			CHECK(pose.mDeviceToAbsoluteTracking.m[r][c] == (r == c ? 1.0f : 0.0f));
+	CHECK(pose.bDeviceIsConnected);
+	CHECK_FALSE(pose.bPoseIsValid);
+	CHECK(pose.eTrackingResult == vr::TrackingResult_Running_OutOfRange);
+}
+
+TEST_CASE("A tracker whose space went with its session isn't located in it")
+{
+	// A handle no runtime gave: locating or destroying it would be a call on a session that's gone
+	XrXDevPropertiesMNDX properties = {};
+	KhrSimpleInteractionProfile profile;
+	XrGenericTracker tracker(profile, properties, 0, (XrSpace)(uintptr_t)0x1234);
+	tracker.ForgetSpace();
+	vr::TrackedDevicePose_t pose = {};
+	pose.bPoseIsValid = true;
+	tracker.GetPose(vr::TrackingUniverseStanding, &pose, TrackingStateType_Rendering);
+	CHECK(pose.bDeviceIsConnected);
+	CHECK_FALSE(pose.bPoseIsValid);
 }

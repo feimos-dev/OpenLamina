@@ -2821,9 +2821,15 @@ static bool OwnFramesInCallsOnly(const void* binding, const void* gameGlContext,
 
 void XrBackend::ForgetTrackerSpaces()
 {
-	// The trackers' spaces went with the old session, even if the new one has the same handle
+	// The trackers' spaces went with the old session, even if the new one has the same handle: none is located or
+	// destroyed any more, and the next poll makes the trackers again on the session there is then
 	std::unique_lock lock(generic_trackers_mutex);
 	generic_trackers_session = XR_NULL_HANDLE;
+	generic_trackers_generation = UINT64_MAX;
+	for (const std::shared_ptr<XrGenericTracker>& tracker : generic_trackers) {
+		if (tracker)
+			tracker->ForgetSpace();
+	}
 }
 
 void XrBackend::OnSessionCreated()
