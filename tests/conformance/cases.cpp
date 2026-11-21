@@ -2027,6 +2027,16 @@ void BindingInfoCase(CaseContext& c)
 		r["slot"] = info[0].rchSlotName;
 		r["source_type"] = info[0].rchInputSourceType;
 	}
+	// IVRInput_007's struct (no rchInputSourceType, 512 bytes): the same binding, at that stride
+	{
+		char older[2 * 512];
+		memset(older, 0x55, sizeof(older));
+		returned = 99;
+		r["older_toggle_err"] = (int)in->GetActionBindingInfo(toggle, (InputBindingInfo_t*)older, 512, 2, &returned);
+		r["older_toggle_bindings"] = returned;
+		r["older_device"] = std::string(older, strnlen(older, 128));
+		r["older_second_cleared"] = older[512] == 0 && older[sizeof(older) - 1] == 0;
+	}
 	vr::VRInputValueHandle_t origins[4]{};
 	in->GetActionOrigins(set, toggle, origins, 4);
 	vr::VRInputValueHandle_t right = 0;

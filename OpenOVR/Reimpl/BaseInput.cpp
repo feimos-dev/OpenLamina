@@ -2888,8 +2888,11 @@ EVRInputError BaseInput::GetActionBindingInfo(VRActionHandle_t actionHandle, OOV
 	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	if (punReturnedBindingInfoCount)
 		*punReturnedBindingInfoCount = 0;
-	// A null or wrong-sized struct is an argument error, as SteamVR answers (VRInputError_InvalidParam)
-	if (unBindingInfoSize != sizeof(OOVR_InputBindingInfo_t) || (unBindingInfoCount && !bindingInfo))
+	// A null or wrong-sized struct is an argument error, as SteamVR answers (VRInputError_InvalidParam). IVRInput_007's
+	// struct ends before rchInputSourceType.
+	const size_t olderSize = offsetof(OOVR_InputBindingInfo_t, rchInputSourceType);
+	const bool withSourceType = unBindingInfoSize == sizeof(OOVR_InputBindingInfo_t);
+	if ((!withSourceType && unBindingInfoSize != olderSize) || (unBindingInfoCount && !bindingInfo))
 		return VRInputError_InvalidParam;
 	if (bindingInfo)
 		memset(bindingInfo, 0, (size_t)unBindingInfoSize * unBindingInfoCount);
@@ -2907,12 +2910,14 @@ EVRInputError BaseInput::GetActionBindingInfo(VRActionHandle_t actionHandle, OOV
 		for (const ActionBinding& b : *fromFiles) {
 			if (written >= unBindingInfoCount)
 				break;
-			OOVR_InputBindingInfo_t& info = bindingInfo[written++];
+			// Each entry at the game's struct size, the fields before rchInputSourceType alike in both
+			OOVR_InputBindingInfo_t info = {};
 			strcpy_arr(info.rchDevicePathName, b.device.c_str());
 			strcpy_arr(info.rchInputPathName, b.input.c_str());
 			strcpy_arr(info.rchModeName, b.mode.c_str());
 			strcpy_arr(info.rchSlotName, b.slot.c_str());
 			strcpy_arr(info.rchInputSourceType, b.sourceType.c_str());
+			memcpy((char*)bindingInfo + (size_t)unBindingInfoSize * written++, &info, unBindingInfoSize);
 		}
 		if (punReturnedBindingInfoCount)
 			*punReturnedBindingInfoCount = written;

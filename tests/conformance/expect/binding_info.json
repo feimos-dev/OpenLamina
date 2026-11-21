@@ -14,6 +14,10 @@
   "mode": "toggle_button",
   "slot": "click",
   "source_type": "trigger",
+  "older_toggle_err": 0,
+  "older_toggle_bindings": 1,
+  "older_device": "/user/hand/right",
+  "older_second_cleared": true,
   "origin_is_the_right_trigger": true,
   "no_set_origins_err": 0,
   "no_set_origins_empty": true
