@@ -3,9 +3,11 @@
 
 #include "stdafx.h"
 
+#include "Drivers/Backend.h"
 #include "Misc/BuiltInResource.h"
 #include "Misc/SteamVRRenderModels.h"
 #include "Reimpl/BaseRenderModels.h"
+#include "generated/static_bases.gen.h"
 #include "resources.h"
 
 #include <algorithm>
@@ -819,4 +821,70 @@ TEST_CASE("Own_controller_models_answer_through_IVRRenderModels")
 	CHECK(rm.RenderModelHasComponent("oculus_quest2_controller_left", "x_button"));
 	// A hand's own model with no controller in it stays the hand
 	CHECK(rm.GetComponentCount("renderLeftHand") == 1);
+}
+
+namespace {
+
+// Both hands are there, and no input has been made yet: a game setting up its models before its first frame
+class HandDevice : public ITrackedDevice {
+public:
+	void GetPose(vr::ETrackingUniverseOrigin, vr::TrackedDevicePose_t* pose, ETrackingStateType, int64_t) override { *pose = {}; }
+	vr::ETrackedDeviceClass GetTrackedDeviceClass() override { return vr::TrackedDeviceClass_Controller; }
+	vr::ETrackedControllerRole GetControllerRole() override { return vr::TrackedControllerRole_LeftHand; }
+};
+
+class HandsBackend : public IBackend {
+public:
+	std::shared_ptr<HandDevice> hand = std::make_shared<HandDevice>();
+	int otherHandsAsked = 0;
+	uint32_t CurrentFrameId() override { return 0; }
+	float SecondsToFrame(uint32_t) override { return NAN; }
+	std::shared_ptr<IHMD> GetPrimaryHMD() override { return nullptr; }
+	std::shared_ptr<ITrackedDevice> GetDevice(vr::TrackedDeviceIndex_t) override { return nullptr; }
+	std::shared_ptr<ITrackedDevice> GetDeviceByHand(ITrackedDevice::TrackedDeviceType type) override
+	{
+		if (type == ITrackedDevice::HAND_LEFT || type == ITrackedDevice::HAND_RIGHT)
+			return hand;
+		otherHandsAsked++;
+		return nullptr;
+	}
+	void GetDeviceToAbsoluteTrackingPose(vr::ETrackingUniverseOrigin, float, vr::TrackedDevicePose_t*, uint32_t) override {}
+	void WaitForTrackingData() override {}
+	IBackend::openvr_enum_t StoreEyeTexture(vr::EVREye, const vr::Texture_t*, const vr::VRTextureBounds_t*, vr::EVRSubmitFlags, bool) override { return 0; }
+	void SubmitFrames(bool) override {}
+	void ClearSubmittedFrame() override {}
+	void SetRenderingSuspended(bool) override {}
+	IBackend::openvr_enum_t SetSkyboxOverride(const vr::Texture_t*, uint32_t) override { return 0; }
+	void ClearSkyboxOverride() override {}
+	bool GetFrameTiming(OOVR_Compositor_FrameTiming*, uint32_t) override { return false; }
+	IBackend::openvr_enum_t GetMirrorTextureD3D11(vr::EVREye, void*, void**) override { return 0; }
+	void ReleaseMirrorTextureD3D11(void*) override {}
+	bool GetPlayAreaPoints(vr::HmdVector3_t*, int*) override { return false; }
+	bool AreBoundsVisible() override { return false; }
+	void ForceBoundsVisible(bool) override {}
+	void PumpEvents() override {}
+	bool IsInputAvailable() override { return false; }
+	bool IsInputFocusLost() override { return false; }
+	bool ShouldReduceRenderingWork() override { return false; }
+	bool IsGraphicsConfigured() override { return false; }
+	void OnOverlayTexture(const vr::Texture_t*) override {}
+};
+
+struct WithHands {
+	HandsBackend* backend = new HandsBackend();
+	WithHands() { BackendManager::Create(backend); }
+	~WithHands() { BackendManager::Reset(); }
+};
+
+}
+
+TEST_CASE("Hand_model_tip_is_answered_before_input_is_made")
+{
+	REQUIRE(GetBaseInput() == nullptr);
+	WithHands hands;
+	BaseRenderModels rm;
+	vr::VRControllerState_t state{};
+	OOVR_RenderModel_ComponentState_t cs{};
+	// No input to ask where the aim is: the model's own place
+	CHECK(rm.GetComponentState("renderLeftHand", "tip", &state, nullptr, &cs));
 }

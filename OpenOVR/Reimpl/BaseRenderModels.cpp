@@ -1209,9 +1209,13 @@ bool BaseRenderModels::TryGetComponentState(ITrackedDevice::TrackedDeviceType ha
 		return false;
 	}
 
+	// Input may not have been made yet (a game setting up its models before its first frame)
+	std::shared_ptr<BaseInput> input = GetBaseInput();
+	if (!input)
+		return false;
 	XrSpace componentSpace, gripSpace;
-	GetBaseInput()->GetHandSpace(hand, componentSpace, true);
-	GetBaseInput()->GetHandSpace(hand, gripSpace, false);
+	input->GetHandSpace(hand, componentSpace, true);
+	input->GetHandSpace(hand, gripSpace, false);
 
 	if (!componentSpace || !gripSpace) {
 		return false;
