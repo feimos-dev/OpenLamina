@@ -574,11 +574,27 @@ public:
 	static void SetHeldByDashboard(bool held);
 	static bool HeldByDashboard();
 	/**
+	 * Holds the game's input until no button or trigger is pressed on either hand: the press that closed the
+	 * dashboard or the keyboard isn't the game's. Let go after each sync once nothing is pressed, or after
+	 * kHoldUntilReleasedLimit at most (a stuck or resting input doesn't keep the game's input away for ever).
+	 */
+	static void HoldUntilReleased();
+	static bool HeldUntilReleased();
+	/** After a sync: lets the hold go if nothing is pressed, or the hold is older than the limit. Returns whether it's still held. */
+	static bool UpdateHoldUntilReleased(bool anythingPressed, std::chrono::steady_clock::time_point now);
+	/** Whether a raw component (its path without the hand) counts as a press for HoldUntilReleased: clicks and trigger or grip values, not touches, axes or forces */
+	static bool CountsAsPress(const std::string& component);
+	static constexpr std::chrono::milliseconds kHoldUntilReleasedLimit{ 3000 };
+	/**
 	 * Whether the game's input is held: by the dashboard, or while the compositor's grid is fully faded in (the game
 	 * is loading, and the user sees the grid, not the game). Held, its digital and analog actions read inactive and its
 	 * old controller states zero.
 	 */
 	static bool InputHeld();
+	/** Whether a button or trigger is pressed on either hand, from the raw inputs of the last sync; nullopt without raw inputs. Call with evaluatorLock held. */
+	std::optional<bool> AnythingPressed();
+	/** After a sync: HoldUntilReleased's hold let go once nothing is pressed */
+	void ReleaseHoldAfterSync();
 	/** A vibration on one hand (0 the left, 1 the right), through the old input's haptic action */
 	void TriggerHandHaptic(int hand, float seconds, float frequency, float amplitude);
 

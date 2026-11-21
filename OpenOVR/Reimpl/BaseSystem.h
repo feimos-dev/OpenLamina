@@ -49,8 +49,6 @@ private:
 	uint64_t storeEventCursor = 0; // the next of other programs' events (SharedStore) to take
 	vr::VRControllerState_t lastLegacyStates[2] = {}; // for the legacy button events
 
-	bool blockingInputsUntilRelease[2] = { false, false };
-
 	// The input subsystem. This is used for the old-style inputs and haptics.
 	std::shared_ptr<class BaseInput> inputSystem;
 	std::recursive_mutex inputSystemLock;
@@ -68,7 +66,6 @@ public:
 	/** Queues an event for this program, and, if alsoToOtherPrograms, for every other OpenComposite program of the
 	 * user too (Misc/ProgramEvents.h) */
 	void _PostEvent(vr::EVREventType type, vr::TrackedDeviceIndex_t device, const vr::VREvent_Data_t& data, bool alsoToOtherPrograms);
-	void _BlockInputsUntilReleased();
 
 	// These are going to be widely used elsewhere, so make them public
 	// One per process, and static: overlay and compositor calls use it before (or without) the app asking for IVRSystem
