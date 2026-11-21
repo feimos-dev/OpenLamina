@@ -811,6 +811,9 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex, bool moveToNewD
 	if (gfxInterop && tex->eType == gfxInterop->Type())
 		return true;
 
+	// Under the session lock (a restart lets go of the compositors under the exclusive one), one caller at a time
+	auto sessionLock = xr_session.lock_shared();
+	std::lock_guard<std::mutex> making(compositorsLock);
 	bool ready = true;
 	for (std::unique_ptr<Compositor>& compositor : compositors) {
 		// Skip a compositor if it's already set up
@@ -1104,6 +1107,7 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 		texture = &copied;
 		copiedSlice.emplace(std::nullopt);
 		// A D3D11 compositor for the interop's texture
+		std::lock_guard<std::mutex> making(compositorsLock);
 		if (!compositors[eye])
 			compositors[eye] = std::make_unique<DX11Compositor>(copy.texture);
 	}
@@ -1588,6 +1592,7 @@ int XrBackend::SetEquirectSkybox(const vr::Texture_t* textures, uint32_t count)
 	// Else they're read back and turned into one lat-long image first, without any lock: it takes a while
 	Image equirect;
 	if (count == 6) {
+		std::lock_guard<std::mutex> reading(skyboxReaderLock);
 		if (!skyboxReader)
 			skyboxReader = BaseCompositor::CreateCompositorAPI(&textures[0]);
 		if (!skyboxReader)
@@ -1663,6 +1668,10 @@ IBackend::openvr_enum_t XrBackend::SetSkyboxOverride(const vr::Texture_t* pTextu
 	if (!SkyboxTexturesValid(pTextures, unTextureCount))
 		return 102; // VRCompositorError_InvalidTexture
 
+	// Held to the end: a session restart on another thread replaces xr_gbl, the compositors and the own frames.
+	// CheckOrInitCompositors' own restart takes it exclusively under this hold, as under Submit's.
+	auto lock = xr_session.lock_shared();
+
 	// Six faces are a cube map, which only equirect layers can show: one face as a flat picture would be wrong
 	if (unTextureCount == 6 && !EquirectSkyboxAvailable()) {
 		OOVR_LOG_ONCE("SetSkyboxOverride with a cube map: not supported yet");
@@ -1677,9 +1686,6 @@ IBackend::openvr_enum_t XrBackend::SetSkyboxOverride(const vr::Texture_t* pTextu
 		shownSkybox.Set(pTextures, unTextureCount);
 	}
 
-	// Taken after CheckOrInitCompositors, which may restart the session, and held to the end: a session restart on
-	// another thread replaces xr_gbl
-	auto lock = xr_session.lock_shared();
 	if (!sessionActive || !usingApplicationGraphicsAPI) {
 		// The session hasn't started running yet (it has just been restarted on the game's device, say): shown once
 		// the game's frames begin
@@ -3448,6 +3454,8 @@ void XrBackend::OnOverlayTexture(const vr::Texture_t* texture)
 	// A headless session has no graphics, and an overlay session stays on OpenLamina's own device: neither is moved
 	if (IsHelperSession())
 		return;
+	// As under Submit: the restart inside takes the lock exclusively under this hold
+	auto lock = xr_session.lock_shared();
 	if (!usingApplicationGraphicsAPI)
 		CheckOrInitCompositors(texture);
 }

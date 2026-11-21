@@ -348,7 +348,10 @@ private:
 	std::atomic<int> deviceRebuilds{ 0 };
 	// Makes the temporary graphics device the backend was made with, if there's none: false if it can't be made
 	static bool MakeTemporaryGraphics();
+	// Made under compositorsLock (two calls of the game's, each under the shared session lock, may find them missing at
+	// once) and let go of under the exclusive session lock; used by the thread that submits
 	std::unique_ptr<Compositor> compositors[XruEyeCount];
+	std::mutex compositorsLock;
 	// The D3D11 mirror texture of each eye (an ID3D11Texture2D of OpenLamina's own on the game's device), which the
 	// game's frames are copied into once it has asked for one (mirrorWanted); under mirrorLock
 	void* mirrorTexture[XruEyeCount]{};
@@ -378,7 +381,8 @@ private:
 	// The skybox's layers added to a frame's, in their reference space as it is now: the seated space's handle is
 	// replaced when the seated zero pose moves. The caller holds the session lock and frameOwner.
 	void AddSkyboxLayers(std::vector<const XrCompositionLayerBaseHeader*>& layers);
-	std::unique_ptr<Compositor> skyboxReader; // reads cube faces back
+	std::unique_ptr<Compositor> skyboxReader; // reads cube faces back, under skyboxReaderLock
+	std::mutex skyboxReaderLock;
 	// The game's last projection layer, for OpenLamina's own frames; under frameOwner
 	XrCompositionLayerProjection lastProjection{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
 	XrCompositionLayerProjectionView lastProjectionViews[2]{};
