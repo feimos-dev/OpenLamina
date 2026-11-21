@@ -190,7 +190,7 @@ public:
 		GLint layer = 0;
 		GLint width = 0, height = 0, format = 0, layers = 1, samples = 0;
 		// A blit from it resolves samples, so it can't turn the rows over or change the format
-		bool Resolves() const { return kind == Kind::Multisampled || (kind == Kind::Renderbuffer && samples > 0); }
+		bool Resolves() const { return kind == Kind::Multisampled || (kind == Kind::Renderbuffer && samples > 1); }
 	};
 
 	struct Copy {
@@ -199,7 +199,7 @@ public:
 		GLuint name = 0;
 		HANDLE object = nullptr;
 	};
-	// By name and kind (a renderbuffer and a texture may have the same name)
+	// By name and kind (a renderbuffer and a texture may have the same name); an array's slices share one
 	std::map<std::pair<GLuint, Kind>, Copy> copies;
 
 	vr::ETextureType Type() const override { return vr::TextureType_OpenGL; }
