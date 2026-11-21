@@ -856,9 +856,15 @@ void BaseInput::_RebuildForNewInstance()
 		std::fill(handInteractionProfiles.begin(), handInteractionProfiles.end(), nullptr);
 		std::lock_guard<std::mutex> registryGuard(inputHandleRegistryLock);
 		for (auto& [name, handle] : inputHandleRegistry) {
-			handle->devicePath = XR_NULL_PATH;
+			// A handle named by dominance: the dominant hand's side now
+			if (handle->alias != HandAlias::NONE) {
+				PointHandleAtHand(*handle, DominantHandIndex(handle->alias));
+				continue;
+			}
+			XrPath path = XR_NULL_PATH;
 			if (!handle->devicePathString.empty())
-				OC_XR_LOG(xrStringToPath(xr_instance, handle->devicePathString.c_str(), &handle->devicePath));
+				OC_XR_LOG(xrStringToPath(xr_instance, handle->devicePathString.c_str(), &path));
+			handle->devicePath = path;
 		}
 	}
 	if (!rebuildPending)
@@ -1713,17 +1719,17 @@ EVRInputError BaseInput::GetActionHandle(const char* pchActionName, VRActionHand
 
 int BaseInput::DominantHandIndex(HandAlias alias) const
 {
-	const bool primaryIsLeft = dominantHand == vr::TrackedControllerRole_LeftHand;
-	return (alias == HandAlias::PRIMARY) == primaryIsLeft ? 0 : 1;
+	return HandForAlias(alias, dominantHand);
 }
 
 void BaseInput::PointHandleAtHand(InputValueHandle& handle, int hand)
 {
+	const char* path = hand == 0 ? "/user/hand/left" : "/user/hand/right";
+	XrPath xrPath = XR_NULL_PATH;
+	if (!xr_instance || XR_FAILED(xrStringToPath(xr_instance, path, &xrPath)))
+		xrPath = XR_NULL_PATH;
+	handle.devicePath = xrPath;
 	handle.type = hand == 0 ? InputSource::HAND_LEFT : InputSource::HAND_RIGHT;
-	handle.devicePathString = hand == 0 ? "/user/hand/left" : "/user/hand/right";
-	XrResult res = xr_instance ? xrStringToPath(xr_instance, handle.devicePathString.c_str(), &handle.devicePath) : XR_ERROR_HANDLE_INVALID;
-	if (XR_FAILED(res))
-		handle.devicePath = XR_NULL_PATH;
 }
 
 void BaseInput::ResolveHandAliases()
@@ -1774,15 +1780,19 @@ EVRInputError BaseInput::GetInputSourceHandle(const char* pchInputSourcePath, VR
 	handle->type = info.type;
 	handle->alias = info.alias;
 	if (info.alias != HandAlias::NONE) {
-		PointHandleAtHand(*handle, DominantHandIndex(info.alias));
+		const int hand = DominantHandIndex(info.alias);
+		handle->devicePathString = hand == 0 ? "/user/hand/left" : "/user/hand/right";
+		PointHandleAtHand(*handle, hand);
 	} else if (!info.devicePath.empty()) {
 		handle->devicePathString = info.devicePath;
 		// Without an OpenXR instance (a Utility app) the handle still works; it just matches no subaction path
-		XrResult res = xr_instance ? xrStringToPath(xr_instance, handle->devicePathString.c_str(), &handle->devicePath) : XR_ERROR_HANDLE_INVALID;
+		XrPath path = XR_NULL_PATH;
+		XrResult res = xr_instance ? xrStringToPath(xr_instance, handle->devicePathString.c_str(), &path) : XR_ERROR_HANDLE_INVALID;
 		if (XR_FAILED(res)) {
 			OOVR_LOGF("GetInputSourceHandle: no OpenXR path for %s (%d)", handle->devicePathString.c_str(), (int)res);
-			handle->devicePath = XR_NULL_PATH;
+			path = XR_NULL_PATH;
 		}
+		handle->devicePath = path;
 	}
 
 	inputHandleRegistry[pchInputSourcePath] = std::move(handle);

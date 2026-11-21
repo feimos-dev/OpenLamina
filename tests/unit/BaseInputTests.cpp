@@ -205,3 +205,16 @@ TEST_CASE("No_aim_in_grip_without_actions")
 		CHECK_FALSE(input.LocateAimInGrip(hand, 0, location));
 	CHECK(location.locationFlags == 7);
 }
+
+TEST_CASE("Hands_named_by_dominance")
+{
+	using A = BaseInput::HandAlias;
+	CHECK(BaseInput::HandForAlias(A::PRIMARY, vr::TrackedControllerRole_RightHand) == 1);
+	CHECK(BaseInput::HandForAlias(A::SECONDARY, vr::TrackedControllerRole_RightHand) == 0);
+	CHECK(BaseInput::HandForAlias(A::PRIMARY, vr::TrackedControllerRole_LeftHand) == 0);
+	CHECK(BaseInput::HandForAlias(A::SECONDARY, vr::TrackedControllerRole_LeftHand) == 1);
+	// A path names its hand by dominance below /user/hand/primary and /secondary only
+	CHECK(BaseInput::ClassifyInputSource("/user/hand/primary/input/trigger").alias == A::PRIMARY);
+	CHECK(BaseInput::ClassifyInputSource("/user/hand/secondary").alias == A::SECONDARY);
+	CHECK(BaseInput::ClassifyInputSource("/user/hand/primaryx").alias == A::NONE);
+}

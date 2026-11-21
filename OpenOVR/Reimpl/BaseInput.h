@@ -754,6 +754,12 @@ public:
 		HandAlias alias = HandAlias::NONE;
 		std::string devicePath; // the device's own path: /user/hand/left, /user/head...
 	};
+	/** The hand (0 left, 1 right) a hand named by dominance is with this dominant hand */
+	static int HandForAlias(HandAlias alias, vr::ETrackedControllerRole dominant)
+	{
+		const bool primaryIsLeft = dominant == vr::TrackedControllerRole_LeftHand;
+		return (alias == HandAlias::PRIMARY) == primaryIsLeft ? 0 : 1;
+	}
 	static bool PathIsOrBelow(const std::string& path, const std::string& prefix)
 	{
 		return path == prefix || (path.size() > prefix.size() && path.starts_with(prefix) && path[prefix.size()] == '/');
@@ -822,7 +828,9 @@ private:
 		 * If this is a valid input source (eg in /user/hand/left or a child thereof) this specifies
 		 * what that input source is.
 		 */
-		InputSource type = InputSource::INVALID;
+		// Atomic: a handle named by dominance (alias) is pointed at the other hand when the dominant hand changes,
+		// while other threads read it
+		std::atomic<InputSource> type = InputSource::INVALID;
 		HandAlias alias = HandAlias::NONE;
 
 		/**
@@ -833,10 +841,11 @@ private:
 		 *
 		 * Eg /user/hand/left.
 		 */
-		XrPath devicePath = XR_NULL_PATH;
+		std::atomic<XrPath> devicePath = XR_NULL_PATH;
 
 		/**
-		 * A string version of #devicePath. Null corresponds to an empty string.
+		 * A string version of #devicePath. Null corresponds to an empty string. Set once: for a handle named by
+		 * dominance, the hand it first pointed at (only a tracker's path is ever compared with it).
 		 */
 		std::string devicePathString;
 	};
@@ -940,7 +949,7 @@ private:
 	// TODO convert to Registry
 	std::unordered_map<std::string, std::unique_ptr<InputValueHandle>> inputHandleRegistry;
 	std::mutex inputHandleRegistryLock; // GetInputSourceHandle is called from any thread
-	/** Points a handle at the left (0) or right (1) hand */
+	/** Points a handle at the left (0) or right (1) hand: its type and OpenXR path, not its path string */
 	void PointHandleAtHand(InputValueHandle& handle, int hand);
 	/** Points the handles named by dominance at the dominant hand's side */
 	void ResolveHandAliases();
