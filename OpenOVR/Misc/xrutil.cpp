@@ -505,12 +505,18 @@ SessionLock::SessionLock(SessionWrapper& p, bool exclusive)
 SessionLock::SessionLock(SessionWrapper& p, std::chrono::milliseconds limit)
     : parent(p)
 {
-	if (thread_lock != Held::Unlocked)
+	if (thread_lock != Held::Unlocked) {
+		if (thread_lock == Held::Shared)
+			OOVR_LOG("Tearing the session down on a thread that holds the session lock shared: other threads aren't waited for");
 		return; // this thread holds it already
+	}
 	auto deadline = std::chrono::steady_clock::now() + limit;
 	while (!p.mutex.try_lock()) {
 		if (std::chrono::steady_clock::now() >= deadline) {
 			OOVR_LOG("The session lock wasn't free in time: tearing the session down without it");
+			// Counted as held, with nothing to release: the requests nested in the teardown would wait for ever too
+			thread_lock = Held::Exclusive;
+			owner = true;
 			return;
 		}
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));

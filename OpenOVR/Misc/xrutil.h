@@ -148,7 +148,8 @@ public:
 
 	/*
 	 * The exclusive lock for tearing down, waiting at most limit: when a game exits without VR_Shutdown, Windows has
-	 * already ended its other threads, and one may have died holding the lock. Without it, carries on unlocked.
+	 * already ended its other threads, and one may have died holding the lock. Without it, carries on unlocked, the
+	 * thread counted as holding it so that requests nested in the teardown don't wait either.
 	 * A thread that holds the lock already (shared or exclusive) gets nothing more: no upgrade, unlike lock().
 	 */
 	[[nodiscard]] SessionLock lock_for_teardown(std::chrono::milliseconds limit);

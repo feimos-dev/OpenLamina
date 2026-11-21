@@ -135,6 +135,31 @@ TEST_CASE("SessionLock: a try for the exclusive lock under the thread's own shar
 	CHECK(WaitFor([&] { return reader.got.load(); }));
 }
 
+TEST_CASE("SessionLock: a teardown that gives up on the lock doesn't wait for it in nested requests either")
+{
+	SessionWrapper w;
+	std::optional<SessionLock> stuck;
+	stuck.emplace(w, true);
+
+	std::atomic<bool> done{ false };
+	std::thread teardown([&] {
+		SessionLock outer = w.lock_for_teardown(20ms);
+		{
+			SessionLock shared = w.lock_shared();
+			SessionLock exclusive = w.lock();
+		}
+		done = true;
+	});
+	CHECK(WaitFor([&] { return done.load(); }, 2s));
+	// Let go of for a teardown that did wait
+	stuck.reset();
+	teardown.join();
+
+	// Nothing was left held or counted as held
+	Contender writer(w, true);
+	CHECK(WaitFor([&] { return writer.got.load(); }));
+}
+
 TEST_CASE("SessionLock: two threads upgrading at once both get through")
 {
 	SessionWrapper w;
