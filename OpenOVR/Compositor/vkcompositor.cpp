@@ -186,13 +186,12 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 		const uint32_t width = sameKind ? std::max(tex->m_nWidth, createInfo.width) : tex->m_nWidth;
 		const uint32_t height = sameKind ? std::max(tex->m_nHeight, createInfo.height) : tex->m_nHeight;
 
-		// First, delete the old chain if necessary
-		if (chain)
-			xrDestroySwapchain(chain);
-
-		// Free old command buffers if necessary
+		// The copies into the old chain's images finish first (FreeImageBuffers waits for them), then it goes
 		FreeImageBuffers();
 		DestroyStage();
+		if (chain)
+			xrDestroySwapchain(chain);
+		chain = XR_NULL_HANDLE;
 
 		// Make eye render buffer
 		createInfo = { XR_TYPE_SWAPCHAIN_CREATE_INFO };
@@ -634,10 +633,18 @@ bool VkCompositor::AllocateImageBuffers(uint32_t count)
 
 void VkCompositor::FreeImageBuffers()
 {
-	// Not freed under a submission that still runs
+	// Not freed under a submission that still runs: one that hasn't ended in a second leaves them all (leaked, logged)
+	bool done = true;
 	for (VkFence fence : imageFences) {
-		if (fence)
-			vkWaitForFences(appDevice, 1, &fence, VK_TRUE, 1000000000ull);
+		if (fence && vkWaitForFences(appDevice, 1, &fence, VK_TRUE, 1000000000ull) != VK_SUCCESS)
+			done = false;
+	}
+	if (!done) {
+		OOVR_LOG_ONCE("A Vulkan copy didn't finish in time: its command buffers and fences are left");
+		imageFences.clear();
+		imageSemaphores.clear();
+		appCommandBuffers.clear();
+		return;
 	}
 	for (VkFence fence : imageFences) {
 		if (fence)
