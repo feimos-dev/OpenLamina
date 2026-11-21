@@ -61,8 +61,12 @@ TEST_CASE("A_keyboard_layout_with_an_unknown_escape_or_width_is_no_layout")
 {
 	const std::string escape = "width 10\nkey \\x X 0 0\n";
 	CHECK_FALSE(KeyboardLayout(std::vector<char>(escape.begin(), escape.end())).Valid());
-	const std::string width = "width wide\nkey a A 0 0\n";
-	CHECK_FALSE(KeyboardLayout(std::vector<char>(width.begin(), width.end())).Valid());
+	for (const char* w : { "wide", "nan", "inf", "1e30", "-15", "0", "2.5" }) {
+		const std::string text = std::string("width ") + w + "\nkey a A 0 0\n";
+		CHECK_MESSAGE(!KeyboardLayout(std::vector<char>(text.begin(), text.end())).Valid(), w);
+	}
+	const std::string fine = "width 15\nkey a A 0 0\n";
+	CHECK(KeyboardLayout(std::vector<char>(fine.begin(), fine.end())).GetWidth() == 15);
 }
 
 TEST_CASE("Typing_builds_text_and_events")

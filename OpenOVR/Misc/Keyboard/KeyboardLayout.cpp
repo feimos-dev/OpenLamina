@@ -10,6 +10,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <cwctype>
 #include <memory>
 #include <mutex>
@@ -158,8 +159,9 @@ KeyboardLayout::KeyboardLayout(std::vector<char> data)
 		}
 
 		if (op == L"width") {
-			// Not a number: no width (std::stoi would throw)
-			width = (int)Numbers::ToFloat(pullstring(line), 0);
+			// In keys; anything but a whole number of them up to 1000 is no width (and no layout)
+			const float w = Numbers::ToFloat(pullstring(line), 0);
+			width = std::isfinite(w) && w >= 1 && w <= 1000 && w == std::floor(w) ? (int)w : 0;
 			continue;
 		}
 
