@@ -3,6 +3,7 @@
 #include "SteamVRSettings.h"
 
 #include "Misc/JsonFile.h"
+#include "Misc/PathUtf8.h"
 #include "Misc/SteamVRPaths.h"
 
 #include <chrono>
@@ -12,12 +13,6 @@
 namespace fs = std::filesystem;
 
 namespace {
-
-std::string Utf8(const fs::path& p)
-{
-	std::u8string s = p.u8string();
-	return std::string(s.begin(), s.end());
-}
 
 // One settings file: read again when its modification time changes, looked at no more than once a second
 struct SettingsFile {
@@ -61,7 +56,7 @@ struct SettingsFile {
 		if (ReadJsonFileLenient(path, read, error) && read.isObject()) {
 			data = read;
 		} else {
-			OOVR_LOGF("SteamVR's settings file %s can't be read, ignored: %s", Utf8(path).c_str(), error.c_str());
+			OOVR_LOGF("SteamVR's settings file %s can't be read, ignored: %s", PathToUtf8(path).c_str(), error.c_str());
 			data = Json::Value(Json::objectValue);
 		}
 		exists = true;

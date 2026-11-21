@@ -27,11 +27,12 @@ struct BadConfigValue {
 
 static string str_tolower(std::string val)
 {
-	transform(val.begin(), val.end(), val.begin(), ::tolower);
+	// Through unsigned char: tolower of a negative char (a byte of a non-ASCII value) is undefined
+	transform(val.begin(), val.end(), val.begin(), [](unsigned char c) { return (char)::tolower(c); });
 	return val;
 }
 
-unsigned char hexval(unsigned char c)
+static unsigned char hexval(unsigned char c)
 {
 	if ('0' <= c && c <= '9')
 		return c - '0';
@@ -74,7 +75,7 @@ static HmdColor_t parse_HmdColor_t(string orig, string name, int line)
 	}
 
 	HmdColor_t c;
-	c.a = 255; // Full alpha
+	c.a = 1.0f; // Full alpha
 
 	c.r = ((hexval(val[1]) << 4) + hexval(val[2])) / 255.0f;
 	c.g = ((hexval(val[3]) << 4) + hexval(val[4])) / 255.0f;

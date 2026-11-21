@@ -2,6 +2,7 @@
 
 #include "SharedStore.h"
 
+#include "Misc/PathUtf8.h"
 #include "Misc/Process.h"
 
 #include <algorithm>
@@ -22,6 +23,7 @@
 #else
 #include <cerrno>
 #include <csignal>
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/mman.h>
@@ -132,8 +134,8 @@ bool ParseDoc(const std::string& text, Json::Value& root)
 
 // Moves from over to, replacing it. On Windows that fails (access denied, or a sharing violation) while another handle
 // has the file open: a reader in some program, an antivirus or an indexer. None holds it long: tried again for
-// kRetryFor.
-bool Replace(const fs::path& from, const fs::path& to)
+// kRetryFor, unless retry is false (a writer that mustn't wait tries again later instead).
+bool Replace(const fs::path& from, const fs::path& to, bool retry = true)
 {
 #ifdef _WIN32
 	auto deadline = std::chrono::steady_clock::now() + kRetryFor;
@@ -141,11 +143,12 @@ bool Replace(const fs::path& from, const fs::path& to)
 		if (MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING))
 			return true;
 		DWORD err = GetLastError();
-		if ((err != ERROR_ACCESS_DENIED && err != ERROR_SHARING_VIOLATION) || std::chrono::steady_clock::now() >= deadline)
+		if ((err != ERROR_ACCESS_DENIED && err != ERROR_SHARING_VIOLATION) || !retry || std::chrono::steady_clock::now() >= deadline)
 			return false;
 		std::this_thread::sleep_for(std::chrono::milliseconds(5));
 	}
 #else
+	(void)retry;
 	return rename(from.c_str(), to.c_str()) == 0;
 #endif
 }
@@ -206,12 +209,6 @@ fs::path OverrideDir()
 	return {};
 }
 
-std::string Utf8(const fs::path& p)
-{
-	std::u8string name = p.u8string();
-	return std::string(name.begin(), name.end());
-}
-
 // Where this process's store is: OC_STORE_DIR if set, else the OpenLamina folder. If that doesn't exist yet and the
 // OpenComposite one this was forked from does, its documents are copied over once (the old folder is left as it is,
 // for an OpenComposite still installed); if they can't be, the old folder is used where it is.
@@ -225,13 +222,13 @@ fs::path ChooseDir()
 	if (dir.empty() || legacy.empty() || fs::exists(dir, ec) || !fs::is_directory(legacy, ec))
 		return dir;
 	if (SharedStore::MigrateLegacyDir(legacy, dir)) {
-		OOVR_LOGF("Copied the shared store of OpenComposite, %s, to %s", Utf8(legacy).c_str(), Utf8(dir).c_str());
+		OOVR_LOGF("Copied the shared store of OpenComposite, %s, to %s", PathToUtf8(legacy).c_str(), PathToUtf8(dir).c_str());
 		return dir;
 	}
 	// Another program that started at the same moment may have done it
 	if (fs::exists(dir, ec))
 		return dir;
-	OOVR_LOGF("Couldn't copy the shared store of OpenComposite, %s, to %s: using it where it is", Utf8(legacy).c_str(), Utf8(dir).c_str());
+	OOVR_LOGF("Couldn't copy the shared store of OpenComposite, %s, to %s: using it where it is", PathToUtf8(legacy).c_str(), PathToUtf8(dir).c_str());
 	return legacy;
 }
 
@@ -245,7 +242,7 @@ bool SharedStore::MigrateLegacyDir(const fs::path& legacy, const fs::path& dir)
 		return false;
 	// Into a folder of its own first, which becomes dir in one step: a program that is late can't write the old
 	// documents over newer ones, and a half-copied store is never seen
-	fs::path temp = dir.parent_path() / (Utf8(dir.filename()) + ".migrating-" + std::to_string(oc_current_pid()));
+	fs::path temp = dir.parent_path() / (PathToUtf8(dir.filename()) + ".migrating-" + std::to_string(oc_current_pid()));
 	fs::remove_all(temp, ec);
 	if (!fs::create_directory(temp, ec) || ec)
 		return false;
@@ -503,8 +500,10 @@ void SharedStore::UpdateLater(StoreDoc doc, const std::string& key, std::functio
 		q.erase(std::remove_if(q.begin(), q.end(), [&](const Later::Edit& e) { return e.doc == doc && e.key == key; }), q.end());
 	}
 	later->queue.push_back({ later->nextId++, doc, key, std::move(edit) });
-	if (!later->thread.joinable())
+	if (!later->thread.joinable()) {
+		StayLoaded();
 		later->thread = std::thread([this] { WriterLoop(); });
+	}
 	later->cv.notify_all();
 }
 
@@ -695,7 +694,9 @@ bool SharedStore::WriteUpdate(StoreDoc doc, const std::function<void(Json::Value
 	fs::path path = DocPath(doc);
 	Json::Value data(Json::objectValue);
 	std::string text, backup;
-	switch (ReadShared(path, text, 200)) {
+	// A writer that mustn't wait (Wait::Never, in the game's frame) reads and replaces once, and tries again later
+	const bool retry = wait != Wait::Never;
+	switch (ReadShared(path, text, retry ? 200 : 1)) {
 	case ReadResult::Failed:
 		return false; // there but unreadable: writing now would lose what's in it
 	case ReadResult::Missing:
@@ -714,13 +715,15 @@ bool SharedStore::WriteUpdate(StoreDoc doc, const std::function<void(Json::Value
 			// Kept for a look, and replaced below, starting from the last good copy if there is one
 			fs::path bad = path;
 			bad += ".bad";
-			Replace(path, bad);
+			// A writer that mustn't wait leaves it for the next one, rather than replace it without keeping it
+			if (!Replace(path, bad, retry) && !retry)
+				return false;
 			OOVR_LOGF("Store document %s doesn't parse; kept as %s", path.filename().string().c_str(), bad.filename().string().c_str());
 			fs::path good = path;
 			good += ".bak";
 			std::string goodText;
 			Json::Value goodRoot;
-			if (ReadShared(good, goodText, 4) == ReadResult::Ok && ParseDoc(goodText, goodRoot) && goodRoot["data"].isObject()) {
+			if (ReadShared(good, goodText, retry ? 4 : 1) == ReadResult::Ok && ParseDoc(goodText, goodRoot) && goodRoot["data"].isObject()) {
 				data = goodRoot["data"];
 				OOVR_LOGF("Store document %s restored from its last good copy", path.filename().string().c_str());
 			}
@@ -767,7 +770,7 @@ bool SharedStore::WriteUpdate(StoreDoc doc, const std::function<void(Json::Value
 		good += ".bak";
 		WriteFile(good, backup, false);
 	}
-	if (!WriteFile(tmp, out, Kept(doc)) || !Replace(tmp, path)) {
+	if (!WriteFile(tmp, out, Kept(doc)) || !Replace(tmp, path, retry)) {
 		std::error_code ec;
 		fs::remove(tmp, ec);
 		return false;
@@ -813,6 +816,8 @@ bool SharedStore::PostEvent(uint32_t eventType, const std::array<uint64_t, 4>& d
 	StoreEvent& slot = ring()[(size_t)((seq - 1) % kRingSize)];
 	// seq 0 while it's written, so a reader never takes half an event for a whole one
 	Store(slot.seq, 0);
+	// The fields' writes not seen before the 0: a release store only orders the writes before it
+	std::atomic_thread_fence(std::memory_order_release);
 	slot.pid = (uint32_t)
 #ifdef _WIN32
 	    GetCurrentProcessId();
@@ -911,6 +916,21 @@ uint64_t SharedStore::ProcessStartTime(uint32_t pid)
 	const unsigned long long ticks = std::strtoull(field.c_str(), &end, 10);
 	return end && *end == 0 ? (uint64_t)ticks + 1 : 0; // + 1: a process started at tick 0 is still told apart from none
 #endif
+}
+
+void SharedStore::StayLoaded()
+{
+	static int anchor;
+	static const bool pinned = [] {
+#ifdef _WIN32
+		HMODULE module = nullptr;
+		return GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN, (LPCWSTR)&anchor, &module) != FALSE;
+#else
+		Dl_info info{};
+		return dladdr(&anchor, &info) && info.dli_fname && dlopen(info.dli_fname, RTLD_NOW | RTLD_NOLOAD | RTLD_NODELETE);
+#endif
+	}();
+	(void)pinned;
 }
 
 uint64_t SharedStore::OwnStartTime()

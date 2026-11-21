@@ -340,6 +340,12 @@ TEST_CASE("Settings_supersample_store_beats_ini")
 		settings.SetFloat("steam.app.4242", "resolutionScale", 225.0f);
 		AppId app("4242");
 		CHECK(BaseSettings::RenderScale(store, 1.25f) == 3.0f);
+		// A game's percentage that isn't one leaves the global scale
+		settings.SetFloat("steam.app.4242", "resolutionScale", 0.0f);
+		CHECK(BaseSettings::RenderScale(store, 1.25f) == 2.0f);
+		settings.SetFloat("steam.app.4242", "resolutionScale", 1e6f);
+		CHECK(BaseSettings::RenderScale(store, 1.25f) == 2.0f);
+		settings.SetFloat("steam.app.4242", "resolutionScale", 225.0f);
 		// Nonsense isn't a scale: the ini's instead, still with the app's
 		settings.SetFloat("steamvr", "supersampleScale", -1.0f);
 		CHECK(BaseSettings::RenderScale(store, 1.25f) == doctest::Approx(1.25 * 1.5));
@@ -453,4 +459,26 @@ TEST_CASE("Settings_long_keys_are_not_stored")
 	settings.SetInt32("oc_test", limitName.c_str(), 1, &error);
 	CHECK(error == VRSettingsError_None);
 	CHECK(settings.GetInt32("oc_test", limitName.c_str(), &error) == 1);
+}
+
+TEST_CASE("Settings_same_value_is_not_written_again")
+{
+	TempDir dir;
+	SteamVRFiles files(false);
+	SharedStore store(dir.path);
+	BaseSettings settings(store);
+	BaseSettings::EVRSettingsError error = VRSettingsError_IPCFailed;
+
+	settings.SetInt32("oc_test", "count", 3, &error);
+	CHECK(error == VRSettingsError_None);
+	const uint64_t written = store.Generation(StoreDoc::Settings);
+	error = VRSettingsError_IPCFailed;
+	settings.SetInt32("oc_test", "count", 3, &error);
+	CHECK(error == VRSettingsError_None);
+	CHECK(store.Generation(StoreDoc::Settings) == written);
+
+	settings.SetInt32("oc_test", "count", 4, &error);
+	CHECK(error == VRSettingsError_None);
+	CHECK(store.Generation(StoreDoc::Settings) != written);
+	CHECK(settings.GetInt32("oc_test", "count", &error) == 4);
 }

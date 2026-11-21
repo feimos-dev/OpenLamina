@@ -106,6 +106,16 @@ TEST_CASE("A slot keeps the class of the device it held")
 	CHECK(system.GetTrackedDeviceClass(vr::k_unMaxTrackedDeviceCount) == vr::TrackedDeviceClass_Invalid);
 }
 
+TEST_CASE("A slot with no device has an unknown activity level")
+{
+	WithSlots slots;
+	BaseSystem system;
+	slots.Add(3, vr::TrackedControllerRole_RightHand, 0);
+	CHECK(system.GetTrackedDeviceActivityLevel(3) == vr::k_EDeviceActivityLevel_UserInteraction);
+	CHECK(system.GetTrackedDeviceActivityLevel(4) == vr::k_EDeviceActivityLevel_Unknown);
+	CHECK(system.GetTrackedDeviceActivityLevel(vr::k_unTrackedDeviceIndexInvalid) == vr::k_EDeviceActivityLevel_Unknown);
+}
+
 TEST_CASE("Controller roles follow the connected devices")
 {
 	WithSlots slots;

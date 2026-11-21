@@ -309,20 +309,21 @@ float BaseSettings::PreferredRefreshRate(SharedStore& store)
 
 float BaseSettings::RenderScale(SharedStore& store, float iniRatio)
 {
-	float scale = GlobalRenderScale(store, iniRatio);
+	const float global = GlobalRenderScale(store, iniRatio);
 	const char* appId = getenv("SteamAppId");
-	if (appId && appId[0]) {
-		std::string section = std::string("steam.app.") + appId;
-		std::optional<Json::Value> percent = StoredValue(store, section, "resolutionScale");
-		if (!percent)
-			percent = SteamVRUserSettingValue(section, "resolutionScale");
-		if (percent && AsNumber(*percent))
-			scale *= (float)std::sqrt(*AsNumber(*percent) / 100.0);
-	}
+	if (!appId || !appId[0])
+		return global;
+	std::string section = std::string("steam.app.") + appId;
+	std::optional<Json::Value> percent = StoredValue(store, section, "resolutionScale");
+	if (!percent)
+		percent = SteamVRUserSettingValue(section, "resolutionScale");
+	if (!percent || !AsNumber(*percent))
+		return global;
+	const float scale = global * (float)std::sqrt(*AsNumber(*percent) / 100.0);
 
-	// A scale that would make no image, or a huge one, isn't one
+	// A game's percentage that would make no image, or a huge one, isn't one: the global scale alone
 	if (!(scale > 0.0f) || scale > 16.0f)
-		return iniRatio;
+		return global;
 	return scale;
 }
 
@@ -338,6 +339,15 @@ void BaseSettings::Set(const char* pchSection, const char* pchSettingsKey, const
 	if (section.size() > kk::k_unMaxSettingsKeyLength || key.size() > kk::k_unMaxSettingsKeyLength) {
 		SetError(peError, VRSettingsError_WriteFailed);
 		return;
+	}
+	// The same value already stored: the document isn't written again (each write is synced to disk)
+	{
+		const Json::Value stored = Store().Read(StoreDoc::Settings);
+		if (stored.isObject() && stored[section].isObject() && stored[section].isMember(key) && stored[section][key] == value) {
+			SetError(peError, VRSettingsError_None);
+			NoticeSettingChanged(section);
+			return;
+		}
 	}
 	bool written = Store().Update(StoreDoc::Settings, [&](Json::Value& data) {
 		if (!data.isObject())

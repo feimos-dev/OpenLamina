@@ -14,7 +14,6 @@
 #include <shellapi.h>
 #include <windows.h>
 #else
-#include <dlfcn.h>
 #include <errno.h>
 #include <signal.h>
 #include <spawn.h>
@@ -25,21 +24,6 @@ extern char** environ;
 #endif
 
 namespace fs = std::filesystem;
-
-fs::path PathFromUtf8(const std::string& text)
-{
-	try {
-		return fs::path(std::u8string(text.begin(), text.end()));
-	} catch (const std::exception&) {
-		return {};
-	}
-}
-
-std::string PathToUtf8(const fs::path& path)
-{
-	std::u8string s = path.u8string();
-	return std::string(s.begin(), s.end());
-}
 
 std::string FileUrl(const fs::path& path)
 {
@@ -398,22 +382,12 @@ std::string QuoteArgument(const std::string& argument)
 
 namespace {
 
-// Keeps this library loaded for good: a game may unload it while a thread waits for a child in its code
-void StayLoaded()
-{
-	static int anchor;
-	static const bool pinned = [] {
-		Dl_info info{};
-		return dladdr(&anchor, &info) && info.dli_fname && dlopen(info.dli_fname, RTLD_NOW | RTLD_NOLOAD | RTLD_NODELETE);
-	}();
-	(void)pinned;
-}
-
 // Waits for the child on a thread of its own, so it doesn't stay a zombie, which IsProcessAlive takes for a running
 // program. Only for this pid, and SIGCHLD left alone: the game may wait for children of its own.
 void ReapWhenDone(pid_t pid)
 {
-	StayLoaded();
+	// The thread waits in this library's code
+	SharedStore::StayLoaded();
 	try {
 		std::thread([pid] {
 			int status = 0;

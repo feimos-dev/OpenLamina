@@ -234,6 +234,20 @@ TEST_CASE("Applications_registry_calls")
 	CHECK(CurrentProcessAppKey(store) == "steam.app.620980");
 }
 
+TEST_CASE("Identified_process_adds_no_empty_members")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	BaseApplications apps(store);
+
+	CHECK(apps.IdentifyApplication(0, "oc.test.identified") == VRApplicationError_None);
+	const Json::Value doc = store.Read(StoreDoc::Applications);
+	REQUIRE(doc.isObject());
+	CHECK(doc["pids"].isObject());
+	for (const std::string& name : doc.getMemberNames())
+		CHECK_MESSAGE(!doc[name].isNull(), name);
+}
+
 TEST_CASE("Temporary_manifest_goes_with_its_process")
 {
 	TempDir dir;
@@ -583,6 +597,42 @@ TEST_CASE("Scene_process_changes_are_announced")
 	CHECK(changed.eventType == vr::VREvent_SceneApplicationChanged);
 	CHECK(changed.data.process.pid == 0);
 	CHECK(changed.data.process.oldPid == oc_current_pid());
+}
+
+TEST_CASE("Scene_process_not_announced_when_it_isnt_written")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	EventRecorder recorder;
+
+	// A folder where the document's temporary file goes: the edit is made, but the file can't be written
+	fs::create_directories(dir.path / "scene.json.tmp" / "in_the_way");
+	BaseApplications::SetSceneProcess(store, true);
+	CHECK(CountEvents(vr::VREvent_ProcessConnected) == 0);
+	CHECK(CountEvents(vr::VREvent_SceneApplicationChanged) == 0);
+	CHECK(store.Read(StoreDoc::Scene).empty());
+
+	fs::remove_all(dir.path / "scene.json.tmp");
+	BaseApplications::SetSceneProcess(store, true);
+	CHECK(CountEvents(vr::VREvent_SceneApplicationChanged) == 1);
+	BaseApplications::SetSceneProcess(store, false);
+}
+
+TEST_CASE("Scene_process_left_by_an_ended_program_with_this_ones_id_is_not_this_one")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	EventRecorder recorder;
+
+	// An ended scene application whose process id this program has now, started at another time
+	REQUIRE(SharedStore::OwnStartTime() != 0);
+	REQUIRE(store.Update(StoreDoc::Scene, [](Json::Value& scene) {
+		scene["pid"] = oc_current_pid();
+		scene["start"] = (Json::UInt64)(SharedStore::OwnStartTime() + 1);
+	}));
+	BaseApplications::SetSceneProcess(store, true);
+	CHECK(CountEvents(vr::VREvent_SceneApplicationChanged) == 1);
+	BaseApplications::SetSceneProcess(store, false);
 }
 
 TEST_CASE("Scene_application_waits_until_it_has_drawn")

@@ -221,7 +221,10 @@ bool BaseChaperoneSetup::CommitWorkingCopy(EChaperoneConfigFile configFile)
 	// The temporary config is a preview: nothing to keep
 	if (configFile == EChaperoneConfigFile_Temp)
 		return true;
+	// Neither a room found nor anything edited: an empty room isn't kept, which would hide the runtime's stage later
 	Json::Value data = Working().ToJson();
+	if (!workingKept)
+		return true;
 	if (!SharedStore::Get().Update(StoreDoc::Chaperone, [&](Json::Value& doc) { doc = data; }))
 		return false;
 	// A seated zero pose set: kept as the seated origin of every program (BaseSystem::_ApplyStoredSeatedZero)
