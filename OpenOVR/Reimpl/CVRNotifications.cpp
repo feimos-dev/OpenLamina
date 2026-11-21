@@ -8,7 +8,7 @@ GEN_INTERFACE("Notifications", "002")
 #include "generated/GVRNotifications.gen.h"
 
 // IVRNotifications_001 (SDK 0.9.x) named a notification's type and category with strings: dropped as today's are.
-// SteamVR answers it with today's errors (102 InvalidOverlayHandle, 100 InvalidNotificationId), not 0.9's
+// SteamVR answers it with today's errors, not 0.9's
 vr::IVRNotifications_001::NotificationError_t CVRNotifications_001::CreateNotification(vr::VROverlayHandle_t ulOverlayHandle,
     uint64_t ulUserValue, const char* strType, const char* strText, const char* strCategory,
     const vr::IVRNotifications_001::NotificationBitmap* photo, vr::IVRNotifications_001::VRNotificationId* notificationId)

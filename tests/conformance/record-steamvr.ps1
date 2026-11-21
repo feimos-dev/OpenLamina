@@ -5,7 +5,8 @@
     reference OpenLamina is compared with (expected\steamvr-<version>.json).
 .DESCRIPTION
     1. Finds SteamVR: the paths file's runtime entry ending in \SteamVR, else Steam's steamapps\common\SteamVR.
-    2. Refuses while SteamVR, Monado, Pimax's service or OVR Lighthouse Manager runs.
+    2. Refuses while SteamVR, Desktop+, Monado, Pimax's service or OVR Lighthouse Manager runs, or without an elevated
+       prompt (putting the OpenXR runtime back needs one).
     3. Copies, with their SHA-256s, the paths file (%LOCALAPPDATA%\openvr\openvrpaths.vrpath) and, from Steam's config
        folder, steamvr.vrsettings, chaperone_info.vrchap, appconfig.json and vrappconfig\; and keeps the active OpenXR
        runtime (the 64-bit HKLM\SOFTWARE\Khronos\OpenXR\1 ActiveRuntime), which SteamVR takes over when it starts.
@@ -56,8 +57,8 @@ $config = Join-Path $steam 'config'
 $version = (Get-Content -LiteralPath (Join-Path $steamvr 'bin\version.txt') -Raw).Trim()
 Write-Host "SteamVR $version at $steamvr; Steam config $config"
 
-# 2. Nothing VR running
-$running = Get-Process -Name vrserver, vrmonitor, vrcompositor, monado-service, pi_server, OVRLighthouseManager -ErrorAction SilentlyContinue
+# 2. Nothing VR running (the run ends Desktop+ and vrstartup at the end too, so not the user's own)
+$running = Get-Process -Name vrserver, vrmonitor, vrcompositor, vrstartup, DesktopPlus, DesktopPlusUI, monado-service, pi_server, OVRLighthouseManager -ErrorAction SilentlyContinue
 if ($running) { throw "Close these first: $(($running.Name | Sort-Object -Unique) -join ', ')" }
 
 # 3. The backup
@@ -108,6 +109,9 @@ function Set-ActiveRuntime($Runtime) {
     finally { $base.Dispose() }
 }
 $activeRuntime = Get-ActiveRuntime
+# Putting the OpenXR runtime back writes HKLM: refused now rather than after the run
+$elevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $WhatIf -and -not $elevated) { throw 'Run this from an elevated prompt: SteamVR changes the active OpenXR runtime, and putting it back needs one' }
 
 if ($WhatIf) {
     $manifest | Format-Table Exists, Hash, Path -AutoSize | Out-String -Width 220 | Write-Host

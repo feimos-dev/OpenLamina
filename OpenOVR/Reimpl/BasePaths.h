@@ -24,14 +24,21 @@ public:
 	vr::ETrackedPropertyError StringToHandle(OOVR_PathHandle_t* pHandle, const char* pchPath);
 	vr::ETrackedPropertyError HandleToString(OOVR_PathHandle_t pHandle, char* pchBuffer, uint32_t unBufferSize, uint32_t* punBufferSizeUsed);
 
-	// The batch structs differ between the versions (002's PathWrite_t has two more fields), so these take each one's
-	// An empty batch succeeds; any other names a container there isn't (InvalidDevice), its entries left as they were
+	// The batch structs differ between the versions (002's PathWrite_t has two more fields), so these take each one's.
+	// An empty batch succeeds; any other names a container there isn't (InvalidDevice), each entry UnknownProperty.
 	template <typename PathRead>
 	vr::ETrackedPropertyError ReadPathBatch(vr::PropertyContainerHandle_t ulRootHandle, PathRead* pBatch, uint32_t unBatchEntryCount)
 	{
 		if (unBatchEntryCount == 0)
 			return vr::TrackedProp_Success;
-		return pBatch ? vr::TrackedProp_InvalidDevice : vr::TrackedProp_InvalidOperation;
+		if (!pBatch)
+			return vr::TrackedProp_InvalidOperation;
+		for (uint32_t i = 0; i < unBatchEntryCount; i++) {
+			pBatch[i].unTag = vr::k_unInvalidPropertyTag;
+			pBatch[i].unRequiredBufferSize = 0;
+			pBatch[i].eError = vr::TrackedProp_UnknownProperty;
+		}
+		return vr::TrackedProp_InvalidDevice;
 	}
 
 	template <typename PathWrite>
@@ -39,7 +46,11 @@ public:
 	{
 		if (unBatchEntryCount == 0)
 			return vr::TrackedProp_Success;
-		return pBatch ? vr::TrackedProp_InvalidDevice : vr::TrackedProp_InvalidOperation;
+		if (!pBatch)
+			return vr::TrackedProp_InvalidOperation;
+		for (uint32_t i = 0; i < unBatchEntryCount; i++)
+			pBatch[i].eError = vr::TrackedProp_UnknownProperty;
+		return vr::TrackedProp_InvalidDevice;
 	}
 
 private:
