@@ -618,6 +618,23 @@ TEST_CASE("Scene_process_not_announced_when_it_isnt_written")
 	BaseApplications::SetSceneProcess(store, false);
 }
 
+TEST_CASE("Scene_process_left_by_an_ended_program_with_this_ones_id_is_not_this_one")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	EventRecorder recorder;
+
+	// An ended scene application whose process id this program has now, started at another time
+	REQUIRE(SharedStore::OwnStartTime() != 0);
+	REQUIRE(store.Update(StoreDoc::Scene, [](Json::Value& scene) {
+		scene["pid"] = oc_current_pid();
+		scene["start"] = (Json::UInt64)(SharedStore::OwnStartTime() + 1);
+	}));
+	BaseApplications::SetSceneProcess(store, true);
+	CHECK(CountEvents(vr::VREvent_SceneApplicationChanged) == 1);
+	BaseApplications::SetSceneProcess(store, false);
+}
+
 TEST_CASE("Scene_application_waits_until_it_has_drawn")
 {
 	TempDir dir;

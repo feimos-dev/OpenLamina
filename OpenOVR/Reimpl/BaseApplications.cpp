@@ -215,11 +215,19 @@ std::vector<std::string> MimeTypesOf(const AppManifestEntry& app, const Json::Va
 	return types;
 }
 
+// Whether a process id and start time stored in a document are this process: an ended program's id may have been
+// given to this one since
+bool IsThisProcess(uint32_t pid, uint64_t start)
+{
+	const uint64_t own = SharedStore::OwnStartTime();
+	return pid == oc_current_pid() && (!start || !own || start == own);
+}
+
 // The scene application named in the Scene document, if it still runs; 0 if none
 uint32_t LiveScenePid(const Json::Value& scene)
 {
 	uint32_t pid = PidOf(scene["pid"]);
-	if (pid == oc_current_pid())
+	if (IsThisProcess(pid, UInt64Or(scene["start"], 0)))
 		return pid;
 	return pid && SharedStore::IsSameProcessAlive(pid, UInt64Or(scene["start"], 0)) ? pid : 0;
 }
@@ -251,7 +259,7 @@ Transition LiveTransition(const Json::Value& scene)
 	bool live = false;
 	if (state == VRApplicationTransition_OldAppQuitSent)
 		live = NowMs() < UInt64Or(tr["since_ms"], 0) + kTakeOverMs
-		    && (oldPid == oc_current_pid() || SharedStore::IsSameProcessAlive(oldPid, UInt64Or(tr["old_start"], 0)));
+		    && (IsThisProcess(oldPid, UInt64Or(tr["old_start"], 0)) || SharedStore::IsSameProcessAlive(oldPid, UInt64Or(tr["old_start"], 0)));
 	else if (state == VRApplicationTransition_NewAppLaunched)
 		live = NowMs() < UInt64Or(tr["since_ms"], 0) + kNewAppLaunchMs;
 	if (!live)
@@ -333,7 +341,7 @@ void BaseApplications::SetSceneProcess(SharedStore& store, bool running)
 		Json::Value transition = t.state != VRApplicationTransition_None ? scene["transition"] : Json::Value();
 		if (running) {
 			oldPid = PidOf(scene["pid"]);
-			changed = oldPid != pid;
+			changed = !IsThisProcess(oldPid, UInt64Or(scene["start"], 0));
 			scene = Json::Value(Json::objectValue);
 			scene["pid"] = pid;
 			scene["start"] = (Json::UInt64)SharedStore::OwnStartTime();
@@ -374,6 +382,11 @@ void BaseApplications::SetSceneProcess(SharedStore& store, bool running)
 			}
 		}
 	});
+	// Not written: the other programs don't see the change, so it isn't announced or acted on (as with no store)
+	if (!written) {
+		OOVR_LOGF("The scene application couldn't be recorded as %s", running ? "this program" : "gone");
+		return;
+	}
 
 	if (changed)
 		sceneDrawn = sceneDrawnStored = false;
@@ -382,11 +395,6 @@ void BaseApplications::SetSceneProcess(SharedStore& store, bool running)
 	if (changed) {
 		vr::VREvent_Data_t data{};
 		data.process.pid = running ? pid : 0;
-	// Not written: the other programs don't see the change, so it isn't announced or acted on (as with no store)
-	if (!written) {
-		OOVR_LOGF("The scene application couldn't be recorded as %s", running ? "this program" : "gone");
-		return;
-	}
 		data.process.oldPid = oldPid;
 		OcPostEvent(vr::VREvent_SceneApplicationChanged, vr::k_unTrackedDeviceIndexInvalid, data, true);
 
@@ -452,7 +460,7 @@ void BaseApplications::TakeOverPendingLaunch(SharedStore& store)
 	// first program to notice does
 	const Json::Value pending = store.ReadAt(StoreDoc::Scene, { "transition" });
 	if (!pending.isObject() || !BoolOr(pending["launch"], false) || !pending["state"].isInt()
-	    || pending["state"].asInt() != VRApplicationTransition_OldAppQuitSent || PidOf(pending["old_pid"]) == oc_current_pid())
+	    || pending["state"].asInt() != VRApplicationTransition_OldAppQuitSent || IsThisProcess(PidOf(pending["old_pid"]), UInt64Or(pending["old_start"], 0)))
 		return;
 	if (SharedStore::IsSameProcessAlive(PidOf(pending["old_pid"]), UInt64Or(pending["old_start"], 0))) {
 		// An old application that ignored the quit for kForceQuitMs is ended, if it's still the one asked (its start
@@ -477,7 +485,7 @@ void BaseApplications::TakeOverPendingLaunch(SharedStore& store)
 		if (!tr["state"].isInt() || tr["state"].asInt() != VRApplicationTransition_OldAppQuitSent || !BoolOr(tr["launch"], false))
 			return;
 		oldPid = PidOf(tr["old_pid"]);
-		if (oldPid == oc_current_pid() || SharedStore::IsSameProcessAlive(oldPid, UInt64Or(tr["old_start"], 0)))
+		if (IsThisProcess(oldPid, UInt64Or(tr["old_start"], 0)) || SharedStore::IsSameProcessAlive(oldPid, UInt64Or(tr["old_start"], 0)))
 			return;
 		// Asked for too long ago: dropped, not launched
 		if (NowMs() >= UInt64Or(tr["since_ms"], 0) + kTakeOverMs) {
@@ -489,6 +497,9 @@ void BaseApplications::TakeOverPendingLaunch(SharedStore& store)
 		tr["state"] = VRApplicationTransition_NewAppLaunched;
 		tr["since_ms"] = (Json::UInt64)NowMs();
 	});
+	// Not written: the transition is still the old application's, for the next program that looks to take over
+	if (!written)
+		return;
 	if (dropped)
 		AnnounceTransitionAborted();
 	if (!key.empty())
@@ -497,9 +508,6 @@ void BaseApplications::TakeOverPendingLaunch(SharedStore& store)
 
 void BaseApplications::AddThisProcess(SharedStore& store)
 {
-	// Not written: the transition is still the old application's, for the next program that looks to take over
-	if (!written)
-		return;
 	TakeOverPendingLaunch(store);
 	const uint32_t pid = oc_current_pid();
 	const std::string name = std::to_string(pid);
@@ -1245,9 +1253,7 @@ uint32_t BaseApplications::GetCurrentSceneProcessId()
 	// an earlier one
 	if (BaseClientCore::appType == VRApplication_Scene)
 		return oc_current_pid();
-	Json::Value scene = Store().Read(StoreDoc::Scene);
-	uint32_t pid = PidOf(scene["pid"]);
-	return pid && SharedStore::IsProcessAlive(pid) ? pid : 0;
+	return LiveScenePid(Store().Read(StoreDoc::Scene));
 }
 
 EVRApplicationError BaseApplications::RegisterSubprocess(uint32_t nPid)
