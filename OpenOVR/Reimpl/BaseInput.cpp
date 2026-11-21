@@ -2282,6 +2282,8 @@ EVRInputError BaseInput::GetSkeletalReferenceTransforms(VRActionHandle_t actionH
 }
 EVRInputError BaseInput::GetSkeletalTrackingLevel(VRActionHandle_t action, EVRSkeletalTrackingLevel* pSkeletalTrackingLevel)
 {
+	if (!pSkeletalTrackingLevel)
+		return VRInputError_InvalidParam;
 	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	GET_ACTION_FROM_HANDLE(act, action);
 
