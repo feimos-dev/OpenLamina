@@ -21,6 +21,9 @@
 VkCompositor::VkCompositor(const vr::Texture_t* initialTexture)
 {
 	auto* tex = (vr::VRVulkanTextureData_t*)initialTexture->handle;
+	// Without a device nothing can be made: CopyToSwapchain answers InvalidTexture
+	if (!tex || !tex->m_pDevice)
+		return;
 
 	appDevice = tex->m_pDevice;
 	appQueue = tex->m_pQueue;
@@ -30,7 +33,8 @@ VkCompositor::VkCompositor(const vr::Texture_t* initialTexture)
 	poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
 	// Its command buffers go to the app's queue: use the family the backend found that queue in, else the app's word
 	poolInfo.queueFamilyIndex = tex->m_nQueueFamilyIndex;
-	auto* binding = (const XrGraphicsBindingVulkanKHR*)((XrBackend*)BackendManager::Instance().GetBackendInstance())->GetCurrentGraphicsBinding();
+	auto* backend = dynamic_cast<XrBackend*>(BackendManager::Instance().GetBackendInstance());
+	auto* binding = backend ? (const XrGraphicsBindingVulkanKHR*)backend->GetCurrentGraphicsBinding() : nullptr;
 	if (binding && binding->type == XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR && binding->device == tex->m_pDevice) {
 		VkQueue queue = VK_NULL_HANDLE;
 		vkGetDeviceQueue(binding->device, binding->queueFamilyIndex, binding->queueIndex, &queue);

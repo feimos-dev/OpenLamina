@@ -359,8 +359,9 @@ void GLBaseCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::V
 	}
 
 #if defined(SUPPORT_GL) && !defined(_WIN32)
-	const auto binding = (XrGraphicsBindingOpenGLXlibKHR*)((XrBackend*)BackendManager::Instance().GetBackendInstance())->GetCurrentGraphicsBinding();
-	if (binding->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_XLIB_KHR && binding->glxContext != glXGetCurrentContext())
+	auto* backend = dynamic_cast<XrBackend*>(BackendManager::Instance().GetBackendInstance());
+	const auto binding = backend ? (XrGraphicsBindingOpenGLXlibKHR*)backend->GetCurrentGraphicsBinding() : nullptr;
+	if (binding && binding->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_XLIB_KHR && binding->glxContext != glXGetCurrentContext())
 		glFinish();
 #endif
 
