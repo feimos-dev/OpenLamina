@@ -128,7 +128,7 @@ namespace RuntimeSwitcher.Core
 
             response.Dispose();
             // The read then fails; its exception is observed here and replaced by the one below.
-            _ =read.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+            _ = read.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
             throw new IOException($"The download stopped: nothing arrived for {timeout.TotalSeconds:0} seconds.");
         }
 
