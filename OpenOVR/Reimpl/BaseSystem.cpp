@@ -1086,13 +1086,14 @@ bool SamePose(const XrPosef& a, const XrPosef& b)
 	return glm::length(d) < 1e-4f && dot > 1.0f - 1e-6f;
 }
 
-// The store's seated zero pose, when its Offsets document changed since it was last read (and has one)
-bool StoredSeatedZeroChanged(XrPosef& zero)
+// The store's seated zero pose, when its Offsets document changed since it was last read (and has one); always when
+// asked for a new session, which may not have been there when it last changed
+bool StoredSeatedZeroChanged(XrPosef& zero, bool newSession = false)
 {
 	std::lock_guard<std::mutex> guard(storedSeatedLock);
 	SharedStore& store = SharedStore::Get();
 	const uint64_t generation = store.Generation(StoreDoc::Offsets);
-	if (storedSeatedRead && generation == storedSeatedGeneration)
+	if (!newSession && storedSeatedRead && generation == storedSeatedGeneration)
 		return false;
 	storedSeatedRead = true;
 	storedSeatedGeneration = generation;
@@ -1129,7 +1130,7 @@ void BaseSystem::_LoadStoredSeatedZero()
 {
 	// Only a stage outlasts the session: the other standing spaces start where the head was
 	XrPosef zero;
-	if (StoredSeatedZeroChanged(zero) && xr_gbl && xr_gbl->floorSpaceType == XR_REFERENCE_SPACE_TYPE_STAGE && xr_gbl->SetSeatedZero(zero))
+	if (StoredSeatedZeroChanged(zero, true) && xr_gbl && xr_gbl->floorSpaceType == XR_REFERENCE_SPACE_TYPE_STAGE && xr_gbl->SetSeatedZero(zero))
 		xr_seated_zero = zero;
 }
 
