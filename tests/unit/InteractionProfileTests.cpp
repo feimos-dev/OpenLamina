@@ -267,3 +267,14 @@ TEST_CASE("Hand_interaction_isnt_offered_with_a_controller_in_hand")
 	CHECK_FALSE(ExtHandInteractionProfile::ControllerInHands(std::string("Pimax Hand Tracking Left"), std::string("Hand-Tracking Right")));
 	CHECK(ExtHandInteractionProfile::ControllerInHands(std::string("Hand Tracking Left"), std::string("Valve Knuckles Right")));
 }
+
+TEST_CASE("A_property_asked_as_another_type_is_not_there")
+{
+	using enum ITrackedDevice::TrackedDeviceType;
+	IndexControllerInteractionProfile index;
+	CHECK_FALSE(index.GetProperty<int32_t>(vr::Prop_ModelNumber_String, HAND_LEFT).has_value());
+	CHECK_FALSE(index.GetProperty<std::string>(vr::Prop_SupportedButtons_Uint64, HAND_RIGHT).has_value());
+	CHECK_FALSE(index.GetProperty<int32_t>(vr::Prop_TrackingSystemName_String, HAND_NONE).has_value());
+	CHECK(index.GetProperty<std::string>(vr::Prop_ModelNumber_String, HAND_RIGHT) == "Knuckles Right");
+	CHECK(index.GetProperty<uint64_t>(vr::Prop_SupportedButtons_Uint64, HAND_LEFT) == 0x700000007ull);
+}

@@ -179,6 +179,7 @@ public:
 	/**
 	 * Get the requested property from the profile, if it exists.
 	 * If hand == HAND_NONE, this will retrieve the HMD version of the property.
+	 * A property held as another type than T is not there for T.
 	 */
 	template <typename T>
 	    requires(in_variant<T, property_types>::value)
@@ -186,12 +187,15 @@ public:
 	    const
 	{
 		using enum ITrackedDevice::TrackedDeviceType;
+		const property_types* value = nullptr;
 		if (hand != HAND_NONE && propertiesMap.contains(property)) {
-			hand_values_type ret = propertiesMap.at(property);
-			return std::get<T>((hand == HAND_RIGHT && ret.right.has_value()) ? ret.right.value() : ret.left);
+			const auto& ret = propertiesMap.at(property);
+			value = (hand == HAND_RIGHT && ret.right.has_value()) ? &ret.right.value() : &ret.left;
 		} else if (hmdPropertiesMap.contains(property)) {
-			return std::get<T>(hmdPropertiesMap.at(property));
+			value = &hmdPropertiesMap.at(property);
 		}
+		if (const T* typed = value ? std::get_if<T>(value) : nullptr)
+			return *typed;
 		return std::nullopt;
 	}
 
