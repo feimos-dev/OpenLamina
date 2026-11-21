@@ -74,6 +74,23 @@ TEST_CASE("Overlay_getters_refuse_null_pointers")
 	CHECK(overlays.SetOverlayTransformTrackedDeviceRelative(h, 0, nullptr) == VROverlayError_InvalidParameter);
 }
 
+TEST_CASE("A_flag_number_without_a_bit_is_refused")
+{
+	BaseOverlay overlays;
+	const VROverlayHandle_t h = Make(overlays, "oc.test.flagrange");
+	bool on = true;
+	CHECK(overlays.SetOverlayFlag(h, (OOVR_VROverlayFlags)67, true) == VROverlayError_InvalidParameter);
+	CHECK(overlays.SetOverlayFlag(h, (OOVR_VROverlayFlags)-1, true) == VROverlayError_InvalidParameter);
+	CHECK(overlays.GetOverlayFlag(h, (OOVR_VROverlayFlags)67, &on) == VROverlayError_InvalidParameter);
+	// Bit 3 (67 taken modulo 64) is untouched
+	uint32_t all = 0xffffffff;
+	CHECK(overlays.GetOverlayFlags(h, &all) == VROverlayError_None);
+	CHECK(all == 0);
+	CHECK(overlays.SetOverlayFlag(h, (OOVR_VROverlayFlags)63, true) == VROverlayError_None);
+	CHECK(overlays.GetOverlayFlag(h, (OOVR_VROverlayFlags)63, &on) == VROverlayError_None);
+	CHECK(on);
+}
+
 TEST_CASE("An_absolute_transform_never_set_still_answers_an_origin")
 {
 	BaseOverlay overlays;

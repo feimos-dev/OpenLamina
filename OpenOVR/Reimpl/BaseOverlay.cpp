@@ -2764,16 +2764,16 @@ uint32_t BaseOverlay::GetOverlayRenderingPid(VROverlayHandle_t ulOverlayHandle)
 }
 EVROverlayError BaseOverlay::SetOverlayFlag(VROverlayHandle_t ulOverlayHandle, VROverlayFlags eOverlayFlag, bool bEnabled)
 {
-	// A flag of 64 or more has no bit in the mask, and isn't sent
-	if ((uint32_t)eOverlayFlag < 64) {
-		OcOverlayCommand command;
-		command.kind = OcOverlayCommand::Flag;
-		command.flag = (uint32_t)eOverlayFlag;
-		command.enabled = bEnabled;
-		EVROverlayError sent;
-		if (SendRemoteCommand(ulOverlayHandle, command, sent))
-			return sent;
-	}
+	// A flag of 64 or more (or a negative one) has no bit in the mask
+	if ((uint32_t)eOverlayFlag >= 64)
+		return VROverlayError_InvalidParameter;
+	OcOverlayCommand command;
+	command.kind = OcOverlayCommand::Flag;
+	command.flag = (uint32_t)eOverlayFlag;
+	command.enabled = bEnabled;
+	EVROverlayError sent;
+	if (SendRemoteCommand(ulOverlayHandle, command, sent))
+		return sent;
 	USEH_LOCKED();
 
 	if (bEnabled) {
@@ -2786,6 +2786,8 @@ EVROverlayError BaseOverlay::SetOverlayFlag(VROverlayHandle_t ulOverlayHandle, V
 }
 EVROverlayError BaseOverlay::GetOverlayFlag(VROverlayHandle_t ulOverlayHandle, VROverlayFlags eOverlayFlag, bool* pbEnabled)
 {
+	if ((uint32_t)eOverlayFlag >= 64)
+		return VROverlayError_InvalidParameter;
 	Json::Value remote;
 	if (RemoteOverlayEntry(ulOverlayHandle, remote)) {
 		if (!pbEnabled)
@@ -2793,7 +2795,7 @@ EVROverlayError BaseOverlay::GetOverlayFlag(VROverlayHandle_t ulOverlayHandle, V
 		*pbEnabled = (remote["flags"].asUInt64() & (1uLL << eOverlayFlag)) != 0uLL;
 		return VROverlayError_None;
 	}
-	USEH();
+	USEH_LOCKED();
 	if (!pbEnabled)
 		return VROverlayError_InvalidParameter;
 
