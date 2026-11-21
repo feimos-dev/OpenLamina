@@ -3876,7 +3876,8 @@ void XrBackend::CreateGenericTrackers()
 		auto it = std::find_if(wanted.begin(), wanted.end(), [&](const Wanted& w) { return !w.placed && current[slot]->Serial() == w.properties.serial && current[slot]->ControllerType() == w.controllerType; });
 		if (it == wanted.end()) {
 			// A role's tracker can't be asked for while the tracker action isn't on the session (from a session restart
-			// to the attach of the game's actions): it keeps its place, with no space, and is made again at the attach
+			// to the attach of the game's actions): it keeps its place, with no space, and is made again at the attach.
+			// If that attach fails it stays so, a device without a pose, until the session is made again.
 			if (htcx && trackerAction == XR_NULL_HANDLE && !current[slot]->ControllerType().empty()) {
 				generic_trackers[slot] = current[slot];
 				continue;
