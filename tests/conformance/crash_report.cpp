@@ -21,13 +21,19 @@
 namespace {
 
 std::string reportPath;
-std::once_flag written;
+std::mutex writing;
+int reports = 0;
+thread_local bool reporting = false;
 
 void WriteStack(FILE* f, CONTEXT* context)
 {
 	HANDLE process = GetCurrentProcess();
-	SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
-	SymInitialize(process, nullptr, TRUE);
+	static bool symbols = false;
+	if (!symbols) {
+		symbols = true;
+		SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
+		SymInitialize(process, nullptr, TRUE);
+	}
 
 	void* frames[64] = {};
 	USHORT count = 0;
@@ -80,22 +86,31 @@ void WriteStack(FILE* f, CONTEXT* context)
 	}
 }
 
+// Each report replaces the one before, so the file holds the last fault: an exception something handled is followed
+// by the one that ended the program. At most 100 (a fault handled in a loop); none from inside a report.
 void Report(const char* why, CONTEXT* context)
 {
-	std::call_once(written, [&] {
-		FILE* f = std::fopen(reportPath.c_str(), "w");
-		if (!f)
-			return;
-		std::fprintf(f, "%s (thread %lu)\n", why, GetCurrentThreadId());
-		WriteStack(f, context);
-		std::fclose(f);
-	});
+	if (reporting)
+		return;
+	reporting = true;
+	{
+		std::lock_guard<std::mutex> guard(writing);
+		if (reports < 100) {
+			reports++;
+			if (FILE* f = std::fopen(reportPath.c_str(), "w")) {
+				std::fprintf(f, "%s (thread %lu)\n", why, GetCurrentThreadId());
+				WriteStack(f, context);
+				std::fclose(f);
+			}
+		}
+	}
+	reporting = false;
 }
 
 LONG WINAPI OnException(EXCEPTION_POINTERS* info)
 {
 	// Vectored: sees first-chance exceptions too, so only the ones that end a program. A report for one that
-	// something handles is harmless: run.py only reads it when the child ended abnormally.
+	// something handles is replaced by the next, and run.py only reads it when the child ended abnormally.
 	switch (info->ExceptionRecord->ExceptionCode) {
 	case EXCEPTION_ACCESS_VIOLATION:
 	case EXCEPTION_ILLEGAL_INSTRUCTION:
