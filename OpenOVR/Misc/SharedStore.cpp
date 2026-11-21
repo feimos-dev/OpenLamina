@@ -22,6 +22,7 @@
 #else
 #include <cerrno>
 #include <csignal>
+#include <dlfcn.h>
 #include <fcntl.h>
 #include <sys/file.h>
 #include <sys/mman.h>
@@ -33,6 +34,23 @@
 namespace fs = std::filesystem;
 
 namespace {
+
+// Keeps this library loaded for good, once a thread of its own runs in it: the game's openvr_api may unload the
+// library at VR_Shutdown while the process goes on, and the thread would then wake in unmapped code
+void StayLoaded()
+{
+	static int anchor;
+	static const bool pinned = [] {
+#ifdef _WIN32
+		HMODULE module = nullptr;
+		return GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN, (LPCWSTR)&anchor, &module) != FALSE;
+#else
+		Dl_info info{};
+		return dladdr(&anchor, &info) && info.dli_fname && dlopen(info.dli_fname, RTLD_NOW | RTLD_NOLOAD | RTLD_NODELETE);
+#endif
+	}();
+	(void)pinned;
+}
 
 constexpr size_t kStateSize = 16 * 1024;
 constexpr size_t kHeaderSize = 128;
@@ -503,8 +521,10 @@ void SharedStore::UpdateLater(StoreDoc doc, const std::string& key, std::functio
 		q.erase(std::remove_if(q.begin(), q.end(), [&](const Later::Edit& e) { return e.doc == doc && e.key == key; }), q.end());
 	}
 	later->queue.push_back({ later->nextId++, doc, key, std::move(edit) });
-	if (!later->thread.joinable())
+	if (!later->thread.joinable()) {
+		StayLoaded();
 		later->thread = std::thread([this] { WriterLoop(); });
+	}
 	later->cv.notify_all();
 }
 
