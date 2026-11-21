@@ -19,11 +19,13 @@
 
 #include <algorithm>
 #include <chrono>
+#include <deque>
 #include <future>
 #include <map>
 #include <mutex>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 
 #ifndef GLM_ENABLE_EXPERIMENTAL
@@ -542,11 +544,12 @@ struct LoadedModel {
 	TextureID_t texture = -1;
 };
 
-// The models being loaded and loaded, by name. A load runs on a thread of its own; LoadRenderModel_Async answers
-// Loading until it's done. A name's answer, a failure too, is kept for the process. Never freed: a load can still be
-// running when the program exits.
+// The models being loaded and loaded, by name. A load runs on one of a few threads (LoadQueue); LoadRenderModel_Async
+// answers Loading until it's done. A name's answer, a failure too, is kept for the process. Never freed: a load can
+// still be running when the program exits.
 struct ModelLoads {
-	// More names than SteamVR has models and components: past it, a name isn't loaded
+	// More names than SteamVR has models and components: past it, the names that failed make room, and a name that
+	// still doesn't fit isn't loaded
 	static constexpr size_t kMaxNames = 4096;
 	std::mutex lock;
 	std::map<string, std::shared_future<std::shared_ptr<const LoadedModel>>> byName;
@@ -556,9 +559,87 @@ ModelLoads& Loads()
 	static ModelLoads& loads = *new ModelLoads;
 	return loads;
 }
+
+using LoadTask = std::packaged_task<std::shared_ptr<const LoadedModel>()>;
+
+// The loads waiting and their threads: at most kWorkers at once, each ending when nothing is waiting (so none is left
+// running in the library once its loads are done); WaitForLoads joins them. Never freed, as ModelLoads.
+struct LoadQueue {
+	static constexpr size_t kWorkers = 3;
+	std::mutex lock;
+	std::deque<LoadTask> waiting;
+	size_t running = 0; // threads not yet ended
+	size_t busy = 0, busyMost = 0; // loads running now, and the most at once
+	std::vector<std::thread> threads; // ended or not, not yet joined
+};
+LoadQueue& Queue()
+{
+	static LoadQueue& queue = *new LoadQueue;
+	return queue;
+}
+
+void LoadWorker()
+{
+	LoadQueue& queue = Queue();
+	for (;;) {
+		LoadTask task;
+		{
+			std::lock_guard<std::mutex> guard(queue.lock);
+			if (queue.waiting.empty()) {
+				queue.running--;
+				return;
+			}
+			task = std::move(queue.waiting.front());
+			queue.waiting.pop_front();
+			queue.busy++;
+			queue.busyMost = (std::max)(queue.busyMost, queue.busy);
+		}
+		task();
+		std::lock_guard<std::mutex> guard(queue.lock);
+		queue.busy--;
+	}
+}
+
+// Queues a load, starting a thread for it if fewer than kWorkers run; throws (and queues nothing) if no thread runs
+// and none can be started
+std::shared_future<std::shared_ptr<const LoadedModel>> QueueLoad(LoadTask task)
+{
+	std::shared_future<std::shared_ptr<const LoadedModel>> result = task.get_future().share();
+	LoadQueue& queue = Queue();
+	std::lock_guard<std::mutex> guard(queue.lock);
+	queue.waiting.push_back(std::move(task));
+	if (queue.running < LoadQueue::kWorkers) {
+		try {
+			queue.threads.emplace_back(LoadWorker);
+			queue.running++;
+		} catch (const std::exception&) {
+			if (queue.running == 0) {
+				queue.waiting.pop_back();
+				throw;
+			}
+		}
+	}
+	return result;
+}
+
+// A name whose load ended without a model
+bool LoadFailed(const std::shared_future<std::shared_ptr<const LoadedModel>>& load)
+{
+	if (!load.valid() || load.wait_for(std::chrono::seconds(0)) != std::future_status::ready)
+		return !load.valid();
+	const std::shared_ptr<const LoadedModel>& loaded = load.get();
+	return !loaded || loaded->error != VRRenderModelError_None;
+}
 } // namespace
 
 static std::shared_ptr<const LoadedModel> LoadModel(const string& name, std::shared_ptr<const RmModel> own);
+
+size_t BaseRenderModels::MostLoadsAtOnce()
+{
+	LoadQueue& queue = Queue();
+	std::lock_guard<std::mutex> guard(queue.lock);
+	return queue.busyMost;
+}
 
 EVRRenderModelError BaseRenderModels::LoadRenderModel_Async(const char* pchRenderModelName, RenderModel_t** renderModel)
 {
@@ -575,6 +656,8 @@ EVRRenderModelError BaseRenderModels::LoadRenderModel_Async(const char* pchRende
 		auto it = loads.byName.find(name);
 		if (it == loads.byName.end()) {
 			if (loads.byName.size() >= ModelLoads::kMaxNames)
+				std::erase_if(loads.byName, [](const auto& entry) { return LoadFailed(entry.second); });
+			if (loads.byName.size() >= ModelLoads::kMaxNames)
 				OC_UNSUPPORTED(VRRenderModelError_NotSupported, "LoadRenderModel_Async: too many model names, '%s' isn't loaded", pchRenderModelName);
 			OOVR_LOGF("LoadRenderModel_Async %s", pchRenderModelName);
 			// An own controller model is found here, where the profiles are; its load's thread only reads it
@@ -583,7 +666,7 @@ EVRRenderModelError BaseRenderModels::LoadRenderModel_Async(const char* pchRende
 				own = FindModel(base);
 			std::shared_future<std::shared_ptr<const LoadedModel>> started;
 			try {
-				started = std::async(std::launch::async, LoadModel, name, own).share();
+				started = QueueLoad(LoadTask([name, own] { return LoadModel(name, own); }));
 			} catch (const std::exception& e) {
 				OC_UNSUPPORTED(VRRenderModelError_NotSupported, "LoadRenderModel_Async: can't start loading '%s': %s", pchRenderModelName, e.what());
 			}
@@ -627,6 +710,16 @@ void BaseRenderModels::WaitForLoads()
 	}
 	for (auto& load : pending)
 		load.wait();
+
+	// The threads that ran them: each ends once nothing is waiting
+	std::vector<std::thread> threads;
+	{
+		LoadQueue& queue = Queue();
+		std::lock_guard<std::mutex> guard(queue.lock);
+		threads.swap(queue.threads);
+	}
+	for (std::thread& thread : threads)
+		thread.join();
 }
 
 BaseRenderModels::~BaseRenderModels()

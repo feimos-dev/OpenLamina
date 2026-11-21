@@ -917,3 +917,41 @@ TEST_CASE("Hand_model_tip_is_answered_before_input_is_made")
 	rm.GetComponentState("vive_tracker", "tip", &state, nullptr, &cs);
 	CHECK(hands.backend->otherHandsAsked == 0);
 }
+
+TEST_CASE("Render_model_loads_run_a_few_at_a_time")
+{
+	// No SteamVR models: every name below fails, quickly
+	TempDir empty;
+	SteamVRDirForTest dir(empty.path);
+	BaseRenderModels rm;
+	constexpr int kNames = 64;
+	for (int i = 0; i < kNames; i++) {
+		OOVR_RenderModel_t* model = nullptr;
+		std::string name = "oc_test_few_at_a_time_" + std::to_string(i);
+		CHECK((int)rm.LoadRenderModel_Async(name.c_str(), &model) == 100);
+	}
+	BaseRenderModels::WaitForLoads();
+	CHECK(BaseRenderModels::MostLoadsAtOnce() >= 1);
+	CHECK(BaseRenderModels::MostLoadsAtOnce() <= 3);
+}
+
+TEST_CASE("Render_model_names_that_failed_make_room_for_new_ones")
+{
+	TempDir empty;
+	SteamVRDirForTest dir(empty.path);
+	BaseRenderModels rm;
+	// More failing names than are kept (4096), waited for in rounds so the queue stays short
+	constexpr int kNames = 4096 + 16;
+	for (int i = 0; i < kNames; i++) {
+		OOVR_RenderModel_t* model = nullptr;
+		std::string name = "oc_test_make_room_" + std::to_string(i);
+		rm.LoadRenderModel_Async(name.c_str(), &model);
+		if (i % 512 == 511)
+			BaseRenderModels::WaitForLoads();
+	}
+	BaseRenderModels::WaitForLoads();
+	// One more is still loaded, not refused as one too many
+	OOVR_RenderModel_t* model = nullptr;
+	CHECK((int)rm.LoadRenderModel_Async("oc_test_make_room_last", &model) == 100); // Loading
+	BaseRenderModels::WaitForLoads();
+}

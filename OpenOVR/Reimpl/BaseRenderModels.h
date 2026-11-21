@@ -21,6 +21,9 @@ public: // INTERNAL FUNCTIONS
 	/** Waits for every model LoadRenderModel_Async has started loading */
 	static void WaitForLoads();
 
+	/** The most model loads that have run at the same time (tests) */
+	static size_t MostLoadsAtOnce();
+
 	/** LoadRenderModel_Async waited for: the model's answer, never Loading */
 	OOVR_EVRRenderModelError LoadRenderModelNow(const char* pchRenderModelName, OOVR_RenderModel_t** ppRenderModel);
 
