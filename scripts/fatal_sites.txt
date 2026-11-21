@@ -1,5 +1,14 @@
 # Hard stops that may stay, checked by scripts/abort_sites.py --check: file|function|macro|count|reason
 # Nothing built ends a program. A new line here needs a reason a maintainer accepts.
+OpenOVR/Misc/Config.cpp|parse_HmdColor_t|BAD_VALUE|1|throws BadConfigValue, which ini_handler in the same file catches: a bad openlamina.ini value keeps its default
+OpenOVR/Misc/Config.cpp|parse_bool|BAD_VALUE|1|throws BadConfigValue, which ini_handler in the same file catches: a bad openlamina.ini value keeps its default
+OpenOVR/Misc/Config.cpp|parse_dashboard|BAD_VALUE|1|throws BadConfigValue, which ini_handler in the same file catches: a bad openlamina.ini value keeps its default
+OpenOVR/Misc/Config.cpp|parse_float|BAD_VALUE|2|throws BadConfigValue, which ini_handler in the same file catches: a bad openlamina.ini value keeps its default
+OpenOVR/Misc/Config.cpp|parse_handController|BAD_VALUE|1|throws BadConfigValue, which ini_handler in the same file catches: a bad openlamina.ini value keeps its default
+OpenOVR/Misc/Config.cpp|parse_layout|BAD_VALUE|1|throws BadConfigValue, which ini_handler in the same file catches: a bad openlamina.ini value keeps its default
+OpenOVR/Misc/Config.cpp|parse_uint32_t|BAD_VALUE|1|throws BadConfigValue, which ini_handler in the same file catches: a bad openlamina.ini value keeps its default
+OpenOVR/Misc/SoftFail.cpp|oc_soft_fail|oovr_abort_raw|1|stopOnSoftAbort, a debugging setting off by default: an unsupported call then stops the game on purpose
+OpenOVR/Misc/xrutil.cpp|XrExt::XrExt|XR_BIND|15|to convert: a runtime that offers an enabled extension but gives no function for it ends the program
 OpenOVR/logging.cpp|oovr_abort_raw_va|_Exit|1|the hard stop itself, which the macros above lead to: only reached from an allowed site
 OpenOVR/logging.cpp|oovr_abort_raw_va|abort|1|the hard stop itself, which the macros above lead to: only reached from an allowed site
 OpenOVR/logging.cpp|oovr_message_raw|MessageBoxA|1|OOVR_MESSAGE's box: shown only by the hard stop above (and debug_helper's GetStackWalk, which nothing calls)

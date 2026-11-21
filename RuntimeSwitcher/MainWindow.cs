@@ -87,7 +87,8 @@ namespace RuntimeSwitcher
             _settings.Click += (s, e) => ShowSettings();
             _update.Click += async (s, e) => await UpdateAsync();
             _update.Visible = false;
-            _whatsNew.LinkClicked += (s, e) => Open(_pending?.HtmlUrl ?? Releases.PageUrl);
+            _whatsNew.LinkClicked += (s, e) =>
+                Open(Releases.IsGitHubUrl(_pending?.HtmlUrl) ? _pending.HtmlUrl : Releases.PageUrl);
             _includePrereleases.Checked = Install.IncludePrereleases;
             _includePrereleases.CheckedChanged += (s, e) =>
             {
@@ -233,8 +234,10 @@ namespace RuntimeSwitcher
                 _appList.Show(this);
             }
             catch (Exception e) when (e is IOException || e is UnauthorizedAccessException ||
-                                      e is Newtonsoft.Json.JsonException)
+                                      e is Newtonsoft.Json.JsonException || e is ArgumentException ||
+                                      e is FormatException || e is InvalidCastException)
             {
+                // A file of another shape, as a hand edit can make, is reported here.
                 MessageBox.Show(this, e.Message, "OpenLamina", MessageBoxButtons.OK, MessageBoxIcon.Error);
             }
         }
@@ -343,6 +346,11 @@ namespace RuntimeSwitcher
                 using (await Updater.DownloadAsync(release.Asset(Install.SetupAssetName), setup,
                            new Progress<int>(p => _progress.Value = p)))
                 {
+                    // A game started during the download: Setup would ask it to close.
+                    if (Install.InUse())
+                        throw new IOException("A game started using OpenLamina during the download. Close it, then " +
+                                              "update again.");
+
                     // /SILENT: only a progress window. /CLOSEAPPLICATIONS: this window, if still open. /OPENSWITCHER:
                     // the window again afterwards. The switch stays as it is, since the folder doesn't change.
                     Program.ReleaseWindowMutex();
@@ -354,7 +362,9 @@ namespace RuntimeSwitcher
             }
             catch (Exception e) when (e is System.Net.Http.HttpRequestException || e is TaskCanceledException ||
                                       e is IOException || e is UnauthorizedAccessException ||
-                                      e is InvalidDataException || e is System.ComponentModel.Win32Exception)
+                                      e is InvalidDataException || e is System.ComponentModel.Win32Exception ||
+                                      e is InvalidOperationException || e is ArgumentException ||
+                                      e is FormatException)
             {
                 Program.HoldWindowMutex();
                 _progress.Visible = false;
