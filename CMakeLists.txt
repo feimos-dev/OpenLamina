@@ -504,7 +504,7 @@ add_library(OCCore STATIC
 	OpenOVR/Reimpl/BaseCompositor.h
 	OpenOVR/Reimpl/BaseExtendedDisplay.h
 	OpenOVR/Reimpl/BaseInput.h
-	OpenOVR/Reimpl/BaseInputInternal.cpp
+	OpenOVR/Reimpl/BaseInputInternal.h
 	OpenOVR/Reimpl/BaseOverlay.h
 	OpenOVR/Reimpl/BaseOverlayView.h
 	OpenOVR/Reimpl/BaseRenderModels.h
