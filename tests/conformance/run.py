@@ -63,6 +63,8 @@ CASE_ENV = {"render-models": STEAMVR_FIXTURE, "state-and-resources": STEAMVR_FIX
 # SteamVR's answers while vrserver was starting or stopping between children (Retry, AnotherAppLaunching,
 # ShuttingDown): a recording keeps them, a comparison skips them
 STEAMVR_TRANSIENT = {115, 117, 119, 310}  # restarting, or its shared namespace gone (310)
+# --keep-running: an Init answering one of these ran while SteamVR was quitting or starting (309: its IPC not up yet)
+STEAMVR_RETRY = STEAMVR_TRANSIENT | {309}
 
 
 def load_versions():
@@ -260,10 +262,12 @@ class Runner:
             kept = self.resumed(raw, done, {"interface": version, "apptype": apptype, "argset": argset})
             if kept is not None:
                 return kept
-        for attempt in range(2):
+        for attempt in range(3):
             raw.unlink(missing_ok=True)
             done.unlink(missing_ok=True)
             results = self.interface_records(version, apptype, argset, raw)
+            if self.retry_after_restart(raw, results, attempt):
+                continue
             # SteamVR's shared namespace gone: Init answered 310, or the program timed out before its first answer
             # (waiting in Init for the namespace). SteamVR is started again, and the job run again once.
             hung_in_init = any(r.get("index") == -1 and r.get("status") == "timeout" for r in results)
@@ -274,6 +278,24 @@ class Runner:
                 Runner.timeouts_in_a_row = Runner.HUNG_AFTER
         done.write_text(json.dumps(results), encoding="utf-8")
         return results
+
+    def retry_after_restart(self, raw, records, attempt):
+        """--keep-running: True (after waiting for SteamVR) when the job's Init ran while SteamVR was quitting or
+        starting, so the job is to run again; at most twice."""
+        if not self.args.keep_running or attempt >= 2:
+            return False
+        # Not init-matrix's Init(<app type>) records, whose answers are those errors on purpose
+        records = [r for r in records if not str(r.get("method", "")).startswith("Init(")]
+        bad = sorted({r.get("init_error") for r in records if r.get("init_error") in STEAMVR_RETRY}
+                     | {r.get("ret") for r in records if r.get("method") == "Init" and r.get("ret") in STEAMVR_RETRY})
+        if not bad:
+            return False
+        print(f"run.py: {raw.name}: Init answered {bad} while SteamVR was restarting: running it again", flush=True)
+        if 310 in bad:
+            with Runner.keep_lock:
+                Runner.timeouts_in_a_row = Runner.HUNG_AFTER  # its namespace is gone: started again
+        time.sleep(15)  # until a SteamVR that's quitting has gone; keep_running starts it again before the child
+        return True
 
     @staticmethod
     def resumed(raw, done, what):
@@ -335,9 +357,12 @@ class Runner:
         done = Path(str(raw) + ".result.json")
         if self.args.resume and done.exists():
             return json.loads(done.read_text(encoding="utf-8"))
-        raw.unlink(missing_ok=True)
-        done.unlink(missing_ok=True)
-        records = self.case_records(name, round_, stem, raw)
+        for attempt in range(3):
+            raw.unlink(missing_ok=True)
+            done.unlink(missing_ok=True)
+            records = self.case_records(name, round_, stem, raw)
+            if not self.retry_after_restart(raw, records, attempt):
+                break
         done.write_text(json.dumps(records), encoding="utf-8")
         return records
 

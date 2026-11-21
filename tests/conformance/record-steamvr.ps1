@@ -27,7 +27,7 @@ param(
     # One at a time: a test program that ends SteamVR would otherwise take the others running beside it down too
     [int]$Jobs = 1,
     # The null headset with SteamVR's other drivers too (Lighthouse: real controllers switched on), for the cases whose
-    # answers need controllers
+    # answers need controllers; SteamVR doesn't turn them off on exit or when idle meanwhile
     [switch]$Controllers,
     # Keep what an earlier run into the same -Out finished, and run only the rest (run.py --resume)
     [switch]$Resume
@@ -95,6 +95,12 @@ try {
     $settings['driver_null']['enable'] = $true
     $settings['steamvr']['forcedDriver'] = 'null'
     $settings['steamvr']['activateMultipleDrivers'] = [bool]$Controllers
+    if ($Controllers) {
+        # SteamVR turns the controllers off when it exits, and after five idle minutes; the run restarts it often
+        if (-not $settings.ContainsKey('power')) { $settings['power'] = @{} }
+        $settings['power']['powerOffOnExit'] = $false
+        $settings['power']['turnOffControllersTimeout'] = 86400.0  # seconds: a day
+    }
     $settings | ConvertTo-Json -Depth 32 | Set-Content -LiteralPath $settingsPath -Encoding utf8
 
     # SteamVR first in the paths file, as SteamVR puts itself when started from Steam: its own processes (vrmonitor
