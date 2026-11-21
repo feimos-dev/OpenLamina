@@ -697,25 +697,36 @@ void BaseSystem::PushEventLocked(const event_info_t& e)
 
 void BaseSystem::_EnqueueEvent(const VREvent_t& e)
 {
+	// The announced flags change with the queue, so an activation from the start-up list can't land after the
+	// pumping thread's own event for the same device
+	std::unique_lock lock(events_mutex);
 	if (e.trackedDeviceIndex < announcedDevices.size()) {
 		if (e.eventType == VREvent_TrackedDeviceActivated)
 			announcedDevices[e.trackedDeviceIndex] = true;
 		else if (e.eventType == VREvent_TrackedDeviceDeactivated)
 			announcedDevices[e.trackedDeviceIndex] = false;
 	}
-	std::unique_lock lock(events_mutex);
 	PushEventLocked(e);
 }
 
 void BaseSystem::AnnounceConnectedDevices()
 {
+	// Asked of the backend first: the queue's lock isn't held while it answers
+	std::vector<vr::TrackedDeviceIndex_t> connected;
 	for (vr::TrackedDeviceIndex_t i = 0; i < announcedDevices.size(); i++) {
-		if (announcedDevices[i] || !IsTrackedDeviceConnected(i))
+		if (!announcedDevices[i] && IsTrackedDeviceConnected(i))
+			connected.push_back(i);
+	}
+
+	std::unique_lock lock(events_mutex);
+	for (vr::TrackedDeviceIndex_t i : connected) {
+		if (announcedDevices[i])
 			continue;
+		announcedDevices[i] = true;
 		VREvent_t e{};
 		e.eventType = VREvent_TrackedDeviceActivated;
 		e.trackedDeviceIndex = i;
-		_EnqueueEvent(e);
+		PushEventLocked(e);
 	}
 }
 
