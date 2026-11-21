@@ -62,6 +62,8 @@ private:
 	VkDevice appDevice = VK_NULL_HANDLE;
 	VkQueue appQueue = VK_NULL_HANDLE;
 	VkCommandPool appCommandPool = VK_NULL_HANDLE;
+	// Set when FreeImageBuffers left command buffers that may still run: the pool they're of is left too
+	bool buffersLeft = false;
 	uint32_t poolFamily = 0;
 	std::vector<VkCommandBuffer> appCommandBuffers{};
 	// A fence for each command buffer, signalled when its last submission is over

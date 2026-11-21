@@ -133,7 +133,7 @@ VkCompositor::~VkCompositor()
 	FreeImageBuffers();
 	DestroyStage();
 	// destroying command pool also frees command buffers
-	if (appCommandPool)
+	if (appCommandPool && !buffersLeft)
 		vkDestroyCommandPool(appDevice, appCommandPool, nullptr);
 }
 
@@ -653,6 +653,7 @@ void VkCompositor::FreeImageBuffers()
 	}
 	if (!done) {
 		OOVR_LOG_ONCE("A Vulkan copy didn't finish in time: its command buffers and fences are left");
+		buffersLeft = true;
 		imageFences.clear();
 		imageSemaphores.clear();
 		appCommandBuffers.clear();
