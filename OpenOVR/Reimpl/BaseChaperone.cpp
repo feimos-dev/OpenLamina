@@ -73,9 +73,9 @@ void BaseChaperone::GetBoundsColor(HmdColor_t* pOutputColorArray, int nNumOutput
 
 bool BaseChaperone::GetSoftBoundsInfo(OOVR_ChaperoneSoftBoundsInfo_t* pInfo)
 {
-	if (!pInfo)
-		return false;
-	return GetPlayAreaRect(&pInfo->quadCorners);
+	// Whether there are any, as SteamVR answers, with or without a struct to fill
+	HmdQuad_t rect;
+	return GetPlayAreaRect(pInfo ? &pInfo->quadCorners : &rect);
 }
 
 bool BaseChaperone::GetHardBoundsInfo(HmdQuad_t* pQuadsBuffer, uint32_t* punQuadsCount)

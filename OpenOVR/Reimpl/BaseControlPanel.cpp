@@ -140,8 +140,11 @@ void BaseControlPanel::SetIPD(float fIPD)
 
 bool BaseControlPanel::QuitProcess(uint32_t pidProcessToQuit)
 {
-	// SteamVR sends the process a quit request and answers true, whatever the process. This process gets VREvent_Quit,
-	// and so does another OpenLamina program (one listed in the store); any other process isn't OpenLamina's to reach
+	// SteamVR sends the process a quit request and answers true, whatever the process, but for (uint32_t)-1, which no
+	// process has. This process gets VREvent_Quit, and so does another OpenLamina program (one listed in the store); any
+	// other process isn't OpenLamina's to reach
+	if (pidProcessToQuit == UINT32_MAX)
+		return false;
 	char key[256];
 	if (pidProcessToQuit == oc_current_pid()
 	    || (pidProcessToQuit && BaseApplications().GetApplicationKeyByProcessId(pidProcessToQuit, key, sizeof(key)) == VRApplicationError_None)) {

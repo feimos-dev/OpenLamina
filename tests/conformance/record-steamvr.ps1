@@ -5,15 +5,19 @@
     reference OpenLamina is compared with (expected\steamvr-<version>.json).
 .DESCRIPTION
     1. Finds SteamVR: the paths file's runtime entry ending in \SteamVR, else Steam's steamapps\common\SteamVR.
-    2. Refuses while SteamVR, Monado, Pimax's service or OVR Lighthouse Manager runs.
+    2. Refuses while SteamVR, Desktop+, Monado, Pimax's service or OVR Lighthouse Manager runs, or without an elevated
+       prompt (putting the OpenXR runtime back needs one).
     3. Copies, with their SHA-256s, the paths file (%LOCALAPPDATA%\openvr\openvrpaths.vrpath) and, from Steam's config
-       folder, steamvr.vrsettings, chaperone_info.vrchap, appconfig.json and vrappconfig\.
+       folder, steamvr.vrsettings, chaperone_info.vrchap, appconfig.json and vrappconfig\; and keeps the active OpenXR
+       runtime (the 64-bit HKLM\SOFTWARE\Khronos\OpenXR\1 ActiveRuntime), which SteamVR takes over when it starts.
     4. Turns on the null driver in steamvr.vrsettings (driver_null.enable, steamvr.forcedDriver = null,
        steamvr.activateMultipleDrivers = false, or true with -Controllers, other keys kept) and puts SteamVR first in
        the paths file.
     5. Runs run.py against SteamVR's vrclient_x64.dll (--real-runtime: unsafe_methods.txt isn't called).
     6. Always, at the end: stops SteamVR's processes, puts every backed-up file back (and removes any of them that
-       didn't exist before), and fails unless every SHA-256 matches its backup.
+       didn't exist before), then, with nothing of SteamVR's running (Desktop+ and vrstartup, which start it again,
+       stopped first), the active OpenXR runtime (writing it needs an elevated prompt), and fails unless every
+       SHA-256 matches its backup and the runtime is the one before.
 .EXAMPLE
     tests\conformance\record-steamvr.ps1 -Conformance build-tests\tests\oc_conformance.exe -Out out\steamvr
 #>
@@ -53,8 +57,8 @@ $config = Join-Path $steam 'config'
 $version = (Get-Content -LiteralPath (Join-Path $steamvr 'bin\version.txt') -Raw).Trim()
 Write-Host "SteamVR $version at $steamvr; Steam config $config"
 
-# 2. Nothing VR running
-$running = Get-Process -Name vrserver, vrmonitor, vrcompositor, monado-service, pi_server, OVRLighthouseManager -ErrorAction SilentlyContinue
+# 2. Nothing VR running (the run ends Desktop+ and vrstartup at the end too, so not the user's own)
+$running = Get-Process -Name vrserver, vrmonitor, vrcompositor, vrstartup, DesktopPlus, DesktopPlusUI, monado-service, pi_server, OVRLighthouseManager -ErrorAction SilentlyContinue
 if ($running) { throw "Close these first: $(($running.Name | Sort-Object -Unique) -join ', ')" }
 
 # 3. The backup
@@ -74,8 +78,44 @@ $manifest = foreach ($f in $files) {
 $appconfigDir = Join-Path $config 'vrappconfig'
 $appconfigBefore = if (Test-Path $appconfigDir) { @(Get-ChildItem -LiteralPath $appconfigDir -File | ForEach-Object FullName) } else { @() }
 
+# The active OpenXR runtime: SteamVR makes itself the active one when it starts. The 64-bit view, whichever PowerShell runs
+$openxrKey = 'SOFTWARE\Khronos\OpenXR\1'
+function Get-ActiveRuntime {
+    $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine', 'Registry64')
+    try {
+        $key = $base.OpenSubKey($openxrKey)
+        if (-not $key) { return $null }
+        try {
+            $value = $key.GetValue('ActiveRuntime', $null, 'DoNotExpandEnvironmentNames')
+            if ($null -eq $value) { return $null }
+            return [pscustomobject]@{ Value = [string]$value; Kind = $key.GetValueKind('ActiveRuntime') }
+        }
+        finally { $key.Dispose() }
+    }
+    finally { $base.Dispose() }
+}
+function Set-ActiveRuntime($Runtime) {
+    $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey('LocalMachine', 'Registry64')
+    try {
+        if ($null -eq $Runtime) {
+            $key = $base.OpenSubKey($openxrKey, $true)
+            if ($key) { try { $key.DeleteValue('ActiveRuntime', $false) } finally { $key.Dispose() } }
+        }
+        else {
+            $key = $base.CreateSubKey($openxrKey)
+            try { $key.SetValue('ActiveRuntime', $Runtime.Value, $Runtime.Kind) } finally { $key.Dispose() }
+        }
+    }
+    finally { $base.Dispose() }
+}
+$activeRuntime = Get-ActiveRuntime
+# Putting the OpenXR runtime back writes HKLM: refused now rather than after the run
+$elevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if (-not $WhatIf -and -not $elevated) { throw 'Run this from an elevated prompt: SteamVR changes the active OpenXR runtime, and putting it back needs one' }
+
 if ($WhatIf) {
     $manifest | Format-Table Exists, Hash, Path -AutoSize | Out-String -Width 220 | Write-Host
+    Write-Host "Would keep the active OpenXR runtime (HKLM\$openxrKey ActiveRuntime): $($activeRuntime ? $activeRuntime.Value : '(none)')"
     Write-Host "Would set driver_null.enable, steamvr.forcedDriver = null, steamvr.activateMultipleDrivers = $([bool]$Controllers) in $(Join-Path $config 'steamvr.vrsettings')"
     Write-Host "Would run run.py against $(Join-Path $steamvr 'bin\vrclient_x64.dll'), then put everything back"
     return
@@ -84,6 +124,7 @@ if ($WhatIf) {
 New-Item -ItemType Directory -Force -Path $backup | Out-Null
 foreach ($m in $manifest) { if ($m.Exists) { Copy-Item -LiteralPath $m.Path -Destination $m.Copy -Force } }
 $manifest | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $backup 'manifest.json') -Encoding utf8
+$activeRuntime | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $backup 'openxr-active-runtime.json') -Encoding utf8
 
 $failed = $false
 try {
@@ -127,11 +168,26 @@ catch {
     Write-Warning $_
 }
 finally {
-    # 6. SteamVR stopped, every file back as it was
-    Get-Process -Name vrserver, vrmonitor, vrcompositor, vrdashboard, vrwebhelper, vrstartup, vrprismhost -ErrorAction SilentlyContinue |
-        Stop-Process -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 3
+    # 6. SteamVR stopped, every file back as it was. What starts SteamVR again (Desktop+, which SteamVR starts itself,
+    # and vrstartup) goes first: SteamVR started after the paths file is back would take the first runtime listed
+    # there, and make that the active OpenXR runtime.
+    function Stop-SteamVR {
+        $starters = 'DesktopPlus', 'DesktopPlusUI', 'vrstartup'
+        $steamvrProcesses = 'vrserver', 'vrmonitor', 'vrcompositor', 'vrdashboard', 'vrwebhelper', 'vrprismhost'
+        for ($round = 0; $round -lt 3; $round++) {
+            foreach ($names in @($starters), @($steamvrProcesses)) {
+                Get-Process -Name $names -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            }
+            for ($i = 0; $i -lt 30 -and (Get-Process -Name ($starters + $steamvrProcesses) -ErrorAction SilentlyContinue); $i++) {
+                Start-Sleep -Seconds 1
+            }
+            Start-Sleep -Seconds 3
+            if (-not (Get-Process -Name ($starters + $steamvrProcesses) -ErrorAction SilentlyContinue)) { return $true }
+        }
+        return $false
+    }
     $mismatch = @()
+    if (-not (Stop-SteamVR)) { $mismatch += 'SteamVR or Desktop+ still running after three tries to stop them' }
     foreach ($m in $manifest) {
         if ($m.Exists) {
             Copy-Item -LiteralPath $m.Copy -Destination $m.Path -Force
@@ -145,8 +201,22 @@ finally {
         Get-ChildItem -LiteralPath $appconfigDir -File | Where-Object { $appconfigBefore -notcontains $_.FullName } |
             ForEach-Object { Write-Host "Removing $($_.FullName), made during the run"; Remove-Item -LiteralPath $_.FullName -Force }
     }
+    # The active OpenXR runtime last, once nothing of SteamVR's runs (something that started it again meanwhile is
+    # stopped first)
+    if (-not (Stop-SteamVR)) { $mismatch += 'SteamVR or Desktop+ started again after the files were put back, and still runs' }
+    $runtimeNow = Get-ActiveRuntime
+    if (($runtimeNow ? $runtimeNow.Value : $null) -ne ($activeRuntime ? $activeRuntime.Value : $null)) {
+        $was = $activeRuntime ? $activeRuntime.Value : '(none)'
+        try {
+            Set-ActiveRuntime $activeRuntime
+            Write-Host "The active OpenXR runtime put back: $was"
+        }
+        catch {
+            $mismatch += "HKLM\$openxrKey ActiveRuntime (was $was, now $($runtimeNow.Value); writing it needs an elevated prompt)"
+        }
+    }
     if ($mismatch) { throw "NOT put back exactly (backups in $backup): $($mismatch -join ', ')" }
-    Write-Host "Every file put back; SHA-256s match ($backup)."
+    Write-Host "Every file put back; SHA-256s match ($backup). The active OpenXR runtime is the one before."
 }
 if ($failed) { throw 'The recording failed; files were put back.' }
 
@@ -155,8 +225,8 @@ if ($Probe) {
     Get-Content -LiteralPath (Join-Path $Out 'raw\case-init-matrix.jsonl') | Write-Host
     return
 }
-$results = Get-Content -LiteralPath (Join-Path $Out 'results.json') -Raw
+# One record per line, sorted, so a new recording's diff is a line for each answer that changed
 $target = Join-Path $here "expected\steamvr-$version.json"
 New-Item -ItemType Directory -Force -Path (Split-Path $target) | Out-Null
-Set-Content -LiteralPath $target -Value $results -Encoding utf8
-Write-Host "Wrote $target"
+& python -I (Join-Path $here 'reference.py') (Join-Path $Out 'results.json') $target
+if ($LASTEXITCODE -ne 0) { throw "reference.py failed ($LASTEXITCODE)" }

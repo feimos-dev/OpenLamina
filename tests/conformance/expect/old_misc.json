@@ -1,7 +1,7 @@
 {
- "#": "The remaining old versions on the stand-in (run.py --cases old-misc --expect expect/old_misc.json). No home application (104, UnknownApplication); IVRChaperone_002's soft bounds are the play area, its seated bounds none; IVRRenderModels_001's inline model; IVRNotifications_001's error names; IVRControlPanel_001 gives the interfaces VR_GetGenericInterface does; IVRInput_003 takes its 24-byte action sets and refuses today's 32 (4, InvalidParam).",
+ "#": "The remaining old versions on the stand-in (run.py --cases old-misc --expect expect/old_misc.json). No home application (102, NoApplication); IVRChaperone_002's soft bounds are the play area, its seated bounds none; IVRRenderModels_001's inline model; IVRNotifications_001 answered with today's errors and no error names, as SteamVR answers it; IVRControlPanel_001 gives the interfaces VR_GetGenericInterface does; IVRInput_003 takes its 24-byte action sets and refuses today's 32 (4, InvalidParam).",
  "old-misc/IVRApplications_001 GetHomeApplication/-/-": {
-  "ret": 104,
+  "ret": 102,
   "key": ""
  },
  "old-misc/IVRChaperone_002 bounds/-/-": {
@@ -18,15 +18,15 @@
   "freed handle": 0
  },
  "old-misc/IVRNotifications_001/-/-": {
-  "size": 26,
-  "name": "k_ENotificationError_Fail",
-  "create without overlay": 1,
+  "size": 1,
+  "name": "",
+  "create without overlay": 102,
   "id set without overlay": false,
-  "dismiss unknown": 1,
+  "dismiss unknown": 100,
   "create": 0,
   "id set": true,
   "dismiss": 0,
-  "dismiss again": 1
+  "dismiss again": 100
  },
  "old-misc/IVRControlPanel_001/-/-": {
   "drivers": 1,

@@ -30,13 +30,27 @@ std::mutex lock;
 std::vector<EVRScreenshotType> hooked;
 bool isHooked = false;
 std::vector<Request> requests;
+// Screenshots submitted without a request of ours (a game's own, with a handle of its own): kept, as SteamVR keeps
+// them, so their properties are the submitted type and files
+std::vector<Request> submitted;
 ScreenshotHandle_t lastHandle = k_unScreenshotHandleInvalid;
-// The most requests kept: a game that never submits doesn't make the list grow
+// The most requests (and submitted screenshots) kept: a game that never submits doesn't make the list grow
 constexpr size_t kMaxRequests = 32;
 
 Request* Find(ScreenshotHandle_t handle)
 {
 	for (Request& r : requests)
+		if (r.handle == handle && handle != k_unScreenshotHandleInvalid)
+			return &r;
+	return nullptr;
+}
+
+// A request, or else a screenshot submitted without one
+const Request* FindAny(ScreenshotHandle_t handle)
+{
+	if (const Request* r = Find(handle))
+		return r;
+	for (const Request& r : submitted)
 		if (r.handle == handle && handle != k_unScreenshotHandleInvalid)
 			return &r;
 	return nullptr;
@@ -205,7 +219,7 @@ EVRScreenshotError BaseScreenshots::HookScreenshot(VR_ARRAY_COUNT(numTypes) cons
 EVRScreenshotType BaseScreenshots::GetScreenshotPropertyType(ScreenshotHandle_t screenshotHandle, EVRScreenshotError* pError)
 {
 	std::lock_guard<std::mutex> guard(lock);
-	const Request* r = Find(screenshotHandle);
+	const Request* r = FindAny(screenshotHandle);
 	if (pError)
 		*pError = r ? VRScreenshotError_None : VRScreenshotError_NotFound;
 	return r ? r->type : VRScreenshotType_None;
@@ -216,7 +230,7 @@ uint32_t BaseScreenshots::GetScreenshotPropertyFilename(ScreenshotHandle_t scree
 	if (pchFilename && cchFilename)
 		pchFilename[0] = 0;
 	std::lock_guard<std::mutex> guard(lock);
-	const Request* r = Find(screenshotHandle);
+	const Request* r = FindAny(screenshotHandle);
 	if (!r || (filenameType != VRScreenshotPropertyFilenames_Preview && filenameType != VRScreenshotPropertyFilenames_VR)) {
 		if (pError)
 			*pError = r ? VRScreenshotError_RequestFailed : VRScreenshotError_NotFound;
@@ -224,7 +238,7 @@ uint32_t BaseScreenshots::GetScreenshotPropertyFilename(ScreenshotHandle_t scree
 	}
 	const std::string& name = filenameType == VRScreenshotPropertyFilenames_Preview ? r->preview : r->vrFile;
 	const uint32_t needed = (uint32_t)name.size() + 1;
-	if (pchFilename && cchFilename) {
+	if (pchFilename) {
 		if (cchFilename < needed) {
 			if (pError)
 				*pError = VRScreenshotError_BufferTooSmall;
@@ -264,8 +278,19 @@ EVRScreenshotError BaseScreenshots::SubmitScreenshot(ScreenshotHandle_t screensh
 	{
 		std::lock_guard<std::mutex> guard(lock);
 		const Request* found = Find(screenshotHandle);
-		if (!found)
-			return VRScreenshotError_None; // no request of ours: no destination for the files
+		if (!found) {
+			// No request of ours: no destination for the files, but the screenshot (of a type there is) is known from
+			// now on
+			if (screenshotHandle != k_unScreenshotHandleInvalid && type >= VRScreenshotType_None && type <= VRScreenshotType_StereoPanorama) {
+				submitted.erase(std::remove_if(submitted.begin(), submitted.end(), [&](const Request& s) { return s.handle == screenshotHandle; }),
+				    submitted.end());
+				if (submitted.size() >= kMaxRequests)
+					submitted.erase(submitted.begin());
+				submitted.push_back({ screenshotHandle, type, pchSourcePreviewFilename ? pchSourcePreviewFilename : "",
+				    pchSourceVRFilename ? pchSourceVRFilename : "" });
+			}
+			return VRScreenshotError_None;
+		}
 		r = *found;
 		requests.erase(requests.begin() + (found - requests.data()));
 	}

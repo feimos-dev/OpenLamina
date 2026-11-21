@@ -10,9 +10,11 @@
 TEST_CASE("Mailbox_ready_message_is_valid_json_and_comes_once")
 {
 	BaseMailbox mb;
+	OOVR_mbox_handle h = 0;
+	REQUIRE(mb.RegisterMailbox("game", &h) == BaseMailbox::VR_MBox_None);
 	char buf[64];
 	uint32_t len = 0;
-	REQUIRE(mb.ReadMessage(1, buf, sizeof(buf), &len) == BaseMailbox::VR_MBox_None);
+	REQUIRE(mb.ReadMessage(h, buf, sizeof(buf), &len) == BaseMailbox::VR_MBox_None);
 	CHECK(len == strlen(buf));
 
 	Json::Value v;
@@ -22,36 +24,62 @@ TEST_CASE("Mailbox_ready_message_is_valid_json_and_comes_once")
 	REQUIRE(Json::parseFromStream(rb, in, &v, &errs));
 	CHECK(v["type"].asString() == "ready");
 
-	CHECK(mb.ReadMessage(1, buf, sizeof(buf), &len) == BaseMailbox::VR_MBox_NoMessage);
+	CHECK(mb.ReadMessage(h, buf, sizeof(buf), &len) == BaseMailbox::VR_MBox_NoMessage);
 }
 
 TEST_CASE("Mailbox_read_survives_missing_pointers_and_short_buffers")
 {
 	BaseMailbox mb;
-	// No length out-parameter, no buffer
-	CHECK(mb.ReadMessage(1, nullptr, 0, nullptr) == BaseMailbox::VR_MBox_BufferTooShort);
+	OOVR_mbox_handle h = 0;
+	REQUIRE(mb.RegisterMailbox("game", &h) == BaseMailbox::VR_MBox_None);
+	// No length out-parameter: refused, as SteamVR does
+	CHECK(mb.ReadMessage(h, nullptr, 0, nullptr) == BaseMailbox::VR_MBox_InvalidParameter);
 
-	// A buffer one byte too short: the length says what to allocate, and the message is not lost
+	// No buffer, or one byte too short: the length says what to allocate, and the message is not lost
 	uint32_t len = 0;
 	char buf[64];
-	CHECK(mb.ReadMessage(1, buf, 0, &len) == BaseMailbox::VR_MBox_BufferTooShort);
+	CHECK(mb.ReadMessage(h, nullptr, 0, &len) == BaseMailbox::VR_MBox_BufferTooShort);
+	CHECK(mb.ReadMessage(h, buf, 0, &len) == BaseMailbox::VR_MBox_BufferTooShort);
 	REQUIRE(len > 0);
 	memset(buf, 'x', sizeof(buf));
-	CHECK(mb.ReadMessage(1, buf, len, &len) == BaseMailbox::VR_MBox_BufferTooShort);
+	CHECK(mb.ReadMessage(h, buf, len, &len) == BaseMailbox::VR_MBox_BufferTooShort);
 	CHECK(buf[0] == 'x');
-	CHECK(mb.ReadMessage(1, buf, len + 1, &len) == BaseMailbox::VR_MBox_None);
+	CHECK(mb.ReadMessage(h, buf, len + 1, &len) == BaseMailbox::VR_MBox_None);
 }
 
 TEST_CASE("Mailbox_each_instance_sends_ready")
 {
 	char buf[64];
 	uint32_t len = 0;
+	OOVR_mbox_handle h = 0;
 	{
 		BaseMailbox mb;
-		CHECK(mb.ReadMessage(1, buf, sizeof(buf), &len) == BaseMailbox::VR_MBox_None);
+		REQUIRE(mb.RegisterMailbox("game", &h) == BaseMailbox::VR_MBox_None);
+		CHECK(mb.ReadMessage(h, buf, sizeof(buf), &len) == BaseMailbox::VR_MBox_None);
 	}
 	BaseMailbox again;
-	CHECK(again.ReadMessage(1, buf, sizeof(buf), &len) == BaseMailbox::VR_MBox_None);
+	REQUIRE(again.RegisterMailbox("game", &h) == BaseMailbox::VR_MBox_None);
+	CHECK(again.ReadMessage(h, buf, sizeof(buf), &len) == BaseMailbox::VR_MBox_None);
+}
+
+TEST_CASE("Mailbox_answers_as_SteamVR_does_for_mailboxes_it_doesnt_have")
+{
+	BaseMailbox mb;
+	char buf[64];
+	uint32_t len = 0;
+	// Not registered: a small number made up by the caller isn't a mailbox
+	CHECK(mb.ReadMessage(1, buf, sizeof(buf), &len) == BaseMailbox::VR_MBox_InvalidHandle);
+	CHECK(mb.UnregisterMailbox(1) == BaseMailbox::VR_MBox_InvalidHandle);
+	OOVR_mbox_handle h = 0;
+	CHECK(mb.RegisterMailbox("", &h) == BaseMailbox::VR_MBox_InvalidParameter);
+	REQUIRE(mb.RegisterMailbox("game", &h) == BaseMailbox::VR_MBox_None);
+	CHECK(h != 1);
+	CHECK(mb.UnregisterMailbox(h) == BaseMailbox::VR_MBox_None);
+	CHECK(mb.UnregisterMailbox(h) == BaseMailbox::VR_MBox_InvalidHandle);
+	// A message needs an address and a body; to any mailbox it's sent on
+	CHECK(mb.SendMessage(h, "", "") == BaseMailbox::VR_MBox_InvalidParameter);
+	CHECK(mb.SendMessage(0, nullptr, nullptr) == BaseMailbox::VR_MBox_InvalidParameter);
+	CHECK(mb.SendMessage(1, "test", "test") == BaseMailbox::VR_MBox_None);
 }
 
 TEST_CASE("Mailbox_names_have_their_own_handles")
@@ -77,7 +105,7 @@ TEST_CASE("Mailbox_register_with_missing_pointers")
 {
 	BaseMailbox mb;
 	OOVR_mbox_handle h = 5;
-	CHECK(mb.RegisterMailbox(nullptr, &h) != BaseMailbox::VR_MBox_None);
+	CHECK(mb.RegisterMailbox(nullptr, &h) == BaseMailbox::VR_MBox_InvalidParameter);
 	CHECK(h == 0);
-	CHECK(mb.RegisterMailbox("x", nullptr) != BaseMailbox::VR_MBox_None);
+	CHECK(mb.RegisterMailbox("x", nullptr) == BaseMailbox::VR_MBox_InvalidParameter);
 }

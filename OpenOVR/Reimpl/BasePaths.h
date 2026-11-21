@@ -11,42 +11,50 @@ typedef uint64_t OOVR_PathHandle_t;
 
 /**
  * SteamVR's path-keyed property store. The paths are kept (StringToHandle and HandleToString agree, the same path
- * always giving the same handle); there are no properties behind them, so every batch entry is UnknownProperty.
+ * always giving the same handle); there are no property containers behind them, so a batch is refused as SteamVR
+ * refuses one for a container it doesn't know.
  */
 class BasePaths {
 public:
 	// How many distinct paths are kept; a path past that gets no handle
 	static constexpr size_t kMaxPaths = 65536;
+	// The first handle: a large number, as SteamVR's are, so a small number isn't taken for a path
+	static constexpr OOVR_PathHandle_t kFirstHandle = 0x1000000000000000ull;
 
 	vr::ETrackedPropertyError StringToHandle(OOVR_PathHandle_t* pHandle, const char* pchPath);
 	vr::ETrackedPropertyError HandleToString(OOVR_PathHandle_t pHandle, char* pchBuffer, uint32_t unBufferSize, uint32_t* punBufferSizeUsed);
 
-	// The batch structs differ between the versions (002's PathWrite_t has two more fields), so these take each one's
+	// The batch structs differ between the versions (002's PathWrite_t has two more fields), so these take each one's.
+	// An empty batch succeeds; any other names a container there isn't (InvalidDevice), each entry UnknownProperty.
 	template <typename PathRead>
 	vr::ETrackedPropertyError ReadPathBatch(vr::PropertyContainerHandle_t ulRootHandle, PathRead* pBatch, uint32_t unBatchEntryCount)
 	{
-		if (unBatchEntryCount && !pBatch)
+		if (unBatchEntryCount == 0)
+			return vr::TrackedProp_Success;
+		if (!pBatch)
 			return vr::TrackedProp_InvalidOperation;
 		for (uint32_t i = 0; i < unBatchEntryCount; i++) {
 			pBatch[i].unTag = vr::k_unInvalidPropertyTag;
 			pBatch[i].unRequiredBufferSize = 0;
 			pBatch[i].eError = vr::TrackedProp_UnknownProperty;
 		}
-		return vr::TrackedProp_Success;
+		return vr::TrackedProp_InvalidDevice;
 	}
 
 	template <typename PathWrite>
 	vr::ETrackedPropertyError WritePathBatch(vr::PropertyContainerHandle_t ulRootHandle, PathWrite* pBatch, uint32_t unBatchEntryCount)
 	{
-		if (unBatchEntryCount && !pBatch)
+		if (unBatchEntryCount == 0)
+			return vr::TrackedProp_Success;
+		if (!pBatch)
 			return vr::TrackedProp_InvalidOperation;
 		for (uint32_t i = 0; i < unBatchEntryCount; i++)
 			pBatch[i].eError = vr::TrackedProp_UnknownProperty;
-		return vr::TrackedProp_Success;
+		return vr::TrackedProp_InvalidDevice;
 	}
 
 private:
 	std::mutex lock;
 	std::map<std::string, OOVR_PathHandle_t> handles;
-	std::vector<std::string> paths; // handle - 1
+	std::vector<std::string> paths; // handle - kFirstHandle
 };

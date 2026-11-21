@@ -356,10 +356,11 @@ VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(EVRInitError* peError, EVRApp
 	}
 
 	// Overlay and background apps get sessions of their own where the OpenXR runtime has them (helperApps): the backend
-	// decides, and refuses them as below where it hasn't. Not beside a running game's session.
+	// decides, and refuses them as below where it hasn't. Not beside a running game's session: there, as SteamVR, an
+	// Init of any type is a second Init of the running program (below)
 	const bool helperApp = (eApplicationType == VRApplication_Overlay || eApplicationType == VRApplication_Background)
 	    && oovr_global_configuration.HelperApps() && !running;
-	if (eApplicationType != VRApplication_Scene && !helperApp)
+	if (eApplicationType != VRApplication_Scene && !helperApp && !running)
 #ifndef _WIN32
 		if (eApplicationType != VRApplication_Background) // Proton uses this
 #endif
