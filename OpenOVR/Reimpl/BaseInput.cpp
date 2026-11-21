@@ -3230,6 +3230,25 @@ bool BaseInput::AreActionsLoaded()
 	return hasLoadedActions;
 }
 
+bool BaseInput::LocateAimInGrip(ITrackedDevice::TrackedDeviceType hand, XrTime time, XrSpaceLocation& out)
+{
+	if (!IsSkeletonHand(hand))
+		return false;
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
+	// A manifest being loaded replaces the actions and spaces under this lock
+	std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
+	if (!hasLoadedActions || !xr_session.get())
+		return false;
+	const LegacyControllerActions& ctrl = legacyControllers[hand];
+	if (ctrl.aimPoseSpace == XR_NULL_HANDLE || ctrl.gripPoseSpace == XR_NULL_HANDLE)
+		return false;
+	XrSpaceLocation location = { XR_TYPE_SPACE_LOCATION };
+	if (XR_FAILED(xrLocateSpace(ctrl.aimPoseSpace, ctrl.gripPoseSpace, time, &location)))
+		return false;
+	out = location;
+	return true;
+}
+
 bool BaseInput::GetHandPointer(int hand, XrSpace base, XrTime time, HandPointer& out)
 {
 	out = {};

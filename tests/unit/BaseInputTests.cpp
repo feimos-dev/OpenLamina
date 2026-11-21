@@ -195,3 +195,13 @@ TEST_CASE("Escaped_names_keep_each_byte_apart")
 	CHECK(BaseInput::EscapePathString("\xc3\xa9") == ".c3.a9");
 	CHECK(BaseInput::EscapePathString("\xc3\xa9") != BaseInput::EscapePathString("\xc3\xa8"));
 }
+
+TEST_CASE("No_aim_in_grip_without_actions")
+{
+	BaseInput input;
+	XrSpaceLocation location = { XR_TYPE_SPACE_LOCATION };
+	location.locationFlags = 7;
+	for (auto hand : { ITrackedDevice::HAND_LEFT, ITrackedDevice::HAND_RIGHT, ITrackedDevice::GENERIC_TRACKER, ITrackedDevice::HAND_NONE })
+		CHECK_FALSE(input.LocateAimInGrip(hand, 0, location));
+	CHECK(location.locationFlags == 7);
+}

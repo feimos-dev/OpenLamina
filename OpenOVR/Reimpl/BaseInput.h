@@ -551,6 +551,12 @@ public:
 	 */
 	bool GetHandPointer(int hand, XrSpace base, XrTime time, HandPointer& out);
 	/**
+	 * Locates a hand's aim pose relative to its grip pose at time, under the lock a manifest load replaces the spaces
+	 * under (the render models' "tip"). False, with out untouched, for anything but the two hands, before any actions
+	 * are loaded, or when the runtime can't locate it; true with the runtime's flags otherwise.
+	 */
+	bool LocateAimInGrip(ITrackedDevice::TrackedDeviceType hand, XrTime time, XrSpaceLocation& out);
+	/**
 	 * Syncs the old input's actions (and the raw inputs) alone: for a call that blocks the game, which then syncs
 	 * none of its own (ShowMessageOverlay). Nothing before any actions are loaded.
 	 */
