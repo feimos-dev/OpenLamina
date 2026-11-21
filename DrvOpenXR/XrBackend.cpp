@@ -1340,6 +1340,7 @@ void XrBackend::SubmitFrames(bool showSkybox)
 				lastProjectionViews[i].next = nullptr;
 			}
 			lastProjection.views = lastProjectionViews;
+			lastProjectionSpace = frameSpace;
 			haveLastProjection = true;
 		}
 	}
@@ -1347,7 +1348,7 @@ void XrBackend::SubmitFrames(bool showSkybox)
 	// A frame ended for the game without its eye textures: its last frame again, which the runtime reprojects
 	bool repeated = false;
 	if (!app_layer && repeatLastFrame && haveLastProjection && !sceneCleared && !renderingSuspended) {
-		app_layer = (XrCompositionLayerBaseHeader*)&lastProjection;
+		app_layer = (XrCompositionLayerBaseHeader*)LastProjectionLayer();
 		repeated = true;
 	}
 
@@ -1356,9 +1357,7 @@ void XrBackend::SubmitFrames(bool showSkybox)
 	const ScenePlan plan = PlanScene(app_layer != nullptr, SkyboxShown(), CompositorFades::Get().GridAlphaAt(CompositorClockSeconds()));
 	frameLayers.clear();
 	if (plan.skybox) {
-		std::lock_guard<std::mutex> lock(skyboxLock);
-		for (int i = 0; i < skybox.layerCount; i++)
-			frameLayers.push_back((const XrCompositionLayerBaseHeader*)&skybox.layers[i]);
+		AddSkyboxLayers(frameLayers);
 	} else if (plan.scene) {
 		frameLayers.push_back(app_layer);
 	}
@@ -1556,7 +1555,8 @@ bool XrBackend::SkyboxShown()
 int XrBackend::SetEquirectSkybox(const vr::Texture_t* textures, uint32_t count)
 {
 	XrCompositionLayerEquirect2KHR layer{ XR_TYPE_COMPOSITION_LAYER_EQUIRECT2_KHR };
-	layer.space = xr_space_from_ref_space_type(BaseSystem::currentSpace);
+	const XrReferenceSpaceType spaceType = BaseSystem::currentSpace;
+	layer.space = xr_space_from_ref_space_type(spaceType);
 	layer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
 	layer.pose = { { 0, 0, 0, 1 }, { 0, 0, 0 } };
 	layer.radius = 0; // a sphere at infinity
@@ -1570,6 +1570,7 @@ int XrBackend::SetEquirectSkybox(const vr::Texture_t* textures, uint32_t count)
 	if (count == 6 && textures[0].eType == vr::TextureType_DirectX) {
 		std::lock_guard<std::mutex> owner(frameOwner);
 		std::lock_guard<std::mutex> lock(skyboxLock);
+		skybox.space = spaceType;
 		if (!skybox.cube)
 			skybox.cube = BaseCompositor::CreateCompositorAPI(&textures[0]);
 		XrSwapchainSubImage drawn{};
@@ -1607,6 +1608,7 @@ int XrBackend::SetEquirectSkybox(const vr::Texture_t* textures, uint32_t count)
 	// The swapchains are refilled, and maybe remade, while no own frame uses them
 	std::lock_guard<std::mutex> owner(frameOwner);
 	std::lock_guard<std::mutex> lock(skyboxLock);
+	skybox.space = spaceType;
 	skybox.layerCount = 0;
 	if (count == 6) {
 		if (!skybox.faces)
@@ -1634,6 +1636,21 @@ int XrBackend::SetEquirectSkybox(const vr::Texture_t* textures, uint32_t count)
 	}
 	skybox.layerCount = (int)count;
 	return 0;
+}
+
+void XrBackend::AddSkyboxLayers(std::vector<const XrCompositionLayerBaseHeader*>& layers)
+{
+	std::lock_guard<std::mutex> lock(skyboxLock);
+	for (int i = 0; i < skybox.layerCount; i++) {
+		skybox.layers[i].space = xr_space_from_ref_space_type(skybox.space);
+		layers.push_back((const XrCompositionLayerBaseHeader*)&skybox.layers[i]);
+	}
+}
+
+const XrCompositionLayerBaseHeader* XrBackend::LastProjectionLayer()
+{
+	lastProjection.space = xr_space_from_ref_space_type(lastProjectionSpace);
+	return (const XrCompositionLayerBaseHeader*)&lastProjection;
 }
 
 bool XrBackend::EquirectSkyboxAvailable() const
@@ -2910,13 +2927,9 @@ void XrBackend::OnSessionCreated()
 	    [this](XrTime, std::vector<const XrCompositionLayerBaseHeader*>& layers) {
 		    // RunOwnFrame holds frameOwner, under which the skybox and the game's last frame are replaced: the skybox in
 		    // the game's place, else its last frame again (which the runtime reprojects); then the overlays
-		    {
-			    std::lock_guard<std::mutex> lock(skyboxLock);
-			    for (int i = 0; i < skybox.layerCount; i++)
-				    layers.push_back((const XrCompositionLayerBaseHeader*)&skybox.layers[i]);
-		    }
+		    AddSkyboxLayers(layers);
 		    if (layers.empty() && haveLastProjection)
-			    layers.push_back((const XrCompositionLayerBaseHeader*)&lastProjection);
+			    layers.push_back(LastProjectionLayer());
 		    // The fade over the scene, as on the game's frames (a game that stalls in a fade to black stays black)
 		    if (!layers.empty()) {
 			    if (XrCompositionLayerBaseHeader* fade = BuildFadeLayer())

@@ -369,13 +369,22 @@ private:
 		std::unique_ptr<Compositor> cube; // six faces, as one lat-long image drawn on the GPU (InvokeCubemap)
 		XrCompositionLayerEquirect2KHR layers[2]{};
 		int layerCount = 0;
+		// The reference space the layers are in: its handle is asked for at each use (AddSkyboxLayers)
+		XrReferenceSpaceType space = XR_REFERENCE_SPACE_TYPE_STAGE;
 	};
 	std::mutex skyboxLock;
 	Skybox skybox;
+	// The skybox's layers added to a frame's, in their reference space as it is now: the seated space's handle is
+	// replaced when the seated zero pose moves. The caller holds the session lock and frameOwner.
+	void AddSkyboxLayers(std::vector<const XrCompositionLayerBaseHeader*>& layers);
 	std::unique_ptr<Compositor> skyboxReader; // reads cube faces back
 	// The game's last projection layer, for OpenLamina's own frames; under frameOwner
 	XrCompositionLayerProjection lastProjection{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
 	XrCompositionLayerProjectionView lastProjectionViews[2]{};
+	// The reference space its views were located in: its handle is asked for at each use (LastProjectionLayer)
+	XrReferenceSpaceType lastProjectionSpace = XR_REFERENCE_SPACE_TYPE_STAGE;
+	// The last projection layer, in its reference space as it is now. The caller holds the session lock and frameOwner.
+	const XrCompositionLayerBaseHeader* LastProjectionLayer();
 	std::atomic<bool> haveLastProjection{ false };
 	// SubmitFrames shows the game's last frame again if this frame has none of its own (a frame the game didn't submit
 	// to, ended for it)
