@@ -145,6 +145,8 @@ for iface in interfaces:
 # This contains all the definitions for our version-specific classes, aka stubs
 with open(output_dir / "stubs.gen.cpp", "w", newline='\n') as impl:
     impl.write('#include "stdafx.h"\n')
+    impl.write('#include <atomic>\n')
+    impl.write('#include <mutex>\n')
 
     # The interfaces header contains OPENVR_FNTABLE_CALLTYPE, along with declarations
     #  for any non-static functions we define

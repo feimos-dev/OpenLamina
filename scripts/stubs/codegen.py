@@ -52,20 +52,37 @@ def write_stubs(fi, iface: InterfaceSpec):
     var = "_single_inst_" + first_ver.varname()
     getter_name = first_ver.getter_name()
 
-    # Write the version-independent code that creates the instance of the base class
+    # Write the version-independent code that creates the instance of the base class. Any game thread may be the
+    # first to ask for it, so the weak pointer is only touched under a lock. The lock is recursive, as a constructor
+    # may reach its own getter, and never destroyed, as the last reference may be dropped while the process exits.
     fi.write(f"""
 #include "GVR{iface.name}.gen.h"
 // Single inst of {cls}
 static std::weak_ptr<{cls}> {var};
-static {cls} *{var}_unsafe = NULL;
-std::shared_ptr<{cls}> Get{getter_name}() {{ return {var}.lock(); }};
-{cls}* GetUnsafe{getter_name}() {{ return {var}_unsafe; }};
+static std::atomic<{cls} *> {var}_unsafe{{ nullptr }};
+static std::recursive_mutex &{var}_mutex() {{
+    static std::recursive_mutex *mutex = new std::recursive_mutex();
+    return *mutex;
+}}
+std::shared_ptr<{cls}> Get{getter_name}() {{
+    std::lock_guard<std::recursive_mutex> lock({var}_mutex());
+    return {var}.lock();
+}}
+{cls}* GetUnsafe{getter_name}() {{ return {var}_unsafe.load(); }}
 std::shared_ptr<{cls}> GetCreate{getter_name}() {{
+    std::lock_guard<std::recursive_mutex> lock({var}_mutex());
     std::shared_ptr<{cls}> ret = {var}.lock();
     if(!ret) {{
-        ret = std::shared_ptr<{cls}>(new {cls}(), []({cls} *obj){{ {var}_unsafe = NULL; delete obj; }});
+        ret = std::shared_ptr<{cls}>(new {cls}(), []({cls} *obj){{
+            {{
+                std::lock_guard<std::recursive_mutex> deleteLock({var}_mutex());
+                {cls} *expected = obj;
+                {var}_unsafe.compare_exchange_strong(expected, nullptr);
+            }}
+            delete obj;
+        }});
         {var} = ret;
-        {var}_unsafe = ret.get();
+        {var}_unsafe.store(ret.get());
     }}
     return ret;
 }}
