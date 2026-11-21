@@ -28,49 +28,91 @@ MACROS = ["STUBBED", "OOVR_ABORT_T", "OOVR_ABORTF", "OOVR_ABORT", "OOVR_FAILED_X
 # The C++ library's and Windows' own, also as std:: or :: (a message box stalls a game whose window is in the headset)
 CALLS = ["exit", "_Exit", "_exit", "quick_exit", "abort", "terminate", "ExitProcess", "TerminateProcess", "FatalExit",
          "FatalAppExitA", "FatalAppExitW", "__fastfail", "MessageBoxA", "MessageBoxW"]
-USE = re.compile(r"(?<![\w#.:>])(" + "|".join(MACROS) + r")\s*\(|(?<![\w#.:>])(?:std::|::)?(" + "|".join(CALLS) +
-                 r")\s*\(|(?<![\w#])(throw)\b")
 FUNC = re.compile(r"^(?!\s)(?!(?:if|for|while|switch|return|else|do|case|#|//|typedef|namespace|class|struct|enum)\b)"
                   r".*?\b((?:\w+::)*~?\w+)\s*\([^;]*$")
-SKIP_FILES = {"OpenOVR/logging.h", "OpenOVR/Misc/SoftFail.h", "OpenOVR/BaseCommon.h", "OpenOVR/Misc/xrutil.h"}
+DEFINE = re.compile(r"^\s*#\s*define\s+(\w+)")
+
+
+def use_pattern(macros):
+    return re.compile(r"(?<![\w#.:>])(" + "|".join(sorted(macros, key=len, reverse=True)) + r")\s*\(|"
+                      r"(?<![\w#.:>])(?:std::|::)?(" + "|".join(CALLS) + r")\s*\(|(?<![\w#])(throw)\b")
+
+
+def sources(root):
+    for d in DIRS:
+        base = root / d
+        if base.exists():
+            yield from sorted(list(base.rglob("*.cpp")) + list(base.rglob("*.h")))
+
+
+def defines(root):
+    """{name: body} of every #define, its continued lines joined (the first definition of a name)."""
+    found = {}
+    for path in sources(root):
+        name, body = None, []
+        for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
+            if name is None:
+                m = DEFINE.match(line)
+                if not m:
+                    continue
+                name, body = m.group(1), [line[m.end():]]
+            else:
+                body.append(line)
+            if not line.rstrip().endswith("\\"):
+                found.setdefault(name, " ".join(b.split("//", 1)[0] for b in body))
+                name = None
+    return found
+
+
+def hard_stop_macros(root):
+    """MACROS and every macro whose body reaches a hard stop, also through another such macro."""
+    known = set(MACROS)
+    defs = defines(root)
+    for _ in range(len(defs) + 1):
+        pattern = use_pattern(known)
+        new = {name for name, body in defs.items() if name not in known and pattern.search(body)}
+        if not new:
+            break
+        known |= new
+    return known
 
 
 def scan(root):
     sites = []
-    for d in DIRS:
-        base = root / d
-        if not base.exists():
-            continue
-        for path in sorted(list(base.rglob("*.cpp")) + list(base.rglob("*.h"))):
-            rel = path.relative_to(root).as_posix()
-            if rel in SKIP_FILES:
+    use_re = use_pattern(hard_stop_macros(root))
+    for path in sources(root):
+        rel = path.relative_to(root).as_posix()
+        func, ret = "<file>", ""
+        in_block = False
+        in_define = False
+        for n, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
+            stripped = line.strip()
+            # A macro's definition and its continued lines are not uses (hard_stop_macros reads them)
+            if in_define or DEFINE.match(line):
+                in_define = line.rstrip().endswith("\\")
                 continue
-            func, ret = "<file>", ""
-            in_block = False
-            for n, line in enumerate(path.read_text(encoding="utf-8", errors="replace").splitlines(), 1):
-                stripped = line.strip()
-                if in_block:
-                    if "*/" in stripped:
-                        in_block = False
-                    continue
-                if stripped.startswith("/*") and "*/" not in stripped:
-                    in_block = True
-                    continue
-                if stripped.startswith("//") or stripped.startswith("#define") or stripped.startswith("*"):
-                    continue
-                m = FUNC.match(line)
-                if m:
-                    func = m.group(1)
-                    ret = " ".join(line[:m.start(1)].split())
-                code = line.split("//", 1)[0]
-                for use in USE.finditer(code):
-                    macro = use.group(1) or use.group(2) or use.group(3)
-                    if macro == "ThrowIfFailed" and "::ThrowIfFailed" in code:
-                        continue  # its definition, not a use
-                    if macro == "oovr_abort_raw" and re.match(r"\s*(?:OC_NORETURN\s+)?void\s", code):
-                        continue  # its definition
-                    message = code[use.end():].strip().rstrip(";").rstrip(")")[:100]
-                    sites.append((rel, n, func, macro, message, ret))
+            if in_block:
+                if "*/" in stripped:
+                    in_block = False
+                continue
+            if stripped.startswith("/*") and "*/" not in stripped:
+                in_block = True
+                continue
+            if stripped.startswith("//") or stripped.startswith("*"):
+                continue
+            m = FUNC.match(line)
+            if m:
+                func = m.group(1)
+                ret = " ".join(line[:m.start(1)].split())
+            code = line.split("//", 1)[0]
+            for use in use_re.finditer(code):
+                macro = use.group(1) or use.group(2) or use.group(3)
+                if macro == "ThrowIfFailed" and "::ThrowIfFailed" in code:
+                    continue  # its definition, not a use
+                if macro == "oovr_abort_raw" and re.match(r"\s*(?:OC_NORETURN\s+)?void\s", code):
+                    continue  # its definition
+                message = code[use.end():].strip().rstrip(";").rstrip(")")[:100]
+                sites.append((rel, n, func, macro, message, ret))
     return sites
 
 
@@ -117,11 +159,14 @@ def self_test():
             "int Foo::Bar(int x)\n{\n\tSTUBBED();\n}\n// OOVR_ABORT(\"comment\");\nvoid Baz()\n{\n"
             "\tOOVR_ABORTF(\"x %d\", 1);\n\tOOVR_SOFT_ABORT(\"soft\");\n\tstd::terminate();\n\tapp->exit(0);\n"
             "\toovr_abort_raw(__FILE__, 1, \"f\", \"m\");\n\t_exit(1);\n}\n"
-            "OC_NORETURN void oovr_abort_raw(const char* file, long line)\n{\n}\n")
+            "OC_NORETURN void oovr_abort_raw(const char* file, long line)\n{\n}\n"
+            # A macro reaching a hard stop, through another one, over continued lines: its uses count, its body doesn't
+            "#define WRAP(x) \\\n\tdo { \\\n\t\tOOVR_ABORT(x); \\\n\t} while (0)\n#define WRAP2(x) WRAP(x)\n"
+            "#define QUIET(x) OOVR_LOG(x)\nvoid Qux()\n{\n\tWRAP2(\"a\");\n\tQUIET(\"b\");\n}\n")
         sites = scan(root)
         got = [(s[2], s[3]) for s in sites]
         want = [("Foo::Bar", "STUBBED"), ("Baz", "OOVR_ABORTF"), ("Baz", "terminate"), ("Baz", "oovr_abort_raw"),
-                ("Baz", "_exit")]
+                ("Baz", "_exit"), ("Qux", "WRAP2")]
         if got != want:
             print("self-test FAILED: got", got, "want", want)
             return 1
