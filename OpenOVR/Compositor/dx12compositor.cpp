@@ -648,8 +648,10 @@ void DX12Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 		ID3D12CommandList* set[] = { commandList };
 		queue->ExecuteCommandLists(1, set);
 	} else {
-		// Nothing written: the eye is left out (Submit answers InvalidTexture), and the image goes back as it was
-		OOVR_LOG_ONCEF("A D3D12 texture of DXGI format %d couldn't be converted into swapchain format %d", (int)srcDesc.Format, (int)createInfo.format);
+		// Nothing written: the eye is left out (Submit answers InvalidTexture), and the image goes back as it was. A
+		// multisampled one that couldn't be resolved was logged above.
+		if (srcDesc.SampleDesc.Count == 1 || resolvedTex)
+			OOVR_LOG_ONCEF("A D3D12 texture of DXGI format %d couldn't be converted into swapchain format %d", (int)srcDesc.Format, (int)createInfo.format);
 		lastResult = XR_ERROR_VALIDATION_FAILURE;
 	}
 
