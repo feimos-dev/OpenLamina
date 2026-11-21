@@ -1871,6 +1871,7 @@ EVRInputError BaseInput::UpdateActionState(VR_ARRAY_COUNT(unSetCount) VRActiveAc
 	}
 
 	UpdateEvaluators(pSets, unSetCount);
+	ReleaseHoldAfterSync();
 
 	return VRInputError_None;
 }
@@ -1889,6 +1890,7 @@ void BaseInput::InternalUpdate()
 	OC_XR_LOG(xrSyncActions(xr_session.get(), &syncInfo));
 	syncSerial++;
 	FlushDueHaptics();
+	ReleaseHoldAfterSync();
 }
 
 EVRInputError BaseInput::GetDigitalActionData(VRActionHandle_t action, InputDigitalActionData_t* pActionData, uint32_t unActionDataSize,
@@ -3322,11 +3324,76 @@ bool BaseInput::HeldByDashboard()
 	return heldByDashboard;
 }
 
+// When the hold began, in steady_clock ticks; 0 while there's none. One value, so that a hold begun on another thread
+// while a sync lets the last one go isn't lost.
+static std::atomic<int64_t> heldUntilReleasedSince{ 0 };
+
+void BaseInput::HoldUntilReleased()
+{
+	const int64_t now = std::chrono::steady_clock::now().time_since_epoch().count();
+	heldUntilReleasedSince = now != 0 ? now : 1;
+}
+
+bool BaseInput::HeldUntilReleased()
+{
+	return heldUntilReleasedSince.load() != 0;
+}
+
+bool BaseInput::UpdateHoldUntilReleased(bool anythingPressed, std::chrono::steady_clock::time_point now)
+{
+	int64_t began = heldUntilReleasedSince.load();
+	if (began == 0)
+		return false;
+	const std::chrono::steady_clock::time_point since{ std::chrono::steady_clock::duration(began) };
+	// Only the hold that was read: a newer one stays
+	if (!anythingPressed || now - since >= kHoldUntilReleasedLimit)
+		heldUntilReleasedSince.compare_exchange_strong(began, 0);
+	return HeldUntilReleased();
+}
+
+bool BaseInput::CountsAsPress(const std::string& component)
+{
+	auto endsWith = [&](std::string_view suffix) {
+		return component.size() >= suffix.size() && component.compare(component.size() - suffix.size(), suffix.size(), suffix) == 0;
+	};
+	// A click of any button, stick or pad; the trigger's and the grip's pull (Touch has no click on either)
+	return endsWith("/click") || component == "/input/trigger/value" || component == "/input/squeeze/value";
+}
+
+std::optional<bool> BaseInput::AnythingPressed()
+{
+	if (rawInputsSet == XR_NULL_HANDLE || rawActions.empty() || !xr_session.get())
+		return std::nullopt;
+	for (const auto& [component, action] : rawActions) {
+		if (!CountsAsPress(component))
+			continue;
+		for (XrPath subaction : allSubactionPaths) {
+			XrActionStateGetInfo getInfo = { XR_TYPE_ACTION_STATE_GET_INFO };
+			getInfo.action = action;
+			getInfo.subactionPath = subaction;
+			XrActionStateFloat value = { XR_TYPE_ACTION_STATE_FLOAT };
+			// Half way: a resting finger on an analog trigger or grip doesn't count
+			if (XR_SUCCEEDED(xrGetActionStateFloat(xr_session.get(), &getInfo, &value)) && value.isActive && value.currentState > 0.5f)
+				return true;
+		}
+	}
+	return false;
+}
+
+void BaseInput::ReleaseHoldAfterSync()
+{
+	if (!HeldUntilReleased())
+		return;
+	std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
+	// Without raw inputs nothing tells a press: let it go, as before the hold existed
+	UpdateHoldUntilReleased(AnythingPressed().value_or(false), std::chrono::steady_clock::now());
+}
+
 bool BaseInput::InputHeld()
 {
 	// The grid fully in and not asked to fade out: once the game asks for that, its input is back as the fade starts
 	const CompositorFades& fades = CompositorFades::Get();
-	return HeldByDashboard() || (fades.GridWanted() && fades.GridAlphaAt(CompositorClockSeconds()) >= 1.0f);
+	return HeldByDashboard() || HeldUntilReleased() || (fades.GridWanted() && fades.GridAlphaAt(CompositorClockSeconds()) >= 1.0f);
 }
 
 bool BaseInput::GetDashboardButton(bool system, int hand)

@@ -171,6 +171,49 @@ TEST_CASE("Input_is_held_while_the_grid_is_fully_faded_in")
 	CHECK_FALSE(BaseInput::InputHeld());
 }
 
+TEST_CASE("The_press_that_closed_the_dashboard_is_held_until_released")
+{
+	CompositorFades::Get().Reset();
+	BaseInput::SetHeldByDashboard(false);
+	const auto start = std::chrono::steady_clock::now();
+	BaseInput::UpdateHoldUntilReleased(false, start); // nothing left from another case
+
+	// Closed with the trigger still down: the game's input stays held while it is
+	BaseInput::HoldUntilReleased();
+	CHECK(BaseInput::InputHeld());
+	CHECK(BaseInput::UpdateHoldUntilReleased(true, start + std::chrono::milliseconds(100)));
+	CHECK(BaseInput::InputHeld());
+
+	// Released: back at the next sync
+	CHECK_FALSE(BaseInput::UpdateHoldUntilReleased(false, start + std::chrono::milliseconds(200)));
+	CHECK_FALSE(BaseInput::InputHeld());
+
+	// A press held past the limit (a stuck or resting input) lets go anyway
+	const auto before = std::chrono::steady_clock::now();
+	BaseInput::HoldUntilReleased();
+	const auto after = std::chrono::steady_clock::now();
+	CHECK(BaseInput::UpdateHoldUntilReleased(true, before + BaseInput::kHoldUntilReleasedLimit - std::chrono::milliseconds(1)));
+	CHECK_FALSE(BaseInput::UpdateHoldUntilReleased(true, after + BaseInput::kHoldUntilReleasedLimit));
+	CHECK_FALSE(BaseInput::InputHeld());
+
+	// Nothing left for the next case
+	BaseInput::UpdateHoldUntilReleased(false, std::chrono::steady_clock::now());
+	CHECK_FALSE(BaseInput::InputHeld());
+}
+
+TEST_CASE("Only_clicks_and_pulls_count_as_presses_for_the_hold")
+{
+	CHECK(BaseInput::CountsAsPress("/input/trigger/click"));
+	CHECK(BaseInput::CountsAsPress("/input/a/click"));
+	CHECK(BaseInput::CountsAsPress("/input/thumbstick/click"));
+	CHECK(BaseInput::CountsAsPress("/input/trigger/value"));
+	CHECK(BaseInput::CountsAsPress("/input/squeeze/value"));
+	CHECK_FALSE(BaseInput::CountsAsPress("/input/trigger/touch"));
+	CHECK_FALSE(BaseInput::CountsAsPress("/input/thumbstick/x"));
+	CHECK_FALSE(BaseInput::CountsAsPress("/input/squeeze/force"));
+	CHECK_FALSE(BaseInput::CountsAsPress("/input/trackpad/force"));
+}
+
 TEST_CASE("Registry_finds_a_long_name_by_its_full_spelling")
 {
 	BaseInput::Registry<BaseInput::ActionSet> sets(XR_MAX_ACTION_SET_NAME_SIZE);

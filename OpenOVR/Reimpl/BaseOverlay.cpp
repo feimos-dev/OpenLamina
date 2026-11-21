@@ -1473,10 +1473,8 @@ void BaseOverlay::DashboardChanged(bool open, const char* overlayKey)
 	}
 	// The game's input is held while it's open, and the click or press that closed it isn't the game's
 	BaseInput::SetHeldByDashboard(open);
-	if (!open) {
-		if (BaseSystem* system = GetUnsafeBaseSystem())
-			system->_BlockInputsUntilReleased();
-	}
+	if (!open)
+		BaseInput::HoldUntilReleased();
 	vr::VREvent_Data_t data{};
 	data.process.pid = self;
 	OcPostEvent(open ? VREvent_DashboardActivated : VREvent_DashboardDeactivated, k_unTrackedDeviceIndex_Hmd, data, true);
@@ -2048,10 +2046,8 @@ void BaseOverlay::_UpdatePointer()
 			});
 		}
 	}
-	if (keyboardClosed) {
-		if (BaseSystem* system = GetUnsafeBaseSystem())
-			system->_BlockInputsUntilReleased();
-	}
+	if (keyboardClosed)
+		BaseInput::HoldUntilReleased();
 }
 
 bool BaseOverlay::_AnyVisible()
@@ -4431,9 +4427,7 @@ EVROverlayError BaseOverlay::ShowKeyboardWithDispatch(EGamepadTextInputMode eInp
 	}
 	old.reset();
 
-	BaseSystem* system = GetUnsafeBaseSystem();
-	if (system)
-		system->_BlockInputsUntilReleased();
+	BaseInput::HoldUntilReleased();
 	return VROverlayError_None;
 }
 
@@ -4535,10 +4529,7 @@ void BaseOverlay::HideKeyboard()
 	}
 	chain.reset();
 
-	BaseSystem* system = GetUnsafeBaseSystem();
-	if (system) {
-		system->_BlockInputsUntilReleased();
-	}
+	BaseInput::HoldUntilReleased();
 }
 void BaseOverlay::SetKeyboardTransformAbsolute(ETrackingUniverseOrigin eTrackingOrigin, const HmdMatrix34_t* pmatTrackingOriginToKeyboardTransform)
 {

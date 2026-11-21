@@ -132,9 +132,12 @@ std::shared_ptr<{cls}> GetCreate{getter_name}() {{
                 if (f.name, _bare_type_name(ours)) in layout_check_exceptions:
                     continue
                 fi.write(f"\tstatic_assert(oc_same_layout<{ours}, {theirs}>(), \"{ours}: the Base class's copy differs\");\n")
-            fi.write("\tif (oovr_global_configuration.LogAllOpenVRCalls())\n"
-                     f"\t\tOOVR_LOG(\"Entered function (from interface {ver.namespace()})\");\n"
-                     f"\t{return_str} base->{f.name}({nargs});\n}}\n")
+            # An exception from OpenLamina's code ends the call with a failure value, not the game (OC_ENTRY_CATCH)
+            fi.write("\ttry {\n"
+                     "\t\tif (oovr_global_configuration.LogAllOpenVRCalls())\n"
+                     f"\t\t\tOOVR_LOG(\"Entered function (from interface {ver.namespace()})\");\n"
+                     f"\t\t{return_str} base->{f.name}({nargs});\n"
+                     f"\t}} OC_ENTRY_CATCH(\"{cname}::{f.name}\", {failure_value(f.return_type)})\n}}\n")
 
         # Generate the fntable
         _build_fntable(fi, ver)
@@ -143,6 +146,47 @@ std::shared_ptr<{cls}> GetCreate{getter_name}() {{
         # (a function table taken from this object must not keep calling into it)
         inst_name = f"fntable_{ver.varname()}_{ver.version}_instance"
         fi.write(f"void {cname}::Delete() {{ if ({inst_name} == this) {inst_name} = NULL; delete this; }}\n")
+
+
+# The value a call answers when an exception ended it: the error enums' own failure (their zero is success), else zero
+# (false, null, 0, a zeroed struct)
+failure_values = {
+    "EVROverlayError": 23,  # VROverlayError_RequestFailed
+    "EVRInputError": 7,  # VRInputError_IPCError: the runtime failed, not the arguments
+    "EVRCompositorError": 1,  # VRCompositorError_RequestFailed
+    "EVRApplicationError": 105,  # VRApplicationError_IPCFailed
+    "EVRScreenshotError": 1,  # VRScreenshotError_RequestFailed
+    "EVRRenderModelError": 301,  # VRRenderModelError_InvalidModel (not Loading: the game would ask again for ever)
+    "EVRFirmwareError": 2,  # VRFirmwareError_Fail
+    "EVRNotificationError": 104,  # VRNotificationError_ServiceUnavailable
+    "EVRInitError": 124,  # VRInitError_Init_Internal
+    "EVRTrackedCameraError": 100,  # VRTrackedCameraError_OperationFailed
+    "EVRDebugError": 1,  # VRDebugError_BadParameter
+    "EIOBufferError": 100,  # IOBuffer_OperationFailed
+    "EVRSpatialAnchorError": 1,  # VRSpatialAnchorError_Internal
+    "ETrackedPropertyError": 6,  # TrackedProp_CouldNotContactServer
+    "VRMessageOverlayResponse": 4,  # VRMessageOverlayResponse_CouldntFindSystemOverlay (0 is a button press)
+    # The names before OpenVR 1.0
+    "VROverlayError": 23,  # VROverlayError_RequestFailed
+    "VRCompositorError": 101,  # VRCompositorError_DoNotHaveFocus (there was no RequestFailed)
+    "VRFirmwareError": 2,  # VRFirmwareError_Fail
+}
+# Error types whose zero isn't success: an int for unknown functions
+zero_is_failure = {"EVR_ControlPanel_Error"}
+
+
+def failure_value(return_type: str) -> str:
+    rt = return_type.strip()
+    if rt == "void":
+        return ""
+    bare = _bare_type_name(rt)
+    value = failure_values.get(bare)
+    if value is not None:
+        return f"({rt}){value}"
+    # A new error enum would otherwise answer its zero, which is success
+    if bare.endswith("Error") and bare not in zero_is_failure:
+        raise ValueError(f"stubs: no failure value for {rt} (codegen.py failure_values)")
+    return "{}"
 
 
 # (function, type) whose versions differ in size by design: the Base class reads the caller's size, from an argument

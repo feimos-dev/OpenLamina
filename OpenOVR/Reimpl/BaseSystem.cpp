@@ -735,12 +735,6 @@ void BaseSystem::_PostEvent(EVREventType type, TrackedDeviceIndex_t device, cons
 	OcPostEvent(type, device, data, alsoToOtherPrograms);
 }
 
-void BaseSystem::_BlockInputsUntilReleased()
-{
-	blockingInputsUntilRelease[0] = true;
-	blockingInputsUntilRelease[1] = true;
-}
-
 float BaseSystem::SGetIpd()
 {
 	std::shared_ptr<IHMD> dev = BackendManager::Instance().GetPrimaryHMD();

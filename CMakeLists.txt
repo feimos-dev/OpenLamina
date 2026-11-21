@@ -564,6 +564,10 @@ endif ()
 # Set up precompiled headers for OCCore
 target_precompile_headers(OCCore PRIVATE ${CMAKE_SOURCE_DIR}/OpenOVR/stdafx.h)
 set_source_files_properties(${OVR_PCH_EXCLUDED} PROPERTIES SKIP_PRECOMPILE_HEADERS ON)
+# Every stub has its own catch and soft-failure site (OC_ENTRY_CATCH): more sections than MSVC's object format holds
+if(MSVC)
+	set_source_files_properties(${GENERATED_DIR}/stubs.gen.cpp PROPERTIES COMPILE_OPTIONS /bigobj)
+endif()
 
 source_group(OpenVR REGULAR_EXPRESSION ${GENERATED_DIR}/interfaces)
 source_group(OpenVR\\Custom REGULAR_EXPRESSION OpenVRHeaders/custom_interfaces/*)
