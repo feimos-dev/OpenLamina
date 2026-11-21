@@ -3206,6 +3206,10 @@ void BaseInput::GetHandSpace(vr::TrackedDeviceIndex_t index, XrSpace& space, boo
 
 void BaseInput::GetHandSpace(ITrackedDevice::TrackedDeviceType hand, XrSpace& space, bool aimPose)
 {
+	// Only the two hands have a controller space (a tracker or no hand has none)
+	space = XR_NULL_HANDLE;
+	if (!IsSkeletonHand(hand))
+		return;
 	LegacyControllerActions& ctrl = legacyControllers[hand];
 
 	space = aimPose ? ctrl.aimPoseSpace : ctrl.gripPoseSpace;
