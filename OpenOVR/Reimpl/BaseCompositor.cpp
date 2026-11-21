@@ -84,9 +84,12 @@ ovr_enum_t BaseCompositor::WaitGetPoses(TrackedDevicePose_t* renderPoseArray, ui
     TrackedDevicePose_t* gamePoseArray, uint32_t gamePoseArrayCount)
 {
 
-	// Assume this method isn't being called between frames, b/c it really shouldn't be.
-	leftEyeSubmitted = false;
-	rightEyeSubmitted = false;
+	// A new frame: no eye submitted (after a Submit another thread is in, which reads and sets them under the lock)
+	{
+		std::lock_guard<std::mutex> submitGuard(submitLock);
+		leftEyeSubmitted = false;
+		rightEyeSubmitted = false;
+	}
 
 	// An overlay or background application runs no frames of its own: the poses, and the answer SteamVR gives it
 	if (IsHelperSession()) {
