@@ -15,7 +15,7 @@ HeadsetView 9 0 0 0 100
 IOBuffer 6 0 0 0 100
 Input 99 2 3 0 97
 Mailbox 5 0 0 0 100
-Notifications 7 0 0 0 100
+Notifications 6 0 0 0 100
 Overlay 136 0 16 0 100
 OverlayView 4 2 0 0 50
 Paths 2 0 0 0 100
@@ -26,7 +26,7 @@ Settings 19 0 0 0 100
 SpatialAnchors 5 0 0 0 100
 System 78 2 4 1 96
 TrackedCamera 11 0 0 0 100
-all 628 9 32 2 98
+all 627 9 32 2 98
 
 # Interface versions of OpenLamina's own (OpenVRHeaders/custom_interfaces), and why each is there
 IVRClientCore_002 IVRClientCore's old versions, which openvr_api.dll asks vrclient for: Valve never published them
