@@ -189,6 +189,28 @@ TEST_CASE("Tab_click_selects_program")
 	CHECK(!d.OnClick(u, v));
 }
 
+TEST_CASE("A_tab_with_no_room_is_neither_drawn_nor_clicked")
+{
+	Dashboard d(Dashboard::Button::MenuLong);
+	d.isAlive = [](uint32_t, uint64_t) { return true; };
+	Json::Value doc(Json::objectValue);
+	for (uint32_t pid = 300; pid < 310; pid++)
+		doc[std::to_string(pid)] = OverlaysWithDashboard(pid, 77)[std::to_string(pid)];
+	Canvas canvas(Dashboard::kWidth, Dashboard::kHeight);
+	d.Draw(canvas, Json::Value(Json::objectValue), doc);
+	// The first tab past the frame's right margin (20 pixels) is the first not drawn
+	size_t fit = 0;
+	while (fit < 10 && Dashboard::TabRect(fit).x + Dashboard::TabRect(fit).w <= Dashboard::kWidth - 20)
+		fit++;
+	REQUIRE(fit < 10);
+	// The first tab that doesn't fit, where it is on the canvas
+	const Dashboard::Rect r = Dashboard::TabRect(fit);
+	REQUIRE(r.x + 1 < Dashboard::kWidth);
+	const float x = (float)r.x + 1, y = (float)r.y + r.h / 2.0f;
+	std::optional<std::string> clicked = d.OnClick(x / Dashboard::kWidth, y / Dashboard::kHeight);
+	CHECK_FALSE((clicked && *clicked == "tab:" + std::to_string(300 + fit) + ":77"));
+}
+
 TEST_CASE("Dashboard_tabs_of_a_document_of_another_shape")
 {
 	Dashboard d(Dashboard::Button::MenuLong);

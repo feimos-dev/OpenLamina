@@ -184,6 +184,9 @@ std::optional<std::string> Dashboard::OnClick(float u, float v)
 	if (QuitRect().Contains(x, y))
 		return std::string("quit");
 	for (size_t i = 0; i < drawnTabs.size(); i++) {
+		// As Draw stops: a tab with no room isn't drawn
+		if (TabRect(i).x + TabRect(i).w > kWidth - kMargin)
+			break;
 		if (TabRect(i).Contains(x, y))
 			return "tab:" + std::to_string(drawnTabs[i].pid) + ":" + std::to_string(drawnTabs[i].handle);
 	}
