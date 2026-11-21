@@ -148,6 +148,7 @@ bool DX12Compositor::ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTexture
 	ComPtr<ID3D12Resource> resolved;
 	if (desc.SampleDesc.Count > 1) {
 		D3D12_RESOURCE_DESC rd = desc;
+		rd.Alignment = 0; // the multisampled source's is one only multisampled textures can have
 		rd.Format = typed;
 		rd.DepthOrArraySize = 1;
 		rd.MipLevels = 1;
@@ -492,6 +493,7 @@ ID3D12Resource* DX12Compositor::Resolved(const D3D12_RESOURCE_DESC& of, DXGI_FOR
 		resolved.Reset();
 	}
 	D3D12_RESOURCE_DESC rd = of;
+	rd.Alignment = 0; // the multisampled source's is one only multisampled textures can have
 	rd.Format = format;
 	rd.DepthOrArraySize = 1;
 	rd.MipLevels = 1;
@@ -602,7 +604,9 @@ void DX12Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 	}
 
 	bool recorded = false;
-	if (usePass) {
+	if (srcDesc.SampleDesc.Count > 1 && !resolvedTex) {
+		OOVR_LOG_ONCE("A multisampled D3D12 texture couldn't be resolved: left out");
+	} else if (usePass) {
 		// The area, backwards where the bounds flip it, in texture coordinates
 		Dx12Convert::Pass p;
 		const float w = (float)srcDesc.Width, h = (float)srcDesc.Height;
