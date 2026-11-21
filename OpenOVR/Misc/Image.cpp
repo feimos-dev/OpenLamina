@@ -1,6 +1,7 @@
 #include "stdafx.h"
 
 #include "Image.h"
+#include "StbJpeg.h"
 
 #include "lodepng.h"
 
@@ -253,9 +254,8 @@ std::optional<Image> LoadImageFile(const std::filesystem::path& path, std::strin
 		std::vector<unsigned char> bytes((size_t)size);
 		if (size && !in.read((char*)bytes.data(), (std::streamsize)size))
 			return fail("it can't be read");
-		// A JPEG is recognised, to say so: there is no decoder for it
 		if (bytes.size() >= 3 && bytes[0] == 0xFF && bytes[1] == 0xD8 && bytes[2] == 0xFF)
-			return fail("it's a JPEG image, and only PNG images can be read");
+			return DecodeJpeg(std::string(bytes.begin(), bytes.end()), why);
 		unsigned width = 0, height = 0;
 		lodepng::State state;
 		if (lodepng_inspect(&width, &height, &state, bytes.data(), bytes.size()) != 0)

@@ -775,6 +775,10 @@ TEST_CASE("Own_controller_models_textures_can_be_JPEG")
 	for (size_t i = 4; i < image->rgba.size() && !varied; i += 4)
 		varied = memcmp(&image->rgba[i], &image->rgba[0], 3) != 0;
 	CHECK(varied);
+	// The same through the overlay's and the compositor's reader
+	std::optional<Image> again = LoadImageFile(mesh->textures[0], nullptr);
+	REQUIRE(again);
+	CHECK(again->rgba == image->rgba);
 
 	// Bytes that start as a JPEG but aren't one are refused
 	TempDir tmp;
