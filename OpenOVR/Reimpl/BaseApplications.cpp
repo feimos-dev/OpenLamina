@@ -326,7 +326,7 @@ void BaseApplications::SetSceneProcess(SharedStore& store, bool running)
 	// The transition this program was waited on for: it became the new scene application, or was asked to quit
 	bool arrived = false, quitAsked = false;
 	std::string toLaunch;
-	store.Update(StoreDoc::Scene, [&](Json::Value& scene) {
+	const bool written = store.Update(StoreDoc::Scene, [&](Json::Value& scene) {
 		if (!scene.isObject())
 			scene = Json::Value(Json::objectValue);
 		Transition t = LiveTransition(scene);
@@ -382,6 +382,11 @@ void BaseApplications::SetSceneProcess(SharedStore& store, bool running)
 	if (changed) {
 		vr::VREvent_Data_t data{};
 		data.process.pid = running ? pid : 0;
+	// Not written: the other programs don't see the change, so it isn't announced or acted on (as with no store)
+	if (!written) {
+		OOVR_LOGF("The scene application couldn't be recorded as %s", running ? "this program" : "gone");
+		return;
+	}
 		data.process.oldPid = oldPid;
 		OcPostEvent(vr::VREvent_SceneApplicationChanged, vr::k_unTrackedDeviceIndexInvalid, data, true);
 
@@ -465,7 +470,7 @@ void BaseApplications::TakeOverPendingLaunch(SharedStore& store)
 	std::string key;
 	uint32_t oldPid = 0;
 	bool dropped = false;
-	store.Update(StoreDoc::Scene, [&](Json::Value& scene) {
+	const bool written = store.Update(StoreDoc::Scene, [&](Json::Value& scene) {
 		if (!scene.isObject() || !scene["transition"].isObject())
 			return;
 		Json::Value& tr = scene["transition"];
@@ -492,6 +497,9 @@ void BaseApplications::TakeOverPendingLaunch(SharedStore& store)
 
 void BaseApplications::AddThisProcess(SharedStore& store)
 {
+	// Not written: the transition is still the old application's, for the next program that looks to take over
+	if (!written)
+		return;
 	TakeOverPendingLaunch(store);
 	const uint32_t pid = oc_current_pid();
 	const std::string name = std::to_string(pid);

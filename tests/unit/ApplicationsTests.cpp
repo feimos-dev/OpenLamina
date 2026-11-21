@@ -599,6 +599,25 @@ TEST_CASE("Scene_process_changes_are_announced")
 	CHECK(changed.data.process.oldPid == oc_current_pid());
 }
 
+TEST_CASE("Scene_process_not_announced_when_it_isnt_written")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	EventRecorder recorder;
+
+	// A folder where the document's temporary file goes: the edit is made, but the file can't be written
+	fs::create_directories(dir.path / "scene.json.tmp" / "in_the_way");
+	BaseApplications::SetSceneProcess(store, true);
+	CHECK(CountEvents(vr::VREvent_ProcessConnected) == 0);
+	CHECK(CountEvents(vr::VREvent_SceneApplicationChanged) == 0);
+	CHECK(store.Read(StoreDoc::Scene).empty());
+
+	fs::remove_all(dir.path / "scene.json.tmp");
+	BaseApplications::SetSceneProcess(store, true);
+	CHECK(CountEvents(vr::VREvent_SceneApplicationChanged) == 1);
+	BaseApplications::SetSceneProcess(store, false);
+}
+
 TEST_CASE("Scene_application_waits_until_it_has_drawn")
 {
 	TempDir dir;
