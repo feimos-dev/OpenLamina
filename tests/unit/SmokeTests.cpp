@@ -113,6 +113,25 @@ TEST_CASE("Config user file overridden by the working directory's, key by key")
 }
 #endif
 
+TEST_CASE("Config hand colour is read as 0 to 1 with full alpha")
+{
+	IniInDir ini("handColour=#ff8000\n");
+	Config c;
+	vr::HmdColor_t colour = c.HandColour();
+	CHECK(colour.r == 1.0f);
+	CHECK(colour.g == doctest::Approx(128 / 255.0f));
+	CHECK(colour.b == 0.0f);
+	CHECK(colour.a == 1.0f);
+}
+
+TEST_CASE("Config reads a long path whole")
+{
+	const std::string path = "C:/" + std::string(300, 'd') + "/editor.exe";
+	IniInDir ini("bindingEditor=" + path + "\n");
+	Config c;
+	CHECK(c.BindingEditor() == path);
+}
+
 TEST_CASE("Config scales must be numbers above 0")
 {
 	oovr_log_set_test_sink(test_sink);

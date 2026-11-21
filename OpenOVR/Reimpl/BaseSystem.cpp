@@ -70,7 +70,19 @@ public:
 	DEF_PRINT_RESULT(float, "%f", result)
 	DEF_PRINT_RESULT(int32_t, "%" PRIi32, result)
 	DEF_PRINT_RESULT(uint64_t, "%" PRIu64, result)
-	DEF_PRINT_RESULT(char*, "%s", result ? result : "(no buffer)")
+
+	// The game's buffer is printed only as far as the call wrote it: on an error or a short buffer it holds whatever
+	// the game left there, maybe without a terminator
+	void print_string(const char* buffer, uint32_t bufferSize, uint32_t written, const vr::ETrackedPropertyError* error)
+	{
+		if (!oovr_global_configuration.LogGetTrackedProperty())
+			return;
+		if (!buffer || written == 0 || written > bufferSize || (error && *error != vr::TrackedProp_Success)) {
+			OOVR_LOGF("dev: %u | prop: %u | result: (not written, size %" PRIu32 ")", idx, prop, written);
+			return;
+		}
+		OOVR_LOGF("dev: %u | prop: %u | result: %.*s", idx, prop, (int)(written - 1), buffer);
+	}
 
 	void print_result(HmdMatrix34_t result)
 	{
@@ -419,7 +431,9 @@ uint32_t BaseSystem::GetSortedTrackedDeviceIndicesOfClass(ETrackedDeviceClass ta
 
 EDeviceActivityLevel BaseSystem::GetTrackedDeviceActivityLevel(vr::TrackedDeviceIndex_t unDeviceId)
 {
-	// TODO implement
+	// Unknown where there's no device, as SteamVR answers; a device that is there counts as in use
+	if (!BackendManager::Instance().GetDevice(unDeviceId))
+		return k_EDeviceActivityLevel_Unknown;
 	return k_EDeviceActivityLevel_UserInteraction;
 }
 
@@ -583,10 +597,12 @@ uint32_t BaseSystem::GetArrayTrackedDeviceProperty(vr::TrackedDeviceIndex_t unDe
 
 	uint32_t ret = dev->GetArrayTrackedDeviceProperty(prop, propType, pBuffer, unBufferSize, pError);
 	if (oovr_global_configuration.LogGetTrackedProperty()) {
-#define ARRAY_CASE(tag_type, actual_type)                         \
-	case k_un##tag_type##PropertyTag: {                           \
-		actual_type* buffer = static_cast<actual_type*>(pBuffer); \
-		p.print_result(buffer, ret <= unBufferSize ? ret : 0);    \
+		// Nothing was written on an error: the buffer holds what the game left there
+		const bool written = !pError || *pError == TrackedProp_Success;
+#define ARRAY_CASE(tag_type, actual_type)                                 \
+	case k_un##tag_type##PropertyTag: {                                   \
+		actual_type* buffer = static_cast<actual_type*>(pBuffer);         \
+		p.print_result(buffer, ret <= unBufferSize && written ? ret : 0); \
 	} break
 		switch (propType) {
 			ARRAY_CASE(Float, float);
@@ -615,7 +631,7 @@ uint32_t BaseSystem::GetStringTrackedDeviceProperty(vr::TrackedDeviceIndex_t unD
 	}
 
 	uint32_t ret = dev->GetStringTrackedDeviceProperty(prop, value, bufferSize, pErrorL);
-	p.print_result(value);
+	p.print_string(value, bufferSize, ret, pErrorL);
 	return ret;
 }
 
@@ -681,25 +697,36 @@ void BaseSystem::PushEventLocked(const event_info_t& e)
 
 void BaseSystem::_EnqueueEvent(const VREvent_t& e)
 {
+	// The announced flags change with the queue, so an activation from the start-up list can't land after the
+	// pumping thread's own event for the same device
+	std::unique_lock lock(events_mutex);
 	if (e.trackedDeviceIndex < announcedDevices.size()) {
 		if (e.eventType == VREvent_TrackedDeviceActivated)
 			announcedDevices[e.trackedDeviceIndex] = true;
 		else if (e.eventType == VREvent_TrackedDeviceDeactivated)
 			announcedDevices[e.trackedDeviceIndex] = false;
 	}
-	std::unique_lock lock(events_mutex);
 	PushEventLocked(e);
 }
 
 void BaseSystem::AnnounceConnectedDevices()
 {
+	// Asked of the backend first: the queue's lock isn't held while it answers
+	std::vector<vr::TrackedDeviceIndex_t> connected;
 	for (vr::TrackedDeviceIndex_t i = 0; i < announcedDevices.size(); i++) {
-		if (announcedDevices[i] || !IsTrackedDeviceConnected(i))
+		if (!announcedDevices[i] && IsTrackedDeviceConnected(i))
+			connected.push_back(i);
+	}
+
+	std::unique_lock lock(events_mutex);
+	for (vr::TrackedDeviceIndex_t i : connected) {
+		if (announcedDevices[i])
 			continue;
+		announcedDevices[i] = true;
 		VREvent_t e{};
 		e.eventType = VREvent_TrackedDeviceActivated;
 		e.trackedDeviceIndex = i;
-		_EnqueueEvent(e);
+		PushEventLocked(e);
 	}
 }
 
@@ -718,8 +745,10 @@ float BaseSystem::SGetIpd()
 {
 	std::shared_ptr<IHMD> dev = BackendManager::Instance().GetPrimaryHMD();
 	float ipd = dev->GetIPD();
-	static float lastIpd = NAN;
-	if (std::isnan(lastIpd) || std::fabs(ipd - lastIpd) > 1e-5) {
+	// Asked from any thread
+	static std::atomic<float> lastIpd{ NAN };
+	const float last = lastIpd.load();
+	if (std::isnan(last) || std::fabs(ipd - last) > 1e-5) {
 		lastIpd = ipd;
 		OOVR_LOGF("IPD: %f", ipd);
 	}
@@ -1057,13 +1086,14 @@ bool SamePose(const XrPosef& a, const XrPosef& b)
 	return glm::length(d) < 1e-4f && dot > 1.0f - 1e-6f;
 }
 
-// The store's seated zero pose, when its Offsets document changed since it was last read (and has one)
-bool StoredSeatedZeroChanged(XrPosef& zero)
+// The store's seated zero pose, when its Offsets document changed since it was last read (and has one); always when
+// asked for a new session, which may not have been there when it last changed
+bool StoredSeatedZeroChanged(XrPosef& zero, bool newSession = false)
 {
 	std::lock_guard<std::mutex> guard(storedSeatedLock);
 	SharedStore& store = SharedStore::Get();
 	const uint64_t generation = store.Generation(StoreDoc::Offsets);
-	if (storedSeatedRead && generation == storedSeatedGeneration)
+	if (!newSession && storedSeatedRead && generation == storedSeatedGeneration)
 		return false;
 	storedSeatedRead = true;
 	storedSeatedGeneration = generation;
@@ -1100,7 +1130,7 @@ void BaseSystem::_LoadStoredSeatedZero()
 {
 	// Only a stage outlasts the session: the other standing spaces start where the head was
 	XrPosef zero;
-	if (StoredSeatedZeroChanged(zero) && xr_gbl && xr_gbl->floorSpaceType == XR_REFERENCE_SPACE_TYPE_STAGE && xr_gbl->SetSeatedZero(zero))
+	if (StoredSeatedZeroChanged(zero, true) && xr_gbl && xr_gbl->floorSpaceType == XR_REFERENCE_SPACE_TYPE_STAGE && xr_gbl->SetSeatedZero(zero))
 		xr_seated_zero = zero;
 }
 

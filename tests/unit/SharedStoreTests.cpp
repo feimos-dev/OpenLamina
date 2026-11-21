@@ -140,6 +140,24 @@ TEST_CASE("Store_writer_that_does_not_wait_gives_up_while_another_holds_it")
 	CHECK(other.Read(StoreDoc::Settings)["x"].asInt() == 1);
 }
 
+#ifdef _WIN32
+TEST_CASE("Store_writer_that_does_not_wait_gives_up_on_a_document_held_open")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	REQUIRE(store.Update(StoreDoc::Scene, [](Json::Value& d) { d["x"] = 1; }));
+	// Open without sharing, as a backup program or an antivirus may hold it
+	HANDLE held = CreateFileW((dir.path / "scene.json").c_str(), GENERIC_READ, 0, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	REQUIRE(held != INVALID_HANDLE_VALUE);
+	auto start = std::chrono::steady_clock::now();
+	CHECK_FALSE(store.Update(StoreDoc::Scene, [](Json::Value& d) { d["x"] = 2; }, SharedStore::Wait::Never));
+	CHECK(std::chrono::steady_clock::now() - start < std::chrono::milliseconds(200));
+	CloseHandle(held);
+	CHECK(store.Update(StoreDoc::Scene, [](Json::Value& d) { d["x"] = 2; }, SharedStore::Wait::Never));
+	CHECK(store.Read(StoreDoc::Scene)["x"].asInt() == 2);
+}
+#endif
+
 TEST_CASE("Store_survives_corrupt_document")
 {
 	TempDir dir;
