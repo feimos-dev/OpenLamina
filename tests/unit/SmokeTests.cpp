@@ -124,6 +124,14 @@ TEST_CASE("Config hand colour is read as 0 to 1 with full alpha")
 	CHECK(colour.a == 1.0f);
 }
 
+TEST_CASE("Config reads a long path whole")
+{
+	const std::string path = "C:/" + std::string(300, 'd') + "/editor.exe";
+	IniInDir ini("bindingEditor=" + path + "\n");
+	Config c;
+	CHECK(c.BindingEditor() == path);
+}
+
 TEST_CASE("Config scales must be numbers above 0")
 {
 	oovr_log_set_test_sink(test_sink);
