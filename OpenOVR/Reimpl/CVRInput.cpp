@@ -44,7 +44,12 @@ static bool ToActiveSets003(const vr::IVRInput_003::VRActiveActionSet_t* pSets, 
 {
 	if (unSize != sizeof(vr::IVRInput_003::VRActiveActionSet_t) || (unSetCount && !pSets))
 		return false;
-	out.assign(unSetCount, OOVR_VRActiveActionSet_t{});
+	// A count no game's array has (a corrupt call) is an argument error, not an exception into the game
+	try {
+		out.assign(unSetCount, OOVR_VRActiveActionSet_t{});
+	} catch (const std::bad_alloc&) {
+		return false;
+	}
 	for (uint32_t i = 0; i < unSetCount; i++) {
 		out[i].ulActionSet = pSets[i].ulActionSet;
 		out[i].ulRestrictedToDevice = pSets[i].ulRestrictedToDevice;
