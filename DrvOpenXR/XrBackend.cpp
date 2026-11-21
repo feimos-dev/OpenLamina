@@ -1585,7 +1585,8 @@ int XrBackend::SetEquirectSkybox(const vr::Texture_t* textures, uint32_t count)
 		skybox.cube.reset();
 	}
 
-	// Else they're read back and turned into one lat-long image first, without any lock: it takes a while
+	// Else they're read back and turned into one lat-long image first, without the frame's or the skybox's lock (it
+	// takes a while): only another skybox being read back waits for it
 	Image equirect;
 	if (count == 6) {
 		std::lock_guard<std::mutex> reading(skyboxReaderLock);
@@ -1921,17 +1922,17 @@ float XrBackend::SecondsToFrame(uint32_t frameId)
 	return (float)SecondsToSlot(frameId, frameSlot, frameDisplayTime, frameDisplayPeriod, xr_time_now());
 }
 
-/**
- * Get frame timing information to be passed to the application
- *
- * Returns true if successful
- */
 size_t XrBackend::FrameTimingSize(uint32_t givenSize)
 {
 	constexpr size_t newestSize = (sizeof(vr::Compositor_FrameTiming) + 7) & ~(size_t)7;
 	return givenSize > newestSize ? sizeof(OOVR_Compositor_FrameTiming) : (size_t)givenSize;
 }
 
+/**
+ * Get frame timing information to be passed to the application
+ *
+ * Returns true if successful
+ */
 bool XrBackend::GetFrameTiming(OOVR_Compositor_FrameTiming* pTiming, uint32_t unFramesAgo)
 {
 	if (!pTiming)
