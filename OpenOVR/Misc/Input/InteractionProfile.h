@@ -178,7 +178,8 @@ public:
 
 	/**
 	 * Get the requested property from the profile, if it exists.
-	 * If hand == HAND_NONE, this will retrieve the HMD version of the property.
+	 * If hand == HAND_NONE, this will retrieve the HMD version of the property; a hand's property that the profile only
+	 * lists for the HMD (the manufacturer, say) is the HMD's.
 	 * A property held as another type than T is not there for T.
 	 */
 	template <typename T>
