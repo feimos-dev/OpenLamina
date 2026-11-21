@@ -3383,6 +3383,8 @@ XrDuration XrBackend::RunOwnFrame(const OwnFrameLoop::LayerSource& source, const
 		if (state.predictedDisplayPeriod > 0)
 			displayPeriodMs = (float)state.predictedDisplayPeriod / 1e6f;
 		xr_gbl->nextPredictedFrameTime = state.predictedDisplayTime;
+		// The views are located again for this frame's time (a program with no frames of its own has only these)
+		xr_gbl->ClearCachedViews();
 		frameAwaitingBegin = true;
 	}
 

@@ -322,12 +322,16 @@ XruCachedViews XrSessionGlobals::GetCachedViews(XrSpace space)
 	XrViewState viewState = { XR_TYPE_VIEW_STATE };
 	uint32_t viewCount = 0;
 	XrView views[XruEyeCount] = { { XR_TYPE_VIEW }, { XR_TYPE_VIEW } };
-	OOVR_FAILED_XR_SOFT_ABORT(xrLocateViews(xr_session.get(), &locateInfo, &viewState, XruEyeCount, &viewCount, views));
+	const XrResult located = xrLocateViews(xr_session.get(), &locateInfo, &viewState, XruEyeCount, &viewCount, views);
+	OOVR_FAILED_XR_SOFT_ABORT(located);
 
-	XruCachedViews& cws = cachedViews[space];
+	XruCachedViews cws;
 	cws.viewState = viewState;
 	cws.viewCount = viewCount;
 	std::copy(views, views + XruEyeCount, cws.views.begin());
+	// Only an answer is kept: a locate that failed (before the session runs, say) is asked again at the next call
+	if (XR_SUCCEEDED(located) && viewCount == XruEyeCount)
+		cachedViews[space] = cws;
 	return cws;
 }
 

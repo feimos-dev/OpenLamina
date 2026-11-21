@@ -95,12 +95,13 @@ public:
 	XrTime GetBestTime();
 
 	/**
-	 * Returns a XruCachedViews containing the cached result of a xrLocateViews call with the specified space.
+	 * Returns a XruCachedViews containing the cached result of a xrLocateViews call with the specified space: asked of
+	 * the runtime once per frame (the game's, or one of OpenLamina's own). A call that failed isn't kept.
 	 */
 	XruCachedViews GetCachedViews(XrSpace space);
 
 	/**
-	 * Discard all cached xrLocateViews results. This invalidates the references returned by GetCachedViews.
+	 * Discard all cached xrLocateViews results: the next GetCachedViews asks the runtime again.
 	 */
 	void ClearCachedViews();
 
