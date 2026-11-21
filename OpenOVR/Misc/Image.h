@@ -51,7 +51,7 @@ void EncodeSrgbInPlace(Image& image);
 
 // Texels of the layout (rows of stride bytes; bottomUp: the first row is the bottom one, as OpenGL's) as an Image.
 // encodeSrgb: the values are linear (float and 10-bit formats under a linear colour space) and are sRGB-encoded;
-// 8-bit values are taken as they are.
+// 8-bit values are taken as they are. Empty for a side over kMaxRawImageSide, or without the memory for it.
 Image DecodeTexels(TexelLayout layout, const void* data, uint32_t width, uint32_t height, size_t stride, bool bottomUp,
     bool encodeSrgb);
 

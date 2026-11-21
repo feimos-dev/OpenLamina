@@ -125,9 +125,16 @@ Image DecodeTexels(TexelLayout layout, const void* data, uint32_t width, uint32_
 	uint32_t bytes = BytesOfTexelLayout(layout);
 	if (!data || !bytes || !width || !height || stride < (size_t)width * bytes)
 		return out;
+	// As ConvertToRgba8: a size no texture has, or no memory for it, is no image
+	if (width > kMaxRawImageSide || height > kMaxRawImageSide)
+		return out;
+	try {
+		out.rgba.resize((size_t)width * height * 4);
+	} catch (const std::bad_alloc&) {
+		return out;
+	}
 	out.width = width;
 	out.height = height;
-	out.rgba.resize((size_t)width * height * 4);
 	for (uint32_t y = 0; y < height; y++) {
 		const uint8_t* row = (const uint8_t*)data + (size_t)(bottomUp ? height - 1 - y : y) * stride;
 		uint8_t* dst = &out.rgba[(size_t)y * width * 4];

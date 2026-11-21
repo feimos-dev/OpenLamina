@@ -6,6 +6,7 @@
 #include "Misc/Image.h"
 
 #include <cstring>
+#include <vector>
 
 TEST_CASE("Image_convert_1_3_4_bytes")
 {
@@ -45,6 +46,16 @@ TEST_CASE("Image_convert_1_3_4_bytes")
 	// More pixels on a side than any texture has: refused before anything is read
 	CHECK(ConvertToRgba8(rgba, kMaxRawImageSide + 1, 1, (kMaxRawImageSide + 1) * 4, 4).Empty());
 	CHECK(ConvertToRgba8(rgba, 1, kMaxRawImageSide + 1, 4, 4).Empty());
+}
+
+TEST_CASE("Image_decode_texels_refuses_a_side_no_texture_has")
+{
+	const uint32_t tall = kMaxRawImageSide + 1;
+	std::vector<uint8_t> texels((size_t)tall * 4, 0x80);
+	Image image = DecodeTexels(TexelLayout::RGBA8, texels.data(), 1, tall, 4, false, false);
+	CHECK(image.width == 0);
+	CHECK(image.rgba.empty());
+	CHECK(DecodeTexels(TexelLayout::RGBA8, texels.data(), 1, kMaxRawImageSide, 4, false, false).height == kMaxRawImageSide);
 }
 
 TEST_CASE("Image_decode_texels")
