@@ -8,6 +8,7 @@
 #include <atomic>
 #include <fstream>
 #include <mutex>
+#include <stdexcept>
 #include <string>
 #include <thread>
 #include <vector>
@@ -199,4 +200,34 @@ TEST_CASE("Log_lines_from_several_threads_are_written_whole")
 		whole += ok;
 	}
 	CHECK(whole == kThreads * kLines);
+}
+
+namespace {
+int entry_that_throws(bool doThrow)
+{
+	try {
+		if (doThrow)
+			throw std::runtime_error("entry-that-throws");
+		return 1;
+	} OC_ENTRY_CATCH("entry_that_throws", 7)
+}
+
+void void_entry_that_throws()
+{
+	try {
+		throw 5; // not a std::exception
+	} OC_ENTRY_CATCH("void_entry_that_throws")
+}
+} // namespace
+
+TEST_CASE("An_exception_ends_the_call_as_failed_and_is_logged_once")
+{
+	Capture c;
+	CHECK(entry_that_throws(false) == 1);
+	CHECK(entry_that_throws(true) == 7);
+	CHECK(entry_that_throws(true) == 7);
+	CHECK(count_lines("An exception reached entry_that_throws, which answers as failed: entry-that-throws") == 1);
+
+	void_entry_that_throws();
+	CHECK(count_lines("An exception reached void_entry_that_throws, which answers as failed: not a std::exception") == 1);
 }

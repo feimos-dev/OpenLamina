@@ -8,6 +8,7 @@
 #include <cstdarg>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <mutex>
 
 namespace {
@@ -70,6 +71,19 @@ void oc_soft_fail(OcSoftSite* site, const char* fmt, ...)
 		return;
 	}
 	oovr_abort_raw(site->file, site->line, site->func, "%s", "OpenLamina Debug Error (stopOnSoftAbort)", buff);
+}
+
+void oc_entry_exception(OcSoftSite* site, const char* where)
+{
+	std::string what;
+	try {
+		throw;
+	} catch (const std::exception& e) {
+		what = e.what();
+	} catch (...) {
+		what = "not a std::exception";
+	}
+	oc_soft_fail(site, "An exception reached %s, which answers as failed: %s", where, what.c_str());
 }
 
 void oc_soft_log_summary()

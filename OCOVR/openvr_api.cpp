@@ -12,6 +12,7 @@
 #include "generated/version.h"
 
 #include "Misc/SharedStore.h"
+#include "Misc/SoftFail.h"
 #include "Misc/SteamClient.h"
 #include "Misc/backtrace.h"
 #include "Misc/xrutil.h"
@@ -92,7 +93,17 @@ using correct_layout_unique = std::unique_ptr<CVRCorrectLayout, std::function<vo
 
 static std::map<std::string, correct_layout_unique> interfaces;
 
+static void* GetGenericInterface(const char* interfaceVersion, EVRInitError* error);
+
+// The exports a game calls: an exception from OpenLamina's code ends the call as failed, not the game (OC_ENTRY_CATCH)
 VR_INTERFACE void* VR_CALLTYPE VR_GetGenericInterface(const char* interfaceVersion, EVRInitError* error)
+{
+	try {
+		return GetGenericInterface(interfaceVersion, error);
+	} OC_ENTRY_CATCH("VR_GetGenericInterface", (error ? (void)(*error = VRInitError_Init_Internal) : (void)0, nullptr))
+}
+
+static void* GetGenericInterface(const char* interfaceVersion, EVRInitError* error)
 {
 	if (!interfaceVersion) {
 		if (error)
@@ -306,7 +317,16 @@ static void ShutdownAtExit()
 }
 #endif
 
+static uint32_t InitInternal2(EVRInitError* peError, EVRApplicationType eApplicationType, const char* pStartupInfo);
+
 VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(EVRInitError* peError, EVRApplicationType eApplicationType, const char* pStartupInfo)
+{
+	try {
+		return InitInternal2(peError, eApplicationType, pStartupInfo);
+	} OC_ENTRY_CATCH("VR_InitInternal2", (peError ? (void)(*peError = VRInitError_Init_Internal) : (void)0, 0u))
+}
+
+static uint32_t InitInternal2(EVRInitError* peError, EVRApplicationType eApplicationType, const char* pStartupInfo)
 {
 	OOVR_LOG_ONCEF("Initializing OpenLamina, a fork of OpenComposite (github.com/feimos-dev/OpenLamina) - revision %s, answering as OpenVR runtime %s", OC_VERSION, OPENVR_RUNTIME_VERSION);
 	if (peError) {
@@ -390,7 +410,16 @@ VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(EVRInitError* peError, EVRApp
 
 	// TODO seperate this from the rest of dllmain
 	EVRInitError backendError = VRInitError_None;
-	IBackend* backend = DrvOpenXR::CreateOpenXRBackend(pStartupInfo, &backendError, eApplicationType);
+	IBackend* backend = nullptr;
+	try {
+		backend = DrvOpenXR::CreateOpenXRBackend(pStartupInfo, &backendError, eApplicationType);
+	} OC_ENTRY_FORCED_UNWIND_ catch (...) {
+		// Refused below, so that nothing thinks a session is running without a backend
+		OC_SOFT_SITE_;
+		oc_entry_exception(&oc_soft_site_, "the backend's creation (VR_Init)");
+		backend = nullptr;
+		backendError = VRInitError_Init_Internal;
+	}
 	if (!backend) {
 		running = false;
 		running_ovr = false;
@@ -415,7 +444,16 @@ VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(EVRInitError* peError, EVRApp
 	return current_init_token;
 }
 
+static bool IsHmdPresent();
+
 VR_INTERFACE bool VR_CALLTYPE VR_IsHmdPresent()
+{
+	try {
+		return IsHmdPresent();
+	} OC_ENTRY_CATCH("VR_IsHmdPresent", false)
+}
+
+static bool IsHmdPresent()
 {
 	// If we're already running, then Oculus's implementation fails with XR_ERROR_RUNTIME_FAILURE
 	if (running)
@@ -498,7 +536,16 @@ VR_INTERFACE bool VR_GetRuntimePath(char* pchPathBuffer, uint32_t unBufferSize, 
 	return true;
 }
 
+static void ShutdownInternal();
+
 VR_INTERFACE void VR_CALLTYPE VR_ShutdownInternal()
+{
+	try {
+		ShutdownInternal();
+	} OC_ENTRY_CATCH("VR_ShutdownInternal")
+}
+
+static void ShutdownInternal()
 {
 	std::lock_guard<std::recursive_mutex> lock(state_mutex);
 
@@ -568,7 +615,16 @@ VR_INTERFACE void VR_CALLTYPE VR_ShutdownInternal()
 	BaseClientCore::appType = VRApplication_Max;
 }
 
+static void* ClientCoreFactory(const char* pInterfaceName, int* pReturnCode);
+
 VR_INTERFACE void* VRClientCoreFactory(const char* pInterfaceName, int* pReturnCode)
+{
+	try {
+		return ClientCoreFactory(pInterfaceName, pReturnCode);
+	} OC_ENTRY_CATCH("VRClientCoreFactory", (pReturnCode ? (void)(*pReturnCode = VRInitError_Init_Internal) : (void)0, nullptr))
+}
+
+static void* ClientCoreFactory(const char* pInterfaceName, int* pReturnCode)
 {
 	// The choice between OpenLamina and SteamVR is made on the first call only
 	static std::once_flag chosen;

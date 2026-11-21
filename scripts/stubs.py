@@ -153,6 +153,7 @@ with open(output_dir / "stubs.gen.cpp", "w", newline='\n') as impl:
     impl.write('#include "Reimpl/Interfaces.h"\n')
     impl.write(f'#include "{bases_header_fn.name}"\n')
     impl.write('#include "Misc/Config.h"\n')
+    impl.write('#include "Misc/SoftFail.h"\n')
     impl.write('#include <type_traits>\n')
 
     # A type a stub casts to the Base class's copy of it has that copy's size and alignment (for a pointer or a

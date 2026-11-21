@@ -61,6 +61,32 @@ void oc_soft_set_stop_for_tests(int value);
 
 #define OC_SOFT_SITE_ static OcSoftSite oc_soft_site_(__FILE__, __LINE__, __func__)
 
+// An exception that reached a call the game made: logged on the site's first hit and counted, as a soft failure. Call
+// from a catch block only (it reads the exception being handled). where: the function the game called.
+void oc_entry_exception(OcSoftSite* site, const char* where);
+
+// After the body of a function a game calls (a generated interface stub, a VR_* export), as try { ... } OC_ENTRY_CATCH:
+// an exception from OpenLamina's code ends the call with the given failure value instead of leaving through the game's
+// frames, which ends the game. A thread being cancelled (glibc's forced unwind) still unwinds.
+#if defined(__GNUC__) && !defined(_WIN32)
+#include <cxxabi.h>
+#define OC_ENTRY_FORCED_UNWIND_       \
+	catch (abi::__forced_unwind&) \
+	{                             \
+		throw;                    \
+	}
+#else
+#define OC_ENTRY_FORCED_UNWIND_
+#endif
+#define OC_ENTRY_CATCH(where, ...)                 \
+	OC_ENTRY_FORCED_UNWIND_                        \
+	catch (...)                                    \
+	{                                              \
+		OC_SOFT_SITE_;                             \
+		oc_entry_exception(&oc_soft_site_, where); \
+		return __VA_ARGS__;                        \
+	}
+
 #define OC_UNSUPPORTED(ret, ...)                     \
 	do {                                             \
 		OC_SOFT_SITE_;                               \
