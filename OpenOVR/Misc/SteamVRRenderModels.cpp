@@ -974,26 +974,30 @@ static std::mutex& ModelsLock()
 	return lock;
 }
 
-static const std::optional<fs::path>& Install()
+// None unless the user wants SteamVR's models (steamvrRenderModels): then found once. A test's SteamVR folder
+// (OC_TEST_STEAMVR_DIR) is looked up on each call instead, so each test has the one it names, whatever ran before.
+static std::optional<fs::path> Install()
 {
-	// None unless the user wants SteamVR's models (steamvrRenderModels), or a test names its SteamVR folder
 	const char* testDir = getenv("OC_TEST_STEAMVR_DIR");
-	const bool wanted = oovr_global_configuration.SteamVRRenderModels() || (testDir && *testDir);
-	static const std::optional<fs::path>& install = *new std::optional<fs::path>(wanted ? FindSteamVRInstall() : std::nullopt);
+	if (testDir && *testDir)
+		return FindSteamVRInstall();
+	static const std::optional<fs::path>& install
+	    = *new std::optional<fs::path>(oovr_global_configuration.SteamVRRenderModels() ? FindSteamVRInstall() : std::nullopt);
 	return install;
 }
 
 std::shared_ptr<const RmModel> FindSteamVRRenderModel(const std::string& name)
 {
-	const std::optional<fs::path>& install = Install();
+	const std::optional<fs::path> install = Install();
 	if (!install || name.empty())
 		return nullptr;
-	// Kept: every name asked for, up to this many (a game asking for more is answered without the cache)
+	// Kept: every name asked for, by install, up to this many (a game asking for more is answered without the cache)
 	constexpr size_t kMaxCached = 1024;
 	static std::map<std::string, std::shared_ptr<const RmModel>>& cache = *new std::map<std::string, std::shared_ptr<const RmModel>>;
+	const std::string key = PathToUtf8(*install) + std::string(1, '\0') + name;
 	{
 		std::lock_guard<std::mutex> guard(ModelsLock());
-		auto it = cache.find(name);
+		auto it = cache.find(key);
 		if (it != cache.end())
 			return it->second;
 	}
@@ -1001,14 +1005,21 @@ std::shared_ptr<const RmModel> FindSteamVRRenderModel(const std::string& name)
 	std::shared_ptr<const RmModel> model = loaded ? std::make_shared<const RmModel>(std::move(*loaded)) : nullptr;
 	std::lock_guard<std::mutex> guard(ModelsLock());
 	if (cache.size() < kMaxCached)
-		cache.emplace(name, model);
+		cache.emplace(key, model);
 	return model;
 }
 
-const std::vector<std::string>& SteamVRRenderModelNames()
+std::vector<std::string> SteamVRRenderModelNames()
 {
-	static const std::vector<std::string>& names = *new std::vector<std::string>(
-	    Install() ? ListSteamVRRenderModels(*Install()) : std::vector<std::string>());
+	const char* testDir = getenv("OC_TEST_STEAMVR_DIR");
+	if (testDir && *testDir) {
+		const std::optional<fs::path> install = Install();
+		return install ? ListSteamVRRenderModels(*install) : std::vector<std::string>();
+	}
+	static const std::vector<std::string>& names = *[] {
+		const std::optional<fs::path> install = Install();
+		return new std::vector<std::string>(install ? ListSteamVRRenderModels(*install) : std::vector<std::string>());
+	}();
 	return names;
 }
 

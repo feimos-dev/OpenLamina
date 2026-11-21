@@ -118,6 +118,25 @@ float AngleAboutX(const XrPosef& p)
 
 } // namespace
 
+TEST_CASE("SteamVR_models_follow_the_test_folder_whatever_was_asked_before")
+{
+	// Asked first with no SteamVR folder named (the answer then is the user's install, if steamvrRenderModels is on)
+	(void)FindSteamVRRenderModel("test_controller");
+	(void)SteamVRRenderModelNames();
+	{
+		SteamVRDirForTest dir(FixtureSteamVR());
+		CHECK(FindSteamVRRenderModel("test_controller") != nullptr);
+		std::vector<std::string> names = SteamVRRenderModelNames();
+		CHECK(std::find(names.begin(), names.end(), "test_controller") != names.end());
+	}
+	// Another folder: its models, not the first one's
+	TempDir other;
+	fs::create_directories(other.path / "resources" / "rendermodels");
+	SteamVRDirForTest dir(other.path);
+	CHECK(FindSteamVRRenderModel("test_controller") == nullptr);
+	CHECK(SteamVRRenderModelNames().empty());
+}
+
 TEST_CASE("Render_model_from_folder")
 {
 	fs::path steamvr = FixtureSteamVR();
@@ -789,6 +808,8 @@ TEST_CASE("Own_controller_models_textures_can_be_JPEG")
 TEST_CASE("Own_controller_models_answer_through_IVRRenderModels")
 {
 	OwnModelsDirForTest dir(OwnModels());
+	// SteamVR's own models (this machine's install) left out: the fixture has none of these names
+	SteamVRDirForTest steamvr(FixtureSteamVR());
 	BaseRenderModels rm;
 	const char* vive = "htc-vive-right";
 	CHECK(rm.GetComponentCount(vive) == 5); // body, grip, trackpad, trackpad_touch, trigger

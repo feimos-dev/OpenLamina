@@ -134,12 +134,13 @@ XrPosef ModelComponentLocal(const RmModel& model, const RmComponent& c);
  * while touched or pressed */
 bool ComponentVisible(const RmComponent& c, bool touched, bool pressed);
 
-/** The models of the SteamVR install FindSteamVRInstall() finds, cached by name for the process (a failure too).
+/** The models of the SteamVR install FindSteamVRInstall() finds, cached by install and name for the process (a failure too).
  * Null without SteamVR or for a model that can't be loaded. Thread-safe. */
 std::shared_ptr<const RmModel> FindSteamVRRenderModel(const std::string& name);
 
-/** The SteamVR install's model names (ListSteamVRRenderModels), read once. Empty without SteamVR. */
-const std::vector<std::string>& SteamVRRenderModelNames();
+/** The SteamVR install's model names (ListSteamVRRenderModels), read once (on each call where a test names its
+ * SteamVR folder). Empty without SteamVR. */
+std::vector<std::string> SteamVRRenderModelNames();
 
 /** The folder of OpenLamina's own controller models: rendermodels beside the library, else beside the folder it's in
  * (one copy serves bin/ and bin/linux64/); OC_TEST_RENDERMODELS_DIR instead where it's set. Empty if there is none. */
