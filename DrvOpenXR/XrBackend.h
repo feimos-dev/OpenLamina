@@ -559,10 +559,6 @@ private:
 	// Drops the frame, waits about a frame and, if the session is lost or five frames failed in a row, loses the session
 	void OnFrameCallFailed(XrResult res);
 
-	// Were we supposed to start rendering a frame, but couldn't since we were on the
-	// early (pre switch to application graphics instance) OpenXR session?
-	bool deferredRenderingStart = false;
-
 	// Keep track of if eye textures have been submitted and if we need to create a projection layer for them
 	std::atomic<bool> submittedEyeTextures{ false };
 

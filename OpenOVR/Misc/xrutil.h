@@ -139,12 +139,14 @@ public:
 	XrSession& get();
 
 	/*
-	 * Provides a RAII-style lock on accesses to the XrSession. Prevents any other thread from obtaining get() or lock_shared().
+	 * The exclusive lock, for as long as the SessionLock lives: for making, ending or replacing the session. No other
+	 * thread holds lock() or lock_shared() meanwhile.
 	 */
-	SessionLock lock();
+	[[nodiscard]] SessionLock lock();
 
 	/*
-	 * Provides a RAII-style lock on modification to the XrSession. Prevents any other thread from obtaining lock().
+	 * The shared lock, for as long as the SessionLock lives: for using the session. No other thread holds lock()
+	 * meanwhile, so the session isn't ended or replaced under it.
 	 */
 	[[nodiscard]] SessionLock lock_shared();
 
@@ -216,9 +218,6 @@ XrSpace xr_space_from_ref_space_type(XrReferenceSpaceType spaceType);
 // xrSuggestInteractionProfileBindings, with the runtime's answer for the profile logged: it takes a profile's
 // bindings all or none
 XrResult xr_suggest_bindings_logged(const XrInteractionProfileSuggestedBinding& suggested);
-
-XrQuaternionf yRotation(XrQuaternionf& q, XrQuaternionf& r);
-void rotate_vector_by_quaternion(const XrVector3f& v, const XrQuaternionf& q, XrVector3f& vprime);
 
 extern XrInstance xr_instance;
 // Counts the instances made. A new instance may get the handle of the one before it, so what is kept per instance is

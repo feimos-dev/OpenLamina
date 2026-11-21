@@ -1014,11 +1014,10 @@ void XrBackend::WaitForTrackingData()
 	if (viewState.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT)
 		xr_utils::WidenEyes(projectionViews[0].pose, projectionViews[1].pose, XrHMD::IpdOffset());
 
-	// If we're not on the game's graphics API yet, don't actually mark us as having started the frame.
-	// Instead, set a different flag so we'll call this method again when it's available.
-	if (!usingApplicationGraphicsAPI) {
-		deferredRenderingStart = true;
-	} else {
+	// Before the game's first texture the session is OpenLamina's own: the frame begun on it isn't marked as one the
+	// game renders. The first Submit makes the session again on the game's device and begins a frame there
+	// (StoreEyeTexture); a frame left open on this one is ended by the next WaitGetPoses or by EndOpenAppFrame.
+	if (usingApplicationGraphicsAPI) {
 		renderingFrame = true;
 		submittedEyeTextures = false;
 		for (bool& submitted : eyeSubmitted)
@@ -1063,10 +1062,10 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 		return appOnOtherAdapter ? kCompositorTextureIsOnWrongDevice : kCompositorInvalidTexture;
 	}
 
-	// A game that submits without having waited for poses (or whose frame ended before this eye) gets a frame here, with
-	// the poses of now
+	// A game that submits without having waited for poses (or whose frame ended before this eye, or was begun on
+	// OpenLamina's own session before this texture moved the session to the game's device) gets a frame here, with the
+	// poses of now
 	if (sessionActive && !renderingFrame) {
-		deferredRenderingStart = false;
 		WaitForTrackingData();
 		submitCall = std::chrono::steady_clock::now(); // the wait for the frame isn't time in Submit
 	}
@@ -1177,8 +1176,6 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 	eyeSubmitted[eye] = true;
 	sceneCleared = false;
 
-	// WaitGetPoses called before the first texture was submitted began its frame on the early session, not this one:
-	// the frame above was begun on this session instead
 	return result;
 }
 
@@ -2565,8 +2562,9 @@ void XrBackend::PumpEvents()
 	// their first frames, and runtimes can take seconds to give focus. The profile is read straight after, in case
 	// the runtime gives it without an event. Not before the game's device is known (InputsMayAttach): another session
 	// restart for it would follow.
-	// Nor while the session is made again for the game's actions (a headless session is FOCUSED as soon as it has
-	// begun, inside that restart's own pump): the info set on the new session would keep the game's actions off it.
+	// Nor while the session is made again for the game's actions, whose restart pumps on its own thread (when it ends
+	// a frame the game has open, and on the new session, which if headless is FOCUSED as soon as it has begun): the
+	// info set on the new session would keep the game's actions off it.
 	if (input
 	    && ControllerQueryDue(sessionState, exitExpected, restartingForInputs, input->AreActionsLoaded(), input->LegacyInputAsked(),
 	        Hand(XrController::XCT_LEFT) || Hand(XrController::XCT_RIGHT))

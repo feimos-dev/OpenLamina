@@ -16,7 +16,6 @@ XrVersion xr_instance_version = 0;
 // Never destroyed: the backend's static destructor takes its lock when a game exits without VR_Shutdown
 SessionWrapper& xr_session = *new SessionWrapper();
 XrSystemId xr_system = XR_NULL_SYSTEM_ID;
-XrViewConfigurationView xr_main_views[XruEyeCount] = {};
 XrSessionGlobals* xr_gbl = nullptr;
 std::optional<XrPosef> xr_seated_zero;
 
@@ -410,53 +409,6 @@ XrSpace xr_space_from_ref_space_type(XrReferenceSpaceType spaceType)
 		OOVR_LOGF("Unknown XrReferenceSpaceType type %d: using the stage", spaceType);
 		return xr_gbl->floorSpace;
 	}
-}
-
-XrQuaternionf yRotation(XrQuaternionf& q)
-{
-	float theta = atan2(q.y, q.w);
-	return { 0.f, sinf(theta), 0.f, cosf(theta) };
-}
-
-XrQuaternionf yRotation(XrQuaternionf& q, XrQuaternionf& r)
-{
-	float theta = atan2(q.y, q.w);
-	theta += atan2(r.y, r.w);
-	return { 0.f, sinf(theta), 0.f, cosf(theta) };
-}
-
-float v3_dot(const XrVector3f& a, const XrVector3f& b)
-{
-	return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-XrVector3f v3_cross(const XrVector3f& a, const XrVector3f& b)
-{
-	return XrVector3f{ a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x };
-}
-
-XrVector3f operator*(float a, const XrVector3f& b)
-{
-	return { b.x * a, b.y * a, b.z * a };
-}
-
-XrVector3f operator+(const XrVector3f& a, const XrVector3f& b)
-{
-	return { b.x + a.x, b.y + a.y, b.z + a.z };
-}
-
-void rotate_vector_by_quaternion(const XrVector3f& v, const XrQuaternionf& q, XrVector3f& vprime)
-{
-	// Extract the vector part of the quaternion
-	XrVector3f u{ q.x, q.y, q.z };
-
-	// Extract the scalar part of the quaternion
-	float s = q.w;
-
-	// Do the math
-	vprime = 2.0f * v3_dot(u, v) * u
-	    + (s * s - v3_dot(u, u)) * v
-	    + 2.0f * s * v3_cross(u, v);
 }
 
 XrSession& SessionWrapper::get()
