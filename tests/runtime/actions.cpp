@@ -87,15 +87,29 @@ XrResult XRAPI_CALL CreateActionSet(XrInstance, const XrActionSetCreateInfo* inf
 	return XR_SUCCESS;
 }
 
+// A destroyed action's suggested bindings stay (the dump lists them, with no name), but no longer name it: an action made
+// later at the same address isn't bound by them
+void ForgetSuggestions(RtAction* action)
+{
+	for (auto& [profile, list] : St().suggested)
+		for (auto& entry : list)
+			if (entry.first == action)
+				entry.first = nullptr;
+}
+
 XrResult XRAPI_CALL DestroyActionSet(XrActionSet set)
 {
 	std::lock_guard<std::recursive_mutex> g(St().lock);
 	for (auto it = St().actions.begin(); it != St().actions.end();) {
-		if (it->second->set == (RtActionSet*)set)
+		if (it->second->set == (RtActionSet*)set) {
+			ForgetSuggestions(it->first);
 			it = St().actions.erase(it);
-		else
+		} else
 			++it;
 	}
+	// Nor is a set made later at its address active
+	if (RtSession* s = St().session.get())
+		s->activeSets.erase((RtActionSet*)set);
 	St().actionSets.erase((RtActionSet*)set);
 	return XR_SUCCESS;
 }
@@ -125,7 +139,8 @@ XrResult XRAPI_CALL CreateAction(XrActionSet set, const XrActionCreateInfo* info
 XrResult XRAPI_CALL DestroyAction(XrAction action)
 {
 	std::lock_guard<std::recursive_mutex> g(St().lock);
-	St().actions.erase((RtAction*)action);
+	if (St().actions.erase((RtAction*)action))
+		ForgetSuggestions((RtAction*)action);
 	return XR_SUCCESS;
 }
 
