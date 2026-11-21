@@ -34,6 +34,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE), str(HERE.parent)]
 import unelevated  # noqa: E402
+import waivers  # noqa: E402
 from list_games import pe_machine  # noqa: E402
 
 ARGSETS = ["valid", "edge", "null", "invalid"]
@@ -555,7 +556,6 @@ def usable(r):
 def compare(results, expected_path, differences_path, arch):
     expected = {key_of(r): r for r in json.loads(Path(expected_path).read_text(encoding="utf-8"))["records"]}
     allowed = json.loads(Path(differences_path).read_text(encoding="utf-8")) if differences_path else []
-    allowed = [d for d in allowed if d.get("arch", arch) == arch]
     # A job whose Init or interface lookup failed has one "<lookup>" record where SteamVR's has its calls: its
     # init_error and lookup_error are compared with the first of those
     first_of_job = {}
@@ -572,17 +572,8 @@ def compare(results, expected_path, differences_path, arch):
             continue
         if e.get("init_error") in STEAMVR_TRANSIENT:
             continue  # SteamVR was restarting between children: no reference for this record
-        # A record of a call through the function table ("FnTable:<version>") is the same call as the class's: an entry
-        # for the interface is for both
-        who = r.get("interface", r.get("case", ""))
-        names = {who, who[len("FnTable:"):]} if who.startswith("FnTable:") else {who}
         for field in fields:
-            if r.get(field) == e.get(field):
-                continue
-            # An entry may also name the app types it's for ("apptype": a regex of their numbers)
-            if any(any(re.fullmatch(d["interface"], n) for n in names) and re.fullmatch(d["method"], r.get("method", ""))
-                   and d["field"] == field and ("apptype" not in d or re.fullmatch(d["apptype"], str(r.get("apptype", ""))))
-                   for d in allowed):
+            if r.get(field) == e.get(field) or waivers.waived(allowed, r, field, arch):
                 continue
             diffs.append(f'{key_of(r)} {field}: got {json.dumps(r.get(field))}, SteamVR {json.dumps(e.get(field))}')
     # A call SteamVR answered that is missing from an interface's job that ran its calls (a call that ended the program
@@ -656,16 +647,16 @@ def self_test():
                      "status": "ok", "init_error": 0, "lookup_error": 0, "ret": 0, "out": {}}, **fields)
 
     reference = [rec("A", 0), rec("B", 1), rec("A", 0, apptype=2), rec("B", 1, apptype=2)]
-    waivers = [{"interface": "IVR\\w+_\\d+", "method": "<lookup>", "field": "init_error", "apptype": "2"},
+    rules = [{"interface": "IVR\\w+_\\d+", "method": "<lookup>", "field": "init_error", "apptype": "2"},
                {"interface": "IVR\\w+_\\d+", "method": "<lookup>", "field": "lookup_error", "apptype": "2"}]
     failed_init = [rec("<lookup>", -1, init_error=108, lookup_error=109),
                    rec("<lookup>", -1, apptype=2, init_error=130, lookup_error=109)]
     cases = [([rec("A", 0), rec("B", 1)], 0), ([rec("A", 0)], 1), (failed_init, 2)]
-    failed = []
+    failed = [f"waivers: {what}" for what in waivers.self_test()]
     with tempfile.TemporaryDirectory() as folder:
         expected, differences = Path(folder) / "expected.json", Path(folder) / "differences.json"
         expected.write_text(json.dumps({"records": reference}), encoding="utf-8")
-        differences.write_text(json.dumps(waivers), encoding="utf-8")
+        differences.write_text(json.dumps(rules), encoding="utf-8")
         for results, want in cases:
             got = compare(results, expected, differences, "x64")
             if len(got) != want:

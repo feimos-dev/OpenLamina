@@ -24,12 +24,14 @@ records that differ from the earlier files.
 import argparse
 import hashlib
 import json
-import re
 import sys
 import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import waivers  # noqa: E402
+
 # Not answers: which call the record is, and how the run went
 BOOKKEEPING = {"case", "interface", "method", "index", "apptype", "argset", "status", "exit_code", "skipped", "crash", "callers"}
 # A baseline entry's own keys, beside the fields' hashes
@@ -47,19 +49,7 @@ def digest(value):
 
 
 def covered(rules, r, field):
-    who = r.get("interface", r.get("case", ""))
-    # A call through an interface's function table answers as the interface itself
-    if who.startswith("FnTable:"):
-        who = who[len("FnTable:"):]
-    for d in rules:
-        if d["field"] != field and not re.fullmatch(d["field"], field):
-            continue
-        if not re.fullmatch(d["interface"], who) or not re.fullmatch(d["method"], r.get("method", "")):
-            continue
-        if "apptype" in d and not re.fullmatch(d["apptype"], str(r.get("apptype", ""))):
-            continue
-        return True
-    return False
+    return waivers.waived(rules, r, field)
 
 
 def summarise(results, rules):
@@ -178,6 +168,9 @@ def self_test():
     check("a run with every record ok can be accepted", accept_refusal(first) is None)
     check("a run with a crash can't be accepted", accept_refusal(first + [dict(first[0], index=3, status="crashed")]) is not None)
     check("a --repeat run can't be accepted", accept_refusal([dict(first[0], round=1)]) is not None)
+    for what in waivers.self_test():
+        check(f"waivers: {what}", False)
+    check("a volatile field isn't pinned", "ret" not in summarise(first[:1], [{"interface": "IVRSystem_\\d+", "method": "GetFloat", "field": "ret"}])[key_of(first[0])])
     print(f"{len(failures)} failed")
     return 1 if failures else 0
 
