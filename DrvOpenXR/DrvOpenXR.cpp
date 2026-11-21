@@ -750,16 +750,18 @@ void DrvOpenXR::StopOwnFrames()
 
 void DrvOpenXR::ShutdownSession()
 {
+	// A session is its backend's: without one there is none to end
+	if (!currentBackend)
+		return;
 	// No frames of OpenLamina's own on a session that's ending
-	if (currentBackend)
-		currentBackend->StopOwnFrames();
+	currentBackend->StopOwnFrames();
 
 	BackendManager* instance = BackendManager::InstancePtr();
 	// Is it already being shut down?
 	// Note that this is indirectly called by the XrBackend destructor, which will have
 	// already called this function in that case.
 	if (instance) {
-		auto* backend = (XrBackend*)instance->GetBackendInstance();
+		auto* backend = dynamic_cast<XrBackend*>(instance->GetBackendInstance());
 		if (backend)
 			backend->PrepareForSessionShutdown();
 	}

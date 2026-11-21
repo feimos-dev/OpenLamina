@@ -3199,8 +3199,7 @@ bool XrBackend::OwnFramesFillSwapchains() const
 // Here rather than in OwnFrameLoop.cpp, which then needs nothing of the backend's
 OwnFrameLoop::OwnFrameLoop(Mode mode, LayerSource source, std::chrono::milliseconds idleAfter)
     : OwnFrameLoop(mode, std::move(source), idleAfter, [](const LayerSource& source, const std::function<bool()>& wanted) -> XrDuration {
-	    BackendManager* manager = BackendManager::InstancePtr();
-	    auto* backend = manager ? (XrBackend*)manager->GetBackendInstance() : nullptr;
+	    XrBackend* backend = CurrentBackend();
 	    return backend ? backend->RunOwnFrame(source, wanted) : 0;
     })
 {
@@ -3965,7 +3964,7 @@ void XrBackend::MaybeRestartForInputs()
 	if (infoSet == XR_NULL_HANDLE && (!input || !input->AreActionsLoaded()))
 		return;
 
-	auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
+	XrBackend* backend = CurrentBackend();
 	// A lost session isn't restarted: the one made again has the game's actions bound
 	if (!backend || backend->IsSessionLost())
 		return;

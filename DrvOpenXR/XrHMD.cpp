@@ -279,7 +279,7 @@ bool XrHMD::GetTimeSinceLastVsync(float* pfSecondsSinceLastVsync, uint64_t* pulF
 
 	// The runtime's last predicted display time is on the display's vsync grid; the period is the runtime's
 	BackendManager* manager = BackendManager::InstancePtr();
-	auto* backend = manager ? (XrBackend*)manager->GetBackendInstance() : nullptr;
+	auto* backend = manager ? dynamic_cast<XrBackend*>(manager->GetBackendInstance()) : nullptr;
 	float periodMs = backend ? backend->DisplayPeriodMs() : 0.0f;
 	return VsyncPhase(xr_time_now(), xr_gbl->nextPredictedFrameTime, (XrDuration)(periodMs * 1e6f), pfSecondsSinceLastVsync, pulFrameCounter);
 }
@@ -598,7 +598,7 @@ static float DisplayFrequency()
 			return rate;
 	}
 	BackendManager* manager = BackendManager::InstancePtr();
-	auto* backend = manager ? (XrBackend*)manager->GetBackendInstance() : nullptr;
+	auto* backend = manager ? dynamic_cast<XrBackend*>(manager->GetBackendInstance()) : nullptr;
 	float periodMs = backend ? backend->DisplayPeriodMs() : 0.0f;
 	if (periodMs > 0.0f)
 		return 1000.0f / periodMs;
