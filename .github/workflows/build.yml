@@ -584,6 +584,48 @@ jobs:
           if ($a -eq $b) { "::notice::OpenLamina-Windows-Installer.exe is the same bytes when built again ($a)." }
           else { "::error::OpenLamina-Windows-Installer.exe differs when built again ($a, $b)."; exit 1 }
 
+      # The setup as the app's update and other programs run it, on the runner's own (throwaway) user: a silent install
+      # with /SWITCH puts the folder first in openvrpaths.vrpath, and the silent uninstall takes it out and removes it
+      - name: Install and uninstall
+        shell: pwsh
+        run: |
+          $setup = (Resolve-Path build/installer/OpenLamina-Windows-Installer.exe).Path
+          $folder = Join-Path $env:LOCALAPPDATA 'Programs\OpenLamina'
+          $paths = Join-Path $env:LOCALAPPDATA 'openvr\openvrpaths.vrpath'
+          $log = Join-Path $env:RUNNER_TEMP 'setup.log'
+          $uninstallLog = Join-Path $env:RUNNER_TEMP 'uninstall.log'
+          function Fail([string]$message) {
+            "::error::$message"
+            foreach ($file in $log, $uninstallLog) { if (Test-Path -LiteralPath $file) { "--- $file"; Get-Content -LiteralPath $file } }
+            exit 1
+          }
+          function Runtimes {
+            if (-not (Test-Path -LiteralPath $paths)) { return @() }
+            @((Get-Content -LiteralPath $paths -Raw | ConvertFrom-Json).runtime | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\', '/') })
+          }
+          if (Test-Path -LiteralPath $folder) { Fail "$folder exists before the install: the runner isn't clean." }
+
+          $p = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SWITCH', "/LOG=`"$log`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Fail "The silent install with /SWITCH exited with code $($p.ExitCode) (100: the switch failed)." }
+          foreach ($file in 'bin\vrclient_x64.dll', 'bin\vrclient.dll', 'bin\version.txt', 'OpenLamina.exe', 'SOURCE.txt', 'unins000.exe') {
+            if (-not (Test-Path -LiteralPath (Join-Path $folder $file))) { Fail "The install has no $file in $folder." }
+          }
+          $first = @(Runtimes)[0]
+          if (-not $first -or -not [string]::Equals($first, $folder, [StringComparison]::OrdinalIgnoreCase)) {
+            Fail "After the install with /SWITCH, the first runtime in $paths is '$first', not $folder."
+          }
+          "Installed in $folder and first in $paths."
+
+          $p = Start-Process -FilePath (Join-Path $folder 'unins000.exe') -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=`"$uninstallLog`"" -Wait -PassThru
+          if ($p.ExitCode -ne 0) { Fail "The silent uninstall exited with code $($p.ExitCode)." }
+          # The uninstaller finishes from a copy of itself in the temporary folder: wait for the folder to go (at most a minute)
+          for ($i = 0; $i -lt 60 -and (Test-Path -LiteralPath $folder); $i++) { Start-Sleep -Seconds 1 }
+          if (Test-Path -LiteralPath $folder) { Fail "The uninstall left ${folder}: $((Get-ChildItem -LiteralPath $folder -Recurse -Force).FullName -join ', ')" }
+          if (@(Runtimes) | Where-Object { [string]::Equals($_, $folder, [StringComparison]::OrdinalIgnoreCase) }) {
+            Fail "After the uninstall, $paths still lists $folder."
+          }
+          "Uninstalled: $folder is gone and $paths doesn't list it."
+
       - uses: actions/upload-artifact@v7
         with:
           name: installer
