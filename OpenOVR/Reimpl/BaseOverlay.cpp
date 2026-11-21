@@ -147,6 +147,11 @@ public:
 	// Rendering
 	Texture_t texture = {};
 
+	// A Vulkan or Direct3D 12 texture's data, copied from the game's struct, which may be gone once SetOverlayTexture
+	// has returned: the stored texture points at the copy
+	vr::VRVulkanTextureData_t givenVulkan{};
+	vr::D3D12TextureData_t givenD3D12{};
+
 	// A Direct3D 11 texture stays referenced while it's the overlay's: GetOverlayTexture and the image read use it
 	// after SetOverlayTexture has returned
 	void SetTexture(const Texture_t& t)
@@ -158,6 +163,13 @@ public:
 			((IUnknown*)texture.handle)->Release();
 #endif
 		texture = t;
+		if (t.handle && t.eType == TextureType_Vulkan) {
+			givenVulkan = *(const vr::VRVulkanTextureData_t*)t.handle;
+			texture.handle = &givenVulkan;
+		} else if (t.handle && t.eType == TextureType_DirectX12) {
+			givenD3D12 = *(const vr::D3D12TextureData_t*)t.handle;
+			texture.handle = &givenD3D12;
+		}
 	}
 
 #if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
@@ -2685,6 +2697,8 @@ EVROverlayError BaseOverlay::GetOverlayImageData(VROverlayHandle_t ulOverlayHand
 	// SetOverlayRaw and SetOverlayTexture write them under
 	Image copied;
 	Texture_t texture{};
+	VRVulkanTextureData_t vulkan{};
+	D3D12TextureData_t d3d12{};
 	VRTextureBounds_t textureBounds{};
 	std::shared_ptr<Compositor> shared;
 	// An overlay application's texture is shown from its copy on the session's device (kept referenced here), which the
@@ -2699,6 +2713,14 @@ EVROverlayError BaseOverlay::GetOverlayImageData(VROverlayHandle_t ulOverlayHand
 		if (overlay->sharedFromVulkan && copied.Empty())
 			OC_UNSUPPORTED(VROverlayError_RequestFailed, "GetOverlayImageData: a Vulkan texture shared with the session's device can't be read back");
 		texture = overlay->texture;
+		// A Vulkan or Direct3D 12 texture points at the overlay's copy of its data, which a later texture overwrites
+		if (texture.handle && texture.eType == TextureType_Vulkan) {
+			vulkan = overlay->givenVulkan;
+			texture.handle = &vulkan;
+		} else if (texture.handle && texture.eType == TextureType_DirectX12) {
+			d3d12 = overlay->givenD3D12;
+			texture.handle = &d3d12;
+		}
 		textureBounds = overlay->textureBounds;
 		shared = overlay->compositor.lock();
 #if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
