@@ -31,6 +31,7 @@
 #include "Misc/StbJpeg.h"
 
 #include <climits>
+#include <mutex>
 
 std::optional<Image> DecodeJpeg(const std::string& bytes, std::string* why)
 {
@@ -43,11 +44,16 @@ std::optional<Image> DecodeJpeg(const std::string& bytes, std::string* why)
 		return fail("it's too big");
 	int width = 0, height = 0, channels = 0;
 	const auto* data = (const stbi_uc*)bytes.data();
+	// Without thread locals stb keeps its failure reason in one global: one decode at a time (model loads run on
+	// threads of their own)
+	static std::mutex* decodeLock = new std::mutex();
+	std::unique_lock<std::mutex> lock(*decodeLock);
 	if (!stbi_info_from_memory(data, (int)bytes.size(), &width, &height, &channels))
 		return fail("it isn't a JPEG image it can read");
 	if (width <= 0 || height <= 0 || (uint32_t)width > kMaxImageFileSide || (uint32_t)height > kMaxImageFileSide)
 		return fail("it's bigger than 8192 pixels on a side");
 	stbi_uc* pixels = stbi_load_from_memory(data, (int)bytes.size(), &width, &height, &channels, 4);
+	lock.unlock();
 	if (!pixels)
 		return fail("it's damaged");
 	Image image;

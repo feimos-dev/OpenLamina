@@ -12,6 +12,7 @@
 #include <errno.h> // errno, ENOENT, EEXIST
 #include <fstream>
 #include <iostream>
+#include <mutex>
 #include <sstream>
 #include <stdarg.h>
 #include <sys/stat.h> // stat
@@ -47,15 +48,20 @@ static std::string format_time()
 	auto tp = std::chrono::system_clock::now();
 	std::time_t current_time = std::chrono::system_clock::to_time_t(tp);
 
-	// this function use static global pointer. so it is not thread safe solution
-	std::tm* time_info = std::localtime(&current_time);
+	// Each thread its own tm: std::localtime's is shared
+	std::tm time_info{};
+#ifdef _WIN32
+	localtime_s(&time_info, &current_time);
+#else
+	localtime_r(&current_time, &time_info);
+#endif
 
 	char buffer[128];
 
 	size_t string_size = strftime(
 	    buffer, sizeof(buffer),
 	    LOGGER_TIME_FORMAT,
-	    time_info);
+	    &time_info);
 
 	int ms = get_ms(tp);
 
@@ -276,6 +282,9 @@ void oovr_printf_safe(const char* format, ...)
 	if (r < 0) {
 		return;
 	}
+	// vsnprintf answers the length it would have written, which can be more than the buffer holds
+	if (r >= (int)sizeof(buf))
+		r = (int)sizeof(buf) - 1;
 
 	size_t len = r;
 	size_t offset = 0;
@@ -313,6 +322,14 @@ OC_NORETURN void oovr_abort_raw_va(const char* file, long line, const char* func
 
 static std::atomic<void (*)(const char*)> log_test_sink{ nullptr };
 
+// Lines come from any thread; one is written whole before the next. Never destroyed, as threads may log while the
+// process exits.
+static std::mutex& log_mutex()
+{
+	static std::mutex* mutex = new std::mutex();
+	return *mutex;
+}
+
 void oovr_log_set_test_sink(void (*sink)(const char* line))
 {
 	log_test_sink.store(sink);
@@ -335,7 +352,13 @@ void oovr_log_raw(const char* file, long line, const char* func, const char* msg
 #ifdef ANDROID
 	__android_log_print(ANDROID_LOG_INFO, "OpenLamina", "%s:%d \t %s", func, line, msg);
 #else
-	stream() << "[" << format_time() << "] " << func << ":" << line << "\t- " << (msg ? msg : "NULL") << std::endl;
+	std::string text = "[" + format_time() + "] " + (func ? func : "") + ":" + std::to_string(line) + "\t- " + (msg ? msg : "NULL") + "\n";
+	{
+		std::lock_guard<std::mutex> lock(log_mutex());
+		std::ofstream& out = stream();
+		out.write(text.data(), (std::streamsize)text.size());
+		out.flush();
+	}
 
 	// Write it to stdout
 	// TODO on Windows, write it into the debug log
@@ -343,7 +366,6 @@ void oovr_log_raw(const char* file, long line, const char* func, const char* msg
 	printf("[OC] %s:%ld \t %s\n", func, line, msg);
 #endif
 
-	// Do we need to close the stream or something? What about multiple threads?
 #endif
 }
 
@@ -406,7 +428,10 @@ OC_NORETURN void oovr_abort_raw_va(const char* file, long line, const char* func
 #ifdef ANDROID
 	__android_log_print(ANDROID_LOG_ERROR, "OpenLamina", "ERROR: %s:%d \t %s", func, line, buff);
 #else
-	stream() << std::flush;
+	{
+		std::lock_guard<std::mutex> lock(log_mutex());
+		stream() << std::flush;
+	}
 #endif
 
 	if (no_message_box()) {

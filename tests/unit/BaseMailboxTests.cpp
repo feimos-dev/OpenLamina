@@ -4,8 +4,13 @@
 #include "stdafx.h"
 
 #include "Reimpl/BaseMailbox.h"
+#include "generated/static_bases.gen.h"
 
 #include <json/json.h>
+
+#include <atomic>
+#include <thread>
+#include <vector>
 
 TEST_CASE("Mailbox_ready_message_is_valid_json_and_comes_once")
 {
@@ -108,4 +113,33 @@ TEST_CASE("Mailbox_register_with_missing_pointers")
 	CHECK(mb.RegisterMailbox(nullptr, &h) == BaseMailbox::VR_MBox_InvalidParameter);
 	CHECK(h == 0);
 	CHECK(mb.RegisterMailbox("x", nullptr) == BaseMailbox::VR_MBox_InvalidParameter);
+}
+
+TEST_CASE("Base_object_made_from_several_threads_at_once_is_one_object")
+{
+	constexpr int kThreads = 8;
+	std::vector<std::shared_ptr<BaseMailbox>> made(kThreads);
+	std::atomic<int> waiting{ kThreads };
+	std::vector<std::thread> threads;
+	for (int i = 0; i < kThreads; i++) {
+		threads.emplace_back([&, i] {
+			waiting--;
+			// All start together, but none waits long if one is slow to start
+			for (int spin = 0; spin < 100000 && waiting.load() > 0; spin++)
+				std::this_thread::yield();
+			made[i] = GetCreateBaseMailbox();
+		});
+	}
+	for (std::thread& t : threads)
+		t.join();
+
+	REQUIRE(made[0]);
+	for (const auto& m : made)
+		CHECK(m == made[0]);
+	CHECK(GetUnsafeBaseMailbox() == made[0].get());
+	CHECK(GetBaseMailbox() == made[0]);
+
+	made.clear();
+	CHECK(GetBaseMailbox() == nullptr);
+	CHECK(GetUnsafeBaseMailbox() == nullptr);
 }

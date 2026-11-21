@@ -8,6 +8,7 @@
 // Needed for the system-wide usage of this DLL (when renamed to vrclient[_x64].dll)
 #include "generated/GVRClientCore.gen.h"
 
+#include "Misc/AppManifest.h"
 #include "Misc/Config.h"
 #include "Misc/debug_helper.h"
 #include "steamvr_abi.h"
@@ -64,11 +65,10 @@ BOOL APIENTRY DllMain(HMODULE hModule,
 	case DLL_PROCESS_DETACH:
 		// At process exit (lpReserved set) nothing needs freeing, and the loader lock is held anyway. A session still
 		// up isn't shut down: the OpenXR runtime's DLL may be detached already, and the static destructors that
-		// follow would call into it.
+		// follow would call into it. SteamVR's DLL, if it was chained, stays loaded: freeing a library under the loader
+		// lock can deadlock.
 		if (lpReserved)
 			oc_abandon_at_exit();
-		else if (chainedImplementation)
-			FreeLibrary(chainedImplementation);
 		break;
 	}
 	return TRUE;
@@ -109,22 +109,43 @@ alternativeCoreFactory_t PlatformGetAlternativeCoreFactory()
 	dll += "_x64";
 #endif
 	dll += ".dll";
+	// The path is UTF-8: the wide calls take it whatever the code page
+	const std::wstring widePath = PathFromUtf8(path).wstring();
+	const std::wstring wideDll = PathFromUtf8(dll).wstring();
+	if (widePath.empty() || wideDll.empty()) {
+		OOVR_LOGF("SteamVR's path '%s' isn't UTF-8", path.c_str());
+		return nullptr;
+	}
+
+	// What VR_OVERRIDE was, put back if SteamVR can't be used: the rest of the process isn't pointed at it then
+	std::wstring previous;
+	bool hadPrevious = false;
+	if (DWORD length = GetEnvironmentVariableW(L"VR_OVERRIDE", nullptr, 0); length > 0) {
+		previous.resize(length);
+		const DWORD written = GetEnvironmentVariableW(L"VR_OVERRIDE", previous.data(), length);
+		hadPrevious = written > 0 && written < length;
+		previous.resize(hadPrevious ? written : 0);
+	}
+	auto restore = [&] { SetEnvironmentVariableW(L"VR_OVERRIDE", hadPrevious ? previous.c_str() : nullptr); };
 
 	// Make SteamVR load the rest of it's stuff from the correct place
-	bool success = SetEnvironmentVariableA("VR_OVERRIDE", path.c_str());
+	bool success = SetEnvironmentVariableW(L"VR_OVERRIDE", widePath.c_str());
 	if (!success) {
 		OOVR_LOGF("Failed to update SteamVR environment variable with error: %s", GetLastErrorAsString().c_str());
 		return nullptr;
 	}
 
-	chainedImplementation = LoadLibraryA(dll.c_str());
+	chainedImplementation = LoadLibraryW(wideDll.c_str());
 	if (!chainedImplementation) {
 		OOVR_LOGF("Failed to load SteamVR DLL '%s' with error: %s", dll.c_str(), GetLastErrorAsString().c_str());
+		restore();
 		return nullptr;
 	}
 
 	auto factory = (alternativeCoreFactory_t)GetProcAddress(chainedImplementation, "VRClientCoreFactory");
-	if (!factory)
+	if (!factory) {
 		OOVR_LOGF("SteamVR DLL '%s' has no VRClientCoreFactory", dll.c_str());
+		restore();
+	}
 	return factory;
 }

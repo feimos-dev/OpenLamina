@@ -3,9 +3,11 @@
 
 #include "stdafx.h"
 
+#include "Drivers/Backend.h"
 #include "Misc/BuiltInResource.h"
 #include "Misc/SteamVRRenderModels.h"
 #include "Reimpl/BaseRenderModels.h"
+#include "generated/static_bases.gen.h"
 #include "resources.h"
 
 #include <algorithm>
@@ -115,6 +117,25 @@ float AngleAboutX(const XrPosef& p)
 }
 
 } // namespace
+
+TEST_CASE("SteamVR_models_follow_the_test_folder_whatever_was_asked_before")
+{
+	// Asked first with no SteamVR folder named (the answer then is the user's install, if steamvrRenderModels is on)
+	(void)FindSteamVRRenderModel("test_controller");
+	(void)SteamVRRenderModelNames();
+	{
+		SteamVRDirForTest dir(FixtureSteamVR());
+		CHECK(FindSteamVRRenderModel("test_controller") != nullptr);
+		std::vector<std::string> names = SteamVRRenderModelNames();
+		CHECK(std::find(names.begin(), names.end(), "test_controller") != names.end());
+	}
+	// Another folder: its models, not the first one's
+	TempDir other;
+	fs::create_directories(other.path / "resources" / "rendermodels");
+	SteamVRDirForTest dir(other.path);
+	CHECK(FindSteamVRRenderModel("test_controller") == nullptr);
+	CHECK(SteamVRRenderModelNames().empty());
+}
 
 TEST_CASE("Render_model_from_folder")
 {
@@ -773,6 +794,10 @@ TEST_CASE("Own_controller_models_textures_can_be_JPEG")
 	for (size_t i = 4; i < image->rgba.size() && !varied; i += 4)
 		varied = memcmp(&image->rgba[i], &image->rgba[0], 3) != 0;
 	CHECK(varied);
+	// The same through the overlay's and the compositor's reader
+	std::optional<Image> again = LoadImageFile(mesh->textures[0], nullptr);
+	REQUIRE(again);
+	CHECK(again->rgba == image->rgba);
 
 	// Bytes that start as a JPEG but aren't one are refused
 	TempDir tmp;
@@ -783,6 +808,8 @@ TEST_CASE("Own_controller_models_textures_can_be_JPEG")
 TEST_CASE("Own_controller_models_answer_through_IVRRenderModels")
 {
 	OwnModelsDirForTest dir(OwnModels());
+	// SteamVR's own models (this machine's install) left out: the fixture has none of these names
+	SteamVRDirForTest steamvr(FixtureSteamVR());
 	BaseRenderModels rm;
 	const char* vive = "htc-vive-right";
 	CHECK(rm.GetComponentCount(vive) == 5); // body, grip, trackpad, trackpad_touch, trigger
@@ -819,4 +846,112 @@ TEST_CASE("Own_controller_models_answer_through_IVRRenderModels")
 	CHECK(rm.RenderModelHasComponent("oculus_quest2_controller_left", "x_button"));
 	// A hand's own model with no controller in it stays the hand
 	CHECK(rm.GetComponentCount("renderLeftHand") == 1);
+}
+
+namespace {
+
+// Both hands are there, and no input has been made yet: a game setting up its models before its first frame
+class HandDevice : public ITrackedDevice {
+public:
+	void GetPose(vr::ETrackingUniverseOrigin, vr::TrackedDevicePose_t* pose, ETrackingStateType, int64_t) override { *pose = {}; }
+	vr::ETrackedDeviceClass GetTrackedDeviceClass() override { return vr::TrackedDeviceClass_Controller; }
+	vr::ETrackedControllerRole GetControllerRole() override { return vr::TrackedControllerRole_LeftHand; }
+};
+
+class HandsBackend : public IBackend {
+public:
+	std::shared_ptr<HandDevice> hand = std::make_shared<HandDevice>();
+	int otherHandsAsked = 0;
+	uint32_t CurrentFrameId() override { return 0; }
+	float SecondsToFrame(uint32_t) override { return NAN; }
+	std::shared_ptr<IHMD> GetPrimaryHMD() override { return nullptr; }
+	std::shared_ptr<ITrackedDevice> GetDevice(vr::TrackedDeviceIndex_t) override { return nullptr; }
+	std::shared_ptr<ITrackedDevice> GetDeviceByHand(ITrackedDevice::TrackedDeviceType type) override
+	{
+		if (type == ITrackedDevice::HAND_LEFT || type == ITrackedDevice::HAND_RIGHT)
+			return hand;
+		otherHandsAsked++;
+		return nullptr;
+	}
+	void GetDeviceToAbsoluteTrackingPose(vr::ETrackingUniverseOrigin, float, vr::TrackedDevicePose_t*, uint32_t) override {}
+	void WaitForTrackingData() override {}
+	IBackend::openvr_enum_t StoreEyeTexture(vr::EVREye, const vr::Texture_t*, const vr::VRTextureBounds_t*, vr::EVRSubmitFlags, bool) override { return 0; }
+	void SubmitFrames(bool) override {}
+	void ClearSubmittedFrame() override {}
+	void SetRenderingSuspended(bool) override {}
+	IBackend::openvr_enum_t SetSkyboxOverride(const vr::Texture_t*, uint32_t) override { return 0; }
+	void ClearSkyboxOverride() override {}
+	bool GetFrameTiming(OOVR_Compositor_FrameTiming*, uint32_t) override { return false; }
+	IBackend::openvr_enum_t GetMirrorTextureD3D11(vr::EVREye, void*, void**) override { return 0; }
+	void ReleaseMirrorTextureD3D11(void*) override {}
+	bool GetPlayAreaPoints(vr::HmdVector3_t*, int*) override { return false; }
+	bool AreBoundsVisible() override { return false; }
+	void ForceBoundsVisible(bool) override {}
+	void PumpEvents() override {}
+	bool IsInputAvailable() override { return false; }
+	bool IsInputFocusLost() override { return false; }
+	bool ShouldReduceRenderingWork() override { return false; }
+	bool IsGraphicsConfigured() override { return false; }
+	void OnOverlayTexture(const vr::Texture_t*) override {}
+};
+
+struct WithHands {
+	HandsBackend* backend = new HandsBackend();
+	WithHands() { BackendManager::Create(backend); }
+	~WithHands() { BackendManager::Reset(); }
+};
+
+}
+
+TEST_CASE("Hand_model_tip_is_answered_before_input_is_made")
+{
+	REQUIRE(GetBaseInput() == nullptr);
+	WithHands hands;
+	BaseRenderModels rm;
+	vr::VRControllerState_t state{};
+	OOVR_RenderModel_ComponentState_t cs{};
+	// No input to ask where the aim is: the model's own place
+	CHECK(rm.GetComponentState("renderLeftHand", "tip", &state, nullptr, &cs));
+
+	// A tracker isn't a hand: the backend isn't asked for one
+	rm.GetComponentState("vive_tracker", "tip", &state, nullptr, &cs);
+	CHECK(hands.backend->otherHandsAsked == 0);
+}
+
+TEST_CASE("Render_model_loads_run_a_few_at_a_time")
+{
+	// No SteamVR models: every name below fails, quickly
+	TempDir empty;
+	SteamVRDirForTest dir(empty.path);
+	BaseRenderModels rm;
+	constexpr int kNames = 64;
+	for (int i = 0; i < kNames; i++) {
+		OOVR_RenderModel_t* model = nullptr;
+		std::string name = "oc_test_few_at_a_time_" + std::to_string(i);
+		CHECK((int)rm.LoadRenderModel_Async(name.c_str(), &model) == 100);
+	}
+	BaseRenderModels::WaitForLoads();
+	CHECK(BaseRenderModels::_MostLoadsAtOnce() >= 1);
+	CHECK(BaseRenderModels::_MostLoadsAtOnce() <= 3);
+}
+
+TEST_CASE("Render_model_names_that_failed_make_room_for_new_ones")
+{
+	TempDir empty;
+	SteamVRDirForTest dir(empty.path);
+	BaseRenderModels rm;
+	// More failing names than are kept (4096), waited for in rounds so the queue stays short
+	constexpr int kNames = 4096 + 16;
+	for (int i = 0; i < kNames; i++) {
+		OOVR_RenderModel_t* model = nullptr;
+		std::string name = "oc_test_make_room_" + std::to_string(i);
+		rm.LoadRenderModel_Async(name.c_str(), &model);
+		if (i % 512 == 511)
+			BaseRenderModels::WaitForLoads();
+	}
+	BaseRenderModels::WaitForLoads();
+	// One more is still loaded, not refused as one too many
+	OOVR_RenderModel_t* model = nullptr;
+	CHECK((int)rm.LoadRenderModel_Async("oc_test_make_room_last", &model) == 100); // Loading
+	BaseRenderModels::WaitForLoads();
 }

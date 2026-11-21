@@ -51,12 +51,12 @@ void EncodeSrgbInPlace(Image& image);
 
 // Texels of the layout (rows of stride bytes; bottomUp: the first row is the bottom one, as OpenGL's) as an Image.
 // encodeSrgb: the values are linear (float and 10-bit formats under a linear colour space) and are sRGB-encoded;
-// 8-bit values are taken as they are.
+// 8-bit values are taken as they are. Empty for a side over kMaxRawImageSide, or without the memory for it.
 Image DecodeTexels(TexelLayout layout, const void* data, uint32_t width, uint32_t height, size_t stride, bool bottomUp,
     bool encodeSrgb);
 
-// A PNG file as an image (a JPEG is refused with a reason saying so), at most kMaxImageFileSide pixels on a side; nothing (with why) for a file that can't be read,
-// isn't a PNG, is damaged or is too big (more than kMaxImageFileBytes, which is checked before it's read)
+// A PNG or JPEG file as an image, at most kMaxImageFileSide pixels on a side; nothing (with why) for a file that can't be read,
+// isn't either, is damaged or is too big (more than kMaxImageFileBytes, which is checked before it's read)
 constexpr uint32_t kMaxImageFileSide = 8192;
 constexpr uint64_t kMaxImageFileBytes = 64ull * 1024 * 1024;
 std::optional<Image> LoadImageFile(const std::filesystem::path& path, std::string* why);

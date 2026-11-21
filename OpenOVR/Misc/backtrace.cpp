@@ -2,8 +2,10 @@
 #include "logging.h"
 
 #if defined(OC_BACKTRACE) && defined(__unix__)
+#include <atomic>
 #include <csignal>
 #include <cstdlib>
+#include <cstring>
 #include <libunwind.h>
 
 inline static void dump_registers(unw_cursor_t* cursor)
@@ -250,6 +252,18 @@ static void sigsegv_handler(int, siginfo_t*, void* context)
 
 void oovr_install_crash_handler()
 {
+	// Once, and only where nothing handles SIGSEGV yet: a game's runtime (Mono, a JVM) or crash reporter relies on
+	// receiving it, and this handler doesn't pass it on
+	static std::atomic<bool> tried{ false };
+	if (tried.exchange(true))
+		return;
+	struct sigaction current;
+	memset(&current, 0, sizeof(struct sigaction));
+	if (sigaction(SIGSEGV, nullptr, &current) != 0)
+		return;
+	if ((current.sa_flags & SA_SIGINFO) || current.sa_handler != SIG_DFL)
+		return;
+
 	struct sigaction action;
 	memset(&action, 0, sizeof(struct sigaction));
 	action.sa_flags = SA_SIGINFO | SA_ONSTACK;

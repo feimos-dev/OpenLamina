@@ -35,13 +35,14 @@ std::string GetEnv(const std::string& var);
 // working directory
 std::string oovr_log_folder();
 
-#define OOVR_ABORT(msg)                                        \
-	do {                                                       \
-		oovr_abort_raw(__FILE__, __LINE__, __FUNCTION__, msg); \
+// The message is text, not a format: a % in it (a stringised expression) is printed as it is
+#define OOVR_ABORT(msg)                                                       \
+	do {                                                                      \
+		oovr_abort_raw(__FILE__, __LINE__, __FUNCTION__, "%s", nullptr, msg); \
 	} while (0)
-#define OOVR_ABORT_T(msg, title)                                      \
-	do {                                                              \
-		oovr_abort_raw(__FILE__, __LINE__, __FUNCTION__, msg, title); \
+#define OOVR_ABORT_T(msg, title)                                            \
+	do {                                                                    \
+		oovr_abort_raw(__FILE__, __LINE__, __FUNCTION__, "%s", title, msg); \
 	} while (0)
 #define OOVR_ABORTF(msg, ...)                                                        \
 	do {                                                                             \
@@ -75,9 +76,8 @@ std::string oovr_log_folder();
 #define OOVR_LOG_ONCEF(msg, ...)                                                                   \
 	do {                                                                                           \
 		/* We don't need the function suffix, but it makes it easier to recognise in a debugger */ \
-		static bool oovr_hit_log_once_##__FUNCTION__ = false;                                      \
-		if (!oovr_hit_log_once_##__FUNCTION__) {                                                   \
-			oovr_hit_log_once_##__FUNCTION__ = true;                                               \
+		static std::atomic<bool> oovr_hit_log_once_##__FUNCTION__{ false };                        \
+		if (!oovr_hit_log_once_##__FUNCTION__.exchange(true)) {                                    \
 			OOVR_LOGF("[once] " msg, __VA_ARGS__);                                                 \
 		}                                                                                          \
 	} while (false)

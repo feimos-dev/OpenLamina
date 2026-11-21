@@ -145,12 +145,39 @@ for iface in interfaces:
 # This contains all the definitions for our version-specific classes, aka stubs
 with open(output_dir / "stubs.gen.cpp", "w", newline='\n') as impl:
     impl.write('#include "stdafx.h"\n')
+    impl.write('#include <atomic>\n')
+    impl.write('#include <mutex>\n')
 
     # The interfaces header contains OPENVR_FNTABLE_CALLTYPE, along with declarations
     #  for any non-static functions we define
     impl.write('#include "Reimpl/Interfaces.h"\n')
     impl.write(f'#include "{bases_header_fn.name}"\n')
     impl.write('#include "Misc/Config.h"\n')
+    impl.write('#include <type_traits>\n')
+
+    # A type a stub casts to the Base class's copy of it has that copy's size and alignment (for a pointer or a
+    # reference, what it points at has). A copy that is void or only declared is one the Base class doesn't look
+    # into: nothing to compare.
+    impl.write("""
+template <typename T>
+using oc_pointee_t = std::remove_cv_t<std::remove_pointer_t<std::remove_reference_t<T>>>;
+template <typename T, typename = void>
+struct oc_is_complete : std::false_type {};
+template <typename T>
+struct oc_is_complete<T, std::void_t<decltype(sizeof(T))>> : std::true_type {};
+template <typename A, typename B>
+constexpr bool oc_same_layout()
+{
+\tusing a = oc_pointee_t<A>;
+\tusing b = oc_pointee_t<B>;
+\tif constexpr (std::is_void_v<b> || !oc_is_complete<b>::value)
+\t\treturn true;
+\telse if constexpr (std::is_void_v<a>)
+\t\treturn false;
+\telse
+\t\treturn sizeof(a) == sizeof(b) && alignof(a) == alignof(b);
+}
+""")
 
     for iface in interfaces:
         codegen.write_stubs(impl, iface)
