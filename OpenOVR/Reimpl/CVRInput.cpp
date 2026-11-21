@@ -13,6 +13,14 @@ GEN_INTERFACE("Input", "011")
 
 #include "generated/GVRInput.gen.h"
 
+// The game's size argument is the size of the header's struct: BaseInput's own must match it on every target
+static_assert(sizeof(OOVR_InputSkeletalActionData_t) == sizeof(vr::IVRInput_011::InputSkeletalActionData_t));
+static_assert(sizeof(OOVR_InputOriginInfo_t) == sizeof(vr::IVRInput_011::InputOriginInfo_t));
+static_assert(sizeof(OOVR_VRActiveActionSet_t) == sizeof(vr::IVRInput_011::VRActiveActionSet_t));
+static_assert(sizeof(OOVR_VRSkeletalSummaryData_t) == sizeof(vr::IVRInput_011::VRSkeletalSummaryData_t));
+static_assert(sizeof(OOVR_InputBindingInfo_t) == sizeof(vr::IVRInput_011::InputBindingInfo_t));
+static_assert(offsetof(OOVR_InputBindingInfo_t, rchInputSourceType) == sizeof(vr::IVRInput_007::InputBindingInfo_t));
+
 // Prior to IVRInput_005 / OpenVR 1.1.3 the input layer had a slightly different format, so adapt that
 vr::EVRInputError CVRInput_004::GetSkeletalActionData(vr::VRActionHandle_t action, vr::IVRInput_004::InputSkeletalActionData_t* pActionData, uint32_t unActionDataSize, vr::VRInputValueHandle_t ulRestrictToDevice)
 {
