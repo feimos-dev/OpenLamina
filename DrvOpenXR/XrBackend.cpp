@@ -2452,8 +2452,12 @@ void XrBackend::PumpEvents()
 				beginInfo.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
 				// Not while a frame of either side's is in flight (see frameOwner)
 				std::lock_guard<std::mutex> owner(frameOwner);
-				if (XrResult begin = xrBeginSession(xr_session.get(), &beginInfo); XR_FAILED(begin)) {
-					// READY doesn't come again: without a running session the game is told to quit
+				const XrResult begin = xrBeginSession(xr_session.get(), &beginInfo);
+				// A READY for a session that is running already: it goes on as it is
+				if (begin == XR_ERROR_SESSION_RUNNING && sessionActive)
+					break;
+				if (XR_FAILED(begin)) {
+					// READY doesn't come again: without a running session it's lost, until one can be made
 					OOVR_LOGF("xrBeginSession failed: %d", (int)begin);
 					OnSessionLost();
 					break;
