@@ -173,6 +173,13 @@ public:
 	// MaybeRestartForInputs is making the session again, on the thread that holds the session lock
 	std::atomic<bool> restartingForInputs{ false };
 
+	/**
+	 * Whether a frame xrEndFrame refused may have been refused for one of its layers, and so is worth ending again
+	 * with fewer: not for a session or instance that is lost or not running, a call out of order, or a frame-wide
+	 * value (the display time, the blend mode)
+	 */
+	static bool EndFrameRefusalMayBeALayer(XrResult refusal);
+
 	/** The wait between tries to find the system again after a loss */
 	static constexpr std::chrono::milliseconds kRecoveryInterval{ 1000 };
 	/** Whether a try is due at now: the first at once, then one each kRecoveryInterval (lastTry is {} before the first) */

@@ -45,6 +45,27 @@ TEST_CASE("The event pump looks for the controllers only on a running session no
 	CHECK_FALSE(XrBackend::ControllerQueryDue(XR_SESSION_STATE_FOCUSED, false, false, false, false, true));
 }
 
+TEST_CASE("A refused frame is ended again with fewer layers only when a layer may be why")
+{
+	CHECK(XrBackend::EndFrameRefusalMayBeALayer(XR_ERROR_LAYER_INVALID));
+	CHECK(XrBackend::EndFrameRefusalMayBeALayer(XR_ERROR_LAYER_LIMIT_EXCEEDED));
+	CHECK(XrBackend::EndFrameRefusalMayBeALayer(XR_ERROR_SWAPCHAIN_RECT_INVALID));
+	CHECK(XrBackend::EndFrameRefusalMayBeALayer(XR_ERROR_POSE_INVALID));
+	CHECK(XrBackend::EndFrameRefusalMayBeALayer(XR_ERROR_VALIDATION_FAILURE));
+	CHECK(XrBackend::EndFrameRefusalMayBeALayer(XR_ERROR_RUNTIME_FAILURE));
+	CHECK(XrBackend::EndFrameRefusalMayBeALayer(XR_ERROR_HANDLE_INVALID));
+	// Nothing fewer layers would change
+	CHECK_FALSE(XrBackend::EndFrameRefusalMayBeALayer(XR_ERROR_SESSION_LOST));
+	CHECK_FALSE(XrBackend::EndFrameRefusalMayBeALayer(XR_ERROR_INSTANCE_LOST));
+	CHECK_FALSE(XrBackend::EndFrameRefusalMayBeALayer(XR_ERROR_SESSION_NOT_RUNNING));
+	CHECK_FALSE(XrBackend::EndFrameRefusalMayBeALayer(XR_ERROR_CALL_ORDER_INVALID));
+	CHECK_FALSE(XrBackend::EndFrameRefusalMayBeALayer(XR_ERROR_TIME_INVALID));
+	CHECK_FALSE(XrBackend::EndFrameRefusalMayBeALayer(XR_ERROR_ENVIRONMENT_BLEND_MODE_UNSUPPORTED));
+	// Not a refusal at all
+	CHECK_FALSE(XrBackend::EndFrameRefusalMayBeALayer(XR_SUCCESS));
+	CHECK_FALSE(XrBackend::EndFrameRefusalMayBeALayer(XR_SESSION_LOSS_PENDING));
+}
+
 TEST_CASE("The system is asked for at once after a loss, then about once a second")
 {
 	using clock = std::chrono::steady_clock;

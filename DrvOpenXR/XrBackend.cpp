@@ -1397,9 +1397,9 @@ void XrBackend::SubmitFrames(bool showSkybox)
 
 	const auto endCall = std::chrono::steady_clock::now();
 	XrResult endResult = xrEndFrame(xr_session.get(), &info);
-	if (XR_FAILED(endResult) && sceneShown && layer_count > 1) {
-		// A layer of the overlays' was refused. The game's frame isn't dropped for it: ended without each of those
-		// layers in turn, then with the game's layer alone.
+	if (sceneShown && layer_count > 1 && EndFrameRefusalMayBeALayer(endResult)) {
+		// A layer of the overlays' may have been refused. The game's frame isn't dropped for it: ended without each of
+		// those layers in turn, then with the game's layer alone.
 		const XrResult refusal = endResult;
 		std::vector<const XrCompositionLayerBaseHeader*> kept;
 		int without = -1;
@@ -2202,6 +2202,21 @@ bool XrBackend::ControllerQueryDue(XrSessionState state, bool exitExpected, bool
 	if (exitExpected || restartingForInputs || actionsLoaded || legacyInputAsked || handFound)
 		return false;
 	return state == XR_SESSION_STATE_SYNCHRONIZED || state == XR_SESSION_STATE_VISIBLE || state == XR_SESSION_STATE_FOCUSED;
+}
+
+bool XrBackend::EndFrameRefusalMayBeALayer(XrResult refusal)
+{
+	switch (refusal) {
+	case XR_ERROR_SESSION_LOST:
+	case XR_ERROR_INSTANCE_LOST:
+	case XR_ERROR_SESSION_NOT_RUNNING:
+	case XR_ERROR_CALL_ORDER_INVALID:
+	case XR_ERROR_TIME_INVALID:
+	case XR_ERROR_ENVIRONMENT_BLEND_MODE_UNSUPPORTED:
+		return false;
+	default:
+		return XR_FAILED(refusal);
+	}
 }
 
 bool XrBackend::RecoveryDue(std::chrono::steady_clock::time_point lastTry, std::chrono::steady_clock::time_point now)
