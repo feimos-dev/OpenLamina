@@ -50,6 +50,38 @@ TEST_CASE("A_D3D11_compositor_releases_every_object_it_made_on_the_device")
 	tex->Release();
 	device->Release();
 }
+
+TEST_CASE("A_D3D11_compositor_reads_back_only_textures_of_its_device")
+{
+	ID3D11Device* devices[2] = {};
+	for (ID3D11Device*& d : devices)
+		if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &d, nullptr, nullptr)))
+			d = nullptr;
+	ID3D11Texture2D* textures[2] = {};
+	D3D11_TEXTURE2D_DESC desc{};
+	desc.Width = desc.Height = 4;
+	desc.MipLevels = desc.ArraySize = 1;
+	desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	desc.SampleDesc.Count = 1;
+	desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	if (devices[0] && devices[1] && SUCCEEDED(devices[0]->CreateTexture2D(&desc, nullptr, &textures[0]))
+	    && SUCCEEDED(devices[1]->CreateTexture2D(&desc, nullptr, &textures[1]))) {
+		DX11Compositor compositor(textures[0]);
+		Image out;
+		vr::Texture_t own{ textures[0], vr::TextureType_DirectX, vr::ColorSpace_Auto };
+		vr::Texture_t other{ textures[1], vr::TextureType_DirectX, vr::ColorSpace_Auto };
+		CHECK(compositor.ReadbackToCpu(&own, nullptr, out));
+		CHECK_FALSE(compositor.ReadbackToCpu(&other, nullptr, out));
+	} else {
+		MESSAGE("No WARP devices here");
+	}
+	for (ID3D11Texture2D* t : textures)
+		if (t)
+			t->Release();
+	for (ID3D11Device* d : devices)
+		if (d)
+			d->Release();
+}
 #endif
 
 TEST_CASE("Bounds_with_no_area_show_the_whole_texture_on_that_axis")
