@@ -5,6 +5,7 @@
 #include "DrvOpenXR.h"
 
 #include "../OpenOVR/Misc/Config.h"
+#include "../OpenOVR/Misc/Input/ExtHandInteractionProfile.h"
 #include "../OpenOVR/Misc/Process.h"
 #include "../OpenOVR/Misc/SharedStore.h"
 #include "../OpenOVR/Misc/android_api.h"
@@ -643,6 +644,7 @@ XrResult DrvOpenXR::SetupSession()
 	if (xr_gbl) {
 		ShutdownSession();
 	}
+	ExtHandInteractionProfile::ForgetDecision();
 
 	XrSessionCreateInfo sessionInfo{};
 	sessionInfo.type = XR_TYPE_SESSION_CREATE_INFO;
