@@ -89,16 +89,17 @@ void WriteStack(FILE* f, CONTEXT* context)
 }
 
 // Each report replaces the one before, so the file holds the last fault: an exception something handled is followed
-// by the one that ended the program. At most 100 (a fault handled in a loop); none from inside a report.
-void Report(const char* why, CONTEXT* context)
+// by the one that ended the program. At most 100 exceptions (a fault handled in a loop), but always an abort, terminate
+// or invalid parameter, which end it; none from inside a report.
+void Report(const char* why, CONTEXT* context, bool ends = true)
 {
 	if (reporting)
 		return;
 	reporting = true;
 	{
 		std::lock_guard<std::mutex> guard(writing);
-		if (reports < 100) {
-			reports++;
+		if (ends || reports < 100) {
+			reports += !ends;
 			if (FILE* f = std::fopen(reportPath.c_str(), "w")) {
 				std::fprintf(f, "%s (thread %lu)\n", why, GetCurrentThreadId());
 				WriteStack(f, context);
@@ -128,7 +129,7 @@ LONG WINAPI OnException(EXCEPTION_POINTERS* info)
 	char why[160];
 	std::snprintf(why, sizeof(why), "exception 0x%08lx at %p", info->ExceptionRecord->ExceptionCode,
 	    info->ExceptionRecord->ExceptionAddress);
-	Report(why, info->ContextRecord);
+	Report(why, info->ContextRecord, false);
 	return EXCEPTION_CONTINUE_SEARCH;
 }
 
