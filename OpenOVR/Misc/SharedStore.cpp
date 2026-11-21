@@ -2,6 +2,7 @@
 
 #include "SharedStore.h"
 
+#include "Misc/PathUtf8.h"
 #include "Misc/Process.h"
 
 #include <algorithm>
@@ -225,12 +226,6 @@ fs::path OverrideDir()
 	return {};
 }
 
-std::string Utf8(const fs::path& p)
-{
-	std::u8string name = p.u8string();
-	return std::string(name.begin(), name.end());
-}
-
 // Where this process's store is: OC_STORE_DIR if set, else the OpenLamina folder. If that doesn't exist yet and the
 // OpenComposite one this was forked from does, its documents are copied over once (the old folder is left as it is,
 // for an OpenComposite still installed); if they can't be, the old folder is used where it is.
@@ -244,13 +239,13 @@ fs::path ChooseDir()
 	if (dir.empty() || legacy.empty() || fs::exists(dir, ec) || !fs::is_directory(legacy, ec))
 		return dir;
 	if (SharedStore::MigrateLegacyDir(legacy, dir)) {
-		OOVR_LOGF("Copied the shared store of OpenComposite, %s, to %s", Utf8(legacy).c_str(), Utf8(dir).c_str());
+		OOVR_LOGF("Copied the shared store of OpenComposite, %s, to %s", PathToUtf8(legacy).c_str(), PathToUtf8(dir).c_str());
 		return dir;
 	}
 	// Another program that started at the same moment may have done it
 	if (fs::exists(dir, ec))
 		return dir;
-	OOVR_LOGF("Couldn't copy the shared store of OpenComposite, %s, to %s: using it where it is", Utf8(legacy).c_str(), Utf8(dir).c_str());
+	OOVR_LOGF("Couldn't copy the shared store of OpenComposite, %s, to %s: using it where it is", PathToUtf8(legacy).c_str(), PathToUtf8(dir).c_str());
 	return legacy;
 }
 
@@ -264,7 +259,7 @@ bool SharedStore::MigrateLegacyDir(const fs::path& legacy, const fs::path& dir)
 		return false;
 	// Into a folder of its own first, which becomes dir in one step: a program that is late can't write the old
 	// documents over newer ones, and a half-copied store is never seen
-	fs::path temp = dir.parent_path() / (Utf8(dir.filename()) + ".migrating-" + std::to_string(oc_current_pid()));
+	fs::path temp = dir.parent_path() / (PathToUtf8(dir.filename()) + ".migrating-" + std::to_string(oc_current_pid()));
 	fs::remove_all(temp, ec);
 	if (!fs::create_directory(temp, ec) || ec)
 		return false;

@@ -3,6 +3,7 @@
 #include "SteamVRPaths.h"
 
 #include "Misc/JsonFile.h"
+#include "Misc/PathUtf8.h"
 
 #include <cstdlib>
 #include <fstream>
@@ -19,16 +20,6 @@
 namespace fs = std::filesystem;
 
 namespace {
-
-// Empty for text that isn't UTF-8 (MSVC throws on it)
-fs::path FromUtf8(const std::string& s)
-{
-	try {
-		return fs::path(std::u8string(s.begin(), s.end()));
-	} catch (const std::exception&) {
-		return {};
-	}
-}
 
 bool IsDirectory(const fs::path& p)
 {
@@ -96,7 +87,7 @@ std::optional<fs::path> FromPathsFile(const fs::path& pathsFile)
 	for (const Json::Value& entry : runtimes) {
 		if (!entry.isString())
 			continue;
-		fs::path p = FromUtf8(entry.asString());
+		fs::path p = PathFromUtf8(entry.asString());
 		while (!p.empty() && !p.has_filename() && p.has_parent_path() && p.parent_path() != p)
 			p = p.parent_path();
 		// Compared as UTF-8: a narrow conversion of another runtime's folder name could throw or mangle it
@@ -122,7 +113,7 @@ std::optional<fs::path> ConfigFromPathsFile(const fs::path& pathsFile)
 	for (const Json::Value& entry : configs) {
 		if (!entry.isString())
 			continue;
-		fs::path p = FromUtf8(entry.asString());
+		fs::path p = PathFromUtf8(entry.asString());
 		if (!p.empty() && IsDirectory(p))
 			return p;
 	}
@@ -146,7 +137,7 @@ std::optional<fs::path> FromSteamLibraries(const fs::path& steamDir)
 					i++;
 				unescaped += raw[i];
 			}
-			if (fs::path library = FromUtf8(unescaped); !library.empty())
+			if (fs::path library = PathFromUtf8(unescaped); !library.empty())
 				libraries.push_back(library);
 		}
 	}
