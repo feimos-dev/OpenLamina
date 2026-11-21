@@ -22,6 +22,12 @@ public:
 
 	void CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTextureBounds_t* bounds, std::optional<XruEye> eye, vr::EVRSubmitFlags submitFlags) override;
 
+	// Through the shared copy of its first slice
+	bool ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTextureBounds_t* bounds, Image& out) override;
+
+	// D3D10 faces aren't drawn on the GPU: they're read back and joined on the CPU
+	bool InvokeCubemap(const vr::Texture_t* faces, uint32_t maxWidth, XrSwapchainSubImage& subImage) override { return false; }
+
 	// The texture of a TextureType_DirectX Texture_t that is a D3D10 one (not a D3D11 one), else nullptr
 	static ID3D10Texture2D* AsD3D10Texture(const vr::Texture_t* texture);
 
@@ -45,6 +51,10 @@ private:
 	};
 	// The shared copy for game (made, or made again when its description changed), nullptr if it can't be made
 	Shared* SharedFor(ID3D10Texture2D* game);
+	// Copies subresource of game (its mip 0 of one slice) into s and takes the D3D11 side's key, which EndShared hands
+	// back: false (logged once; s may be gone) if the copy didn't get across
+	bool CopyIntoShared(ID3D10Texture2D* game, Shared& s, UINT subresource);
+	void EndShared(Shared& s);
 
 	// By the game's texture, which the game owns (a texture freed and another made at its address gets a new copy if
 	// its description differs)

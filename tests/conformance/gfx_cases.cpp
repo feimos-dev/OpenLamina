@@ -1376,6 +1376,7 @@ const std::map<std::string, CaseFn>& conformance::GfxCases()
 		{ "overlay-texture-readback-vk", [](CaseContext& c) { OverlayTextureReadback(c, GfxKind::Vulkan, kVkRGBA8Srgb); } },
 		{ "overlay-texture-readback-gl", [](CaseContext& c) { OverlayTextureReadback(c, GfxKind::OpenGL, kGlSRGB8Alpha8); } },
 		{ "gfx-d3d10-basic", [](CaseContext& c) { Basic(c, GfxKind::D3D10, kDxgiRGBA8Srgb); } },
+		{ "overlay-texture-readback-d3d10", [](CaseContext& c) { OverlayTextureReadback(c, GfxKind::D3D10, kDxgiRGBA8Srgb); } },
 		// As the basic ones, under a script whose runtime has D3D11 alone (expect/gfx_interop.json)
 		{ "gfx-gl-interop", [](CaseContext& c) { Basic(c, GfxKind::OpenGL, kGlSRGB8Alpha8); } },
 		{ "gfx-gl-interop-bounds", [](CaseContext& c) { Bounds(c, GfxKind::OpenGL, kGlSRGB8Alpha8); } },

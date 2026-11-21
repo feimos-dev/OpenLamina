@@ -308,45 +308,75 @@ void DX10Compositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRT
 	// Mip 0 of the slice
 	const UINT subresource = D3D10CalcSubresource(0, slice, s->gameDesc.MipLevels);
 
-	// The D3D10 side: the game's texture into the shared one (key 0 to 1)
-	ComPtr<ID3D10Device> device10;
-	game->GetDevice(&device10);
-	if (s->mutex10 && s->mutex10->AcquireSync(0, kSyncMs) != S_OK) {
-		OOVR_LOG_ONCE("Direct3D 10: the shared copy stayed locked: frame left out");
-		shared.erase(game); // made again next time
-		lastResult = XR_ERROR_RUNTIME_FAILURE;
-		return;
-	}
-	if (s->gameDesc.SampleDesc.Count > 1)
-		device10->ResolveSubresource(s->tex10.Get(), 0, game, subresource, ResolveFormat(s->gameDesc.Format));
-	else if (s->gameDesc.MipLevels == 1 && s->gameDesc.ArraySize == 1)
-		device10->CopyResource(s->tex10.Get(), game);
-	else
-		device10->CopySubresourceRegion(s->tex10.Get(), 0, 0, 0, 0, game, subresource, nullptr);
-	if (s->mutex10) {
-		s->mutex10->ReleaseSync(1);
-	} else if (!WaitForGpu10(device10.Get())) {
-		OOVR_LOG_ONCE("Direct3D 10: the game's device didn't finish the copy in time: frame left out");
+	if (!CopyIntoShared(game, *s, subresource)) {
 		lastResult = XR_ERROR_RUNTIME_FAILURE;
 		return;
 	}
 
-	// The D3D11 side: as a D3D11 texture (key 1 to 0)
-	if (s->mutex11 && s->mutex11->AcquireSync(1, kSyncMs) != S_OK) {
-		OOVR_LOG_ONCE("Direct3D 10: the game's copy didn't reach the Direct3D 11 side: frame left out");
-		shared.erase(game); // its key is lost: made again next time
-		lastResult = XR_ERROR_RUNTIME_FAILURE;
-		return;
-	}
 	vr::Texture_t copy = *texture;
 	copy.handle = s->tex11.Get();
 	// The shared copy is the slice itself
 	submitSlice.reset();
 	DX11Compositor::CopyToSwapchain(&copy, bounds, eye, submitFlags);
-	if (s->mutex11)
-		s->mutex11->ReleaseSync(0);
+	EndShared(*s);
+}
+
+bool DX10Compositor::CopyIntoShared(ID3D10Texture2D* game, Shared& s, UINT subresource)
+{
+	// The D3D10 side: the game's texture into the shared one (key 0 to 1)
+	ComPtr<ID3D10Device> device10;
+	game->GetDevice(&device10);
+	if (s.mutex10 && s.mutex10->AcquireSync(0, kSyncMs) != S_OK) {
+		OOVR_LOG_ONCE("Direct3D 10: the shared copy stayed locked: frame left out");
+		shared.erase(game); // made again next time
+		return false;
+	}
+	if (s.gameDesc.SampleDesc.Count > 1)
+		device10->ResolveSubresource(s.tex10.Get(), 0, game, subresource, ResolveFormat(s.gameDesc.Format));
+	else if (s.gameDesc.MipLevels == 1 && s.gameDesc.ArraySize == 1)
+		device10->CopyResource(s.tex10.Get(), game);
+	else
+		device10->CopySubresourceRegion(s.tex10.Get(), 0, 0, 0, 0, game, subresource, nullptr);
+	if (s.mutex10) {
+		s.mutex10->ReleaseSync(1);
+	} else if (!WaitForGpu10(device10.Get())) {
+		OOVR_LOG_ONCE("Direct3D 10: the game's device didn't finish the copy in time: frame left out");
+		return false;
+	}
+
+	// The D3D11 side (key 1 to 0, in EndShared)
+	if (s.mutex11 && s.mutex11->AcquireSync(1, kSyncMs) != S_OK) {
+		OOVR_LOG_ONCE("Direct3D 10: the game's copy didn't reach the Direct3D 11 side: frame left out");
+		shared.erase(game); // its key is lost: made again next time
+		return false;
+	}
+	return true;
+}
+
+void DX10Compositor::EndShared(Shared& s)
+{
+	if (s.mutex11)
+		s.mutex11->ReleaseSync(0);
 	else if (!WaitForGpu11(device, context)) // before the game's next copy overwrites it
 		OOVR_LOG_ONCE("Direct3D 10: the copy into the swapchain didn't finish in time");
+}
+
+bool DX10Compositor::ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTextureBounds_t* bounds, Image& out)
+{
+	ID3D10Texture2D* game = AsD3D10Texture(tex);
+	if (!game) {
+		OOVR_LOG_ONCE("Direct3D 10: a texture that isn't a D3D10 one can't be read back here");
+		return false;
+	}
+	Shared* s = SharedFor(game);
+	// Its first slice, as for a D3D11 texture
+	if (!s || !CopyIntoShared(game, *s, 0))
+		return false;
+	vr::Texture_t copy = *tex;
+	copy.handle = s->tex11.Get();
+	const bool read = DX11Compositor::ReadbackToCpu(&copy, bounds, out);
+	EndShared(*s);
+	return read;
 }
 
 #endif
