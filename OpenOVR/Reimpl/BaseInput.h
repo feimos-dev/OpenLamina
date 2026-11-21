@@ -649,7 +649,7 @@ public:
 		return std::isnan(value) ? 0.0f : std::clamp(value, 0.0f, 1.0f);
 	}
 
-private:
+public: // The action sets and the registries are public for the unit tests
 	enum class ActionSetUsage {
 		LeftRight = 0, // User can bind each side separately
 		Single, // What's bound to one controller is bound to the other
@@ -832,6 +832,7 @@ private:
 		std::string devicePathString;
 	};
 
+public:
 	using RegHandle = uint64_t;
 
 	// For keeping track of string-lookup based stuff: actions, actionsets, and inputvaluehandles.
@@ -865,6 +866,12 @@ private:
 		void Reset();
 
 	private:
+		std::string ShortenOrLookupNameLocked(const std::string& longName);
+
+		// The handles and names (handlesByName, namesByHandle, longNames): GetActionHandle and the like make them on
+		// any thread, with or without the session lock. The items are changed only under the exclusive session lock.
+		mutable std::mutex nameLock;
+
 		// A map of names to handles, used in the common case of not-the-first call
 		std::unordered_map<std::string, RegHandle> handlesByName;
 
@@ -891,6 +898,7 @@ private:
 		const uint32_t maxNameSize;
 	};
 
+private:
 	// See GetSyncSerial
 	std::atomic<uint64_t> syncSerial = 0;
 

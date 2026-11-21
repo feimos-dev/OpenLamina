@@ -251,7 +251,8 @@ T* BaseInput::Registry<T>::LookupItem(RegHandle handle) const
 template <typename T>
 BaseInput::RegHandle BaseInput::Registry<T>::LookupHandle(const std::string& name)
 {
-	std::string lowerName = ShortenOrLookupName(name);
+	std::lock_guard<std::mutex> guard(nameLock);
+	std::string lowerName = ShortenOrLookupNameLocked(name);
 	auto iter = handlesByName.find(lowerName);
 	if (iter != handlesByName.end())
 		return iter->second;
@@ -266,6 +267,13 @@ BaseInput::RegHandle BaseInput::Registry<T>::LookupHandle(const std::string& nam
 
 template <typename T>
 std::string BaseInput::Registry<T>::ShortenOrLookupName(const std::string& longName)
+{
+	std::lock_guard<std::mutex> guard(nameLock);
+	return ShortenOrLookupNameLocked(longName);
+}
+
+template <typename T>
+std::string BaseInput::Registry<T>::ShortenOrLookupNameLocked(const std::string& longName)
 {
 	std::string ret = lowerStr(longName);
 	if (ret.size() > maxNameSize - 1) {
@@ -289,6 +297,7 @@ std::string BaseInput::Registry<T>::ShortenOrLookupName(const std::string& longN
 template <typename T>
 T* BaseInput::Registry<T>::Initialise(const std::string& name, std::unique_ptr<T> value)
 {
+	std::lock_guard<std::mutex> guard(nameLock);
 	std::string lowerName = lowerStr(name);
 	RegHandle handle = 0;
 
@@ -334,6 +343,9 @@ void BaseInput::Registry<T>::Reset()
 	itemsByName.clear();
 	storage.clear();
 }
+
+template class BaseInput::Registry<BaseInput::Action>;
+template class BaseInput::Registry<BaseInput::ActionSet>;
 
 // ---
 
