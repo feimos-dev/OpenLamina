@@ -221,7 +221,10 @@ InteractionProfile* InteractionProfile::GetProfileByPath(const string& name)
 		}
 	}
 	if (!byPath.contains(name)) {
-		OOVR_LOGF("Could not find interaction profile '%s'", name.c_str());
+		// Asked again on every input update while the runtime's profile is one of none here: told once per path
+		static std::set<std::string> told;
+		if (told.insert(name).second)
+			OOVR_LOGF("Could not find interaction profile '%s'", name.c_str());
 		return nullptr;
 	}
 	return byPath.at(name);
