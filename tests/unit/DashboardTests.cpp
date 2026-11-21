@@ -189,6 +189,23 @@ TEST_CASE("Tab_click_selects_program")
 	CHECK(!d.OnClick(u, v));
 }
 
+TEST_CASE("Dashboard_tabs_of_a_document_of_another_shape")
+{
+	Dashboard d(Dashboard::Button::MenuLong);
+	d.isAlive = [](uint32_t, uint64_t) { return true; };
+	Json::Value doc = OverlaysWithDashboard(222, 77);
+	doc["222"]["overlays"][1]["thumbnail"] = "yes";
+	doc["222"]["app"] = 3;
+	doc["223"] = "an entry";
+	doc["224"]["overlays"] = 1;
+	std::vector<Dashboard::Tab> tabs;
+	REQUIRE_NOTHROW(tabs = d.Tabs(doc));
+	// The thumbnail whose flag can't be read is taken for a main overlay
+	CHECK(tabs.size() == 2);
+	Canvas canvas(Dashboard::kWidth, Dashboard::kHeight);
+	REQUIRE_NOTHROW(d.Draw(canvas, Json::Value(Json::objectValue), doc));
+}
+
 TEST_CASE("Quit_click_returns_quit")
 {
 	Dashboard d(Dashboard::Button::MenuLong);

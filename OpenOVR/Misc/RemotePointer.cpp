@@ -44,7 +44,95 @@ bool ReadPose(const Json::Value& v, XrPosef& out)
 	return true;
 }
 
+bool AllNumbers(const Json::Value& v, Json::ArrayIndex size)
+{
+	if (!v.isArray() || v.size() != size)
+		return false;
+	for (Json::ArrayIndex i = 0; i < size; i++)
+		if (!v[i].isNumeric())
+			return false;
+	return true;
+}
+
+// One overlay's entry, its fields of the wrong type left out; null if it isn't an object
+Json::Value CheckedOverlay(const Json::Value& o)
+{
+	if (!o.isObject())
+		return Json::Value();
+	auto isPose = [](const Json::Value& v) { return v.isObject() && AllNumbers(v["p"], 3) && AllNumbers(v["q"], 4); };
+	auto isNumberPair = [](const Json::Value& v) { return AllNumbers(v, 2); };
+	auto isMask = [](const Json::Value& v) {
+		if (!v.isArray())
+			return false;
+		for (const Json::Value& m : v)
+			if (!m.isObject() || (m.isMember("rect") && !AllNumbers(m["rect"], 4)) || (m.isMember("circle") && !AllNumbers(m["circle"], 3)))
+				return false;
+		return true;
+	};
+	using Check = bool (*)(const Json::Value&);
+	static const std::pair<const char*, Check> kFields[] = {
+		{ "handle", [](const Json::Value& v) { return v.isUInt64(); } },
+		{ "key", [](const Json::Value& v) { return v.isString(); } },
+		{ "name", [](const Json::Value& v) { return v.isString(); } },
+		{ "space", [](const Json::Value& v) { return v.isString(); } },
+		{ "relative_to", [](const Json::Value& v) { return v.isString(); } },
+		{ "width", [](const Json::Value& v) { return v.isNumeric(); } },
+		{ "height", [](const Json::Value& v) { return v.isNumeric(); } },
+		{ "curvature", [](const Json::Value& v) { return v.isNumeric(); } },
+		{ "alpha", [](const Json::Value& v) { return v.isNumeric(); } },
+		{ "input_method", [](const Json::Value& v) { return v.isInt(); } },
+		{ "flags", [](const Json::Value& v) { return v.isUInt64(); } },
+		{ "sort_order", [](const Json::Value& v) { return v.isUInt(); } },
+		{ "rendering_pid", [](const Json::Value& v) { return v.isUInt(); } },
+		{ "visible", [](const Json::Value& v) { return v.isBool(); } },
+		{ "shown", [](const Json::Value& v) { return v.isBool(); } },
+		{ "dashboard", [](const Json::Value& v) { return v.isBool(); } },
+		{ "thumbnail", [](const Json::Value& v) { return v.isBool(); } },
+	};
+	Json::Value out = o;
+	for (const auto& [field, ok] : kFields)
+		if (out.isMember(field) && !ok(out[field]))
+			out.removeMember(field);
+	if (out.isMember("pose") && !isPose(out["pose"]))
+		out.removeMember("pose");
+	if (out.isMember("mouse_scale") && !isNumberPair(out["mouse_scale"]))
+		out.removeMember("mouse_scale");
+	if (out.isMember("mask") && !isMask(out["mask"]))
+		out.removeMember("mask");
+	return out;
+}
+
 } // namespace
+
+Json::Value CheckedOverlaysDoc(const Json::Value& doc)
+{
+	Json::Value out(Json::objectValue);
+	if (!doc.isObject())
+		return out;
+	for (const std::string& name : doc.getMemberNames()) {
+		const Json::Value& entry = doc[name];
+		if (!entry.isObject())
+			continue;
+		Json::Value& program = out[name];
+		program = Json::Value(Json::objectValue);
+		if (entry["start"].isUInt64())
+			program["start"] = entry["start"];
+		if (entry["app"].isString())
+			program["app"] = entry["app"];
+		if (entry["updated"].isNumeric())
+			program["updated"] = entry["updated"];
+		Json::Value list(Json::arrayValue);
+		if (entry["overlays"].isArray()) {
+			for (const Json::Value& o : entry["overlays"]) {
+				Json::Value checked = CheckedOverlay(o);
+				if (checked.isObject())
+					list.append(checked);
+			}
+		}
+		program["overlays"] = list;
+	}
+	return out;
+}
 
 StoreEvent MakeRemotePointerEvent(const RemotePointerEvent& e)
 {
@@ -117,8 +205,9 @@ std::vector<OOVR_VROverlayIntersectionMaskPrimitive_t> MaskFromJson(const Json::
 	return out;
 }
 
-void RemotePointer::Update(const std::array<PointerRay, 2>& rays, const Json::Value& overlaysDoc, uint32_t selfPid, double now, std::vector<StoreEvent>& toPost)
+void RemotePointer::Update(const std::array<PointerRay, 2>& rays, const Json::Value& stored, uint32_t selfPid, double now, std::vector<StoreEvent>& toPost)
 {
+	const Json::Value overlaysDoc = CheckedOverlaysDoc(stored);
 	sawDead = false;
 	std::vector<PointerTarget> targets;
 	std::set<std::pair<uint32_t, uint64_t>> present;
@@ -170,7 +259,7 @@ void RemotePointer::Update(const std::array<PointerRay, 2>& rays, const Json::Va
 				t.placement = placement;
 				// Units of the overlay's width and height: its owner scales them by its own mouse scale
 				t.mouseScale = { { 1.0f, 1.0f } };
-				t.flags = o["flags"].asUInt();
+				t.flags = (uint32_t)o["flags"].asUInt64();
 				// Another build may have written the whole unsigned number
 				const Json::Value& order = o["sort_order"];
 				t.sortOrder = order.isInt() ? order.asInt() : order.isUInt() ? INT_MAX - 1 : 0;

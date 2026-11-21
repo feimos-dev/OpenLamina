@@ -432,10 +432,16 @@ Json::Value PoseJson(const XrPosef& pose)
 
 bool PoseFromJson(const Json::Value& v, XrPosef& out)
 {
+	// Written by other programs: anything else is no pose (jsoncpp throws on reading a value of the wrong type)
+	if (!v.isObject())
+		return false;
 	const Json::Value& p = v["p"];
 	const Json::Value& q = v["q"];
 	if (!p.isArray() || p.size() != 3 || !q.isArray() || q.size() != 4)
 		return false;
+	for (Json::ArrayIndex i = 0; i < 4; i++)
+		if ((i < 3 && !p[i].isNumeric()) || !q[i].isNumeric())
+			return false;
 	out.position = { p[0].asFloat(), p[1].asFloat(), p[2].asFloat() };
 	out.orientation = { q[0].asFloat(), q[1].asFloat(), q[2].asFloat(), q[3].asFloat() };
 	return true;
@@ -1422,7 +1428,7 @@ void BaseOverlay::DashboardChanged(bool open, const char* overlayKey)
 		std::vector<Dashboard::Tab> tabs = d.dashboard.Tabs(store.Read(StoreDoc::Overlays));
 		const Dashboard::Tab* active = tabs.empty() ? nullptr : &tabs[0];
 		if (overlayKey && *overlayKey) {
-			Json::Value overlaysDoc = store.Read(StoreDoc::Overlays);
+			Json::Value overlaysDoc = CheckedOverlaysDoc(store.Read(StoreDoc::Overlays));
 			for (const Dashboard::Tab& t : tabs)
 				for (const Json::Value& o : overlaysDoc[std::to_string(t.pid)]["overlays"])
 					if (o["handle"].asUInt64() == t.handle && o["key"].asString() == overlayKey)
@@ -1606,11 +1612,14 @@ void BaseOverlay::_PublishOverlays()
 	const uint32_t self = oc_current_pid();
 	auto ended = [self](const std::string& name, const Json::Value& entry) {
 		const uint32_t pid = (uint32_t)std::strtoul(name.c_str(), nullptr, 10);
+		// Not an object: no program's entry, whoever wrote it
+		if (!entry.isObject())
+			return pid != self;
 		const uint64_t start = entry["start"].isUInt64() ? entry["start"].asUInt64() : 0;
 		return pid != self && (pid == 0 || !SharedStore::IsSameProcessAlive(pid, start));
 	};
 	bool anyEnded = false;
-	Json::Value doc = SharedStore::Get().Read(StoreDoc::Overlays);
+	Json::Value doc = CheckedOverlaysDoc(SharedStore::Get().Read(StoreDoc::Overlays));
 	if (doc.isObject()) {
 		for (const std::string& name : doc.getMemberNames())
 			anyEnded = anyEnded || ended(name, doc[name]);
@@ -1758,7 +1767,7 @@ void BaseOverlay::_UpdatePointer()
 	const bool pointHere = !SceneAppPoints();
 	// The scene app points at other programs' mouse overlays too (laserMouse)
 	const bool pointRemote = laserMouse && IsSceneApp();
-	Json::Value others = pointRemote ? SharedStore::Get().Read(StoreDoc::Overlays) : Json::Value();
+	Json::Value others = pointRemote ? CheckedOverlaysDoc(SharedStore::Get().Read(StoreDoc::Overlays)) : Json::Value();
 	const bool remoteWanted = pointRemote && others.isObject() && others.size() > (others.isMember(std::to_string(oc_current_pid())) ? 1u : 0u);
 
 	bool wanted = false;
@@ -2305,7 +2314,7 @@ EVROverlayError BaseOverlay::FindOverlay(const char* pchOverlayKey, VROverlayHan
 	// Another program's overlay, as the store has it: a handle its state can be read through, and changed through its
 	// program (SendRemoteCommand)
 	const uint32_t self = oc_current_pid();
-	const Json::Value doc = SharedStore::Get().Read(StoreDoc::Overlays);
+	const Json::Value doc = CheckedOverlaysDoc(SharedStore::Get().Read(StoreDoc::Overlays));
 	if (doc.isObject()) {
 		for (const std::string& name : doc.getMemberNames()) {
 			const uint32_t pid = (uint32_t)std::strtoul(name.c_str(), nullptr, 10);
@@ -2380,7 +2389,7 @@ bool BaseOverlay::RemoteOverlayEntry(VROverlayHandle_t handle, Json::Value& entr
 		pid = remote.pid;
 		theirs = remote.handle;
 	}
-	const Json::Value doc = SharedStore::Get().Read(StoreDoc::Overlays);
+	const Json::Value doc = CheckedOverlaysDoc(SharedStore::Get().Read(StoreDoc::Overlays));
 	const Json::Value& program = doc[std::to_string(pid)];
 	if (!program.isObject() || !SharedStore::IsSameProcessAlive(pid, program["start"].isUInt64() ? program["start"].asUInt64() : 0))
 		return false;
@@ -2558,7 +2567,7 @@ EVROverlayError BaseOverlay::CreateOverlay(const char* pchOverlayKey, const char
 		return VROverlayError_NameTooLong;
 	// A key is one overlay's among all the programs: another running program's overlay may have it (as the store has
 	// them). Not OpenLamina's own keys, which start with \1 and are each program's.
-	if (pchOverlayKey[0] != 1 && KeyOfAnotherProgram(SharedStore::Get().Read(StoreDoc::Overlays), pchOverlayKey, oc_current_pid()))
+	if (pchOverlayKey[0] != 1 && KeyOfAnotherProgram(CheckedOverlaysDoc(SharedStore::Get().Read(StoreDoc::Overlays)), pchOverlayKey, oc_current_pid()))
 		return VROverlayError_KeyInUse;
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	if (overlays.count(pchOverlayKey)) {

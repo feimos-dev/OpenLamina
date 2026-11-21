@@ -117,6 +117,49 @@ TEST_CASE("Remote_overlay_sort_order_above_the_signed_range")
 	CHECK(Has(events, vr::VREvent_MouseMove));
 }
 
+TEST_CASE("Remote_overlay_fields_of_another_type_are_left_out")
+{
+	// Another build's (or a damaged) document: nothing of it throws, and an overlay with a sound pose is still pointed at
+	RemotePointer pointer;
+	pointer.isAlive = [](uint32_t, uint64_t) { return true; };
+	Json::Value doc;
+	doc["222"] = Entry(0x1234);
+	Json::Value& o = doc["222"]["overlays"][0];
+	o["flags"] = -1;
+	o["sort_order"] = "high";
+	o["curvature"] = Json::Value(Json::arrayValue);
+	o["mask"] = 5;
+	o["dashboard"] = "no";
+	doc["222"]["start"] = "now";
+	doc["223"] = 7;
+	doc["224"]["overlays"] = "none";
+	doc["225"] = Entry(0x99);
+	doc["225"]["overlays"][0]["visible"] = "yes";
+	doc["225"]["overlays"][0]["pose"] = 3;
+	doc["225"]["overlays"].append(Json::Value("not an overlay"));
+	std::vector<StoreEvent> posted;
+	REQUIRE_NOTHROW(pointer.Update(Rays(false), doc, 111, 1.0, posted));
+	std::vector<RemotePointerEvent> events = Unpacked(posted);
+	CHECK(Has(events, vr::VREvent_MouseMove));
+
+	// Every field of a sound entry is kept, and a flag above the 32 bits doesn't throw
+	Json::Value sound;
+	sound["222"] = Entry(0x1234);
+	sound["222"]["overlays"][0]["flags"] = (Json::UInt64)1 << 40;
+	const Json::Value checked = CheckedOverlaysDoc(sound);
+	CHECK(checked["222"]["overlays"][0] == sound["222"]["overlays"][0]);
+	CHECK(checked["222"]["app"] == "test.app");
+	REQUIRE_NOTHROW(pointer.Update(Rays(false), sound, 111, 1.1, posted));
+	const Json::Value bad = CheckedOverlaysDoc(doc);
+	CHECK_FALSE(bad.isMember("223"));
+	CHECK(bad["224"]["overlays"].size() == 0);
+	CHECK(bad["225"]["overlays"].size() == 1);
+	CHECK_FALSE(bad["225"]["overlays"][0].isMember("visible"));
+	CHECK_FALSE(bad["225"]["overlays"][0].isMember("pose"));
+	CHECK_FALSE(bad["222"]["overlays"][0].isMember("flags"));
+	CHECK_FALSE(bad["222"].isMember("start"));
+}
+
 TEST_CASE("Dead_pid_ignored")
 {
 	RemotePointer pointer;

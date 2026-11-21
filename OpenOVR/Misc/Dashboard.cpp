@@ -2,6 +2,7 @@
 
 #include "Dashboard.h"
 
+#include "RemotePointer.h"
 #include "SharedStore.h"
 
 #include "Reimpl/BaseApplications.h"
@@ -87,8 +88,9 @@ void Dashboard::SetOpen(bool isOpen)
 	open = isOpen;
 }
 
-std::vector<Dashboard::Tab> Dashboard::Tabs(const Json::Value& overlaysDoc) const
+std::vector<Dashboard::Tab> Dashboard::Tabs(const Json::Value& stored) const
 {
+	const Json::Value overlaysDoc = CheckedOverlaysDoc(stored);
 	std::vector<Tab> tabs;
 	if (!overlaysDoc.isObject())
 		return tabs;
