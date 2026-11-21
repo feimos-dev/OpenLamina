@@ -2896,6 +2896,15 @@ void XrBackend::OnSessionCreated()
 		return;
 	}
 
+	// The trackers the game knows get their spaces on this session now, not at the next poll
+	bool trackersKnown = false;
+	{
+		std::shared_lock trackersLock(generic_trackers_mutex);
+		trackersKnown = !generic_trackers.empty();
+	}
+	if (trackersKnown)
+		CreateGenericTrackers();
+
 	// A helper program's session has its own loop, whatever ownFrames says: an overlay session's frames are all
 	// OpenLamina's, and a headless one's events come from nowhere else
 	if (IsHelperSession()) {
