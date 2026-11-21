@@ -97,6 +97,33 @@ TEST_CASE("A refused Init's Shutdown keeps another caller's session")
 	CHECK(err != vr::VRInitError_None);
 }
 
+TEST_CASE("Each Utility Init is matched by a Shutdown")
+{
+	Runtime rt;
+	auto init = rt.fn<InitFn>("VR_InitInternal2");
+	auto shutdown = rt.fn<ShutdownFn>("VR_ShutdownInternal");
+	auto generic = rt.fn<GenericFn>("VR_GetGenericInterface");
+	REQUIRE(init);
+	REQUIRE(shutdown);
+	REQUIRE(generic);
+
+	vr::EVRInitError err = vr::VRInitError_Unknown;
+	REQUIRE(init(&err, vr::VRApplication_Utility, nullptr) != 0);
+	REQUIRE(init(&err, vr::VRApplication_Utility, nullptr) != 0);
+	REQUIRE(err == vr::VRInitError_None);
+
+	// The first Shutdown leaves the second caller its interfaces
+	shutdown();
+	err = vr::VRInitError_Unknown;
+	CHECK(generic("IVRApplications_007", &err) != nullptr);
+	CHECK(err == vr::VRInitError_None);
+
+	shutdown();
+	err = vr::VRInitError_None;
+	CHECK(generic("IVRApplications_007", &err) == nullptr);
+	CHECK(err != vr::VRInitError_None);
+}
+
 TEST_CASE("A Utility app has the settings interface")
 {
 	Runtime rt;

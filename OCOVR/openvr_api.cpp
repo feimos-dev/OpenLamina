@@ -43,6 +43,8 @@ static EVRApplicationType current_apptype;
 static int scene_init_count = 0;
 // A Utility app has called Init: it may have the interfaces whose APPTYPE flag allows Utility, with no backend
 static bool utility_init = false;
+// Utility Inits not yet matched by a shutdown, while no session runs: the last Shutdown ends the Utility state
+static int utility_init_count = 0;
 // Inits refused while a session was up, whose Shutdown (made by the caller on failure) doesn't end that session
 static int refused_init_count = 0;
 // Init, Shutdown and the interface lookups run on whatever threads the program uses; a lookup of an FnTable calls itself
@@ -343,6 +345,7 @@ VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(EVRInitError* peError, EVRApp
 			utility_init = true;
 			NewInitToken();
 		}
+		utility_init_count++;
 		BaseClientCore::appType = eApplicationType;
 		BaseApplications::AddThisProcess(SharedStore::Get());
 		return current_init_token;
@@ -399,8 +402,9 @@ VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(EVRInitError* peError, EVRApp
 #endif
 	DrvOpenXR::KeepOverlaysInstance();
 	// An earlier Utility Init not yet shut down is matched by a Shutdown too
-	scene_init_count = utility_init ? 2 : 1;
+	scene_init_count = utility_init ? 1 + utility_init_count : 1;
 	utility_init = false;
+	utility_init_count = 0;
 	// A refused Init of an older SDK that never shut down doesn't hold this session's Shutdown back
 	refused_init_count = 0;
 	NewInitToken();
@@ -504,7 +508,12 @@ VR_INTERFACE void VR_CALLTYPE VR_ShutdownInternal()
 		return;
 	}
 	if (utility_init && !running) {
+		if (--utility_init_count > 0) {
+			OOVR_LOGF("Utility Shutdown with %d more Init(s) to match: keeping the interfaces", utility_init_count);
+			return;
+		}
 		utility_init = false;
+		utility_init_count = 0;
 		refused_init_count = 0;
 		BaseClientCore::appType = VRApplication_Max;
 		interfaces.clear();
@@ -525,6 +534,7 @@ VR_INTERFACE void VR_CALLTYPE VR_ShutdownInternal()
 	scene_init_count = 0;
 	refused_init_count = 0;
 	utility_init = false;
+	utility_init_count = 0;
 
 	OOVR_LOG("OpenLamina shutdown");
 
