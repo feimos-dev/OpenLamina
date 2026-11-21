@@ -813,6 +813,8 @@ bool SharedStore::PostEvent(uint32_t eventType, const std::array<uint64_t, 4>& d
 	StoreEvent& slot = ring()[(size_t)((seq - 1) % kRingSize)];
 	// seq 0 while it's written, so a reader never takes half an event for a whole one
 	Store(slot.seq, 0);
+	// The fields' writes not seen before the 0: a release store only orders the writes before it
+	std::atomic_thread_fence(std::memory_order_release);
 	slot.pid = (uint32_t)
 #ifdef _WIN32
 	    GetCurrentProcessId();
