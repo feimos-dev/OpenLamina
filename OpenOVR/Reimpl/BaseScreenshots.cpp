@@ -57,7 +57,7 @@ const Request* FindAny(ScreenshotHandle_t handle)
 	return nullptr;
 }
 
-// Empty if it isn't UTF-8 (nothing can be written there)
+// Empty where it can't be a path (on Windows: text that isn't UTF-8): nothing can be written there
 std::filesystem::path PathOf(const std::string& utf8)
 {
 	return PathFromUtf8(utf8);
