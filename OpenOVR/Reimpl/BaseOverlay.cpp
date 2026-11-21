@@ -4020,6 +4020,8 @@ EVROverlayError BaseOverlay::SetOverlayRaw(VROverlayHandle_t ulOverlayHandle, vo
 		}
 	}
 	overlay->compositor.reset();
+	// A texture the program wrote directly (GetOverlayTexture's) is shown no more
+	overlay->DropLive();
 	overlay->SetTexture({});
 	overlay->shownFlipY = false;
 	overlay->sharedFromVulkan = false;
