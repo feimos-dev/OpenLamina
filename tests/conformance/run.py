@@ -538,14 +538,31 @@ def expect_key(r):
     return f'{who}/{r.get("method")}/{r.get("apptype", "-")}/{r.get("argset", "-")}'
 
 
+def job_of(r):
+    return (r.get("case") or r.get("interface"), r.get("apptype"), r.get("argset"))
+
+
+def usable(r):
+    return r.get("status") == "ok" and not r.get("skipped")
+
+
 def compare(results, expected_path, differences_path, arch):
     expected = {key_of(r): r for r in json.loads(Path(expected_path).read_text(encoding="utf-8"))["records"]}
     allowed = json.loads(Path(differences_path).read_text(encoding="utf-8")) if differences_path else []
     allowed = [d for d in allowed if d.get("arch", arch) == arch]
+    # A job whose Init or interface lookup failed has one "<lookup>" record where SteamVR's has its calls: its
+    # init_error and lookup_error are compared with the first of those
+    first_of_job = {}
+    for e in expected.values():
+        if usable(e) and e.get("method") != "<lookup>":
+            first_of_job.setdefault(job_of(e), e)
     diffs = []
     for r in results:
         e = expected.get(key_of(r))
-        if not e or e.get("status") != "ok" or r.get("status") != "ok" or e.get("skipped") or r.get("skipped"):
+        fields = ("ret", "out", "init_error", "lookup_error")
+        if not e and r.get("method") == "<lookup>":
+            e, fields = first_of_job.get(job_of(r)), ("init_error", "lookup_error")
+        if not e or not usable(e) or not usable(r):
             continue
         if e.get("init_error") in STEAMVR_TRANSIENT:
             continue  # SteamVR was restarting between children: no reference for this record
@@ -553,7 +570,7 @@ def compare(results, expected_path, differences_path, arch):
         # for the interface is for both
         who = r.get("interface", r.get("case", ""))
         names = {who, who[len("FnTable:"):]} if who.startswith("FnTable:") else {who}
-        for field in ("ret", "out", "init_error", "lookup_error"):
+        for field in fields:
             if r.get(field) == e.get(field):
                 continue
             # An entry may also name the app types it's for ("apptype": a regex of their numbers)
@@ -562,7 +579,13 @@ def compare(results, expected_path, differences_path, arch):
                    for d in allowed):
                 continue
             diffs.append(f'{key_of(r)} {field}: got {json.dumps(r.get(field))}, SteamVR {json.dumps(e.get(field))}')
-    return diffs
+    # A call SteamVR answered that is missing from an interface's job that ran its calls (a call that ended the program
+    # has a record that says so). Not cases': what a case records depends on what it got
+    have = {key_of(r) for r in results}
+    ran = {job_of(r) for r in results} - {job_of(r) for r in results if r.get("method") == "<lookup>"}
+    missing = sorted(k for k, e in expected.items() if usable(e) and not e.get("case") and e.get("method") != "<lookup>"
+                     and e.get("init_error") not in STEAMVR_TRANSIENT and job_of(e) in ran and k not in have)
+    return diffs + [f"{k}: no record, SteamVR answered it" for k in missing]
 
 
 def check_expect(results, expect_path, allow_skip=None, rounds=None):
@@ -618,7 +641,39 @@ def round_summary(results, repeat):
             + (f" (not: {', '.join(str(n) for n in sorted(bad[c]))})" if c in bad else "") for c in cases]
 
 
+def self_test():
+    """compare: a job whose Init failed, and a job with a call missing, are differences"""
+    import tempfile
+
+    def rec(method, index, apptype=1, **fields):
+        return dict({"interface": "IVRTest_001", "method": method, "index": index, "apptype": apptype, "argset": "valid",
+                     "status": "ok", "init_error": 0, "lookup_error": 0, "ret": 0, "out": {}}, **fields)
+
+    reference = [rec("A", 0), rec("B", 1), rec("A", 0, apptype=2), rec("B", 1, apptype=2)]
+    waivers = [{"interface": "IVR\\w+_\\d+", "method": "<lookup>", "field": "init_error", "apptype": "2"},
+               {"interface": "IVR\\w+_\\d+", "method": "<lookup>", "field": "lookup_error", "apptype": "2"}]
+    failed_init = [rec("<lookup>", -1, init_error=108, lookup_error=109),
+                   rec("<lookup>", -1, apptype=2, init_error=130, lookup_error=109)]
+    cases = [([rec("A", 0), rec("B", 1)], 0), ([rec("A", 0)], 1), (failed_init, 2)]
+    failed = []
+    with tempfile.TemporaryDirectory() as folder:
+        expected, differences = Path(folder) / "expected.json", Path(folder) / "differences.json"
+        expected.write_text(json.dumps({"records": reference}), encoding="utf-8")
+        differences.write_text(json.dumps(waivers), encoding="utf-8")
+        for results, want in cases:
+            got = compare(results, expected, differences, "x64")
+            if len(got) != want:
+                failed.append(f"{[r['method'] for r in results]}: {len(got)} differences, want {want}: {got}")
+    if failed:
+        print("self-test FAILED: " + "; ".join(failed))
+        return 1
+    print("self-test passed")
+    return 0
+
+
 def main():
+    if sys.argv[1:] == ["--self-test"]:
+        return self_test()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--runtime", required=True)
     ap.add_argument("--conformance", required=True)

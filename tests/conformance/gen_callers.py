@@ -177,7 +177,8 @@ def main():
         is_custom = version in custom
         header = (custom_dir if is_custom else iface_dir) / f"{version}.h"
         if not header.exists():
-            continue
+            # Left out, its interface would never be called, and nothing would say so
+            sys.exit(f"gen_callers.py: no header {header} for {version} (interfaces.txt): list it in not_implemented.txt")
         name = version.rsplit("_", 1)[0]  # IVRSystem
         out.append(f'#include "custom_interfaces/{version}.h"' if is_custom else f'#include "{version}.h"')
         funcs = parse_header(header)
