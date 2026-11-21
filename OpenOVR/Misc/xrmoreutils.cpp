@@ -124,7 +124,7 @@ bool xr_utils::PoseFromSpace(vr::TrackedDevicePose_t* pose, XrSpace space, vr::E
 	return true;
 }
 
-void xr_utils::PoseFromHandTracking(vr::TrackedDevicePose_t* pose, XrHandJointLocationsEXT locations, XrHandJointVelocitiesEXT velocities, bool isRight)
+bool xr_utils::PoseFromHandTracking(vr::TrackedDevicePose_t* pose, XrHandJointLocationsEXT locations, XrHandJointVelocitiesEXT velocities, bool isRight)
 {
 	const int boneToUse = XR_HAND_JOINT_PALM_EXT;
 
@@ -135,7 +135,7 @@ void xr_utils::PoseFromHandTracking(vr::TrackedDevicePose_t* pose, XrHandJointLo
 	bool orientationTracked = (palmJoint.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0;
 
 	if (!locations.isActive || !orientationTracked) {
-		return;
+		return false;
 	}
 
 	glm::mat4 gripPoseMatrix = X2G_om34_pose(palmJoint.pose);
@@ -160,4 +160,5 @@ void xr_utils::PoseFromHandTracking(vr::TrackedDevicePose_t* pose, XrHandJointLo
 	const XrVector3f still{ 0, 0, 0 };
 	pose->vVelocity = X2S_v3f((velocity.velocityFlags & XR_SPACE_VELOCITY_LINEAR_VALID_BIT) ? velocity.linearVelocity : still);
 	pose->vAngularVelocity = X2S_v3f((velocity.velocityFlags & XR_SPACE_VELOCITY_ANGULAR_VALID_BIT) ? velocity.angularVelocity : still);
+	return true;
 }

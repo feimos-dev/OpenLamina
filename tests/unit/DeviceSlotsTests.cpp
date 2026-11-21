@@ -211,7 +211,7 @@ TEST_CASE("A tracked hand's pose is valid only with its position, and has the ve
 	// Orientation alone: a pose, not a valid one, and no velocity the runtime didn't mark
 	palm.locationFlags = XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
 	vr::TrackedDevicePose_t pose = {};
-	xr_utils::PoseFromHandTracking(&pose, locations, velocities, false);
+	CHECK(xr_utils::PoseFromHandTracking(&pose, locations, velocities, false));
 	CHECK(pose.bDeviceIsConnected);
 	CHECK_FALSE(pose.bPoseIsValid);
 	CHECK(pose.eTrackingResult == vr::TrackingResult_Running_OutOfRange);
@@ -229,12 +229,16 @@ TEST_CASE("A tracked hand's pose is valid only with its position, and has the ve
 	CHECK(pose.vVelocity.v[2] == 6.0f);
 	CHECK(pose.vAngularVelocity.v[1] == 8.0f);
 
-	// No orientation: the pose is left as it was
+	// No orientation, or a hand that isn't tracked at all: no pose from it, and the one given is left as it was
 	palm.locationFlags = XR_SPACE_LOCATION_POSITION_VALID_BIT;
 	pose = {};
-	xr_utils::PoseFromHandTracking(&pose, locations, velocities, false);
+	CHECK_FALSE(xr_utils::PoseFromHandTracking(&pose, locations, velocities, false));
 	CHECK_FALSE(pose.bDeviceIsConnected);
 	CHECK_FALSE(pose.bPoseIsValid);
+	palm.locationFlags = XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT;
+	locations.isActive = XR_FALSE;
+	CHECK_FALSE(xr_utils::PoseFromHandTracking(&pose, locations, velocities, false));
+	CHECK_FALSE(pose.bDeviceIsConnected);
 }
 
 TEST_CASE("Poses are located as far ahead as asked")

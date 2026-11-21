@@ -36,5 +36,7 @@ XrPosef SeatedOriginAtHead(const XrPosef& origin, const XrPosef& head);
 
 bool PoseFromSpace(vr::TrackedDevicePose_t* pose, XrSpace space, vr::ETrackingUniverseOrigin origin,
     std::optional<glm::mat4> extraTransform = {}, XrTime time = 0);
-void PoseFromHandTracking(vr::TrackedDevicePose_t* pose, XrHandJointLocationsEXT locations, XrHandJointVelocitiesEXT velocities, bool isRight);
+// The pose of a controller held where the tracked hand's palm is; false, with the pose left as it was, for a hand
+// that isn't tracked
+bool PoseFromHandTracking(vr::TrackedDevicePose_t* pose, XrHandJointLocationsEXT locations, XrHandJointVelocitiesEXT velocities, bool isRight);
 } // namespace xr_utils

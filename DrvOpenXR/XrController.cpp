@@ -185,22 +185,21 @@ void XrController::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDevice
 	}
 
 	// Fallback to pose from hand tracking if the controller one isn't valid
-	GetPoseFromHandTracking(origin, input, pose, xrTime);
-	isPoseFromHandTracking = true;
+	isPoseFromHandTracking = GetPoseFromHandTracking(origin, input, pose, xrTime);
 }
 
-void XrController::GetPoseFromHandTracking(vr::ETrackingUniverseOrigin origin, BaseInput* input, vr::TrackedDevicePose_t* pose, int64_t xrTime)
+bool XrController::GetPoseFromHandTracking(vr::ETrackingUniverseOrigin origin, BaseInput* input, vr::TrackedDevicePose_t* pose, int64_t xrTime)
 {
 	if (!xr_gbl || !xr_gbl->handTrackingProperties.supportsHandTracking)
-		return;
+		return false;
 
 	if (!input->handTrackers[(int)GetHand()])
-		return;
+		return false;
 
 	// In the space the game asked for, as the controller's own pose is
 	const XrSpace baseSpace = xr_space_from_tracking_origin(origin);
 	if (!baseSpace)
-		return;
+		return false;
 
 	XrHandJointsLocateInfoEXT locateInfo = { XR_TYPE_HAND_JOINTS_LOCATE_INFO_EXT };
 	locateInfo.baseSpace = baseSpace;
@@ -219,9 +218,9 @@ void XrController::GetPoseFromHandTracking(vr::ETrackingUniverseOrigin origin, B
 
 	// On failure the pose stays as it was (the controller's), so the hand doesn't jump
 	if (XR_FAILED(xr_ext->xrLocateHandJointsEXT(input->handTrackers[(int)GetHand()], &locateInfo, &locations)))
-		return;
+		return false;
 
-	xr_utils::PoseFromHandTracking(pose, locations, velocities, GetHand() == HAND_RIGHT);
+	return xr_utils::PoseFromHandTracking(pose, locations, velocities, GetHand() == HAND_RIGHT);
 }
 
 vr::ETrackedDeviceClass XrController::GetTrackedDeviceClass()
