@@ -276,6 +276,9 @@ void oovr_printf_safe(const char* format, ...)
 	if (r < 0) {
 		return;
 	}
+	// vsnprintf answers the length it would have written, which can be more than the buffer holds
+	if (r >= (int)sizeof(buf))
+		r = (int)sizeof(buf) - 1;
 
 	size_t len = r;
 	size_t offset = 0;
