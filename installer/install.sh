@@ -131,6 +131,13 @@ def load(file):
         sys.exit(f"install.sh: {file} isn't an OpenVR paths file (\"runtime\" isn't a list of folders).")
     return data
 
+def discard(temp):
+    try:
+        if os.path.isfile(temp):
+            os.remove(temp)
+    except OSError:
+        pass
+
 # Written next to the real file (a symlink stays a symlink), with its permissions, after a backup named by the date and
 # time (an earlier backup is never overwritten). A file that can't be written, as when made read-only to keep SteamVR
 # from changing it, is refused and left as it is.
@@ -159,14 +166,17 @@ def save(file, data, old):
             shutil.copymode(file, temp)
         os.replace(temp, file)
     except PermissionError as e:
-        if os.path.exists(temp):
-            os.remove(temp)
+        discard(temp)
         # A read-only file, else its folder (temporary and backup files go there too)
         name = file if e.filename == file else folder
         what = "file" if name == file else "folder"
         sys.exit(f"install.sh: {name} can't be written (it or its folder is read-only), so {'it' if name == file else file} was left as it is.\n"
                  f"To let install.sh change it, make the {what} writable (chmod u+w {shlex.quote(name)}) and run this again; "
                  f"SteamVR can then change it too. Or leave it, and choose the runtime per game with VR_OVERRIDE (README, \"Linux notes\").")
+    except OSError as e:
+        # A full disk, say: the temporary file goes, the real one is as it was
+        discard(temp)
+        sys.exit(f"install.sh: {file} can't be written ({e.strerror or e}), so it was left as it is.")
 
 def version_key(v):
     m = re.fullmatch(r"(\d+(?:\.\d+)*)(?:-([0-9A-Za-z.-]+))?", v or "")
@@ -233,9 +243,12 @@ def main(command, *args):
                 continue
             for asset in release.get("assets") or []:
                 digest = asset.get("digest") or ""
-                if asset.get("name") == asset_name and re.fullmatch(r"sha256:[0-9a-fA-F]{64}", digest):
+                # An https address on github.com, as GitHub gives every release file; anything else isn't fetched
+                url = asset.get("browser_download_url") or ""
+                if (asset.get("name") == asset_name and re.fullmatch(r"sha256:[0-9a-fA-F]{64}", digest)
+                        and url.startswith("https://github.com/") and not re.search(r"\s", url)):
                     if best is None or key > best[0]:
-                        best = (key, version, asset["browser_download_url"], digest[7:].lower())
+                        best = (key, version, url, digest[7:].lower())
         if best:
             print("\t".join(best[1:]))
 
@@ -411,7 +424,10 @@ manager_hints() {
 # the copy is deleted. Prints where, or nothing when there were none.
 keep_own_files() {
 	[ -d "$copy/bin" ] || return 0
-	rm -f "$copy/bin/linux64/vrclient.so" "$copy/bin/vrclient.so" "$copy/bin/version.txt"
+	rm -f "$copy/bin/linux64/vrclient.so" "$copy/bin/vrclient.so" "$copy/bin/version.txt" \
+		"$copy/bin/linux64/vrclient.so.install-tmp" "$copy/bin/vrclient.so.install-tmp" "$copy/bin/version.txt.install-tmp"
+	# The controller models are replaced whole by every install, so nothing in them is the owner's
+	rm -rf "$copy/bin/rendermodels" "$copy/bin/rendermodels.install-tmp" "$copy/bin/rendermodels.old"
 	find "$copy/bin" -depth -type d -empty -delete
 	[ -d "$copy/bin" ] || return 0
 	aside=$copy-kept-$(date +%Y-%m-%d-%H%M%S)

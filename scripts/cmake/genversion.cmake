@@ -32,4 +32,7 @@ if ("${OC_VERSION}" STREQUAL "")
 	endif()
 endif()
 
+# Into a C string: a commit subject or ref name may hold a quote or a backslash
+string(REPLACE "\\" "\\\\" OC_VERSION "${OC_VERSION}")
+string(REPLACE "\"" "\\\"" OC_VERSION "${OC_VERSION}")
 configure_file(${IN} ${OUT})

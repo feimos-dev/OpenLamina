@@ -311,6 +311,7 @@ add_custom_target(VersionHeader
 		-DOUT=${GENERATED_DIR}/version.h
 		-DOC_VERSION=${OC_VERSION}
 		-P ${CMAKE_SOURCE_DIR}/scripts/cmake/genversion.cmake
+	WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
 	BYPRODUCTS ${GENERATED_DIR}/version.h
 	VERBATIM
 )
@@ -503,7 +504,7 @@ add_library(OCCore STATIC
 	OpenOVR/Reimpl/BaseCompositor.h
 	OpenOVR/Reimpl/BaseExtendedDisplay.h
 	OpenOVR/Reimpl/BaseInput.h
-	OpenOVR/Reimpl/BaseInputInternal.cpp
+	OpenOVR/Reimpl/BaseInputInternal.h
 	OpenOVR/Reimpl/BaseOverlay.h
 	OpenOVR/Reimpl/BaseOverlayView.h
 	OpenOVR/Reimpl/BaseRenderModels.h
@@ -611,10 +612,16 @@ if (OC_BACKTRACE)
 
 		list(JOIN libunwind_CONFIGURE_FLAGS " " libunwind_CONFIGURE_FLAGS)
 
+		# One job per logical core, as many as the machine has and no more
+		cmake_host_system_information(RESULT OC_LIBUNWIND_JOBS QUERY NUMBER_OF_LOGICAL_CORES)
+		if (NOT OC_LIBUNWIND_JOBS GREATER 0)
+			set(OC_LIBUNWIND_JOBS 1)
+		endif ()
+
 		ExternalProject_Add(libunwind
 			BUILD_IN_SOURCE 1
 			CONFIGURE_COMMAND sh -c "autoreconf -i && <SOURCE_DIR>/configure --prefix=<INSTALL_DIR> ${libunwind_CONFIGURE_FLAGS}"
-			BUILD_COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
+			BUILD_COMMAND make -j${OC_LIBUNWIND_JOBS}
 			INSTALL_COMMAND make install
 			LOG_CONFIGURE 1
 			LOG_BUILD 1
@@ -806,8 +813,12 @@ add_dependencies(OCOVR OCRenderModels)
 
 # Installation
 include(GNUInstallDirs)
+# A shared library is a LIBRARY on Linux and a RUNTIME (the DLL) on Windows
 install(TARGETS OCOVR
 	LIBRARY
+	DESTINATION "${PROJECT_NAME}/${VRCLIENT_DIR}"
+	COMPONENT Runtime
+	RUNTIME
 	DESTINATION "${PROJECT_NAME}/${VRCLIENT_DIR}"
 	COMPONENT Runtime
 )

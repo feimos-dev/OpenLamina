@@ -2,6 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using System.Threading.Tasks;
 using RuntimeSwitcher.Core;
 using Xunit;
 
@@ -230,7 +234,7 @@ namespace RuntimeSwitcher.Tests
                 $"{{\"tag_name\":\"{r.tag}\",\"prerelease\":{(r.pre ? "true" : "false")},\"draft\":{(r.draft ? "true" : "false")}," +
                 $"\"html_url\":\"https://github.com/x/y/releases/tag/{r.tag}\",\"assets\":[" +
                 (r.asset
-                    ? $"{{\"name\":\"OpenLamina-Windows-Installer.exe\",\"browser_download_url\":\"https://example/{r.tag}/OpenLamina-Windows-Installer.exe\",\"size\":10" +
+                    ? $"{{\"name\":\"OpenLamina-Windows-Installer.exe\",\"browser_download_url\":\"https://github.com/x/y/releases/download/{r.tag}/OpenLamina-Windows-Installer.exe\",\"size\":10" +
                       (r.digest ? $",\"digest\":\"sha256:{Sha.ToUpperInvariant()}\"" : ",\"digest\":null") + "}"
                     : "") +
                 "]}")) + "]";
@@ -281,6 +285,23 @@ namespace RuntimeSwitcher.Tests
         }
 
         [Theory]
+        [InlineData("http://github.com/x/y/releases/download/v2/OpenLamina-Windows-Installer.exe")]
+        [InlineData("https://example.com/v2/OpenLamina-Windows-Installer.exe")]
+        [InlineData("https://github.com.example.com/v2/OpenLamina-Windows-Installer.exe")]
+        [InlineData("https://github.com:8443/x/y/releases/download/v2/OpenLamina-Windows-Installer.exe")]
+        [InlineData("https://user@github.com/x/y/releases/download/v2/OpenLamina-Windows-Installer.exe")]
+        [InlineData("file:///C:/Windows/notepad.exe")]
+        [InlineData("/x/y/releases/download/v2/OpenLamina-Windows-Installer.exe")]
+        public void AReleaseWhoseSetupIsNotOnGitHubIsSkipped(string url)
+        {
+            string good = Json(("v2026.11.20", false, false, true, true));
+            string json = good.Replace("https://github.com/x/y/releases/download/v2026.11.20/OpenLamina-Windows-Installer.exe", url);
+            Assert.NotEqual(good, json);
+            Assert.Null(Find(json, "2026.11.06", true));
+            Assert.Equal("2026.11.20", Find(good, "2026.11.06", true)?.Version);
+        }
+
+        [Theory]
         [InlineData("[1]")]
         [InlineData("[{\"tag_name\":\"v1\",\"prerelease\":\"maybe\"}]")]
         [InlineData("[{\"tag_name\":\"v1\",\"assets\":[{\"name\":\"a\",\"size\":\"big\"}]}]")]
@@ -290,20 +311,13 @@ namespace RuntimeSwitcher.Tests
             Assert.Throws<InvalidDataException>(() => Releases.Parse(json));
         }
 
+        /// <summary>tests/version_order.json's rows, which install.sh's version order is checked against too.</summary>
+        public static IEnumerable<object[]> VersionOrder() =>
+            Newtonsoft.Json.Linq.JObject.Parse(File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "version_order.json")))
+                ["rows"].Select(row => new object[] { (string)row[0], (string)row[1], (int)row[2] });
+
         [Theory]
-        [InlineData("2026.11.06", "2026.11.6", 0)]
-        [InlineData("2026.11.10", "2026.11.9", 1)]
-        [InlineData("2026.12.01", "2026.11.30", 1)]
-        [InlineData("2026.11.06.1", "2026.11.06", 1)]
-        [InlineData("0.0.0-test.1", "0.0.0", -1)]
-        [InlineData("0.0.0-test.2", "0.0.0-test.1", 1)]
-        [InlineData("1.0.0-rc.10", "1.0.0-rc.2", 1)]
-        [InlineData("1.0.0-rc.1", "1.0.0-rc", 1)]
-        [InlineData("1.0.0-beta", "1.0.0-2", 1)]
-        [InlineData("1.0.0-beta.2", "1.0.0-alpha.10", 1)]
-        [InlineData("1.0.0-rc.1", "1.0.0-rc.1", 0)]
-        [InlineData("1.0.0-rc.a-1", "1.0.0-rc.1", 1)]
-        [InlineData("not-a-version", "2026.11.06", -1)]
+        [MemberData(nameof(VersionOrder))]
         public void VersionsCompareAsNumbers(string a, string b, int sign)
         {
             Assert.Equal(sign, Math.Sign(ReleaseVersion.Compare(a, b)));
@@ -364,6 +378,139 @@ namespace RuntimeSwitcher.Tests
             {
                 File.Delete(file);
             }
+        }
+    }
+
+    public class DownloadTests : IDisposable
+    {
+        private readonly string _folder = Path.Combine(Path.GetTempPath(), "oc-tests-" + Guid.NewGuid().ToString("N"));
+        private readonly TcpListener _listener = new TcpListener(IPAddress.Loopback, 0);
+
+        public DownloadTests() => _listener.Start();
+
+        public void Dispose()
+        {
+            _listener.Stop();
+            if (Directory.Exists(_folder))
+                Directory.Delete(_folder, true);
+        }
+
+        private static string Sha256Hex(byte[] data)
+        {
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+                return BitConverter.ToString(sha.ComputeHash(data)).Replace("-", "").ToLowerInvariant();
+        }
+
+        /// <summary>
+        /// Answers one request with <paramref name="body"/> (a Content-Length of all of it); with <paramref name="stall"/>,
+        /// sends only its first half and then nothing until the client goes or ten seconds pass.
+        /// </summary>
+        private async Task Serve(byte[] body, bool stall = false)
+        {
+            using (TcpClient client = await _listener.AcceptTcpClientAsync())
+            using (NetworkStream stream = client.GetStream())
+            {
+                var request = new byte[65536];
+                int got = 0;
+                while (got < request.Length)
+                {
+                    int n = await stream.ReadAsync(request, got, request.Length - got);
+                    if (n == 0)
+                        return;
+                    got += n;
+                    if (Encoding.ASCII.GetString(request, 0, got).Contains("\r\n\r\n"))
+                        break;
+                }
+
+                byte[] head = Encoding.ASCII.GetBytes(
+                    $"HTTP/1.1 200 OK\r\nContent-Length: {body.Length}\r\nConnection: close\r\n\r\n");
+                try
+                {
+                    await stream.WriteAsync(head, 0, head.Length);
+                    await stream.WriteAsync(body, 0, stall ? body.Length / 2 : body.Length);
+                    await stream.FlushAsync();
+                }
+                catch (IOException)
+                {
+                    // The client stopped reading (a refused download).
+                    return;
+                }
+
+                if (stall)
+                {
+                    try
+                    {
+                        await stream.ReadAsync(new byte[1], 0, 1).WaitAsync(TimeSpan.FromSeconds(10));
+                    }
+                    catch (Exception e) when (e is IOException || e is TimeoutException || e is ObjectDisposedException)
+                    {
+                    }
+                }
+            }
+        }
+
+        private ReleaseAsset Asset(string sha256, long size) => new ReleaseAsset
+        {
+            Name = "OpenLamina-Windows-Installer.exe",
+            DownloadUrl = $"http://127.0.0.1:{((IPEndPoint)_listener.LocalEndpoint).Port}/setup.exe",
+            Sha256 = sha256,
+            Size = size,
+        };
+
+        private string Destination => Path.Combine(_folder, "1.0.0", "OpenLamina-Windows-Installer.exe");
+
+        [Fact]
+        public async Task AFileWithTheListedDigestIsKeptAndReturnedOpen()
+        {
+            byte[] body = Encoding.ASCII.GetBytes("the setup");
+            Task server = Serve(body);
+            using (FileStream file = await Updater.DownloadAsync(Asset(Sha256Hex(body), body.Length), Destination, null))
+            {
+                var read = new byte[body.Length + 1];
+                Assert.Equal(body.Length, file.Read(read, 0, read.Length));
+                Assert.Equal(body, read.Take(body.Length).ToArray());
+            }
+
+            await server.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.False(File.Exists(Destination + ".part"));
+        }
+
+        [Fact]
+        public async Task AFileWithAnotherDigestIsRefusedAndDeleted()
+        {
+            byte[] body = Encoding.ASCII.GetBytes("not the setup");
+            Task server = Serve(body);
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                Updater.DownloadAsync(Asset(new string('0', 64), body.Length), Destination, null));
+            await server.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.False(File.Exists(Destination));
+            Assert.False(File.Exists(Destination + ".part"));
+        }
+
+        [Fact]
+        public async Task AFileLargerThanListedIsRefused()
+        {
+            byte[] body = new byte[200000];
+            Task server = Serve(body);
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                Updater.DownloadAsync(Asset(Sha256Hex(body), 1000), Destination, null));
+            await server.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.False(File.Exists(Destination));
+            Assert.False(File.Exists(Destination + ".part"));
+        }
+
+        [Fact]
+        public async Task ADownloadThatStopsArrivingIsGivenUp()
+        {
+            byte[] body = new byte[1000];
+            Task server = Serve(body, stall: true);
+            Task<FileStream> download = Updater.DownloadAsync(Asset(Sha256Hex(body), body.Length), Destination, null,
+                TimeSpan.FromSeconds(1));
+            Assert.Same(download, await Task.WhenAny(download, Task.Delay(TimeSpan.FromSeconds(8))));
+            await Assert.ThrowsAsync<IOException>(() => download);
+            await server.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.False(File.Exists(Destination));
+            Assert.False(File.Exists(Destination + ".part"));
         }
     }
 
