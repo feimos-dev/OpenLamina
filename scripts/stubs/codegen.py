@@ -73,12 +73,11 @@ std::shared_ptr<{cls}> GetCreate{getter_name}() {{
     std::lock_guard<std::recursive_mutex> lock({var}_mutex());
     std::shared_ptr<{cls}> ret = {var}.lock();
     if(!ret) {{
+        // The deleter takes no lock (it may run under the session lock, which a constructor here can wait for):
+        // the pointer is cleared only if it is still this object's
         ret = std::shared_ptr<{cls}>(new {cls}(), []({cls} *obj){{
-            {{
-                std::lock_guard<std::recursive_mutex> deleteLock({var}_mutex());
-                {cls} *expected = obj;
-                {var}_unsafe.compare_exchange_strong(expected, nullptr);
-            }}
+            {cls} *expected = obj;
+            {var}_unsafe.compare_exchange_strong(expected, nullptr);
             delete obj;
         }});
         {var} = ret;
