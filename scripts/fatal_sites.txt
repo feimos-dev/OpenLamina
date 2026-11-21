@@ -1,5 +1,6 @@
 # Hard stops that may stay, checked by scripts/abort_sites.py --check: file|function|macro|count|reason
 # Nothing built ends a program. A new line here needs a reason a maintainer accepts.
+OpenOVR/Misc/SoftFail.cpp|oc_soft_fail|oovr_abort_raw|1|stopOnSoftAbort, a debugging setting off by default: an unsupported call then stops the game on purpose
 OpenOVR/logging.cpp|oovr_abort_raw_va|_Exit|1|the hard stop itself, which the macros above lead to: only reached from an allowed site
 OpenOVR/logging.cpp|oovr_abort_raw_va|abort|1|the hard stop itself, which the macros above lead to: only reached from an allowed site
 OpenOVR/logging.cpp|oovr_message_raw|MessageBoxA|1|OOVR_MESSAGE's box: shown only by the hard stop above (and debug_helper's GetStackWalk, which nothing calls)
