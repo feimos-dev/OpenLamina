@@ -2213,6 +2213,7 @@ EVRInputError BaseInput::GetBoneCount(VRActionHandle_t action, uint32_t* pBoneCo
 {
 	if (!pBoneCount)
 		return VRInputError_InvalidParam;
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	GET_ACTION_FROM_HANDLE(act, action);
 	if (!IsSkeletonHand(act->skeletalHand))
 		return VRInputError_InvalidSkeleton;
@@ -2221,6 +2222,7 @@ EVRInputError BaseInput::GetBoneCount(VRActionHandle_t action, uint32_t* pBoneCo
 }
 EVRInputError BaseInput::GetBoneHierarchy(VRActionHandle_t action, VR_ARRAY_COUNT(unIndexArayCount) BoneIndex_t* pParentIndices, uint32_t unIndexArayCount)
 {
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	GET_ACTION_FROM_HANDLE(act, action);
 	if ((int)act->skeletalHand >= 2)
 		return VRInputError_InvalidSkeleton;
@@ -2234,6 +2236,7 @@ EVRInputError BaseInput::GetBoneName(VRActionHandle_t action, BoneIndex_t nBoneI
 {
 	if (pchBoneName && unNameBufferSize)
 		pchBoneName[0] = 0;
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	GET_ACTION_FROM_HANDLE(act, action);
 	if ((int)act->skeletalHand >= 2)
 		return VRInputError_InvalidSkeleton;
@@ -2247,6 +2250,7 @@ EVRInputError BaseInput::GetBoneName(VRActionHandle_t action, BoneIndex_t nBoneI
 }
 EVRInputError BaseInput::GetSkeletalReferenceTransforms(VRActionHandle_t actionHandle, EVRSkeletalTransformSpace eTransformSpace, EVRSkeletalReferencePose eReferencePose, VR_ARRAY_COUNT(unTransformArrayCount) VRBoneTransform_t* pTransformArray, uint32_t unTransformArrayCount)
 {
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	GET_ACTION_FROM_HANDLE(act, actionHandle);
 
 	if (!IsSkeletonHand(act->skeletalHand))
@@ -2984,10 +2988,15 @@ EVRInputError BaseInput::OpenBindingUI(const char* pchAppKey, VRActionSetHandle_
 		OC_UNSUPPORTED(VRInputError_NoSteam, "OpenBindingUI: no bindingEditor in openlamina.ini");
 
 	std::string key = pchAppKey && pchAppKey[0] ? std::string(pchAppKey) : CurrentProcessAppKey();
-	ActionSet* set = ulActionSetHandle != vr::k_ulInvalidActionSetHandle ? cast_ASH(ulActionSetHandle) : nullptr;
+	std::string setName;
+	{
+		auto sessionLock = xr_session.lock_shared(); // a manifest load waits while the set is read
+		if (ActionSet* set = ulActionSetHandle != vr::k_ulInvalidActionSetHandle ? cast_ASH(ulActionSetHandle) : nullptr)
+			setName = set->fullName;
+	}
 	InputValueHandle* device = cast_IVH(ulDeviceHandle);
 	// Each value one argument of its own, whatever it holds
-	std::string args = "--app-key " + QuoteArgument(key) + " --action-set " + QuoteArgument(set ? set->fullName : "")
+	std::string args = "--app-key " + QuoteArgument(key) + " --action-set " + QuoteArgument(setName)
 	    + " --device " + QuoteArgument(device ? device->path : "");
 	std::filesystem::path binary = PathFromUtf8(editor);
 	if (!LaunchProcess(binary, args, binary.parent_path()))
@@ -3390,6 +3399,7 @@ EVRInputError BaseInput::GetEyeTrackingDataRelativeToNow(VRActionHandle_t action
 EVRInputError BaseInput::GetEyeTrackingDataAt(VRActionHandle_t action, ETrackingUniverseOrigin eOrigin,
     XrTime time, VREyeTrackingData_t* pEyeTrackingData, uint32_t ulEyeTrackingDataSize)
 {
+	auto lock = xr_session.lock_shared();
 	GET_ACTION_FROM_HANDLE(act, action);
 	if (ulEyeTrackingDataSize != sizeof(*pEyeTrackingData))
 		return VRInputError_InvalidParam;
@@ -3399,7 +3409,6 @@ EVRInputError BaseInput::GetEyeTrackingDataAt(VRActionHandle_t action, ETracking
 	// As SteamVR answers: in the space asked for; with no eye tracker behind the action (or for an action of
 	// another type) inactive, at the head; with one, active and as valid as the tracker's gaze.
 	*pEyeTrackingData = {};
-	auto lock = xr_session.lock_shared();
 	if (!xr_gbl)
 		return VRInputError_None;
 	XrSpace base = xr_space_from_tracking_origin(eOrigin);
