@@ -23,7 +23,7 @@
 /**
  * Defines an interaction profile, as specified by 6.4 in the OpenXR spec.
  * Implementing an interaction profile is fairly straightforward, view the other interaction profiles for examples.
- * Be sure to add any implemented profiles to the interactionProfiles vector in BaseInput.cpp. (This is done in the BaseInput constructor.)
+ * Be sure to add any implemented profiles to InteractionProfile::CreateProfiles in InteractionProfile.cpp.
  */
 class XrExt;
 
@@ -73,12 +73,12 @@ public:
 	virtual const std::string& GetPath() const = 0;
 
 	/**
-	 * Get the right hand render model name of current interaction profile which would recognized by OpenVR app
+	 * Get the left hand render model name of current interaction profile which would recognized by OpenVR app
 	 */
 	virtual std::optional<const char*> GetLeftHandRenderModelName() const = 0;
 
 	/**
-	 * Get the left hand render model name of current interaction profile which would recognized by OpenVR app
+	 * Get the right hand render model name of current interaction profile which would recognized by OpenVR app
 	 */
 	virtual std::optional<const char*> GetRightHandRenderModelName() const = 0;
 
