@@ -36,23 +36,6 @@ namespace fs = std::filesystem;
 
 namespace {
 
-// Keeps this library loaded for good, once a thread of its own runs in it: the game's openvr_api may unload the
-// library at VR_Shutdown while the process goes on, and the thread would then wake in unmapped code
-void StayLoaded()
-{
-	static int anchor;
-	static const bool pinned = [] {
-#ifdef _WIN32
-		HMODULE module = nullptr;
-		return GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN, (LPCWSTR)&anchor, &module) != FALSE;
-#else
-		Dl_info info{};
-		return dladdr(&anchor, &info) && info.dli_fname && dlopen(info.dli_fname, RTLD_NOW | RTLD_NOLOAD | RTLD_NODELETE);
-#endif
-	}();
-	(void)pinned;
-}
-
 constexpr size_t kStateSize = 16 * 1024;
 constexpr size_t kHeaderSize = 128;
 constexpr const char* kDocNames[] = { "settings", "applications", "chaperone", "scene", "dashboard", "overlays", "offsets" };
@@ -933,6 +916,21 @@ uint64_t SharedStore::ProcessStartTime(uint32_t pid)
 	const unsigned long long ticks = std::strtoull(field.c_str(), &end, 10);
 	return end && *end == 0 ? (uint64_t)ticks + 1 : 0; // + 1: a process started at tick 0 is still told apart from none
 #endif
+}
+
+void SharedStore::StayLoaded()
+{
+	static int anchor;
+	static const bool pinned = [] {
+#ifdef _WIN32
+		HMODULE module = nullptr;
+		return GetModuleHandleExW(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN, (LPCWSTR)&anchor, &module) != FALSE;
+#else
+		Dl_info info{};
+		return dladdr(&anchor, &info) && info.dli_fname && dlopen(info.dli_fname, RTLD_NOW | RTLD_NOLOAD | RTLD_NODELETE);
+#endif
+	}();
+	(void)pinned;
 }
 
 uint64_t SharedStore::OwnStartTime()

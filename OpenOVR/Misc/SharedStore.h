@@ -98,6 +98,10 @@ public:
 	/** Ends pid at once if it's the process that started at start (not 0), checked as near to the kill as the system
 	 * allows; false if it isn't, or couldn't be ended */
 	static bool KillProcess(uint32_t pid, uint64_t start);
+
+	/** Keeps this library loaded for good, before a thread of its own starts in it: the game's openvr_api may unload
+	 * the library at VR_Shutdown while the process goes on, and the thread would then wake in unmapped code */
+	static void StayLoaded();
 	/** The start time the store has for a pid (the Applications document's processes, the scene's, the overlay
 	 * programs'), if it's still that process; 0 for a pid the store doesn't know or that's gone */
 	uint64_t KnownProcessStart(uint32_t pid);
