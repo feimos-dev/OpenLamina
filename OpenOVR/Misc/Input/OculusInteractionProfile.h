@@ -24,7 +24,7 @@ public:
 	std::optional<vr::EVRSkeletalTrackingLevel> GetOpenVRTrackinglevel() const override;
 
 protected:
-	const LegacyBindings* GetLegacyBindings(const std::string& handPath) const override;
+	LegacyBindings MakeLegacyBindings(const std::string& handPath) const override;
 
 private:
 	Model model;

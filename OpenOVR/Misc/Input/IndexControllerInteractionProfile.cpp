@@ -151,10 +151,10 @@ std::optional<vr::EVRSkeletalTrackingLevel> IndexControllerInteractionProfile::G
 	return vr::VRSkeletalTracking_Partial;
 }
 
-const InteractionProfile::LegacyBindings* IndexControllerInteractionProfile::GetLegacyBindings(const std::string& handPath) const
+InteractionProfile::LegacyBindings IndexControllerInteractionProfile::MakeLegacyBindings(const std::string& handPath) const
 {
 	// Index controllers are exactly symmetrical, so we can just drop handPath on the floor.
-	static LegacyBindings bindings = {};
+	LegacyBindings bindings = {};
 	//	this->bindingsLegacy.system = "input/system/click"; - causes issues on Oculus runtime
 	bindings.dashboard = "input/system/click";
 	bindings.menu = "input/b/click";
@@ -179,5 +179,5 @@ const InteractionProfile::LegacyBindings* IndexControllerInteractionProfile::Get
 
 	bindings.gripPoseAction = "input/grip/pose";
 	bindings.aimPoseAction = "input/aim/pose";
-	return &bindings;
+	return bindings;
 }

@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <mutex>
 #include <set>
 #include <utility>
 
@@ -76,6 +77,16 @@ const std::unordered_set<std::string>& InteractionProfile::GetValidInputPaths() 
 bool InteractionProfile::IsInputPathValid(const std::string& inputPath) const
 {
 	return validInputPaths.find(inputPath) != validInputPaths.end();
+}
+
+const InteractionProfile::LegacyBindings* InteractionProfile::GetLegacyBindings(const std::string& handPath) const
+{
+	// The profile doesn't change once made: both hands' bindings are made once, from whichever thread asks first
+	std::call_once(legacyBindingsMade, [this] {
+		legacyBindings[0] = MakeLegacyBindings("/user/hand/left");
+		legacyBindings[1] = MakeLegacyBindings("/user/hand/right");
+	});
+	return &legacyBindings[handPath == "/user/hand/left" ? 0 : 1];
 }
 
 void InteractionProfile::AddLegacyBindings(const LegacyControllerActions& ctrl, std::vector<XrActionSuggestedBinding>& bindings) const
@@ -188,24 +199,42 @@ InteractionProfile::ProfileList InteractionProfile::CreateProfiles(XrExt& ext)
 	return profiles;
 }
 
+// The profile list and the path map are made on the first call that has the extensions, from any thread
+static std::mutex& ProfileListLock()
+{
+	static std::mutex lock;
+	return lock;
+}
+
 const InteractionProfile::ProfileList& InteractionProfile::GetProfileList()
 {
 	static ProfileList profiles;
-	if (profiles.empty())
+	static const ProfileList none;
+	std::lock_guard<std::mutex> guard(ProfileListLock());
+	if (profiles.empty()) {
+		// Before the instance: nothing yet, and nothing kept
+		if (!xr_ext)
+			return none;
 		profiles = CreateProfiles(*xr_ext);
+	}
 	return profiles;
 }
 
 InteractionProfile* InteractionProfile::GetProfileByPath(const string& name)
 {
 	static std::map<std::string, InteractionProfile*> byPath;
+	const ProfileList& profiles = GetProfileList();
+	std::lock_guard<std::mutex> guard(ProfileListLock());
 	if (byPath.empty()) {
-		for (const std::unique_ptr<InteractionProfile>& profile : GetProfileList()) {
+		for (const std::unique_ptr<InteractionProfile>& profile : profiles) {
 			byPath[profile->GetPath()] = profile.get();
 		}
 	}
 	if (!byPath.contains(name)) {
-		OOVR_LOGF("Could not find interaction profile '%s'", name.c_str());
+		// Asked again on every input update while the runtime's profile is one of none here: told once per path
+		static std::set<std::string> told;
+		if (told.insert(name).second)
+			OOVR_LOGF("Could not find interaction profile '%s'", name.c_str());
 		return nullptr;
 	}
 	return byPath.at(name);

@@ -42,7 +42,7 @@ public:
 	/** Reads this frame's inputs, and writes the actions this binding's inputs are bound to into out */
 	virtual void Update(const RawInputState& in, ActionOutputs& out) = 0;
 	/** The raw input paths it reads */
-	virtual std::vector<std::string> RawInputs() const = 0;
+	virtual const std::vector<std::string>& RawInputs() const = 0;
 	/** This frame's state of one of its inputs (click, north...), bound or not: for chords */
 	virtual std::optional<bool> DigitalInput(const std::string& inputName) const = 0;
 };

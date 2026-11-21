@@ -170,3 +170,51 @@ TEST_CASE("Input_is_held_while_the_grid_is_fully_faded_in")
 	BaseInput::SetHeldByDashboard(false);
 	CHECK_FALSE(BaseInput::InputHeld());
 }
+
+TEST_CASE("Registry_finds_a_long_name_by_its_full_spelling")
+{
+	BaseInput::Registry<BaseInput::ActionSet> sets(XR_MAX_ACTION_SET_NAME_SIZE);
+	const std::string longName = "/actions/" + std::string(70, 'a');
+	const std::string shortName = sets.ShortenOrLookupName(longName);
+	CHECK(shortName.size() < XR_MAX_ACTION_SET_NAME_SIZE);
+	BaseInput::ActionSet* set = sets.Initialise(shortName, std::make_unique<BaseInput::ActionSet>());
+	// As a binding file names it, and as the manifest parser kept it
+	CHECK(sets.LookupItem(longName) == set);
+	CHECK(sets.LookupItem(shortName) == set);
+	// A handle asked for before or after, by either spelling, is the item's
+	CHECK(sets.LookupItem(sets.LookupHandle(longName)) == set);
+	CHECK(sets.LookupItem("/actions/other") == nullptr);
+}
+
+TEST_CASE("Escaped_names_keep_each_byte_apart")
+{
+	CHECK(BaseInput::EscapePathString("main_set") == "main_set");
+	CHECK(BaseInput::EscapePathString("Fire") == "_fire");
+	CHECK(BaseInput::EscapePathString("a b") == "a.20b");
+	// UTF-8 bytes past 0x7f, each its own code: é and è differ
+	CHECK(BaseInput::EscapePathString("\xc3\xa9") == ".c3.a9");
+	CHECK(BaseInput::EscapePathString("\xc3\xa9") != BaseInput::EscapePathString("\xc3\xa8"));
+}
+
+TEST_CASE("No_aim_in_grip_without_actions")
+{
+	BaseInput input;
+	XrSpaceLocation location = { XR_TYPE_SPACE_LOCATION };
+	location.locationFlags = 7;
+	for (auto hand : { ITrackedDevice::HAND_LEFT, ITrackedDevice::HAND_RIGHT, ITrackedDevice::GENERIC_TRACKER, ITrackedDevice::HAND_NONE })
+		CHECK_FALSE(input.LocateAimInGrip(hand, 0, location));
+	CHECK(location.locationFlags == 7);
+}
+
+TEST_CASE("Hands_named_by_dominance")
+{
+	using A = BaseInput::HandAlias;
+	CHECK(BaseInput::HandForAlias(A::PRIMARY, vr::TrackedControllerRole_RightHand) == 1);
+	CHECK(BaseInput::HandForAlias(A::SECONDARY, vr::TrackedControllerRole_RightHand) == 0);
+	CHECK(BaseInput::HandForAlias(A::PRIMARY, vr::TrackedControllerRole_LeftHand) == 0);
+	CHECK(BaseInput::HandForAlias(A::SECONDARY, vr::TrackedControllerRole_LeftHand) == 1);
+	// A path names its hand by dominance below /user/hand/primary and /secondary only
+	CHECK(BaseInput::ClassifyInputSource("/user/hand/primary/input/trigger").alias == A::PRIMARY);
+	CHECK(BaseInput::ClassifyInputSource("/user/hand/secondary").alias == A::SECONDARY);
+	CHECK(BaseInput::ClassifyInputSource("/user/hand/primaryx").alias == A::NONE);
+}

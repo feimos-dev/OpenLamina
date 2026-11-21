@@ -551,6 +551,12 @@ public:
 	 */
 	bool GetHandPointer(int hand, XrSpace base, XrTime time, HandPointer& out);
 	/**
+	 * Locates a hand's aim pose relative to its grip pose at time, under the lock a manifest load replaces the spaces
+	 * under (the render models' "tip"). False, with out untouched, for anything but the two hands, before any actions
+	 * are loaded, or when the runtime can't locate it; true with the runtime's flags otherwise.
+	 */
+	bool LocateAimInGrip(ITrackedDevice::TrackedDeviceType hand, XrTime time, XrSpaceLocation& out);
+	/**
 	 * Syncs the old input's actions (and the raw inputs) alone: for a call that blocks the game, which then syncs
 	 * none of its own (ShowMessageOverlay). Nothing before any actions are loaded.
 	 */
@@ -649,7 +655,10 @@ public:
 		return std::isnan(value) ? 0.0f : std::clamp(value, 0.0f, 1.0f);
 	}
 
-private:
+	/** An application's name as one OpenXR takes for an action or action set: each byte it can't take as its hex code */
+	static std::string EscapePathString(const std::string& str);
+
+public: // The action sets and the registries are public for the unit tests
 	enum class ActionSetUsage {
 		LeftRight = 0, // User can bind each side separately
 		Single, // What's bound to one controller is bound to the other
@@ -745,6 +754,12 @@ public:
 		HandAlias alias = HandAlias::NONE;
 		std::string devicePath; // the device's own path: /user/hand/left, /user/head...
 	};
+	/** The hand (0 left, 1 right) a hand named by dominance is with this dominant hand */
+	static int HandForAlias(HandAlias alias, vr::ETrackedControllerRole dominant)
+	{
+		const bool primaryIsLeft = dominant == vr::TrackedControllerRole_LeftHand;
+		return (alias == HandAlias::PRIMARY) == primaryIsLeft ? 0 : 1;
+	}
 	static bool PathIsOrBelow(const std::string& path, const std::string& prefix)
 	{
 		return path == prefix || (path.size() > prefix.size() && path.starts_with(prefix) && path[prefix.size()] == '/');
@@ -813,7 +828,9 @@ private:
 		 * If this is a valid input source (eg in /user/hand/left or a child thereof) this specifies
 		 * what that input source is.
 		 */
-		InputSource type = InputSource::INVALID;
+		// Atomic: a handle named by dominance (alias) is pointed at the other hand when the dominant hand changes,
+		// while other threads read it
+		std::atomic<InputSource> type = InputSource::INVALID;
 		HandAlias alias = HandAlias::NONE;
 
 		/**
@@ -824,14 +841,16 @@ private:
 		 *
 		 * Eg /user/hand/left.
 		 */
-		XrPath devicePath = XR_NULL_PATH;
+		std::atomic<XrPath> devicePath = XR_NULL_PATH;
 
 		/**
-		 * A string version of #devicePath. Null corresponds to an empty string.
+		 * A string version of #devicePath. Null corresponds to an empty string. Set once: for a handle named by
+		 * dominance, the hand it first pointed at (only a tracker's path is ever compared with it).
 		 */
 		std::string devicePathString;
 	};
 
+public:
 	using RegHandle = uint64_t;
 
 	// For keeping track of string-lookup based stuff: actions, actionsets, and inputvaluehandles.
@@ -853,6 +872,7 @@ private:
 		Registry(uint32_t _maxNameSize);
 		~Registry() = default;
 
+		// By the name as the manifest or a binding file gives it, or as shortened
 		T* LookupItem(const std::string& name) const;
 		T* LookupItem(RegHandle handle) const;
 		RegHandle LookupHandle(const std::string& name);
@@ -865,6 +885,12 @@ private:
 		void Reset();
 
 	private:
+		std::string ShortenOrLookupNameLocked(const std::string& longName);
+
+		// The handles and names (handlesByName, namesByHandle, longNames): GetActionHandle and the like make them on
+		// any thread, with or without the session lock. The items are changed only under the exclusive session lock.
+		mutable std::mutex nameLock;
+
 		// A map of names to handles, used in the common case of not-the-first call
 		std::unordered_map<std::string, RegHandle> handlesByName;
 
@@ -891,6 +917,7 @@ private:
 		const uint32_t maxNameSize;
 	};
 
+private:
 	// See GetSyncSerial
 	std::atomic<uint64_t> syncSerial = 0;
 
@@ -922,7 +949,7 @@ private:
 	// TODO convert to Registry
 	std::unordered_map<std::string, std::unique_ptr<InputValueHandle>> inputHandleRegistry;
 	std::mutex inputHandleRegistryLock; // GetInputSourceHandle is called from any thread
-	/** Points a handle at the left (0) or right (1) hand */
+	/** Points a handle at the left (0) or right (1) hand: its type and OpenXR path, not its path string */
 	void PointHandleAtHand(InputValueHandle& handle, int hand);
 	/** Points the handles named by dominance at the dominant hand's side */
 	void ResolveHandAliases();
@@ -1081,14 +1108,6 @@ private:
 	EVRInputError getEstimatedBoneData(ITrackedDevice::TrackedDeviceType hand, EVRSkeletalTransformSpace transformSpace, EVRSkeletalMotionRange eMotionRange, std::span<VRBoneTransform_t, eBone_Count> boneData);
 	/** Each hand's touches for the estimated skeleton (left, right) */
 	std::array<HandTouchEase, 2> handTouches;
-
-	/**
-	 * Some games (i.e. newer Unity games) won't explicitly call SetActionManifestPath, but instead will set the path through
-	 * the Steamworks web interface. If this is the case, we'll never be able to set the actions! So instead, we must discover if this is the case.
-	 * This method should only be called when a game is trying to retrieve action data (the GetXActionData family of functions).
-	 */
-	void checkIfActionsMustBeDiscoveredFromSteam();
-	bool triedDiscoveringManifest = false;
 };
 
 // Valve's 31-bone hand skeleton, its hierarchy and names, and OpenComposite's compressed bone data

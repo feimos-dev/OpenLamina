@@ -9,6 +9,7 @@
 #include <glm/gtc/matrix_inverse.hpp>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_set>
@@ -23,7 +24,7 @@
 /**
  * Defines an interaction profile, as specified by 6.4 in the OpenXR spec.
  * Implementing an interaction profile is fairly straightforward, view the other interaction profiles for examples.
- * Be sure to add any implemented profiles to the interactionProfiles vector in BaseInput.cpp. (This is done in the BaseInput constructor.)
+ * Be sure to add any implemented profiles to InteractionProfile::CreateProfiles in InteractionProfile.cpp.
  */
 class XrExt;
 
@@ -73,12 +74,12 @@ public:
 	virtual const std::string& GetPath() const = 0;
 
 	/**
-	 * Get the right hand render model name of current interaction profile which would recognized by OpenVR app
+	 * Get the left hand render model name of current interaction profile which would recognized by OpenVR app
 	 */
 	virtual std::optional<const char*> GetLeftHandRenderModelName() const = 0;
 
 	/**
-	 * Get the left hand render model name of current interaction profile which would recognized by OpenVR app
+	 * Get the right hand render model name of current interaction profile which would recognized by OpenVR app
 	 */
 	virtual std::optional<const char*> GetRightHandRenderModelName() const = 0;
 
@@ -178,7 +179,9 @@ public:
 
 	/**
 	 * Get the requested property from the profile, if it exists.
-	 * If hand == HAND_NONE, this will retrieve the HMD version of the property.
+	 * If hand == HAND_NONE, this will retrieve the HMD version of the property; a hand's property that the profile only
+	 * lists for the HMD (the manufacturer, say) is the HMD's.
+	 * A property held as another type than T is not there for T.
 	 */
 	template <typename T>
 	    requires(in_variant<T, property_types>::value)
@@ -186,12 +189,15 @@ public:
 	    const
 	{
 		using enum ITrackedDevice::TrackedDeviceType;
+		const property_types* value = nullptr;
 		if (hand != HAND_NONE && propertiesMap.contains(property)) {
-			hand_values_type ret = propertiesMap.at(property);
-			return std::get<T>((hand == HAND_RIGHT && ret.right.has_value()) ? ret.right.value() : ret.left);
+			const auto& ret = propertiesMap.at(property);
+			value = (hand == HAND_RIGHT && ret.right.has_value()) ? &ret.right.value() : &ret.left;
 		} else if (hmdPropertiesMap.contains(property)) {
-			return std::get<T>(hmdPropertiesMap.at(property));
+			value = &hmdPropertiesMap.at(property);
 		}
+		if (const T* typed = value ? std::get_if<T>(value) : nullptr)
+			return *typed;
 		return std::nullopt;
 	}
 
@@ -221,9 +227,19 @@ protected:
 	};
 
 	/*
-	 * Returns a legacy bindings struct for the given interaction profile.
+	 * Makes the legacy bindings struct for a hand of this profile. Called once per hand (GetLegacyBindings keeps it).
 	 */
-	virtual const LegacyBindings* GetLegacyBindings(const std::string& handPath) const = 0;
+	virtual LegacyBindings MakeLegacyBindings(const std::string& handPath) const = 0;
+
+public:
+	/** The legacy bindings for a hand ("/user/hand/left", or the right for any other path), made on the first call */
+	const LegacyBindings* GetLegacyBindings(const std::string& handPath) const;
+
+private:
+	mutable std::once_flag legacyBindingsMade;
+	mutable LegacyBindings legacyBindings[2];
+
+protected:
 
 	// The set of valid input paths for an interaction profile. An interaction profile should fill this in its constructor.
 	std::unordered_set<std::string> validInputPaths;

@@ -50,15 +50,13 @@ std::string MsftHandInteractionProfile::BindingConversionType() const
 	return "hand_interaction";
 }
 
-const InteractionProfile::LegacyBindings* MsftHandInteractionProfile::GetLegacyBindings(const std::string& handPath) const
+InteractionProfile::LegacyBindings MsftHandInteractionProfile::MakeLegacyBindings(const std::string& handPath) const
 {
-	static LegacyBindings bindings = {};
-	if (!bindings.trigger) {
-		bindings.trigger = "input/select/value";
-		bindings.triggerClick = "input/select/value";
-		bindings.grip = "input/squeeze/value";
-		bindings.gripPoseAction = "input/grip/pose";
-		bindings.aimPoseAction = "input/aim/pose";
-	}
-	return &bindings;
+	LegacyBindings bindings = {};
+	bindings.trigger = "input/select/value";
+	bindings.triggerClick = "input/select/value";
+	bindings.grip = "input/squeeze/value";
+	bindings.gripPoseAction = "input/grip/pose";
+	bindings.aimPoseAction = "input/aim/pose";
+	return bindings;
 }

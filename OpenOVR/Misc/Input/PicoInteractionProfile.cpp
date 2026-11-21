@@ -106,61 +106,54 @@ std::optional<vr::EVRSkeletalTrackingLevel> PicoInteractionProfile::GetOpenVRTra
 	return vr::VRSkeletalTracking_Estimated;
 }
 
-const InteractionProfile::LegacyBindings* PicoInteractionProfile::GetLegacyBindings(const std::string& handPath) const
+InteractionProfile::LegacyBindings PicoInteractionProfile::MakeLegacyBindings(const std::string& handPath) const
 {
 	if (model == Model::G3) {
 		// The trigger, the touchpad as a stick, and the menu button as SteamVR's menu
-		static LegacyBindings g3 = {};
-		if (!g3.system) {
-			g3.trigger = "input/trigger/value";
-			g3.triggerClick = "input/trigger/click";
-			g3.stickX = "input/thumbstick/x";
-			g3.stickY = "input/thumbstick/y";
-			g3.stickBtn = "input/thumbstick/click";
-			g3.gripPoseAction = "input/grip/pose";
-			g3.aimPoseAction = "input/aim/pose";
-			g3.system = "input/menu/click";
-		}
-		return &g3;
+		LegacyBindings g3 = {};
+		g3.trigger = "input/trigger/value";
+		g3.triggerClick = "input/trigger/click";
+		g3.stickX = "input/thumbstick/x";
+		g3.stickY = "input/thumbstick/y";
+		g3.stickBtn = "input/thumbstick/click";
+		g3.gripPoseAction = "input/grip/pose";
+		g3.aimPoseAction = "input/aim/pose";
+		g3.system = "input/menu/click";
+		return g3;
 	}
 
-	static LegacyBindings allBindings[2] = { {}, {} };
-	int hand = handPath == "/user/hand/left" ? vr::Eye_Left : vr::Eye_Right;
-	LegacyBindings& bindings = allBindings[hand];
+	LegacyBindings bindings = {};
 
-	if (!bindings.menu) {
-		bindings = {};
-		bindings.stickX = "input/thumbstick/x";
-		bindings.stickY = "input/thumbstick/y";
-		bindings.stickBtn = "input/thumbstick/click";
-		bindings.stickBtnTouch = "input/thumbstick/touch";
+	bindings.stickX = "input/thumbstick/x";
+	bindings.stickY = "input/thumbstick/y";
+	bindings.stickBtn = "input/thumbstick/click";
+	bindings.stickBtnTouch = "input/thumbstick/touch";
 
-		bindings.trigger = "input/trigger/value";
-		bindings.triggerClick = "input/trigger/click";
-		bindings.triggerTouch = "input/trigger/touch";
+	bindings.trigger = "input/trigger/value";
+	bindings.triggerClick = "input/trigger/click";
+	bindings.triggerTouch = "input/trigger/touch";
 
-		bindings.grip = "input/squeeze/value";
+	bindings.grip = "input/squeeze/value";
 
-		bindings.haptic = "output/haptic";
+	bindings.haptic = "output/haptic";
 
-		bindings.gripPoseAction = "input/grip/pose";
-		bindings.aimPoseAction = "input/aim/pose";
+	bindings.gripPoseAction = "input/grip/pose";
+	bindings.aimPoseAction = "input/aim/pose";
 
-		if (handPath == "/user/hand/left") {
-			bindings.menu = "input/y/click";
-			bindings.menuTouch = "input/y/touch";
-			bindings.btnA = "input/x/click";
-			bindings.btnATouch = "input/x/touch";
+	if (handPath == "/user/hand/left") {
+		bindings.menu = "input/y/click";
+		bindings.menuTouch = "input/y/touch";
+		bindings.btnA = "input/x/click";
+		bindings.btnATouch = "input/x/touch";
 
-			// The menu button is SteamVR's menu
-			bindings.system = "input/menu/click";
-		} else {
-			bindings.menu = "input/b/click";
-			bindings.menuTouch = "input/b/touch";
-			bindings.btnA = "input/a/click";
-			bindings.btnATouch = "input/a/touch";
-		}
+		// The menu button is SteamVR's menu
+		bindings.system = "input/menu/click";
+	} else {
+		bindings.menu = "input/b/click";
+		bindings.menuTouch = "input/b/touch";
+		bindings.btnA = "input/a/click";
+		bindings.btnATouch = "input/a/touch";
 	}
 
-	return &bindings;
+	return bindings;
 }

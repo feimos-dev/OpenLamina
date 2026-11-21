@@ -13,6 +13,7 @@
 #include "Misc/Input/MsftHandInteractionProfile.h"
 #include "Misc/Input/OculusInteractionProfile.h"
 #include "Misc/Input/PicoInteractionProfile.h"
+#include "Misc/Input/ReverbG2InteractionProfile.h"
 #include "Misc/Input/ViveCosmosInteractionProfile.h"
 #include "Misc/Input/ViveFocus3InteractionProfile.h"
 #include "Misc/Input/ViveInteractionProfile.h"
@@ -266,4 +267,52 @@ TEST_CASE("Hand_interaction_isnt_offered_with_a_controller_in_hand")
 	CHECK_FALSE(ExtHandInteractionProfile::ControllerInHands(std::string(), std::nullopt)); // a device without a name
 	CHECK_FALSE(ExtHandInteractionProfile::ControllerInHands(std::string("Pimax Hand Tracking Left"), std::string("Hand-Tracking Right")));
 	CHECK(ExtHandInteractionProfile::ControllerInHands(std::string("Hand Tracking Left"), std::string("Valve Knuckles Right")));
+}
+
+TEST_CASE("A_property_asked_as_another_type_is_not_there")
+{
+	using enum ITrackedDevice::TrackedDeviceType;
+	IndexControllerInteractionProfile index;
+	CHECK_FALSE(index.GetProperty<int32_t>(vr::Prop_ModelNumber_String, HAND_LEFT).has_value());
+	CHECK_FALSE(index.GetProperty<std::string>(vr::Prop_SupportedButtons_Uint64, HAND_RIGHT).has_value());
+	CHECK_FALSE(index.GetProperty<int32_t>(vr::Prop_TrackingSystemName_String, HAND_NONE).has_value());
+	CHECK(index.GetProperty<std::string>(vr::Prop_ModelNumber_String, HAND_RIGHT) == "Knuckles Right");
+	CHECK(index.GetProperty<uint64_t>(vr::Prop_SupportedButtons_Uint64, HAND_LEFT) == 0x700000007ull);
+}
+
+TEST_CASE("No_profiles_before_the_instance")
+{
+	REQUIRE(xr_ext == nullptr);
+	CHECK(InteractionProfile::GetProfileList().empty());
+	CHECK(InteractionProfile::GetProfileByPath("/interaction_profiles/khr/simple_controller") == nullptr);
+}
+
+TEST_CASE("Every_legacy_binding_is_an_input_of_its_profile")
+{
+	XrExt all(0, { XR_EXT_SAMSUNG_ODYSSEY_CONTROLLER_EXTENSION_NAME, OC_XR_FB_TOUCH_CONTROLLER_PROXIMITY_EXTENSION_NAME,
+	                 OC_XR_FB_TOUCH_CONTROLLER_PRO_EXTENSION_NAME, OC_XR_META_TOUCH_CONTROLLER_PLUS_EXTENSION_NAME,
+	                 OC_XR_HTC_VIVE_COSMOS_CONTROLLER_INTERACTION_EXTENSION_NAME, OC_XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME,
+	                 OC_XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME, XR_MSFT_HAND_INTERACTION_EXTENSION_NAME,
+	                 OC_XR_EXT_HAND_INTERACTION_EXTENSION_NAME });
+	InteractionProfile::ProfileList profiles = InteractionProfile::CreateProfiles(all);
+	profiles.emplace_back(std::make_unique<ReverbG2InteractionProfile>());
+	CHECK(profiles.size() > 10);
+	for (const auto& profile : profiles) {
+		for (const std::string hand : { "/user/hand/left", "/user/hand/right" }) {
+			const auto* b = profile->GetLegacyBindings(hand);
+			REQUIRE(b);
+			// The same table on every call
+			CHECK(profile->GetLegacyBindings(hand) == b);
+			// The dashboard's system button is left out of the valid paths on purpose
+			for (const char* path : { b->system, b->menu, b->menuTouch, b->btnA, b->btnATouch, b->trackpadX, b->trackpadY,
+			         b->trackpadTouch, b->trackpadForce, b->stickX, b->stickY, b->stickBtn, b->stickBtnTouch, b->trigger,
+			         b->triggerClick, b->triggerTouch, b->triggerProximity, b->thumbProximity, b->triggerCurl, b->grip,
+			         b->haptic, b->gripPoseAction, b->aimPoseAction }) {
+				if (!path)
+					continue;
+				INFO(profile->GetPath(), " ", hand, "/", path);
+				CHECK(profile->IsInputPathValid(hand + "/" + path));
+			}
+		}
+	}
 }

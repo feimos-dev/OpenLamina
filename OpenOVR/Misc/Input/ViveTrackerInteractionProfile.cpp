@@ -25,11 +25,10 @@ std::optional<const char*> ViveTrackerInteractionProfile::GetRightHandRenderMode
 	return GetOpenVRName().value();
 }
 
-const InteractionProfile::LegacyBindings* ViveTrackerInteractionProfile::GetLegacyBindings(const std::string& handPath) const
+InteractionProfile::LegacyBindings ViveTrackerInteractionProfile::MakeLegacyBindings(const std::string& handPath) const
 {
-	static LegacyBindings bindings = {};
-
-	return &bindings;
+	// A tracker has none of a controller's inputs
+	return {};
 }
 
 std::optional<const char*> ViveTrackerInteractionProfile::GetOpenVRName() const

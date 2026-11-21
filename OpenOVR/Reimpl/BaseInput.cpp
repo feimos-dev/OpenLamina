@@ -50,8 +50,6 @@ using namespace vr;
 
 #include "../DrvOpenXR/XrBackend.h"
 
-// On Android, the application must supply a function to load the contents of a file
-
 /**
  * Macro for creating an Action object from a handle and verifying isn't invalid.
  * If it is invalid, it will cause the surrounding function to return VRInputError_InvalidHandle.
@@ -78,7 +76,6 @@ using namespace vr;
 		}                                                            \
 	} while (0)
 
-// This is a duplicate from BaseClientCore.cpp
 // Manifests and binding files as SteamVR reads them (BOM, comments, trailing commas: Misc/JsonFile.h); false with
 // the reason in error if the file can't be read or isn't JSON
 // path is UTF-8, as OpenVR passes it; one that isn't (an older game's ANSI path) is tried as the system code page on
@@ -167,7 +164,7 @@ static void stringSplit(const std::string& str, std::vector<std::string>& items)
 }
 
 // Converts an arbitrary application-supplied string to one we can use with OpenXR
-static std::string escapePathString(const std::string& str)
+std::string BaseInput::EscapePathString(const std::string& str)
 {
 	std::vector<char> out;
 	out.reserve(str.length() + 10);
@@ -188,7 +185,7 @@ static std::string escapePathString(const std::string& str)
 
 		// Just print out the hex code
 		char hex[3];
-		snprintf(hex, sizeof(hex), "%02x", c);
+		snprintf(hex, sizeof(hex), "%02x", (unsigned char)c);
 		out.push_back('.');
 		out.push_back(hex[0]);
 		out.push_back(hex[1]);
@@ -233,7 +230,14 @@ BaseInput::Registry<T>::Registry(uint32_t _maxNameSize)
 template <typename T>
 T* BaseInput::Registry<T>::LookupItem(const std::string& name) const
 {
-	auto iter = itemsByName.find(lowerStr(name));
+	std::string lowerName = lowerStr(name);
+	{
+		std::lock_guard<std::mutex> guard(nameLock);
+		auto shortened = longNames.find(lowerName);
+		if (shortened != longNames.end())
+			lowerName = shortened->second;
+	}
+	auto iter = itemsByName.find(lowerName);
 	if (iter == itemsByName.end())
 		return nullptr;
 	return iter->second;
@@ -251,7 +255,8 @@ T* BaseInput::Registry<T>::LookupItem(RegHandle handle) const
 template <typename T>
 BaseInput::RegHandle BaseInput::Registry<T>::LookupHandle(const std::string& name)
 {
-	std::string lowerName = ShortenOrLookupName(name);
+	std::lock_guard<std::mutex> guard(nameLock);
+	std::string lowerName = ShortenOrLookupNameLocked(name);
 	auto iter = handlesByName.find(lowerName);
 	if (iter != handlesByName.end())
 		return iter->second;
@@ -266,6 +271,13 @@ BaseInput::RegHandle BaseInput::Registry<T>::LookupHandle(const std::string& nam
 
 template <typename T>
 std::string BaseInput::Registry<T>::ShortenOrLookupName(const std::string& longName)
+{
+	std::lock_guard<std::mutex> guard(nameLock);
+	return ShortenOrLookupNameLocked(longName);
+}
+
+template <typename T>
+std::string BaseInput::Registry<T>::ShortenOrLookupNameLocked(const std::string& longName)
 {
 	std::string ret = lowerStr(longName);
 	if (ret.size() > maxNameSize - 1) {
@@ -289,6 +301,7 @@ std::string BaseInput::Registry<T>::ShortenOrLookupName(const std::string& longN
 template <typename T>
 T* BaseInput::Registry<T>::Initialise(const std::string& name, std::unique_ptr<T> value)
 {
+	std::lock_guard<std::mutex> guard(nameLock);
 	std::string lowerName = lowerStr(name);
 	RegHandle handle = 0;
 
@@ -335,6 +348,9 @@ void BaseInput::Registry<T>::Reset()
 	storage.clear();
 }
 
+template class BaseInput::Registry<BaseInput::Action>;
+template class BaseInput::Registry<BaseInput::ActionSet>;
+
 // ---
 
 static double EvaluatorClock(); // below, with the evaluator
@@ -356,8 +372,10 @@ BaseInput::BaseInput()
 }
 BaseInput::~BaseInput()
 {
+	// The trackers are the current session's (BindInputsForSession forgets older ones); with no session they went
+	// with the last one
 	for (XrHandTrackerEXT& handTracker : handTrackers) {
-		if (handTracker != XR_NULL_HANDLE && xr_ext)
+		if (handTracker != XR_NULL_HANDLE && xr_ext && xr_session.get() != XR_NULL_HANDLE)
 			xr_ext->xrDestroyHandTrackerEXT(handTracker);
 		handTracker = XR_NULL_HANDLE;
 	}
@@ -633,7 +651,7 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 	std::set<std::string> usedSetNames;
 	for (const std::unique_ptr<ActionSet>& as : actionSets.GetItems()) {
 		XrActionSetCreateInfo createInfo = { XR_TYPE_ACTION_SET_CREATE_INFO };
-		std::string safeName = escapePathString(as->name);
+		std::string safeName = EscapePathString(as->name);
 		strcpy_arr(createInfo.actionSetName, safeName.c_str());
 		strcpy_arr(createInfo.localizedActionSetName, localizedName(as->manifestName, as->name, usedSetNames).c_str());
 
@@ -648,7 +666,7 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 			continue;
 
 		XrActionCreateInfo info = { XR_TYPE_ACTION_CREATE_INFO };
-		std::string safeName = escapePathString(act->shortName);
+		std::string safeName = EscapePathString(act->shortName);
 		strcpy_arr(info.actionName, safeName.c_str());
 		strcpy_arr(info.localizedActionName, localizedName(act->manifestName, act->shortName, usedActionNames[act->set]).c_str());
 		info.actionType = XR_ACTION_TYPE_VIBRATION_OUTPUT;
@@ -750,12 +768,14 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 	}
 
 	// remaining profiles: the user's own bindings for them if there are any, else our backup path
-	for (auto& [name, profiles] : OpenVRNameToProfile) {
+	for (auto& [name, profiles] : OpenVRNameToProfile) try {
 		std::optional<std::filesystem::path> own = FindBindingFile(appKey, name, userBindings, workingDir, {}, "", legacyUserBindings);
 		if (own)
 			OOVR_LOGF("Loading the user's own bindings for controller type %s: %s", name.c_str(), PathToUtf8(*own).c_str());
 		for (InteractionProfile* profile : profiles)
 			LoadBindingsSet(*profile, own ? PathToUtf8(*own) : backupPath);
+	} catch (const std::exception& e) {
+		OOVR_SOFT_ABORTF("Skipping the bindings for controller type %s: %s", name.c_str(), e.what());
 	}
 
 	// Attach everything to the current session
@@ -836,9 +856,15 @@ void BaseInput::_RebuildForNewInstance()
 		std::fill(handInteractionProfiles.begin(), handInteractionProfiles.end(), nullptr);
 		std::lock_guard<std::mutex> registryGuard(inputHandleRegistryLock);
 		for (auto& [name, handle] : inputHandleRegistry) {
-			handle->devicePath = XR_NULL_PATH;
+			// A handle named by dominance: the dominant hand's side now
+			if (handle->alias != HandAlias::NONE) {
+				PointHandleAtHand(*handle, DominantHandIndex(handle->alias));
+				continue;
+			}
+			XrPath path = XR_NULL_PATH;
 			if (!handle->devicePathString.empty())
-				OC_XR_LOG(xrStringToPath(xr_instance, handle->devicePathString.c_str(), &handle->devicePath));
+				OC_XR_LOG(xrStringToPath(xr_instance, handle->devicePathString.c_str(), &path));
+			handle->devicePath = path;
 		}
 	}
 	if (!rebuildPending)
@@ -928,8 +954,10 @@ void BaseInput::LoadEmptyManifestIfRequired()
 
 void BaseInput::BindInputsForSession()
 {
-	// Not attached to this session (yet)
+	// Not attached to this session (yet), and the hand trackers went with the session they were made on
 	trackerPoseSession = XR_NULL_HANDLE;
+	for (XrHandTrackerEXT& handTracker : handTrackers)
+		handTracker = XR_NULL_HANDLE;
 
 	// This is called from DrvOpenXR::SetupSession. If we requested a session restart ourselves, we're also
 	// going to bind the inputs ourselves anyway, so we don't want to do that twice.
@@ -1001,7 +1029,11 @@ void BaseInput::BindInputsForSession()
 		for (int i = 0; i < 2; i++) {
 			createInfo.hand = i == 0 ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT;
 			createInfo.handJointSet = XR_HAND_JOINT_SET_DEFAULT_EXT;
-			OC_XR_LOG(xr_ext->xrCreateHandTrackerEXT(xr_session.get(), &createInfo, &handTrackers[i]));
+			XrHandTrackerEXT tracker = XR_NULL_HANDLE;
+			XrResult res = xr_ext->xrCreateHandTrackerEXT(xr_session.get(), &createInfo, &tracker);
+			OC_XR_LOG(res);
+			if (XR_SUCCEEDED(res))
+				handTrackers[i] = tracker;
 		}
 	}
 }
@@ -1687,17 +1719,17 @@ EVRInputError BaseInput::GetActionHandle(const char* pchActionName, VRActionHand
 
 int BaseInput::DominantHandIndex(HandAlias alias) const
 {
-	const bool primaryIsLeft = dominantHand == vr::TrackedControllerRole_LeftHand;
-	return (alias == HandAlias::PRIMARY) == primaryIsLeft ? 0 : 1;
+	return HandForAlias(alias, dominantHand);
 }
 
 void BaseInput::PointHandleAtHand(InputValueHandle& handle, int hand)
 {
+	const char* path = hand == 0 ? "/user/hand/left" : "/user/hand/right";
+	XrPath xrPath = XR_NULL_PATH;
+	if (!xr_instance || XR_FAILED(xrStringToPath(xr_instance, path, &xrPath)))
+		xrPath = XR_NULL_PATH;
+	handle.devicePath = xrPath;
 	handle.type = hand == 0 ? InputSource::HAND_LEFT : InputSource::HAND_RIGHT;
-	handle.devicePathString = hand == 0 ? "/user/hand/left" : "/user/hand/right";
-	XrResult res = xr_instance ? xrStringToPath(xr_instance, handle.devicePathString.c_str(), &handle.devicePath) : XR_ERROR_HANDLE_INVALID;
-	if (XR_FAILED(res))
-		handle.devicePath = XR_NULL_PATH;
 }
 
 void BaseInput::ResolveHandAliases()
@@ -1748,15 +1780,19 @@ EVRInputError BaseInput::GetInputSourceHandle(const char* pchInputSourcePath, VR
 	handle->type = info.type;
 	handle->alias = info.alias;
 	if (info.alias != HandAlias::NONE) {
-		PointHandleAtHand(*handle, DominantHandIndex(info.alias));
+		const int hand = DominantHandIndex(info.alias);
+		handle->devicePathString = hand == 0 ? "/user/hand/left" : "/user/hand/right";
+		PointHandleAtHand(*handle, hand);
 	} else if (!info.devicePath.empty()) {
 		handle->devicePathString = info.devicePath;
 		// Without an OpenXR instance (a Utility app) the handle still works; it just matches no subaction path
-		XrResult res = xr_instance ? xrStringToPath(xr_instance, handle->devicePathString.c_str(), &handle->devicePath) : XR_ERROR_HANDLE_INVALID;
+		XrPath path = XR_NULL_PATH;
+		XrResult res = xr_instance ? xrStringToPath(xr_instance, handle->devicePathString.c_str(), &path) : XR_ERROR_HANDLE_INVALID;
 		if (XR_FAILED(res)) {
 			OOVR_LOGF("GetInputSourceHandle: no OpenXR path for %s (%d)", handle->devicePathString.c_str(), (int)res);
-			handle->devicePath = XR_NULL_PATH;
+			path = XR_NULL_PATH;
 		}
+		handle->devicePath = path;
 	}
 
 	inputHandleRegistry[pchInputSourcePath] = std::move(handle);
@@ -2194,6 +2230,7 @@ EVRInputError BaseInput::GetBoneCount(VRActionHandle_t action, uint32_t* pBoneCo
 {
 	if (!pBoneCount)
 		return VRInputError_InvalidParam;
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	GET_ACTION_FROM_HANDLE(act, action);
 	if (!IsSkeletonHand(act->skeletalHand))
 		return VRInputError_InvalidSkeleton;
@@ -2202,6 +2239,7 @@ EVRInputError BaseInput::GetBoneCount(VRActionHandle_t action, uint32_t* pBoneCo
 }
 EVRInputError BaseInput::GetBoneHierarchy(VRActionHandle_t action, VR_ARRAY_COUNT(unIndexArayCount) BoneIndex_t* pParentIndices, uint32_t unIndexArayCount)
 {
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	GET_ACTION_FROM_HANDLE(act, action);
 	if ((int)act->skeletalHand >= 2)
 		return VRInputError_InvalidSkeleton;
@@ -2215,6 +2253,7 @@ EVRInputError BaseInput::GetBoneName(VRActionHandle_t action, BoneIndex_t nBoneI
 {
 	if (pchBoneName && unNameBufferSize)
 		pchBoneName[0] = 0;
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	GET_ACTION_FROM_HANDLE(act, action);
 	if ((int)act->skeletalHand >= 2)
 		return VRInputError_InvalidSkeleton;
@@ -2228,6 +2267,7 @@ EVRInputError BaseInput::GetBoneName(VRActionHandle_t action, BoneIndex_t nBoneI
 }
 EVRInputError BaseInput::GetSkeletalReferenceTransforms(VRActionHandle_t actionHandle, EVRSkeletalTransformSpace eTransformSpace, EVRSkeletalReferencePose eReferencePose, VR_ARRAY_COUNT(unTransformArrayCount) VRBoneTransform_t* pTransformArray, uint32_t unTransformArrayCount)
 {
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	GET_ACTION_FROM_HANDLE(act, actionHandle);
 
 	if (!IsSkeletonHand(act->skeletalHand))
@@ -2259,6 +2299,8 @@ EVRInputError BaseInput::GetSkeletalReferenceTransforms(VRActionHandle_t actionH
 }
 EVRInputError BaseInput::GetSkeletalTrackingLevel(VRActionHandle_t action, EVRSkeletalTrackingLevel* pSkeletalTrackingLevel)
 {
+	if (!pSkeletalTrackingLevel)
+		return VRInputError_InvalidParam;
 	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	GET_ACTION_FROM_HANDLE(act, action);
 
@@ -2365,11 +2407,15 @@ EVRInputError BaseInput::GetSkeletalBoneData(VRActionHandle_t actionHandle, EVRS
 	bool isRight = (action->skeletalHand == ITrackedDevice::HAND_RIGHT);
 	const InteractionProfile* profile = dev->GetInteractionProfile();
 
-	// Retrieve the appropriate hand transform to account for the SteamVR pose being different from OpenXR grip
-	glm::mat4 transform = profile->GetGripToSteamVRTransform(hand);
+	// Retrieve the appropriate hand transform to account for the SteamVR pose being different from OpenXR grip (none
+	// before the runtime names a profile)
+	glm::mat4 transform = profile ? profile->GetGripToSteamVRTransform(hand) : glm::mat4(1.0f);
 
-	if (!XrHandJointsToSkeleton(jointLocations, isRight, pTransformArray, transform))
+	if (!XrHandJointsToSkeleton(jointLocations, isRight, pTransformArray, transform)) {
+		// It may have filled some bones before it failed: none of them go out with the estimate's answer
+		ClearBones(pTransformArray, unTransformArrayCount);
 		return getEstimatedBoneData(hand, eTransformSpace, eMotionRange, std::span<VRBoneTransform_t, eBone_Count>(pTransformArray, eBone_Count));
+	}
 
 	// Without a controller we get a hand positioned relative to floor space, change that to be relative to the fake controller pose
 	if (usingFakePose) {
@@ -2461,6 +2507,13 @@ EVRInputError BaseInput::getRealSkeletalSummary(ITrackedDevice::TrackedDeviceTyp
 			break;
 		default:
 			break;
+		}
+
+		// A joint the runtime has no position for (an occluded finger) reads as zero: the estimate answers instead
+		const XrSpaceLocationFlags valid = XR_SPACE_LOCATION_POSITION_VALID_BIT;
+		if (!(metacarpal.locationFlags & valid) || !(proximal.locationFlags & valid) || !(tip.locationFlags & valid)) {
+			ZeroMemory(pSkeletalSummaryData, sizeof(VRSkeletalSummaryData_t));
+			return getEstimatedSkeletalSummary(hand, pSkeletalSummaryData);
 		}
 
 		glm::vec3 metacarpalProximalDelta = X2G_v3f(metacarpal.pose.position) - X2G_v3f(proximal.pose.position);
@@ -2565,8 +2618,8 @@ EVRInputError BaseInput::GetSkeletalActionData(VRActionHandle_t action, EVRSkele
 EVRInputError BaseInput::GetSkeletalActionDataCompressed(VRActionHandle_t action, EVRSkeletalTransformSpace eBoneParent,
     float fPredictedSecondsFromNow, void* pvCompressedData, uint32_t unCompressedSize, uint32_t* punRequiredCompressedSize)
 {
-	return GetSkeletalBoneDataCompressed(action, vr::VRSkeletalMotionRange_WithController, pvCompressedData, unCompressedSize,
-	    punRequiredCompressedSize);
+	return GetSkeletalBoneDataCompressed(action, eBoneParent, vr::VRSkeletalMotionRange_WithController, pvCompressedData,
+	    unCompressedSize, punRequiredCompressedSize, vr::k_ulInvalidInputValueHandle);
 }
 
 EVRInputError BaseInput::UncompressSkeletalActionData(void* pvCompressedBuffer, uint32_t unCompressedBufferSize,
@@ -2865,8 +2918,11 @@ EVRInputError BaseInput::GetActionBindingInfo(VRActionHandle_t actionHandle, OOV
 	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	if (punReturnedBindingInfoCount)
 		*punReturnedBindingInfoCount = 0;
-	// A null or wrong-sized struct is an argument error, as SteamVR answers (VRInputError_InvalidParam)
-	if (unBindingInfoSize != sizeof(OOVR_InputBindingInfo_t) || (unBindingInfoCount && !bindingInfo))
+	// A null or wrong-sized struct is an argument error, as SteamVR answers (VRInputError_InvalidParam). IVRInput_007's
+	// struct ends before rchInputSourceType.
+	const size_t olderSize = offsetof(OOVR_InputBindingInfo_t, rchInputSourceType);
+	const bool withSourceType = unBindingInfoSize == sizeof(OOVR_InputBindingInfo_t);
+	if ((!withSourceType && unBindingInfoSize != olderSize) || (unBindingInfoCount && !bindingInfo))
 		return VRInputError_InvalidParam;
 	if (bindingInfo)
 		memset(bindingInfo, 0, (size_t)unBindingInfoSize * unBindingInfoCount);
@@ -2884,12 +2940,14 @@ EVRInputError BaseInput::GetActionBindingInfo(VRActionHandle_t actionHandle, OOV
 		for (const ActionBinding& b : *fromFiles) {
 			if (written >= unBindingInfoCount)
 				break;
-			OOVR_InputBindingInfo_t& info = bindingInfo[written++];
+			// Each entry at the game's struct size, the fields before rchInputSourceType alike in both
+			OOVR_InputBindingInfo_t info = {};
 			strcpy_arr(info.rchDevicePathName, b.device.c_str());
 			strcpy_arr(info.rchInputPathName, b.input.c_str());
 			strcpy_arr(info.rchModeName, b.mode.c_str());
 			strcpy_arr(info.rchSlotName, b.slot.c_str());
 			strcpy_arr(info.rchInputSourceType, b.sourceType.c_str());
+			memcpy((char*)bindingInfo + (size_t)unBindingInfoSize * written++, &info, unBindingInfoSize);
 		}
 		if (punReturnedBindingInfoCount)
 			*punReturnedBindingInfoCount = written;
@@ -2965,10 +3023,15 @@ EVRInputError BaseInput::OpenBindingUI(const char* pchAppKey, VRActionSetHandle_
 		OC_UNSUPPORTED(VRInputError_NoSteam, "OpenBindingUI: no bindingEditor in openlamina.ini");
 
 	std::string key = pchAppKey && pchAppKey[0] ? std::string(pchAppKey) : CurrentProcessAppKey();
-	ActionSet* set = ulActionSetHandle != vr::k_ulInvalidActionSetHandle ? cast_ASH(ulActionSetHandle) : nullptr;
+	std::string setName;
+	{
+		auto sessionLock = xr_session.lock_shared(); // a manifest load waits while the set is read
+		if (ActionSet* set = ulActionSetHandle != vr::k_ulInvalidActionSetHandle ? cast_ASH(ulActionSetHandle) : nullptr)
+			setName = set->fullName;
+	}
 	InputValueHandle* device = cast_IVH(ulDeviceHandle);
 	// Each value one argument of its own, whatever it holds
-	std::string args = "--app-key " + QuoteArgument(key) + " --action-set " + QuoteArgument(set ? set->fullName : "")
+	std::string args = "--app-key " + QuoteArgument(key) + " --action-set " + QuoteArgument(setName)
 	    + " --device " + QuoteArgument(device ? device->path : "");
 	std::filesystem::path binary = PathFromUtf8(editor);
 	if (!LaunchProcess(binary, args, binary.parent_path()))
@@ -3163,6 +3226,10 @@ void BaseInput::GetHandSpace(vr::TrackedDeviceIndex_t index, XrSpace& space, boo
 
 void BaseInput::GetHandSpace(ITrackedDevice::TrackedDeviceType hand, XrSpace& space, bool aimPose)
 {
+	// Only the two hands have a controller space (a tracker or no hand has none)
+	space = XR_NULL_HANDLE;
+	if (!IsSkeletonHand(hand))
+		return;
 	LegacyControllerActions& ctrl = legacyControllers[hand];
 
 	space = aimPose ? ctrl.aimPoseSpace : ctrl.gripPoseSpace;
@@ -3171,6 +3238,25 @@ void BaseInput::GetHandSpace(ITrackedDevice::TrackedDeviceType hand, XrSpace& sp
 bool BaseInput::AreActionsLoaded()
 {
 	return hasLoadedActions;
+}
+
+bool BaseInput::LocateAimInGrip(ITrackedDevice::TrackedDeviceType hand, XrTime time, XrSpaceLocation& out)
+{
+	if (!IsSkeletonHand(hand))
+		return false;
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
+	// A manifest being loaded replaces the actions and spaces under this lock
+	std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
+	if (!hasLoadedActions || !xr_session.get())
+		return false;
+	const LegacyControllerActions& ctrl = legacyControllers[hand];
+	if (ctrl.aimPoseSpace == XR_NULL_HANDLE || ctrl.gripPoseSpace == XR_NULL_HANDLE)
+		return false;
+	XrSpaceLocation location = { XR_TYPE_SPACE_LOCATION };
+	if (XR_FAILED(xrLocateSpace(ctrl.aimPoseSpace, ctrl.gripPoseSpace, time, &location)))
+		return false;
+	out = location;
+	return true;
 }
 
 bool BaseInput::GetHandPointer(int hand, XrSpace base, XrTime time, HandPointer& out)
@@ -3371,6 +3457,7 @@ EVRInputError BaseInput::GetEyeTrackingDataRelativeToNow(VRActionHandle_t action
 EVRInputError BaseInput::GetEyeTrackingDataAt(VRActionHandle_t action, ETrackingUniverseOrigin eOrigin,
     XrTime time, VREyeTrackingData_t* pEyeTrackingData, uint32_t ulEyeTrackingDataSize)
 {
+	auto lock = xr_session.lock_shared();
 	GET_ACTION_FROM_HANDLE(act, action);
 	if (ulEyeTrackingDataSize != sizeof(*pEyeTrackingData))
 		return VRInputError_InvalidParam;
@@ -3380,7 +3467,6 @@ EVRInputError BaseInput::GetEyeTrackingDataAt(VRActionHandle_t action, ETracking
 	// As SteamVR answers: in the space asked for; with no eye tracker behind the action (or for an action of
 	// another type) inactive, at the head; with one, active and as valid as the tracker's gaze.
 	*pEyeTrackingData = {};
-	auto lock = xr_session.lock_shared();
 	if (!xr_gbl)
 		return VRInputError_None;
 	XrSpace base = xr_space_from_tracking_origin(eOrigin);

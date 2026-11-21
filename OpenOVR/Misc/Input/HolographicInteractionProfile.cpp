@@ -67,25 +67,23 @@ std::optional<vr::EVRSkeletalTrackingLevel> HolographicInteractionProfile::GetOp
 	return vr::VRSkeletalTracking_Estimated;
 }
 
-const InteractionProfile::LegacyBindings* HolographicInteractionProfile::GetLegacyBindings(const std::string& handPath) const
+InteractionProfile::LegacyBindings HolographicInteractionProfile::MakeLegacyBindings(const std::string& handPath) const
 {
-	static LegacyBindings bindings = {};
+	LegacyBindings bindings = {};
 
 	// Games that use legacy bindings will typically just not use the thumbstick,
 	// but most users would probably prefer to use it, so let's use it.
-	if (!bindings.menu) {
-		bindings.menu = "input/menu/click";
-		bindings.stickX = "input/thumbstick/x";
-		bindings.stickY = "input/thumbstick/y";
-		bindings.stickBtn = "input/thumbstick/click";
-		bindings.trigger = "input/trigger/value";
-		bindings.triggerClick = "input/trigger/value";
-		bindings.triggerTouch = "input/trigger/value";
-		bindings.grip = "input/squeeze/click";
-		bindings.haptic = "output/haptic";
-		bindings.gripPoseAction = "input/grip/pose";
-		bindings.aimPoseAction = "input/aim/pose";
-	}
+	bindings.menu = "input/menu/click";
+	bindings.stickX = "input/thumbstick/x";
+	bindings.stickY = "input/thumbstick/y";
+	bindings.stickBtn = "input/thumbstick/click";
+	bindings.trigger = "input/trigger/value";
+	bindings.triggerClick = "input/trigger/value";
+	bindings.triggerTouch = "input/trigger/value";
+	bindings.grip = "input/squeeze/click";
+	bindings.haptic = "output/haptic";
+	bindings.gripPoseAction = "input/grip/pose";
+	bindings.aimPoseAction = "input/aim/pose";
 
-	return &bindings;
+	return bindings;
 }

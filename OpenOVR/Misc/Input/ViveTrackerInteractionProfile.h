@@ -14,7 +14,5 @@ public:
 	bool CanHaveBindings() const override;
 
 protected:
-	LegacyBindings bindingsLegacy = {};
-	const LegacyBindings* GetLegacyBindings(const std::string& handPath) const override;
-	std::string role;
+	LegacyBindings MakeLegacyBindings(const std::string& handPath) const override;
 };

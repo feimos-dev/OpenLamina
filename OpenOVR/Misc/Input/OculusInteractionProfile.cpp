@@ -210,65 +210,56 @@ std::optional<vr::EVRSkeletalTrackingLevel> OculusTouchInteractionProfile::GetOp
 	return vr::VRSkeletalTracking_Estimated;
 }
 
-const InteractionProfile::LegacyBindings* OculusTouchInteractionProfile::GetLegacyBindings(const std::string& handPath) const
+InteractionProfile::LegacyBindings OculusTouchInteractionProfile::MakeLegacyBindings(const std::string& handPath) const
 {
-	// For each model, and the Touch with and without proximity, by hand
-	static LegacyBindings allBindings[4][2] = {};
-	int hand = handPath == "/user/hand/left" ? vr::Eye_Left : vr::Eye_Right;
-	int variant = model == Model::TouchPro ? 2 : model == Model::TouchPlus ? 3 : proximity ? 1 : 0;
-	LegacyBindings& bindings = allBindings[variant][hand];
+	LegacyBindings bindings = {};
+	bindings.stickX = "input/thumbstick/x";
+	bindings.stickY = "input/thumbstick/y";
+	bindings.stickBtn = "input/thumbstick/click";
+	bindings.stickBtnTouch = "input/thumbstick/touch";
 
-	// First-time initialisation
-	if (!bindings.menu) {
-		bindings = {};
-		bindings.stickX = "input/thumbstick/x";
-		bindings.stickY = "input/thumbstick/y";
-		bindings.stickBtn = "input/thumbstick/click";
-		bindings.stickBtnTouch = "input/thumbstick/touch";
+	bindings.trigger = "input/trigger/value";
+	bindings.triggerClick = "input/trigger/value";
+	bindings.triggerTouch = "input/trigger/touch";
 
-		bindings.trigger = "input/trigger/value";
-		bindings.triggerClick = "input/trigger/value";
-		bindings.triggerTouch = "input/trigger/touch";
+	bindings.grip = "input/squeeze/value";
 
-		bindings.grip = "input/squeeze/value";
+	bindings.haptic = "output/haptic";
 
-		bindings.haptic = "output/haptic";
+	bindings.gripPoseAction = "input/grip/pose";
+	bindings.aimPoseAction = "input/aim/pose";
 
-		bindings.gripPoseAction = "input/grip/pose";
-		bindings.aimPoseAction = "input/aim/pose";
-
-		// The fingers near the controller, and the index finger's curl on the trigger, for the estimated skeleton
-		if (model == Model::TouchPlus) {
-			bindings.triggerProximity = "input/trigger/proximity_meta";
-			bindings.thumbProximity = "input/thumb_meta/proximity_meta";
-			bindings.triggerCurl = "input/trigger/curl_meta";
-		} else if (proximity) {
-			bindings.triggerProximity = "input/trigger/proximity_fb";
-			bindings.thumbProximity = "input/thumb_fb/proximity_fb";
-			if (model == Model::TouchPro)
-				bindings.triggerCurl = "input/trigger/curl_fb";
-		}
-
-		if (handPath == "/user/hand/left") {
-			// Left
-			bindings.menu = "input/y/click";
-			bindings.menuTouch = "input/y/touch";
-			bindings.btnA = "input/x/click";
-			bindings.btnATouch = "input/x/touch";
-
-			// Note this refers to what Oculus calls the menu button (and games use to open the pause menu), which
-			// is used by SteamVR for it's menu.
-			bindings.system = "input/menu/click";
-		} else {
-			// Right
-			bindings.menu = "input/b/click";
-			bindings.menuTouch = "input/b/touch";
-			bindings.btnA = "input/a/click";
-			bindings.btnATouch = "input/a/touch";
-
-			// Ignore Oculus's system button, you're not supposed to do anything with it
-		}
+	// The fingers near the controller, and the index finger's curl on the trigger, for the estimated skeleton
+	if (model == Model::TouchPlus) {
+		bindings.triggerProximity = "input/trigger/proximity_meta";
+		bindings.thumbProximity = "input/thumb_meta/proximity_meta";
+		bindings.triggerCurl = "input/trigger/curl_meta";
+	} else if (proximity) {
+		bindings.triggerProximity = "input/trigger/proximity_fb";
+		bindings.thumbProximity = "input/thumb_fb/proximity_fb";
+		if (model == Model::TouchPro)
+			bindings.triggerCurl = "input/trigger/curl_fb";
 	}
 
-	return &bindings;
+	if (handPath == "/user/hand/left") {
+		// Left
+		bindings.menu = "input/y/click";
+		bindings.menuTouch = "input/y/touch";
+		bindings.btnA = "input/x/click";
+		bindings.btnATouch = "input/x/touch";
+
+		// Note this refers to what Oculus calls the menu button (and games use to open the pause menu), which
+		// is used by SteamVR for it's menu.
+		bindings.system = "input/menu/click";
+	} else {
+		// Right
+		bindings.menu = "input/b/click";
+		bindings.menuTouch = "input/b/touch";
+		bindings.btnA = "input/a/click";
+		bindings.btnATouch = "input/a/touch";
+
+		// Ignore Oculus's system button, you're not supposed to do anything with it
+	}
+
+	return bindings;
 }

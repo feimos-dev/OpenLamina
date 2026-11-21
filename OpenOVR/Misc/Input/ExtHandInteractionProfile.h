@@ -28,7 +28,7 @@ public:
 	static bool ControllerInHands(const std::optional<std::string>& left, const std::optional<std::string>& right);
 
 protected:
-	const LegacyBindings* GetLegacyBindings(const std::string& handPath) const override;
+	LegacyBindings MakeLegacyBindings(const std::string& handPath) const override;
 
 private:
 	std::unique_ptr<InteractionProfile> emulated;
