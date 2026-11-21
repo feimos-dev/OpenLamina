@@ -46,7 +46,8 @@ def sources(root):
 
 
 def defines(root):
-    """{name: body} of every #define, its continued lines joined (the first definition of a name)."""
+    """{name: [body, ...]} of every #define, its continued lines joined: every definition of a name, from any file or
+    #if branch."""
     found = {}
     for path in sources(root):
         name, body = None, []
@@ -59,18 +60,20 @@ def defines(root):
             else:
                 body.append(line)
             if not line.rstrip().endswith("\\"):
-                found.setdefault(name, " ".join(b.split("//", 1)[0] for b in body))
+                found.setdefault(name, []).append(" ".join(b.split("//", 1)[0] for b in body))
                 name = None
     return found
 
 
 def hard_stop_macros(root):
-    """MACROS and every macro whose body reaches a hard stop, also through another such macro."""
+    """MACROS and every macro one of whose definitions reaches a hard stop, also through another such macro (a name
+    defined harmlessly elsewhere too still counts: the safe side)."""
     known = set(MACROS)
     defs = defines(root)
     for _ in range(len(defs) + 1):
         pattern = use_pattern(known)
-        new = {name for name, body in defs.items() if name not in known and pattern.search(body)}
+        new = {name for name, bodies in defs.items()
+               if name not in known and any(pattern.search(body) for body in bodies)}
         if not new:
             break
         known |= new
@@ -162,11 +165,14 @@ def self_test():
             "OC_NORETURN void oovr_abort_raw(const char* file, long line)\n{\n}\n"
             # A macro reaching a hard stop, through another one, over continued lines: its uses count, its body doesn't
             "#define WRAP(x) \\\n\tdo { \\\n\t\tOOVR_ABORT(x); \\\n\t} while (0)\n#define WRAP2(x) WRAP(x)\n"
-            "#define QUIET(x) OOVR_LOG(x)\nvoid Qux()\n{\n\tWRAP2(\"a\");\n\tQUIET(\"b\");\n}\n")
+            "#define QUIET(x) OOVR_LOG(x)\nvoid Qux()\n{\n\tWRAP2(\"a\");\n\tQUIET(\"b\");\n}\n"
+            "#define TWICE(x) OOVR_LOG(x)\n")
+        # The same name defined again in a later file, there as a hard stop
+        (root / "OpenOVR" / "b.cpp").write_text("#define TWICE(x) OOVR_ABORT(x)\nvoid Zed()\n{\n\tTWICE(\"c\");\n}\n")
         sites = scan(root)
         got = [(s[2], s[3]) for s in sites]
         want = [("Foo::Bar", "STUBBED"), ("Baz", "OOVR_ABORTF"), ("Baz", "terminate"), ("Baz", "oovr_abort_raw"),
-                ("Baz", "_exit"), ("Qux", "WRAP2")]
+                ("Baz", "_exit"), ("Qux", "WRAP2"), ("Zed", "TWICE")]
         if got != want:
             print("self-test FAILED: got", got, "want", want)
             return 1
