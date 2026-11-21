@@ -369,3 +369,12 @@ TEST_CASE("Clearing_an_overlay_s_texture_needs_no_runtime")
 	CHECK(overlays.ClearOverlayTexture(h) == VROverlayError_None);
 	CHECK(overlays.ClearOverlayTexture((VROverlayHandle_t)0x1234) == VROverlayError_InvalidHandle);
 }
+
+TEST_CASE("A_texture_without_a_handle_is_refused")
+{
+	BaseOverlay overlays;
+	const VROverlayHandle_t h = Make(overlays, "oc.test.nohandle");
+	Texture_t none{ nullptr, TextureType_DirectX, ColorSpace_Auto };
+	CHECK(overlays.SetOverlayTexture(h, &none) == VROverlayError_InvalidTexture);
+	CHECK(overlays.SetOverlayTexture(h, nullptr) == VROverlayError_InvalidTexture);
+}

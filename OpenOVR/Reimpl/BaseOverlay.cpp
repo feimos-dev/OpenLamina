@@ -3794,7 +3794,8 @@ EVROverlayError BaseOverlay::SetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 	if (RemoteOverlayEntry(ulOverlayHandle, remote) && remote["rendering_pid"].asUInt() == oc_current_pid())
 		OC_UNSUPPORTED(VROverlayError_RequestFailed, "SetOverlayTexture: another program's overlay's texture can't be set from this one");
 	USEH();
-	if (!pTexture)
+	// No texture, or one with nothing to read (ClearOverlayTexture takes a texture away)
+	if (!pTexture || !pTexture->handle)
 		return VROverlayError_InvalidTexture;
 	if (CurrentSessionKind() == SessionKind::Headless)
 		OC_UNSUPPORTED(VROverlayError_RequestFailed, "SetOverlayTexture: a background application's session has no graphics to show it");
