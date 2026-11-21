@@ -253,7 +253,7 @@ public:
 			HmdMatrix34_t offset;
 			TrackedDeviceIndex_t device;
 		} deviceRelative;
-	} transformData;
+	} transformData{};
 
 	glm::mat4 overlayTransform{
 		1.0f, 0.0f, 0.0f, 0.0f,
