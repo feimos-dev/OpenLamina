@@ -4,6 +4,9 @@
 #include "Misc/Fade.h"
 
 #include <cmath>
+#ifdef _WIN32
+#include <unknwn.h>
+#endif
 
 TEST_CASE("Skybox_textures_need_one_two_or_six_with_handles")
 {
@@ -50,6 +53,58 @@ TEST_CASE("Skybox_request_keeps_its_own_copy_of_the_textures")
 	CHECK_FALSE(copy.Empty());
 	CHECK_FALSE(request.Set(t, 3));
 }
+
+#ifdef _WIN32
+namespace {
+// A COM object that only counts its references
+struct CountedUnknown : IUnknown {
+	ULONG refs = 1;
+	HRESULT STDMETHODCALLTYPE QueryInterface(REFIID, void** out) override
+	{
+		*out = nullptr;
+		return E_NOINTERFACE;
+	}
+	ULONG STDMETHODCALLTYPE AddRef() override { return ++refs; }
+	ULONG STDMETHODCALLTYPE Release() override { return --refs; }
+};
+} // namespace
+
+TEST_CASE("Skybox_request_holds_a_reference_of_its_Direct3D_textures")
+{
+	CountedUnknown d3d11, resource, queue;
+	vr::D3D12TextureData_t data{};
+	data.m_pResource = reinterpret_cast<ID3D12Resource*>(static_cast<IUnknown*>(&resource));
+	data.m_pCommandQueue = reinterpret_cast<ID3D12CommandQueue*>(static_cast<IUnknown*>(&queue));
+	vr::Texture_t t[2] = { { static_cast<IUnknown*>(&d3d11), vr::TextureType_DirectX, vr::ColorSpace_Auto },
+		{ &data, vr::TextureType_DirectX12, vr::ColorSpace_Auto } };
+	{
+		SkyboxRequest request;
+		REQUIRE(request.Set(t, 2));
+		CHECK(request.HeldAlive());
+		CHECK(d3d11.refs == 2);
+		CHECK(resource.refs == 2);
+		CHECK(queue.refs == 2);
+		SkyboxRequest copy = request;
+		CHECK(d3d11.refs == 3);
+		copy = request;
+		CHECK(d3d11.refs == 3);
+		request.Clear();
+		CHECK(d3d11.refs == 2);
+		REQUIRE(request.Set(t, 1));
+		REQUIRE(request.Set(t, 1));
+		CHECK(d3d11.refs == 3);
+	}
+	CHECK(d3d11.refs == 1);
+	CHECK(resource.refs == 1);
+	CHECK(queue.refs == 1);
+
+	int gl = 3;
+	vr::Texture_t other{ &gl, vr::TextureType_OpenGL, vr::ColorSpace_Auto };
+	SkyboxRequest request;
+	REQUIRE(request.Set(&other, 1));
+	CHECK_FALSE(request.HeldAlive());
+}
+#endif
 
 TEST_CASE("Ramp_moves_linearly_from_where_it_is_when_told")
 {

@@ -74,6 +74,10 @@ public:
 	const vr::Texture_t* Textures() const { return textures.data(); }
 	uint32_t Count() const { return (uint32_t)textures.size(); }
 
+	// Whether the textures stay alive while it's kept, whatever the game does with them: Direct3D 11 and 12 ones, of
+	// which it holds a COM reference (Vulkan and OpenGL ones are the game's to keep)
+	bool HeldAlive() const;
+
 	SkyboxRequest() = default;
 	SkyboxRequest(const SkyboxRequest& other) { Copy(other); }
 	SkyboxRequest& operator=(const SkyboxRequest& other)
@@ -82,10 +86,13 @@ public:
 			Copy(other);
 		return *this;
 	}
+	~SkyboxRequest() { Hold(false); }
 
 private:
 	void Copy(const SkyboxRequest& other);
 	void Fix();
+	// Takes (true) or drops a reference of each Direct3D texture's (and D3D12 queue's)
+	void Hold(bool take);
 	std::vector<vr::Texture_t> textures;
 	std::vector<vr::VRVulkanTextureData_t> vulkan; // one for each texture, used by the Vulkan ones
 	std::vector<vr::D3D12TextureData_t> d3d12; // the same for the D3D12 ones

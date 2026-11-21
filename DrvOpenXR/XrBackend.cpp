@@ -2251,10 +2251,11 @@ XrResult XrBackend::RebuildSession(RebuildReason reason)
 	if (XR_FAILED(res))
 		return res;
 
-	// The skybox the game set is shown again from its texture, at the new session's first frame
+	// The skybox the game set is shown again from its texture, at the new session's first frame: only where its
+	// textures are held alive (a Vulkan or OpenGL game may have freed its picture since)
 	{
 		std::lock_guard<std::mutex> pending(pendingSkyboxLock);
-		if (!shownSkybox.Empty())
+		if (!shownSkybox.Empty() && shownSkybox.HeldAlive())
 			pendingSkybox = shownSkybox;
 	}
 	// The overlays' swapchains went with the old session: made again from their textures
