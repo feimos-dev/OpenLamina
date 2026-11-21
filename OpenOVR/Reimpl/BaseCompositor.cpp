@@ -459,9 +459,14 @@ void BaseCompositor::GetCumulativeStats(OOVR_Compositor_CumulativeStats* pStats,
 		const uint32_t pid = scene["pid"].isUInt() ? scene["pid"].asUInt() : 0;
 		if (pid && SharedStore::IsSameProcessAlive(pid, scene["start"].isUInt64() ? scene["start"].asUInt64() : 0)) {
 			stats.m_nPid = pid;
-			stats.m_nNumFramePresents = scene["frame_stats"]["presents"].asUInt();
-			stats.m_nNumDroppedFrames = scene["frame_stats"]["dropped"].asUInt();
-			stats.m_nNumReprojectedFrames = scene["frame_stats"]["reprojected"].asUInt();
+			// Read with the types checked: a document of another shape answers 0, as jsoncpp throws for the wrong type
+			const Json::Value& frameStats = scene["frame_stats"];
+			auto count = [&](const char* name) -> uint32_t {
+				return frameStats.isObject() && frameStats[name].isUInt() ? frameStats[name].asUInt() : 0;
+			};
+			stats.m_nNumFramePresents = count("presents");
+			stats.m_nNumDroppedFrames = count("dropped");
+			stats.m_nNumReprojectedFrames = count("reprojected");
 		}
 		memset(pStats, 0, nStatsSizeInBytes);
 		memcpy(pStats, &stats, std::min<size_t>(nStatsSizeInBytes, sizeof(stats)));
