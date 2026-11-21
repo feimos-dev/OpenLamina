@@ -123,6 +123,26 @@ TEST_CASE("Battery_by_role_is_the_roles_device")
 	CHECK(right->charging);
 }
 
+TEST_CASE("Battery_of_same_named_devices_goes_by_serial")
+{
+	// Two trackers of one model have one name: each one's battery is the device's with its serial
+	FakeLibMonado fake("1", "1,0,0.5;1,0,0.25;1,1,0.75");
+	SetEnv("FAKE_MND_SAME_NAMES", "1");
+	LibMonado mnd("Monado(XRT) by Collabora et al");
+	REQUIRE(mnd.Available());
+	std::optional<LibMonado::Battery> second = mnd.BatteryFor("Fake Controller", "SN1"), third = mnd.BatteryFor("Fake Controller", "SN2");
+	// A serial libmonado doesn't list: the first device of that name
+	std::optional<LibMonado::Battery> byName = mnd.BatteryFor("Fake Controller", "SN9");
+	SetEnv("FAKE_MND_SAME_NAMES", nullptr);
+	REQUIRE(second.has_value());
+	REQUIRE(third.has_value());
+	REQUIRE(byName.has_value());
+	CHECK(second->charge == 0.25f);
+	CHECK(third->charge == 0.75f);
+	CHECK(third->charging);
+	CHECK(byName->charge == 0.5f);
+}
+
 TEST_CASE("Battery_unsupported_is_no_battery")
 {
 	// Monado fails the call for a device without battery status: libmonado is there, and the device has none

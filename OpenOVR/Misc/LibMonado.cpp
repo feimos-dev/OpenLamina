@@ -290,12 +290,15 @@ std::optional<uint32_t> LibMonado::DeviceIndex(const std::string& deviceName, co
 	uint32_t count = 0;
 	if (api->getDeviceCount(root, &count) != 0)
 		return std::nullopt;
-	for (uint32_t i = 0; i < count; i++) {
-		const char* name = nullptr;
+	// By serial first: devices of one model share a name
+	for (uint32_t i = 0; i < count && !serial.empty(); i++) {
 		const char* devSerial = nullptr;
-		if (api->getDeviceInfoString(root, i, kMndPropertyNameString, &name) == 0 && name && !deviceName.empty() && deviceName == name)
+		if (api->getDeviceInfoString(root, i, kMndPropertySerialString, &devSerial) == 0 && devSerial && serial == devSerial)
 			return i;
-		if (api->getDeviceInfoString(root, i, kMndPropertySerialString, &devSerial) == 0 && devSerial && !serial.empty() && serial == devSerial)
+	}
+	for (uint32_t i = 0; i < count && !deviceName.empty(); i++) {
+		const char* name = nullptr;
+		if (api->getDeviceInfoString(root, i, kMndPropertyNameString, &name) == 0 && name && deviceName == name)
 			return i;
 	}
 	return std::nullopt;
