@@ -2598,8 +2598,8 @@ EVRInputError BaseInput::GetSkeletalActionData(VRActionHandle_t action, EVRSkele
 EVRInputError BaseInput::GetSkeletalActionDataCompressed(VRActionHandle_t action, EVRSkeletalTransformSpace eBoneParent,
     float fPredictedSecondsFromNow, void* pvCompressedData, uint32_t unCompressedSize, uint32_t* punRequiredCompressedSize)
 {
-	return GetSkeletalBoneDataCompressed(action, vr::VRSkeletalMotionRange_WithController, pvCompressedData, unCompressedSize,
-	    punRequiredCompressedSize);
+	return GetSkeletalBoneDataCompressed(action, eBoneParent, vr::VRSkeletalMotionRange_WithController, pvCompressedData,
+	    unCompressedSize, punRequiredCompressedSize, vr::k_ulInvalidInputValueHandle);
 }
 
 EVRInputError BaseInput::UncompressSkeletalActionData(void* pvCompressedBuffer, uint32_t unCompressedBufferSize,
