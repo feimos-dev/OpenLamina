@@ -3163,6 +3163,13 @@ bool XrBackend::RunOwnFramesWhile(const std::function<bool()>& keepGoing)
 
 void XrBackend::EndOpenAppFrame()
 {
+	// A frame the game waited for before its first texture (on OpenLamina's own session) is begun without being marked
+	// as one it renders: ended here all the same, or no own frame could start while it stays open
+	{
+		std::lock_guard<std::mutex> owner(frameOwner);
+		if (frameBegun && sessionActive)
+			renderingFrame = true;
+	}
 	// As if the game had submitted: with its last frame again
 	repeatLastFrame = true;
 	SubmitFrames(false);
