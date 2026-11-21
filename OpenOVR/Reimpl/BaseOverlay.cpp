@@ -3234,7 +3234,6 @@ EVROverlayError BaseOverlay::SetOverlayTransformTrackedDeviceComponent(VROverlay
 }
 EVROverlayError BaseOverlay::GetOverlayTransformTrackedDeviceComponent(VROverlayHandle_t ulOverlayHandle, TrackedDeviceIndex_t* punDeviceIndex, char* pchComponentName, uint32_t unComponentNameSize)
 {
-	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	USEH_LOCKED();
 	if (overlay->transformType != VROverlayTransform_TrackedComponent)
 		return VROverlayError_WrongTransformType;
@@ -3669,7 +3668,6 @@ bool BaseOverlay::IsHoverTargetOverlay(VROverlayHandle_t ulOverlayHandle)
 {
 	USEHB_LOCKED();
 	// The last overlay the laser driving the mouse was on
-	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	return pointing->mouse.Hover() == ulOverlayHandle;
 }
 VROverlayHandle_t BaseOverlay::GetGamepadFocusOverlay()
@@ -4302,7 +4300,6 @@ bool BaseOverlay::IsActiveDashboardOverlay(VROverlayHandle_t ulOverlayHandle)
 	if (IsSceneApp() && !SceneDashboard())
 		OC_UNSUPPORTED(false, "IsActiveDashboardOverlay: there's no dashboard (dashboardButton is off)");
 	USEHB_LOCKED();
-	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	return overlay->dashboard && !overlay->thumbnail && dash->open && dash->activePid == oc_current_pid()
 	    && dash->activeOverlay == overlay->handle && dash->ForScene(*overlay);
 }
@@ -4310,10 +4307,7 @@ EVROverlayError BaseOverlay::SetDashboardOverlaySceneProcess(VROverlayHandle_t u
 {
 	USEH_LOCKED();
 	// Shown only over that program's dashboard (0: any); the dashboard's next update applies it
-	{
-		std::lock_guard<std::recursive_mutex> lock(layersLock);
-		overlay->dashboardScenePid = unProcessId;
-	}
+	overlay->dashboardScenePid = unProcessId;
 	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::GetDashboardOverlaySceneProcess(VROverlayHandle_t ulOverlayHandle, uint32_t* punProcessId)
