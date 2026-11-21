@@ -1,5 +1,5 @@
 {
- "#": "The play area's walls without stage bounds (scripts/bounds_room_setup.json), with drawBounds (ini/draw_bounds.ini): the committed 2 x 3 m room setup's play area, so one 3 m wide wall on the +X edge, where the HMD is 0.2 m from it",
+ "#": "The play area's walls without stage bounds (scripts/bounds_room_setup.json), with drawBounds (ini/draw_bounds.ini): the committed 2 x 3 m room setup's play area, so one 3 m wide wall on the +X edge, where the HMD is 0.2 m from it. The chaperone getters answer the same play area (the committed room setup's 2 x 3 m, without stage bounds), calibrated, and the runtime is asked for its bounds once a session (the stand-in's few sessions), not every frame",
  "bounds-room-setup/walls/-/-": {
   "walls": 1,
   "positions": [
@@ -9,5 +9,17 @@
     0.0
    ]
   ]
+ },
+ "bounds-room-setup/play area/-/-": {
+  "ret": true,
+  "size": [
+   2.0,
+   3.0
+  ],
+  "calibration": 1,
+  "bounds_rect_calls": {
+   "near": 2,
+   "within": 1
+  }
  }
 }

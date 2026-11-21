@@ -18,8 +18,9 @@ windows-x86 (vrclient.dll), linux-x64 and linux-x86 (vrclient.so each). Made in 
 --windows-folder writes the Windows archive's OpenLamina folder into DIR instead, unpacked, for the installer.
 
 Both binary archives also have an empty bin/version.txt (it keeps Steam from rewriting openvrpaths.vrpath while that
-names the folder), the licences of OpenLamina and of what is built into it, and SOURCE.txt. Each archive's entries
-carry the commit's time, so the same commit packs the same bytes.
+names the folder), the controller models in bin/rendermodels (scripts/rendermodels.py converts them), the licences of
+OpenLamina and of what is built into it, and SOURCE.txt. Each archive's entries carry the commit's time, so the same
+commit packs the same bytes.
 """
 
 import argparse
@@ -29,14 +30,17 @@ import io
 import subprocess
 import sys
 import tarfile
+import tempfile
 import time
 import zipfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
+sys.path.insert(0, str(ROOT / "scripts"))
+import rendermodels  # noqa: E402
 
-# OpenLamina's licence and those of what is built into the library (the hand models, glm, the OpenXR loader and its
-# jsoncpp): source path -> name in the archive.
+# OpenLamina's licence and those of what is built into the library or comes with it (the hand models, the controller
+# models, glm, the OpenXR loader and its jsoncpp): source path -> name in the archive.
 LICENCES = {
     "LICENSE.txt": "LICENSE.txt",
     "LICENSE_OPENVR.txt": "LICENSE_OPENVR.txt",
@@ -44,6 +48,7 @@ LICENCES = {
     "LICENCE_BUILD_UTIL.txt": "LICENCE_BUILD_UTIL.txt",
     "assets/LICENSE.txt": "LICENSE_assets.txt",
     "assets/notes.txt": "NOTES_assets.txt",
+    "assets/controllers/LICENSE.md": "LICENSE_webxr-input-profiles.txt",
     "libs/glm/copying.txt": "LICENSE_glm.txt",
     "libs/openxr-sdk/LICENSE": "LICENSE_openxr-sdk.txt",
     "libs/openxr-sdk/LICENSES/LicenseRef-jsoncpp-public-domain.txt": "LICENSE_jsoncpp.txt",
@@ -91,6 +96,8 @@ def binary_files(os_name: str, artifacts: Path, version: str, commit: str, repos
             sys.exit(f"{path} is missing: the {folder} build's artifact.")
         files[target] = (path.read_bytes(), 0o755)
     files["bin/version.txt"] = (b"", 0o644)
+    for path, data in controller_models().items():
+        files[f"bin/rendermodels/{path}"] = (data, 0o644)
     licences = LICENCES | (LINUX_LICENCES if os_name == "linux" else {})
     for source, target in licences.items():
         path = ROOT / source
@@ -101,6 +108,16 @@ def binary_files(os_name: str, artifacts: Path, version: str, commit: str, repos
     if os_name == "linux":
         files["install.sh"] = ((ROOT / LINUX_INSTALLER).read_bytes(), 0o755)
     return files
+
+
+def controller_models() -> dict[str, bytes]:
+    """The controller models (scripts/rendermodels.py) from assets/controllers: path in bin/rendermodels -> contents"""
+    with tempfile.TemporaryDirectory() as tmp:
+        try:
+            rendermodels.convert(ROOT / "assets" / "controllers", Path(tmp))
+        except rendermodels.ConversionError as e:
+            sys.exit(f"The controller models can't be converted: {e}")
+        return {p.relative_to(tmp).as_posix(): p.read_bytes() for p in sorted(Path(tmp).rglob("*")) if p.is_file()}
 
 
 def write_folder(out: Path, files: dict[str, tuple[bytes, int]]) -> None:

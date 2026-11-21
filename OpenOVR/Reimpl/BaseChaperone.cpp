@@ -6,6 +6,7 @@
 #include "generated/static_bases.gen.h"
 
 #include "Drivers/Backend.h"
+#include "Misc/Bounds.h"
 #include "Misc/ChaperoneData.h"
 #include "Misc/SharedStore.h"
 
@@ -17,9 +18,35 @@ using namespace vr;
 
 BaseChaperone::BaseChaperoneCalibrationState BaseChaperone::GetCalibrationState()
 {
-	// OK whether or not the runtime gives stage bounds: runtimes without them (Monado among them) have nothing for the
-	// player to set up, and games read an error here as a room setup to do first
-	return ChaperoneCalibrationState_OK;
+	// OK with a play area (the runtime's, else the committed room setup's), as the getters answer. Without one, a
+	// warning rather than an error: games read an error as a room setup to do before they start, and a runtime
+	// without stage bounds (Monado among them) still tracks standing
+	const XrExtent2Df area = CurrentPlayArea();
+	return area.width > 0 && area.height > 0 ? ChaperoneCalibrationState_OK : ChaperoneCalibrationState_Warning;
+}
+
+XrExtent2Df CurrentPlayArea()
+{
+	XrExtent2Df runtime{};
+	bool known = false;
+	if (BackendManager* backends = BackendManager::InstancePtr()) {
+		int count = 0;
+		if (backends->GetPlayAreaPoints(nullptr, &count) && count >= 2) {
+			std::vector<vr::HmdVector3_t> points(count);
+			if (backends->GetPlayAreaPoints(points.data(), nullptr)) {
+				float minX = points[0].v[0], maxX = minX, minZ = points[0].v[2], maxZ = minZ;
+				for (const vr::HmdVector3_t& p : points) {
+					minX = std::min(minX, p.v[0]);
+					maxX = std::max(maxX, p.v[0]);
+					minZ = std::min(minZ, p.v[2]);
+					maxZ = std::max(maxZ, p.v[2]);
+				}
+				runtime = { maxX - minX, maxZ - minZ };
+				known = true;
+			}
+		}
+	}
+	return BoundsPlayArea(known ? &runtime : nullptr, known ? Json::Value() : SharedStore::Get().Read(StoreDoc::Chaperone));
 }
 bool BaseChaperone::GetPlayAreaSize(float* pSizeX, float* pSizeZ)
 {
@@ -92,7 +119,8 @@ bool BaseChaperone::GetPlayAreaRect(HmdQuad_t* rect)
 }
 void BaseChaperone::ReloadInfo(void)
 {
-	// The play area is asked of the OpenXR runtime, and the committed room setup read from the store, each time
+	// The play area is the OpenXR runtime's (asked once per session and after it changes), else the committed room
+	// setup's, read from the store each time
 }
 void BaseChaperone::SetSceneColor(HmdColor_t color)
 {
@@ -124,31 +152,12 @@ void BaseChaperone::ForceBoundsVisible(bool bForce)
 
 bool BaseChaperone::GetMinMaxPoints(vr::HmdVector3_t& minPoint, vr::HmdVector3_t& maxPoint)
 {
-	int count;
-	bool success = BackendManager::Instance().GetPlayAreaPoints(nullptr, &count);
-
-	if (!success)
-		return false; // the play area isn't set up, or is unsupported by the backend
-
-	std::vector<vr::HmdVector3_t> points(count);
-	success = BackendManager::Instance().GetPlayAreaPoints(points.data(), nullptr);
-
-	if (!success)
-		return false; // shouldn't happen - should be caught by first check
-
-	if (points.size() < 2)
-		return false; // not enough points to find a min/max
-
-	minPoint = points[0];
-	maxPoint = points[0];
-
-	for (const auto& point : points) {
-		for (int i = 0; i < 3; i++) {
-			minPoint.v[i] = std::min(minPoint.v[i], point.v[i]);
-			maxPoint.v[i] = std::max(maxPoint.v[i], point.v[i]);
-		}
-	}
-
+	// The play area, centred on the standing origin
+	const XrExtent2Df area = CurrentPlayArea();
+	if (!(area.width > 0) || !(area.height > 0))
+		return false; // no play area: the runtime has none and no room setup was committed
+	minPoint = { -area.width / 2, 0, -area.height / 2 };
+	maxPoint = { area.width / 2, 0, area.height / 2 };
 	return true;
 }
 

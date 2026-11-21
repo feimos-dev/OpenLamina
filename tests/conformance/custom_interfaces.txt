@@ -1,7 +1,8 @@
 # Interface versions Valve never published (or only in its C API), with headers in OpenVRHeaders/custom_interfaces that
 # OpenLamina offers. gen_callers.py calls their methods like those of interfaces.txt; run.py runs them like the others.
-IVRPaths_001
-IVRPaths_002
-IVRMailbox_001
-IVRControlPanel_006
-IVRInputInternal_002
+# Columns: version, then why it's offered (scripts/openvr_inventory.py lists it in how_real.txt).
+IVRPaths_001 SteamVR's path-keyed property store, offered by Valve only through the C API (SDK 1.12.5 to 2.12.14)
+IVRPaths_002 SteamVR's path-keyed property store, offered by Valve only through the C API (SDK 2.15.6)
+IVRMailbox_001 used by Half-Life: Alyx, never published by Valve
+IVRControlPanel_006 used by Half-Life: Alyx, never published by Valve
+IVRInputInternal_002 used by Half-Life: Alyx, never published by Valve

@@ -18,7 +18,8 @@ struct ActionBinding {
 };
 
 /** The bindings of an action (its manifest name, lower-cased) on one device (/user/hand/left; empty for every
- * device). A source of mode none binds nothing. */
+ * device). A source of mode none binds nothing, nor a force sensor's click. A pose and a skeleton are told by their
+ * device and the path read (/pose/raw, /input/skeleton/left) with no mode; a vibration with every field empty. */
 std::vector<ActionBinding> BindingsForAction(const BindingFile& file, const std::string& action, const std::string& device = {});
 
 /** The render model component an origin's input path names: the input's name, so /user/hand/left/input/trigger/click

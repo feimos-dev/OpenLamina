@@ -98,13 +98,12 @@ TEST_CASE("A_frame_with_one_eye_shows_it_in_both")
 	CHECK(source[1] == -1);
 }
 
-TEST_CASE("Submit_ends_the_frame_unless_the_game_ends_it_with_PostPresentHandoff")
+TEST_CASE("Submit_ends_the_frame_unless_the_timing_mode_says_PostPresentHandoff_does")
 {
-	CHECK(BaseCompositor::SubmitEndsFrame(VRCompositorTimingMode_Implicit, false));
-	CHECK(BaseCompositor::SubmitEndsFrame(VRCompositorTimingMode_Explicit_RuntimePerformsPostPresentHandoff, false));
-	CHECK_FALSE(BaseCompositor::SubmitEndsFrame(VRCompositorTimingMode_Explicit_ApplicationPerformsPostPresentHandoff, false));
-	// A game that calls it ends its frames there in any mode
-	CHECK_FALSE(BaseCompositor::SubmitEndsFrame(VRCompositorTimingMode_Implicit, true));
+	// By the mode the game set alone, whether or not it has called PostPresentHandoff before
+	CHECK(BaseCompositor::SubmitEndsFrame(VRCompositorTimingMode_Implicit));
+	CHECK(BaseCompositor::SubmitEndsFrame(VRCompositorTimingMode_Explicit_RuntimePerformsPostPresentHandoff));
+	CHECK_FALSE(BaseCompositor::SubmitEndsFrame(VRCompositorTimingMode_Explicit_ApplicationPerformsPostPresentHandoff));
 }
 
 TEST_CASE("Submitted_bounds_with_a_NaN_are_not_bounds")
@@ -170,6 +169,17 @@ TEST_CASE("A_Vulkan_loader_older_than_the_runtime_needs_is_refused")
 	CHECK(VulkanVersionMeetsXr(VK_MAKE_VERSION(1, 3, 250), XR_MAKE_VERSION(1, 1, 0)));
 	CHECK_FALSE(VulkanVersionMeetsXr(VK_MAKE_VERSION(1, 0, 65), XR_MAKE_VERSION(1, 1, 0)));
 	CHECK(VulkanVersionMeetsXr(VK_MAKE_VERSION(2, 0, 0), XR_MAKE_VERSION(1, 3, 0)));
+}
+
+TEST_CASE("The_temporary_Vulkan_instance_is_1_1_where_the_loader_and_runtime_have_it")
+{
+	CHECK(TemporaryVkApiVersion(VK_API_VERSION_1_3, XR_MAKE_VERSION(1, 0, 0), XR_MAKE_VERSION(1, 3, 0)) == VK_API_VERSION_1_1);
+	// Not past a loader or a runtime that stops at 1.0
+	CHECK(TemporaryVkApiVersion(VK_API_VERSION_1_0, XR_MAKE_VERSION(1, 0, 0), XR_MAKE_VERSION(1, 3, 0)) == VK_API_VERSION_1_0);
+	CHECK(TemporaryVkApiVersion(VK_API_VERSION_1_3, XR_MAKE_VERSION(1, 0, 0), XR_MAKE_VERSION(1, 0, 0)) == VK_API_VERSION_1_0);
+	CHECK(TemporaryVkApiVersion(VK_API_VERSION_1_3, XR_MAKE_VERSION(1, 0, 0), 0) == VK_API_VERSION_1_0);
+	// The runtime's lowest stays when it's higher
+	CHECK(TemporaryVkApiVersion(VK_API_VERSION_1_3, XR_MAKE_VERSION(1, 2, 0), XR_MAKE_VERSION(1, 3, 0)) == VK_API_VERSION_1_2);
 }
 #endif
 
@@ -352,4 +362,15 @@ TEST_CASE("The scene overlay is the part of its image the settings pick, ahead o
 	settings.transform = {};
 	REQUIRE(BaseCompositor::SceneOverlayFrom(image, settings, out));
 	CHECK(out.inHead.m[0][0] == doctest::Approx(1.0f));
+}
+
+TEST_CASE("Extensions_among_available")
+{
+	const std::vector<std::string> available = { "VK_KHR_external_memory", "VK_KHR_external_semaphore", "VK_KHR_swapchain" };
+	CHECK(BaseCompositor::ExtensionsAmong("VK_KHR_external_memory VK_KHR_external_memory_fd VK_KHR_swapchain", available)
+	    == "VK_KHR_external_memory VK_KHR_swapchain");
+	CHECK(BaseCompositor::ExtensionsAmong("", available).empty());
+	CHECK(BaseCompositor::ExtensionsAmong("VK_KHR_external_memory_fd", available).empty());
+	// Doubled spaces don't make empty names
+	CHECK(BaseCompositor::ExtensionsAmong("VK_KHR_swapchain  VK_KHR_external_semaphore", available) == "VK_KHR_swapchain VK_KHR_external_semaphore");
 }

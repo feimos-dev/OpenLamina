@@ -44,12 +44,17 @@ std::optional<Json::Value> StoredValue(SharedStore& store, const std::string& se
 	return v;
 }
 
-// The OpenXR system's name, which picks the HMD's identity row; empty before a session (and in the unit tests)
-std::string HmdSystemName()
+// The OpenXR system's name, which picks the HMD's identity row, with its vendor ID and the runtime's name; empty before
+// a session (and in the unit tests)
+std::string HmdSystemName(uint32_t* vendorId, std::string* runtimeName)
 {
 	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	if (!xr_gbl)
 		return {};
+	*vendorId = xr_gbl->systemProperties.vendorId;
+	XrInstanceProperties properties = { XR_TYPE_INSTANCE_PROPERTIES };
+	if (xr_instance != XR_NULL_HANDLE && XR_SUCCEEDED(xrGetInstanceProperties(xr_instance, &properties)))
+		*runtimeName = properties.runtimeName;
 	return xr_gbl->systemProperties.systemName;
 }
 
@@ -230,8 +235,10 @@ std::optional<Json::Value> BaseSettings::Lookup(const std::string& section, cons
 		if (key == kk::k_pch_SteamVR_MotionSmoothing_Bool)
 			return Json::Value(false); // OpenComposite doesn't make frames up
 	} else if (section == kk::k_pch_LastKnown_Section) {
-		const std::string systemName = HmdSystemName();
-		const DeviceIdentity& hmd = HmdIdentity(systemName);
+		uint32_t vendorId = 0;
+		std::string runtimeName;
+		const std::string systemName = HmdSystemName(&vendorId, &runtimeName);
+		const DeviceIdentity& hmd = HmdIdentity(systemName, {}, vendorId, runtimeName);
 		if (key == kk::k_pch_LastKnown_HMDManufacturer_String)
 			return Json::Value(hmd.manufacturer);
 		if (key == kk::k_pch_LastKnown_HMDModel_String) {

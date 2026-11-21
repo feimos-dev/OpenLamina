@@ -49,13 +49,43 @@ std::vector<ActionBinding> BindingsForAction(const BindingFile& file, const std:
 		b.sourceType = SourceType(b.input, file.controllerType);
 		found.push_back(std::move(b));
 	};
+	// A pose and a skeleton are told by where they're read (/pose/raw, /input/skeleton/left), with no mode
+	auto addPose = [&](const std::string& path) {
+		ActionBinding b;
+		size_t at = path.find("/pose");
+		if (at == std::string::npos)
+			at = path.find("/input/");
+		if (at == std::string::npos || at == 0)
+			return;
+		b.device = path.substr(0, at);
+		b.input = path.substr(at);
+		if (device.empty() || b.device == device)
+			found.push_back(std::move(b));
+	};
 	for (const auto& [setName, set] : file.sets) {
 		for (const SourceBinding& source : set.sources) {
 			if (source.mode == "none")
 				continue;
-			for (const auto& [slot, output] : source.inputs)
-				if (output == action)
+			for (const auto& [slot, output] : source.inputs) {
+				// A force sensor is read by its force; one bound by its click binds nothing
+				if (output == action && !(source.mode == "force_sensor" && slot == "click"))
 					add(source.path, source.mode, slot);
+			}
+		}
+		for (const PoseBinding& pose : set.poses)
+			if (pose.output == action)
+				addPose(pose.path);
+		for (const SkeletonBinding& skeleton : set.skeleton)
+			if (skeleton.output == action)
+				addPose(skeleton.path);
+		// A vibration is told with no device or input path
+		for (const HapticBinding& haptic : set.haptics) {
+			if (haptic.output != action)
+				continue;
+			const size_t at = haptic.path.find("/output/");
+			if (!device.empty() && (at == std::string::npos || haptic.path.substr(0, at) != device))
+				continue;
+			found.emplace_back();
 		}
 		for (const ChordBinding& chord : set.chords) {
 			if (chord.output != action)

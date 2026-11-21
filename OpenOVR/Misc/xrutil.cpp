@@ -74,6 +74,10 @@ XrExt::XrExt(XrGraphicsApiSupportedFlags apis, const std::vector<const char*>& e
 		if (strcmp(ext, OC_XR_EXT_LOCAL_FLOOR_EXTENSION_NAME) == 0)
 			supportsLocalFloor = true;
 	}
+#ifdef SUPPORT_VK
+	const bool vulkanEnable1 = enabledExtensions.count(XR_KHR_VULKAN_ENABLE_EXTENSION_NAME) != 0;
+	const bool vulkanEnable2 = enabledExtensions.count(XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME) != 0;
+#endif
 
 #define XR_BIND(name, function) OOVR_FAILED_XR_ABORT(xrGetInstanceProcAddr(xr_instance, #name, (PFN_xrVoidFunction*)&this->function))
 #define XR_BIND_OPT(name, function) xrGetInstanceProcAddr(xr_instance, #name, (PFN_xrVoidFunction*)&this->function)
@@ -88,6 +92,10 @@ XrExt::XrExt(XrGraphicsApiSupportedFlags apis, const std::vector<const char*>& e
 		XR_BIND_OPT(xrEnumerateDisplayRefreshRatesFB, pfnXrEnumerateDisplayRefreshRatesFB);
 		XR_BIND_OPT(xrRequestDisplayRefreshRateFB, pfnXrRequestDisplayRefreshRateFB);
 	}
+
+	// Vive trackers by their role
+	if (enabledExtensions.contains(OC_XR_HTCX_VIVE_TRACKER_INTERACTION_EXTENSION_NAME))
+		XR_BIND_OPT(xrEnumerateViveTrackerPathsHTCX, pfnXrEnumerateViveTrackerPathsHTCX);
 
 	if (hasHandTracking) {
 		XR_BIND(xrCreateHandTrackerEXT, pfnXrCreateHandTrackerExt);
@@ -127,11 +135,17 @@ XrExt::XrExt(XrGraphicsApiSupportedFlags apis, const std::vector<const char*>& e
 #endif
 
 #ifdef SUPPORT_VK
-	if (apis & XR_SUPPORTED_GRAPHICS_API_VK) {
+	// XR_KHR_vulkan_enable, else XR_KHR_vulkan_enable2 (a runtime that has only the second)
+	if ((apis & XR_SUPPORTED_GRAPHICS_API_VK) && (vulkanEnable1 || !vulkanEnable2)) {
 		XR_BIND(xrGetVulkanGraphicsRequirementsKHR, pfnXrGetVulkanGraphicsRequirementsKHR);
 		XR_BIND(xrGetVulkanInstanceExtensionsKHR, pfnXrGetVulkanInstanceExtensionsKHR);
 		XR_BIND(xrGetVulkanDeviceExtensionsKHR, pfnXrGetVulkanDeviceExtensionsKHR);
 		XR_BIND(xrGetVulkanGraphicsDeviceKHR, pfnXrGetVulkanGraphicsDeviceKHR);
+	} else if (apis & XR_SUPPORTED_GRAPHICS_API_VK) {
+		XR_BIND(xrGetVulkanGraphicsRequirements2KHR, pfnXrGetVulkanGraphicsRequirements2KHR);
+		XR_BIND(xrGetVulkanGraphicsDevice2KHR, pfnXrGetVulkanGraphicsDevice2KHR);
+		XR_BIND(xrCreateVulkanInstanceKHR, pfnXrCreateVulkanInstanceKHR);
+		XR_BIND(xrCreateVulkanDeviceKHR, pfnXrCreateVulkanDeviceKHR);
 	}
 #endif
 
@@ -457,6 +471,11 @@ SessionLock SessionWrapper::try_lock_shared()
 	return SessionLock(*this, SessionLock::TryShared{});
 }
 
+SessionLock SessionWrapper::try_lock()
+{
+	return SessionLock(*this, SessionLock::TryExclusive{});
+}
+
 void SessionWrapper::reset()
 {
 	session = XR_NULL_HANDLE;
@@ -510,6 +529,18 @@ SessionLock::SessionLock(SessionWrapper& p, TryShared)
 		return;
 	shared_lock = std::shared_lock(p.mutex, std::adopt_lock);
 	thread_lock = Held::Shared;
+	owner = true;
+}
+
+SessionLock::SessionLock(SessionWrapper& p, TryExclusive)
+    : parent(p)
+{
+	if (thread_lock != Held::Unlocked)
+		return; // this thread holds it already
+	if (!p.mutex.try_lock())
+		return;
+	lock = std::unique_lock(p.mutex, std::adopt_lock);
+	thread_lock = Held::Exclusive;
 	owner = true;
 }
 

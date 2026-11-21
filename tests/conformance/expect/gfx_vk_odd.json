@@ -1,0 +1,555 @@
+{
+ "#": "Vulkan textures out of the ordinary (run.py --cases gfx-vk-odd,gfx-vk-dynamic-resolution,gfx-vk-msaa-formats --script scripts/gfx_vk_odd.json --expect expect/gfx_vk_odd.json), under a runtime with single-sampled swapchains only, of RGBA8 sRGB alone. gfx-vk-odd: 4x MSAA RGBA8 sRGB of 600 x 600 (resolved), the same of 640 x 640 with flipped bounds (resolved, then flipped: shown upside down), and 512 x 512 textures on a second queue of the family (skipped where the family has one queue). Multisampled patterns have the quadrants alone, so their centre (c) is the bottom-right quadrant's colour. gfx-vk-dynamic-resolution: textures of 800, 640, 720 and 960 a side; the swapchain (image) is made again only when the texture grows past it. Needs a Vulkan driver (skipped on CI). gfx-vk-msaa-formats: 4x MSAA BGRA8 sRGB, resolved and then converted into RGBA8 sRGB.",
+ "gfx-vk-odd/msaa/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   600,
+   600
+  ],
+  "dump:views[0].image": [
+   600,
+   600
+  ],
+  "dump:views[0].format": 43,
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].rect": [
+   0,
+   0,
+   600,
+   600
+  ],
+  "dump:views[1].image": [
+   600,
+   600
+  ],
+  "dump:views[1].format": 43,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "00ff00ff",
+   "within": 2
+  }
+ },
+ "gfx-vk-odd/msaa flipped/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   640,
+   640
+  ],
+  "dump:views[0].image": [
+   640,
+   640
+  ],
+  "dump:views[0].format": 43,
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].rect": [
+   0,
+   0,
+   640,
+   640
+  ],
+  "dump:views[1].image": [
+   640,
+   640
+  ],
+  "dump:views[1].format": 43,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "ff0000ff",
+   "within": 2
+  }
+ },
+ "gfx-vk-odd/other queue/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   512,
+   512
+  ],
+  "dump:views[0].image": [
+   512,
+   512
+  ],
+  "dump:views[0].format": 43,
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].rect": [
+   0,
+   0,
+   512,
+   512
+  ],
+  "dump:views[1].image": [
+   512,
+   512
+  ],
+  "dump:views[1].format": 43,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  }
+ },
+ "gfx-vk-dynamic-resolution/800/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   800,
+   800
+  ],
+  "dump:views[0].image": [
+   800,
+   800
+  ],
+  "dump:views[0].format": 43,
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].rect": [
+   0,
+   0,
+   800,
+   800
+  ],
+  "dump:views[1].image": [
+   800,
+   800
+  ],
+  "dump:views[1].format": 43,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  }
+ },
+ "gfx-vk-dynamic-resolution/640/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   640,
+   640
+  ],
+  "dump:views[0].image": [
+   800,
+   800
+  ],
+  "dump:views[0].format": 43,
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].rect": [
+   0,
+   0,
+   640,
+   640
+  ],
+  "dump:views[1].image": [
+   800,
+   800
+  ],
+  "dump:views[1].format": 43,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  }
+ },
+ "gfx-vk-dynamic-resolution/720/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   720,
+   720
+  ],
+  "dump:views[0].image": [
+   800,
+   800
+  ],
+  "dump:views[0].format": 43,
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].rect": [
+   0,
+   0,
+   720,
+   720
+  ],
+  "dump:views[1].image": [
+   800,
+   800
+  ],
+  "dump:views[1].format": 43,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  }
+ },
+ "gfx-vk-dynamic-resolution/960/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   960,
+   960
+  ],
+  "dump:views[0].image": [
+   960,
+   960
+  ],
+  "dump:views[0].format": 43,
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].rect": [
+   0,
+   0,
+   960,
+   960
+  ],
+  "dump:views[1].image": [
+   960,
+   960
+  ],
+  "dump:views[1].format": 43,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  }
+ },
+ "gfx-vk-msaa-formats/format msaa bgra8/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   512,
+   512
+  ],
+  "dump:views[0].image": [
+   512,
+   512
+  ],
+  "dump:views[0].format": 43,
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].rect": [
+   0,
+   0,
+   512,
+   512
+  ],
+  "dump:views[1].image": [
+   512,
+   512
+  ],
+  "dump:views[1].format": 43,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "00ff00ff",
+   "within": 2
+  }
+ }
+}

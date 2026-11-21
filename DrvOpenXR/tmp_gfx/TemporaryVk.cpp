@@ -60,12 +60,15 @@ TemporaryVk::TemporaryVk()
 
 	// Create a Vulkan instance that the runtime will find suitable
 	VkApplicationInfo appInfo{ VK_STRUCTURE_TYPE_APPLICATION_INFO };
-	appInfo.apiVersion = (std::max)((uint32_t)VK_API_VERSION_1_0, VK_MAKE_VERSION((uint32_t)XR_VERSION_MAJOR(req.minApiVersionSupported), (uint32_t)XR_VERSION_MINOR(req.minApiVersionSupported), 0));
+	appInfo.apiVersion = TemporaryVkApiVersion(loaderVersion, req.minApiVersionSupported, req.maxApiVersionSupported);
 	VkInstanceCreateInfo createInfo{ VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
 	createInfo.pApplicationInfo = &appInfo;
 
+	// XR_KHR_vulkan_enable2 alone has no extension lists: the runtime makes the instance and device, adding its own
+	const bool throughRuntime = xr_ext->VulkanEnable2Only();
 	uint32_t extCap = 0;
-	TMPVK_XR(xr_ext->xrGetVulkanInstanceExtensionsKHR(xr_instance, xr_system, 0, &extCap, nullptr));
+	if (!throughRuntime)
+		TMPVK_XR(xr_ext->xrGetVulkanInstanceExtensionsKHR(xr_instance, xr_system, 0, &extCap, nullptr));
 
 	std::vector<std::string> instanceExtensionsStore;
 	std::vector<const char*> instanceExtensionsCstr;
@@ -83,7 +86,19 @@ TemporaryVk::TemporaryVk()
 		// Don't use any layers here
 	}
 
-	if (VkResult vr_ = vkCreateInstance(&createInfo, nullptr, &instance); vr_ != VK_SUCCESS) {
+	if (throughRuntime) {
+		XrVulkanInstanceCreateInfoKHR xrInfo{ XR_TYPE_VULKAN_INSTANCE_CREATE_INFO_KHR };
+		xrInfo.systemId = xr_system;
+		xrInfo.pfnGetInstanceProcAddr = &vkGetInstanceProcAddr;
+		xrInfo.vulkanCreateInfo = &createInfo;
+		VkResult vr_ = VK_SUCCESS;
+		XrResult xr_ = xr_ext->xrCreateVulkanInstanceKHR(xr_instance, &xrInfo, &instance, &vr_);
+		if (XR_FAILED(xr_) || vr_ != VK_SUCCESS) {
+			OOVR_LOGF("Temporary Vulkan device: xrCreateVulkanInstanceKHR failed: %d (Vulkan %d)", (int)xr_, (int)vr_);
+			instance = VK_NULL_HANDLE;
+			return;
+		}
+	} else if (VkResult vr_ = vkCreateInstance(&createInfo, nullptr, &instance); vr_ != VK_SUCCESS) {
 		OOVR_LOGF("Temporary Vulkan device: vkCreateInstance failed: %d", (int)vr_);
 		instance = VK_NULL_HANDLE;
 		return;
@@ -117,7 +132,9 @@ TemporaryVk::TemporaryVk()
 	std::vector<std::string> deviceExtensionsStore;
 	std::vector<const char*> deviceExtensionsCstr;
 
-	TMPVK_XR(xr_ext->xrGetVulkanDeviceExtensionsKHR(xr_instance, xr_system, 0, &extCap, nullptr));
+	extCap = 0;
+	if (!throughRuntime)
+		TMPVK_XR(xr_ext->xrGetVulkanDeviceExtensionsKHR(xr_instance, xr_system, 0, &extCap, nullptr));
 	if (extCap > 1) {
 		std::string deviceExtensionsStr;
 		deviceExtensionsStr.resize(extCap, 0);
@@ -134,22 +151,24 @@ TemporaryVk::TemporaryVk()
 	auto addIfAvailable = [&](const char* name) {
 		for (const char* enabled : deviceExtensionsCstr) {
 			if (strcmp(enabled, name) == 0)
-				return; // the runtime asked for it already
+				return true; // the runtime asked for it already
 		}
 		for (const VkExtensionProperties& ext : available) {
 			if (strcmp(ext.extensionName, name) == 0) {
 				deviceExtensionsCstr.push_back(name);
-				return;
+				return true;
 			}
 		}
 		OOVR_LOGF("Device extension %s isn't available; continuing without it", name);
+		return false;
 	};
 	addIfAvailable(VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME);
 #ifdef _WIN32
 	// Don't import vulkan_win32 just for this constant, so hardcode the string
 	addIfAvailable(VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME);
 #else
-	addIfAvailable(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME);
+	// An overlay application's textures are shared with this device by file descriptor (OverlayTextureShare)
+	externalMemoryFd = addIfAvailable(VK_KHR_EXTERNAL_MEMORY_FD_EXTENSION_NAME) && appInfo.apiVersion >= VK_API_VERSION_1_1;
 #endif
 
 	devCreateInfo.enabledExtensionCount = deviceExtensionsCstr.size();
@@ -158,7 +177,20 @@ TemporaryVk::TemporaryVk()
 	devCreateInfo.queueCreateInfoCount = 1;
 	devCreateInfo.pQueueCreateInfos = &queueInfo;
 
-	if (VkResult vr_ = vkCreateDevice(physicalDevice, &devCreateInfo, nullptr, &device); vr_ != VK_SUCCESS) {
+	if (throughRuntime) {
+		XrVulkanDeviceCreateInfoKHR xrInfo{ XR_TYPE_VULKAN_DEVICE_CREATE_INFO_KHR };
+		xrInfo.systemId = xr_system;
+		xrInfo.pfnGetInstanceProcAddr = &vkGetInstanceProcAddr;
+		xrInfo.vulkanPhysicalDevice = physicalDevice;
+		xrInfo.vulkanCreateInfo = &devCreateInfo;
+		VkResult vr_ = VK_SUCCESS;
+		XrResult xr_ = xr_ext->xrCreateVulkanDeviceKHR(xr_instance, &xrInfo, &device, &vr_);
+		if (XR_FAILED(xr_) || vr_ != VK_SUCCESS) {
+			OOVR_LOGF("Temporary Vulkan device: xrCreateVulkanDeviceKHR failed: %d (Vulkan %d)", (int)xr_, (int)vr_);
+			device = VK_NULL_HANDLE;
+			return;
+		}
+	} else if (VkResult vr_ = vkCreateDevice(physicalDevice, &devCreateInfo, nullptr, &device); vr_ != VK_SUCCESS) {
 		OOVR_LOGF("Temporary Vulkan device: vkCreateDevice failed: %d", (int)vr_);
 		device = VK_NULL_HANDLE;
 		return;

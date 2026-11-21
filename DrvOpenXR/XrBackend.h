@@ -21,6 +21,7 @@
 #include <memory>
 #include <set>
 #include <string>
+#include <thread>
 #include <vector>
 #include <mutex>
 
@@ -66,6 +67,20 @@ public:
 	std::atomic<bool> sessionActive{ false };
 	std::atomic<bool> sessionLost{ false };
 	std::atomic<bool> exitExpected{ false };
+	// The user quit from the runtime: no session is made again
+	std::atomic<bool> quitting{ false };
+	// The session went through STOPPING since it last ran (an EXITING after it is the user quitting)
+	std::atomic<bool> sawStopping{ false };
+	// The game has been told the devices are deactivated (a loss), and not yet that they're back
+	std::atomic<bool> devicesDeactivated{ false };
+	// The instance was lost with the session (XR_ERROR_INSTANCE_LOST, or INSTANCE_LOSS_PENDING): made again first
+	std::atomic<bool> instanceLost{ false };
+	// The instance loss: lost with the session (OnSessionLost)
+	void OnInstanceLost();
+	// The last try to find the system again (RecoverLostSession), and whether the lost session is destroyed yet
+	std::atomic<std::chrono::steady_clock::rep> lastRecoveryTry{ 0 }; // 0 before the first
+	bool lostSessionDestroyed = false;
+	std::mutex recoveryLock;
 	// What the game has been told of the session, as SteamVR tells it: whether it lost input focus (sessionEvents), and
 	// the IPD (NaN until the session's first)
 	std::atomic<bool> inputFocusLost{ false };
@@ -89,15 +104,76 @@ public:
 	// DrvOpenXR::KeepOverlaysInstance
 	void KeepOverlaysInstance();
 
+	/** Why the session is made again (RebuildSession) */
+	enum class RebuildReason {
+		AppGraphics, // the game's first Submit: from the temporary device to the game's own
+		Inputs, // the game's actions, which can only be attached to a session that has none yet
+		Loss, // the runtime lost the session (or one couldn't be made): a new one once the system is back
+	};
+	static const char* RebuildReasonName(RebuildReason reason);
+
 	/**
-	 * The session is gone or going (LOSS_PENDING, an EXITING OpenComposite didn't ask for, or a session restart
-	 * that failed): VREvent_Quit is queued once, and no more frames are begun. There's no reconnecting.
+	 * Makes the session again, under the session lock: never in the middle of a frame (a frame the game has open is
+	 * ended first, as if it had submitted). What the game set on the old session is put back on the new one: its eye
+	 * compositors are made again at its next Submit, the skybox is shown again from the game's texture, and the overlays'
+	 * swapchains are made again from their textures. XR_SUCCESS, or what xrCreateSession answered.
+	 */
+	XrResult RebuildSession(RebuildReason reason);
+
+	/**
+	 * The session is lost (LOSS_PENDING, XR_ERROR_SESSION_LOST, an EXITING the user didn't ask for, or a session that
+	 * couldn't be made): no more frames; the headset and controllers are deactivated, their poses invalid, until
+	 * RecoverLostSession makes a new session. The game isn't told to quit.
 	 */
 	void OnSessionLost();
 	/** Pumps events until done() is true, for at most timeoutMs: whether it was */
 	bool WaitForEvents(const std::function<bool()>& done, int timeoutMs);
-	/** The runtime ends the session on its own: VREvent_DriverRequestedQuit, then OnSessionLost */
+	/**
+	 * The user quit from the runtime (EXITING after STOPPING): VREvent_DriverRequestedQuit and VREvent_Quit, once, and
+	 * no session is made again
+	 */
 	void OnRuntimeQuit();
+	/**
+	 * Whether the game's actions (its manifest's, or legacy input's) and the info set may be attached now: once the
+	 * session is on the game's device (or will stay where it is: a helper program's, or a game whose device can't be
+	 * used). Before that the session restart for its first Submit would follow, and one more for a manifest it loads by
+	 * then. A game that hasn't submitted within kInputsWithoutSubmit of first being asked about gets them all the same.
+	 */
+	static bool InputsMayAttach();
+	static constexpr std::chrono::seconds kInputsWithoutSubmit{ 2 };
+
+	/** Whether the current backend's session is gone (lost, or not made again yet): the devices have no poses */
+	static bool CurrentSessionGone();
+	/** Whether the current backend's session is lost and is to be made again (not the user quitting) */
+	static bool CurrentSessionLost();
+	/** Whether the user quit from the runtime (OnRuntimeQuit): the session isn't made again */
+	bool IsQuitting() const { return quitting; }
+
+	/** What an unasked session state change means for the game */
+	enum class StateOutcome {
+		Ignored,
+		Lost,
+		Quit,
+	};
+	/**
+	 * For a state the session went to: LOSS_PENDING is a loss; EXITING is the user quitting if the session went
+	 * through STOPPING since it last ran (sawStopping), a loss otherwise; neither while OpenLamina ends the session
+	 * itself (exitExpected)
+	 */
+	static StateOutcome OutcomeOfState(XrSessionState state, bool sawStopping, bool exitExpected);
+
+	/** The wait between tries to find the system again after a loss */
+	static constexpr std::chrono::milliseconds kRecoveryInterval{ 1000 };
+	/** Whether a try is due at now: the first at once, then one each kRecoveryInterval (lastTry is {} before the first) */
+	static bool RecoveryDue(std::chrono::steady_clock::time_point lastTry, std::chrono::steady_clock::time_point now);
+
+	/**
+	 * After a loss, on a thread that holds no session lock and no frame: destroys the lost session (once), then about
+	 * once a second asks for the system (xrGetSystem) and, once it's there, makes the session again (RebuildSession);
+	 * the devices are activated again. Retried for as long as it takes; nothing after the user quit. passLock is the
+	 * helper loop's pass lock, taken after the session lock.
+	 */
+	void RecoverLostSession(std::mutex* passLock = nullptr);
 	bool IsSessionLost() const { return sessionLost; }
 	/** The session is lost, not running, or stopping, exiting or about to be lost: nothing can be shown in it any more */
 	bool IsSessionEnded() const
@@ -142,6 +218,17 @@ public:
 	std::shared_ptr<Compositor> MakeOverlayCompositor(ID3D11Texture2D* copy);
 
 	/**
+	 * Where the overlay session's device is Vulkan (Linux): an overlay application's Vulkan or OpenGL texture copied
+	 * into an image of that device that shares its memory with the program's device or context (OverlayTextureShare),
+	 * as a Vulkan texture of the session's device; flipY if its rows run bottom-up. nullptr, with why, if it can't be:
+	 * the texture is read back instead. ReleaseSharedOverlayTexture once the session's copy from it is submitted.
+	 */
+	const vr::VRVulkanTextureData_t* ShareOverlayTexture(const vr::Texture_t* texture, const void* owner, bool* flipY, std::string* why);
+	void ReleaseSharedOverlayTexture(const void* owner);
+	/** A compositor for a texture of the session's own device (ShareOverlayTexture's) */
+	std::shared_ptr<Compositor> MakeSessionOverlayCompositor(const vr::Texture_t* texture);
+
+	/**
 	 * Whether the thread running OpenLamina's frames fills the swapchains drawn from memory (and the pointer's): in an
 	 * overlay application, whose session is on OpenLamina's own device. In a game, the game's thread does, as it uses the
 	 * session's device itself.
@@ -175,8 +262,10 @@ public:
 	 */
 	void StopOwnFrames(bool forGood = false);
 
-	/** Whether OpenLamina runs frames of its own on this session (RunOwnFramesWhile can show something) */
-	bool HasOwnFrames() const { return ownFrames != nullptr; }
+	/** Whether own frames can run on the calling thread now: there are some, and on a session whose frames run only
+	 * inside the game's calls, this is its render thread (OpenGL: the session's context is current here; Vulkan: the
+	 * thread that last waited for a frame, so none before the game's first) */
+	bool OwnFramesHere() const;
 
 	/**
 	 * Runs OpenLamina's own frames on the calling thread while keepGoing() holds (OwnFrameLoop::RunWhile): a blocking
@@ -195,8 +284,22 @@ public:
 	static void VkGetPhysicalDevice(VkInstance instance, VkPhysicalDevice* out);
 #endif
 
+	/** The tracker action is attached: the trackers by role again */
+	void OnTrackerActionAttached() { CreateGenericTrackers(); }
+	/** A new session is being set up: the trackers' spaces are made again in it */
+	void ForgetTrackerSpaces();
+
 private:
 	std::shared_ptr<XrHMD> hmd = std::make_shared<XrHMD>();
+	// The stage's bounds rectangle, asked of the runtime once per session and again after the stage changes
+	// (XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING); under playAreaLock
+	std::mutex playAreaLock;
+	XrSession playAreaSession = XR_NULL_HANDLE;
+	bool playAreaKnown = false;
+	XrExtent2Df playAreaRect{};
+	// Until the stage's change takes effect (its event's changeTime), the bounds are asked each time, not kept
+	XrTime playAreaChangeTime = 0;
+	void ForgetPlayArea(XrTime changeTime = 0);
 	// Replaced when a hand's interaction profile changes, while other threads read input: copied and replaced only
 	// under hands_mutex (Hand), which is held for nothing else
 	std::shared_ptr<XrController> hand_left;
@@ -212,13 +315,26 @@ private:
 	std::shared_mutex generic_trackers_mutex;
 	// The session the trackers' spaces belong to, and the xdev list generation they were made from
 	XrSession generic_trackers_session = XR_NULL_HANDLE;
+	uint64_t generic_trackers_action_generation = 0; // of the tracker action the role trackers' spaces were made from
 	std::atomic<uint64_t> generic_trackers_generation{ UINT64_MAX };
 	std::atomic<int64_t> generic_trackers_polled_ms{ 0 };
 	// Makes the trackers again when the runtime's list of devices has changed (looked at about once a second)
 	void PollGenericTrackers();
 
 	// False if the texture can't be used (logged): no session switch then, or the switch was undone
-	bool CheckOrInitCompositors(const vr::Texture_t* tex);
+	// moveToNewDevice: the session is made again on the texture's device (FollowEyeTextureDevice), once the checks
+	// that can be made before the old session goes down have passed
+	bool CheckOrInitCompositors(const vr::Texture_t* tex, bool moveToNewDevice = false);
+	// The texture is of the session's API (D3D11 or D3D12) but on another device than the session's
+	bool TextureOnOtherDevice(const vr::Texture_t* tex);
+	// Whether an eye texture's device is followed if the game moved to another one (another GPU, or a device made again
+	// after a device loss): move set if it is to be; false if it's on another device and can't be, and the eye is left out
+	bool FollowEyeTextureDevice(const vr::Texture_t* tex, bool& move);
+	// The session is being made again on the device a game moved to: if that fails, the game isn't told to quit
+	std::atomic<bool> rebuildingForNewDevice{ false };
+	std::atomic<int> deviceRebuilds{ 0 };
+	// Makes the temporary graphics device the backend was made with, if there's none: false if it can't be made
+	static bool MakeTemporaryGraphics();
 	std::unique_ptr<Compositor> compositors[XruEyeCount];
 	// The D3D11 mirror texture of each eye (an ID3D11Texture2D of OpenLamina's own on the game's device), which the
 	// game's frames are copied into once it has asked for one (mirrorWanted); under mirrorLock
@@ -237,7 +353,8 @@ private:
 	// next skybox, or let go of with the session. Under skyboxLock.
 	struct Skybox {
 		std::unique_ptr<Compositor> textures[2]; // lat-long textures, one per eye for a stereo pair
-		std::unique_ptr<CpuSwapchain> faces; // six faces, as one lat-long image
+		std::unique_ptr<CpuSwapchain> faces; // six faces, as one lat-long image joined on the CPU
+		std::unique_ptr<Compositor> cube; // six faces, as one lat-long image drawn on the GPU (InvokeCubemap)
 		XrCompositionLayerEquirect2KHR layers[2]{};
 		int layerCount = 0;
 	};
@@ -248,6 +365,17 @@ private:
 	XrCompositionLayerProjection lastProjection{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
 	XrCompositionLayerProjectionView lastProjectionViews[2]{};
 	std::atomic<bool> haveLastProjection{ false };
+	// SubmitFrames shows the game's last frame again if this frame has none of its own (a frame the game didn't submit
+	// to, ended for it)
+	std::atomic<bool> repeatLastFrame{ false };
+	// An OpenGL session's context, which its own frames (run only inside the game's calls) need current; else null
+	std::atomic<const void*> ownFramesGlContext{ nullptr };
+	// The game's OpenGL context on Linux, current when its session's binding was made
+	const void* gameGlContext = nullptr;
+	// A Vulkan session's own frames run inside the game's calls on the thread it renders on (the last to wait for a
+	// frame), where OpenVR may use its queue
+	std::atomic<bool> ownFramesInCalls{ false };
+	std::atomic<std::thread::id> gameFrameThread{};
 	bool SkyboxShown();
 	// The layers of the frame being ended, under frameOwner
 	std::vector<const XrCompositionLayerBaseHeader*> frameLayers;
@@ -269,6 +397,8 @@ private:
 	// A skybox asked for while the session wasn't running, shown at the next frame's start; under pendingSkyboxLock
 	std::mutex pendingSkyboxLock;
 	SkyboxRequest pendingSkybox;
+	// The skybox shown until ClearSkyboxOverride, shown again on a new session (RebuildSession); under pendingSkyboxLock
+	SkyboxRequest shownSkybox;
 	bool EquirectSkyboxAvailable() const;
 	// The session lock held (shared) and the session running
 	IBackend::openvr_enum_t ShowSkybox(const vr::Texture_t* textures, uint32_t count);
@@ -288,10 +418,29 @@ private:
 	void UpdateInteractionProfile();
 
 	/**
-	 * Queries xdevs from MNDX_xdev_space, if the runtime supports it. Ignores HMD & Controllers.
+	 * The Vive trackers by role (XR_HTCX_vive_tracker_interaction, their poses from the tracker action) and the xdevs
+	 * (XR_MNDX_xdev_space) the runtime doesn't also list with a role. Ignores HMD & Controllers.
 	 * These "Generic Trackers" act like an HTC vive tracker, but support no bindings.
 	 */
 	void CreateGenericTrackers();
+	/** The hand's profile as a controller (XR_EXT_hand_interaction's) if hand tracking tracks it (0 left, 1 right),
+	 * null if not */
+	const InteractionProfile* HandWithoutController(int hand);
+	/** Once a second: whether a hand without a controller came or went */
+	bool HandsWithoutControllersChanged();
+	std::atomic<int64_t> handsCheckedMs{ 0 };
+	// The checks in a row each hand without a controller wasn't tracked in, and how many it may miss
+	std::atomic<int> handMisses[2] = { 0, 0 };
+	// Whether each hand's controller is the hand itself, shown because hand tracking tracks it
+	std::atomic<bool> handFromTracking[2] = { false, false };
+	// The Vive trackers the runtime listed, to notice one going (no event says so)
+	std::atomic<uint32_t> viveTrackersListed{ 0 };
+	static constexpr int kHandMissesAllowed = 3;
+	/** The xdevs that are trackers, in a list it makes (null if it can't), each passed to add; those whose lower-case
+	 * serial ends one of byRole (the lower-case persistent paths of the Vive trackers listed by role) are left out;
+	 * false if they can't be listed */
+	bool FindXDevTrackers(XrXDevListMNDX& list, const std::vector<std::string>& byRole,
+	    const std::function<void(XrXDevIdMNDX, const XrXDevPropertiesMNDX&)>& add);
 
 	/**
 	 * Attempts to force the runtime to expose an interaction profile
@@ -306,11 +455,17 @@ private:
 
 	// Whether we've restarted the session to use the application's rendering API yet
 	std::atomic<bool> usingApplicationGraphicsAPI{ false };
+	// When InputsMayAttach was first asked before a Submit (steady_clock ticks; 0 before)
+	std::atomic<std::chrono::steady_clock::rep> inputsFirstAsked{ 0 };
 	// An overlay application's textures, copied onto its session's device
 	std::unique_ptr<class OverlayTextureCopy> overlayCopy;
+#if defined(SUPPORT_VK) && !defined(_WIN32)
+	std::unique_ptr<class OverlayTextureShare> overlayShare;
+#endif
 
 	// A helper program's frame loop (overlay sessions) or event loop (headless ones), made with each session
 	void StartHelperLoop();
+	void StartBackgroundFrames();
 	// Held through each of its passes
 	std::mutex helperPassLock;
 
@@ -353,7 +508,7 @@ private:
 	// waiting for the session lock or for the own frames' thread.
 	std::mutex frameOwner;
 	// A frame was begun (by the game, or SetSkyboxOverride) and not yet ended; under frameOwner
-	bool frameBegun = false;
+	std::atomic<bool> frameBegun{ false };
 	// OpenLamina's frames while the game runs none; created with each session, stopped before it ends
 	std::unique_ptr<OwnFrameLoop> ownFrames;
 	bool ownFramesStopped = false; // for good: OpenLamina is shutting down
@@ -457,4 +612,6 @@ private:
 	// OpenGL or Vulkan frames copied through D3D11, whose device graphicsBinding has (GfxInterop.h)
 	std::unique_ptr<class GfxInterop> gfxInterop;
 	static std::unique_ptr<class TemporaryGraphics> temporaryGraphics;
+	// Which temporary graphics APIs the backend may use
+	inline static bool tmpGfxVulkan = false, tmpGfxD3D11 = false;
 };

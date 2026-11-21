@@ -8,6 +8,7 @@
 #include "logging.h"
 
 #include <chrono>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <string>
@@ -83,6 +84,34 @@ TEST_CASE("Config is read at the first question, not when it's made")
 	std::ofstream(ini.dir / "openlamina.ini") << "supersampleRatio=2\n";
 	CHECK(c.SupersampleRatio() == 1.5f);
 }
+
+#ifndef _WIN32
+// On Linux the user's config folder ($XDG_CONFIG_HOME/openlamina) is read before the working directory, which overrides
+// it key by key
+TEST_CASE("Config user file overridden by the working directory's, key by key")
+{
+	oovr_log_set_test_sink(test_sink);
+	IniInDir ini("supersampleRatio=2\n");
+	std::filesystem::path config = ini.dir / "xdg";
+	std::filesystem::create_directories(config / "openlamina");
+	std::ofstream(config / "openlamina" / "openlamina.ini") << "supersampleRatio=1.5\nlaserMouse=false\n";
+	const char* oldXdg = getenv("XDG_CONFIG_HOME");
+	std::string saved = oldXdg ? oldXdg : "";
+	setenv("XDG_CONFIG_HOME", config.c_str(), 1);
+	{
+		Config c;
+		CHECK(c.SupersampleRatio() == 2.0f);
+		CHECK_FALSE(c.LaserMouse());
+		CHECK(ini.Logged("Checking for user config file"));
+		CHECK(ini.Logged("2 config files read"));
+	}
+	if (oldXdg)
+		setenv("XDG_CONFIG_HOME", saved.c_str(), 1);
+	else
+		unsetenv("XDG_CONFIG_HOME");
+	oovr_log_set_test_sink(nullptr);
+}
+#endif
 
 TEST_CASE("Config scales must be numbers above 0")
 {

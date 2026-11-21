@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstring>
@@ -10,6 +11,7 @@
 #include "../Compositor/compositor_backend.h" // TODO don't import from OCOVR, and remove the "../"
 
 #include <mutex>
+#include <string>
 #include <vector>
 
 typedef unsigned int GLuint;
@@ -150,6 +152,9 @@ class BaseCompositor {
 private:
 	std::shared_ptr<Compositor> overlayReader; // reads SetOverlay's textures back
 	std::atomic<bool> leftEyeSubmitted{ false }, rightEyeSubmitted{ false };
+	// Held through Submit: the eyes' flags are checked and set, and the frame ended, as one step when a game submits
+	// its eyes from two threads
+	std::mutex submitLock;
 
 	// The old compositor window calls (IVRCompositor_005-008) and SetGraphicsDevice (005, 006)
 	bool oldVSync = true;
@@ -172,12 +177,20 @@ private:
 	// True if the current frame has only nullptr textures supplied, and should be ignored
 	std::atomic<bool> isNullRender{ false };
 	std::atomic<int32_t> explicitTimingMode{ 0 };
-	// The game has called PostPresentHandoff: it ends its frames there, not at its second Submit
-	std::atomic<bool> usesPostPresentHandoff{ false };
 	// What the game last set with SetTrackingSpace
 	std::atomic<int> trackingUniverse{ vr::TrackingUniverseStanding };
 
 public:
+	// CompositorDumpImages: whether the eye's next submitted image is wanted, and that image (written to the log
+	// folder as a PNG)
+	static bool _WantsDumpImage(vr::EVREye eye);
+	static void _OfferDumpImage(vr::EVREye eye, const Image& image);
+	// The file an eye's image is dumped to, in that folder, by the process's id
+	static std::string DumpImageName(uint32_t pid, vr::EVREye eye)
+	{
+		return "compositor-dump." + std::to_string(pid) + (eye == vr::Eye_Left ? ".left.png" : ".right.png");
+	}
+
 	// Submitted bounds with a NaN in them are no bounds at all
 	static bool BoundsAreNumbers(const vr::VRTextureBounds_t* bounds)
 	{
@@ -196,7 +209,49 @@ public:
 	static const char* InteropVulkanExtensions(bool device)
 	{
 		return device ? "VK_KHR_external_memory VK_KHR_external_memory_win32 VK_KHR_dedicated_allocation VK_KHR_get_memory_requirements2"
-		              : "VK_KHR_external_memory_capabilities VK_KHR_get_physical_device_properties2";
+		              : "VK_KHR_external_memory_capabilities VK_KHR_external_semaphore_capabilities VK_KHR_get_physical_device_properties2";
+	}
+	// The physical devices GetOutputDevice named: the only ones GetVulkanDeviceExtensionsRequired asks about (a game
+	// may pass anything, and a pointer that isn't a physical device can't be told apart from one)
+	static void NotePhysicalDevice(void* physicalDevice)
+	{
+		std::lock_guard<std::mutex> lock(physicalDevicesLock);
+		if (physicalDevice && physicalDevices.size() < 16
+		    && std::find(physicalDevices.begin(), physicalDevices.end(), physicalDevice) == physicalDevices.end())
+			physicalDevices.push_back(physicalDevice);
+	}
+	static bool KnownPhysicalDevice(void* physicalDevice)
+	{
+		std::lock_guard<std::mutex> lock(physicalDevicesLock);
+		for (void* known : physicalDevices)
+			if (known == physicalDevice)
+				return true;
+		return false;
+	}
+	inline static std::mutex physicalDevicesLock;
+	inline static std::vector<void*> physicalDevices;
+	// The extensions that let the copies through D3D11 be waited for on the GPU (shared fences as semaphores): asked
+	// for only where the game's physical device has them
+	static const char* InteropVulkanSemaphoreExtensions() { return "VK_KHR_external_semaphore VK_KHR_external_semaphore_win32"; }
+	// The names of a space-separated extension list that are among `available`, space separated again, in the list's
+	// order
+	static std::string ExtensionsAmong(const std::string& list, const std::vector<std::string>& available)
+	{
+		std::string out;
+		size_t start = 0;
+		while (start < list.size()) {
+			size_t end = list.find(' ', start);
+			if (end == std::string::npos)
+				end = list.size();
+			const std::string name = list.substr(start, end - start);
+			bool has = false;
+			for (const std::string& a : available)
+				has = has || a == name;
+			if (!name.empty() && has)
+				out += (out.empty() ? "" : " ") + name;
+			start = end + 1;
+		}
+		return out;
 	}
 	// Copies a list into the game's buffer (as much as fits, always ended) and answers the size it needs, as with the
 	// runtime's own lists
@@ -210,11 +265,11 @@ public:
 		}
 		return needed;
 	}
-	// Whether the second eye's Submit ends the frame: not for a game that ends its frames with PostPresentHandoff,
-	// whether it says so in its timing mode or has called it
-	static bool SubmitEndsFrame(int32_t timingMode, bool calledHandoff)
+	// Whether the second eye's Submit ends the frame: not in the timing mode (SetExplicitTimingMode) where the game
+	// ends its frames with PostPresentHandoff
+	static bool SubmitEndsFrame(int32_t timingMode)
 	{
-		return timingMode != (int32_t)VRCompositorTimingMode_Explicit_ApplicationPerformsPostPresentHandoff && !calledHandoff;
+		return timingMode != (int32_t)VRCompositorTimingMode_Explicit_ApplicationPerformsPostPresentHandoff;
 	}
 
 	typedef int ovr_enum_t;
@@ -367,7 +422,8 @@ public:
 	/** Returns true if the mirror window is shown. */
 	bool IsMirrorWindowVisible();
 
-	/** Writes all images that the compositor knows about (including overlays) to a 'screenshots' folder in the SteamVR runtime root. */
+	/** Writes all images that the compositor knows about (including overlays) to a 'screenshots' folder in the SteamVR runtime root.
+	 * Here: each eye's next submitted image, as a PNG in the log folder (DumpImageName). */
 	void CompositorDumpImages();
 
 	/** Let an app know it should be rendering with low resources. */

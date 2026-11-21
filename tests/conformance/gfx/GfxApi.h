@@ -10,13 +10,14 @@
 // In the middle of both, a quarter of each side wide, a mid-grey block (0x80 as an sRGB byte): the corners' 0 and 255
 // are the same in sRGB and linear, the grey isn't, so a conversion that decodes or encodes once too often shows in
 // it. Float and 10-bit formats hold linear values, and get the grey's linear value (0.216). Textures under 8 pixels
-// on a side, and multisampled ones, have the quadrants alone.
+// on a side, and multisampled ones of D3D11, have the quadrants alone (OpenGL's are blitted from a plain one).
 
 #include "callers_support.h"
 
 #include <cmath>
 #include <cstdint>
 #include <cstring>
+#include <functional>
 #include <memory>
 #include <string>
 #include <vector>
@@ -48,14 +49,34 @@ class GfxApi {
 public:
 	// nullptr, with why in *whyNot, when no device of the kind can be made here
 	static std::unique_ptr<GfxApi> Create(GfxKind kind, std::string* whyNot); // WARP for the D3D kinds when no adapter
+	// D3D12 on WARP whether or not there is an adapter (D3D12 has one device per adapter: a second device of another
+	// object than the first is on another adapter); the other kinds as Create
+	static std::unique_ptr<GfxApi> CreateOnWarp(GfxKind kind, std::string* whyNot);
 	// The test pattern (above), w x h, in nativeFormat (the API's own enum value), with samples samples and arraySize
 	// layers: layer i has the pattern of eye (eye + i) % 2, so a layer shown is told from another (multisampled
 	// arrays: each layer the same)
 	virtual GfxTexture Pattern(uint32_t w, uint32_t h, int64_t nativeFormat, int eye, uint32_t samples = 1, uint32_t arraySize = 1) = 0;
 	// A depth texture (32-bit float) filled with value
 	virtual GfxTexture Depth(uint32_t w, uint32_t h, float value) = 0;
+	// OpenGL: a renderbuffer of the pattern (samples > 1: multisampled), its name as the texture's handle, to submit with
+	// Submit_GlRenderBuffer; a texture that wasn't made (null handle) for the other APIs
+	virtual GfxTexture Renderbuffer(uint32_t w, uint32_t h, int64_t nativeFormat, int eye, uint32_t samples)
+	{
+		(void)w, (void)h, (void)nativeFormat, (void)eye, (void)samples;
+		return {};
+	}
+	// Vulkan: queues n clears of a 4096 x 4096 image and returns without waiting, a game's rendering still under way
+	// when it submits; nothing for the other APIs
+	virtual void Busy(int n) { (void)n; }
+	// Vulkan: queues a clear of the texture (made by Pattern) to rgba (0xRRGGBBAA) and returns without waiting
+	virtual void Paint(GfxTexture& tex, uint32_t rgba) { (void)tex, (void)rgba; }
+	// OpenGL: leaves a plain 2D texture bound, as a game's context mostly has one
+	virtual void LeaveTextureBound() {}
 	// Waits until everything the device was asked to do is done
 	virtual void Flush() = 0;
+	// Vulkan: textures made after it are filled on, and name, a second queue of the same family; false (nothing
+	// changed) where the API or the device has none
+	virtual bool UseOtherQueue() { return false; }
 	virtual ~GfxApi() = default;
 };
 
@@ -178,10 +199,14 @@ inline std::vector<uint8_t> PatternTexels(Texels t, uint32_t w, uint32_t h, int 
 
 // gfx/*Gfx.cpp: Vulkan and OpenGL everywhere, the D3D kinds on Windows
 std::unique_ptr<GfxApi> MakeVkGfx(std::string* whyNot);
+// A Vulkan device with the device extensions deviceExtensions names for the instance and physical device made (as a
+// game asks OpenVR's GetVulkanDeviceExtensionsRequired before it makes its device), where the GPU has them
+std::unique_ptr<GfxApi> MakeVkGfxWith(std::string* whyNot,
+    const std::function<std::vector<std::string>(void* instance, void* physicalDevice)>& deviceExtensions);
 std::unique_ptr<GfxApi> MakeGLGfx(std::string* whyNot);
 #ifdef _WIN32
 std::unique_ptr<GfxApi> MakeD3D11Gfx(std::string* whyNot);
-std::unique_ptr<GfxApi> MakeD3D12Gfx(std::string* whyNot);
+std::unique_ptr<GfxApi> MakeD3D12Gfx(std::string* whyNot, bool warpOnly = false);
 std::unique_ptr<GfxApi> MakeD3D10Gfx(std::string* whyNot);
 gfx::Texels TexelsOfDxgi(int64_t format);
 #endif

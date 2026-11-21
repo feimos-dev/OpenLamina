@@ -8,6 +8,7 @@
 #include <atomic>
 #include <cmath>
 #include <cstring>
+#include <deque>
 
 namespace {
 
@@ -169,6 +170,11 @@ XrResult XRAPI_CALL AttachSessionActionSets(XrSession session, const XrSessionAc
 		it->second->attached = true;
 	}
 	s->actionsAttached = true;
+	if (Dump::Enabled()) {
+		Dump& d = GetDump();
+		std::lock_guard<std::mutex> dg(d.lock);
+		d.root["action_attaches"] = d.root["action_attaches"].asUInt64() + 1;
+	}
 	return XR_SUCCESS;
 }
 
@@ -462,6 +468,34 @@ bool RtGazeSpace(const RtSpace* sp, XrPosef* poseInStage, XrSpaceLocationFlags* 
 
 void RtActionsOnFrame(RtSession* s)
 {
+	// XR_HTCX_vive_tracker_interaction: a tracker connects at its frame. XrEventDataViveTrackerConnectedHTCX (not in
+	// the bundled 1.0.12 headers): type, next, then a pointer to the tracker's paths, which stay valid
+	if (RtExtensionEnabled("XR_HTCX_vive_tracker_interaction")) {
+		struct Paths {
+			XrStructureType type;
+			void* next;
+			XrPath persistentPath;
+			XrPath rolePath;
+		};
+		struct Connected {
+			XrStructureType type;
+			const void* next;
+			Paths* paths;
+		};
+		static std::deque<Paths> announced;
+		for (const ScriptViveTracker& t : GetScript().viveTrackers) {
+			if (t.frame != s->framesWaited)
+				continue;
+			announced.push_back({ (XrStructureType)1000103000, nullptr, RtPath(t.persistent), t.role.empty() ? XR_NULL_PATH : RtPath(t.role) });
+			XrEventDataBuffer buf{ XR_TYPE_EVENT_DATA_BUFFER };
+			auto* ev = (Connected*)&buf;
+			ev->type = (XrStructureType)1000103001; // XR_TYPE_EVENT_DATA_VIVE_TRACKER_CONNECTED_HTCX
+			ev->next = nullptr;
+			ev->paths = &announced.back();
+			QueueEvent(buf);
+		}
+	}
+
 	if (!RtExtensionEnabled("XR_EXT_user_presence"))
 		return;
 	for (const ScriptPresence& p : GetScript().presence) {

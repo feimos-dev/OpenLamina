@@ -358,6 +358,28 @@ TEST_CASE("Launch_unknown_key_errors")
 	CHECK(apps.PerformApplicationPrelaunchCheck("oc.test.overlay") == VRApplicationError_None);
 }
 
+#ifndef _WIN32
+// A Windows program can't be started on Linux: refused before it's tried, though the file is there and would run
+TEST_CASE("Windows_binary_refused_on_Linux")
+{
+	TempDir dir;
+	SharedStore store(dir.path / "store");
+	BaseApplications apps(store);
+	fs::path exe = dir.path / "Game.EXE";
+	fs::path marker = dir.path / "started";
+	std::ofstream(exe) << "#!/bin/sh\ntouch \"$1\"\n";
+	fs::permissions(exe, fs::perms::owner_all);
+	std::ofstream(dir.path / "game.vrmanifest") << "{ \"applications\" : [ { \"app_key\" : \"oc.test.windows\", "
+	                                                  "\"binary_path\" : \"Game.EXE\", \"arguments\" : \""
+	                                               << PathToUtf8(marker) << "\" } ] }";
+	REQUIRE(apps.AddApplicationManifest(PathToUtf8(dir.path / "game.vrmanifest").c_str(), true) == VRApplicationError_None);
+	CHECK(apps.LaunchApplication("oc.test.windows") == VRApplicationError_LaunchFailed);
+	std::this_thread::sleep_for(std::chrono::milliseconds(200));
+	CHECK_FALSE(fs::exists(marker));
+	CHECK(apps.GetApplicationProcessId("oc.test.windows") == 0);
+}
+#endif
+
 TEST_CASE("Command_line_split_as_CommandLineToArgvW")
 {
 	using V = std::vector<std::string>;
@@ -1229,3 +1251,165 @@ TEST_CASE("A_quit_request_that_cannot_be_sent_is_undone")
 	CHECK(apps.GetTransitionState() == VRApplicationTransition_None);
 	BaseApplications::SetSceneProcess(store, false);
 }
+
+TEST_CASE("Overlay_command_crosses_between_programs")
+{
+	OcOverlayCommand flag;
+	flag.pid = 4321;
+	flag.handle = 0x1234567890ull;
+	flag.kind = OcOverlayCommand::Flag;
+	flag.flag = 15;
+	flag.enabled = true;
+	std::optional<std::array<uint64_t, 4>> packed = OcPackOverlayCommand(flag);
+	REQUIRE(packed);
+	uint64_t raw[4] = { (*packed)[0], (*packed)[1], (*packed)[2], (*packed)[3] };
+	OcOverlayCommand back = OcUnpackOverlayCommand(raw);
+	CHECK(back.pid == 4321);
+	CHECK(back.handle == 0x1234567890ull);
+	CHECK(back.kind == OcOverlayCommand::Flag);
+	CHECK(back.flag == 15);
+	CHECK(back.enabled);
+
+	OcOverlayCommand alpha;
+	alpha.kind = OcOverlayCommand::Alpha;
+	alpha.number = 0.25f;
+	packed = OcPackOverlayCommand(alpha);
+	REQUIRE(packed);
+	uint64_t rawAlpha[4] = { (*packed)[0], (*packed)[1], (*packed)[2], (*packed)[3] };
+	CHECK(OcUnpackOverlayCommand(rawAlpha).number == 0.25f);
+
+	// An event's type and the first 16 bytes of its data
+	OcOverlayCommand event;
+	event.kind = OcOverlayCommand::Event;
+	event.eventType = vr::VREvent_MouseButtonDown;
+	vr::VREvent_Data_t data{};
+	data.mouse.x = 12.5f;
+	data.mouse.y = 7.0f;
+	data.mouse.button = vr::VRMouseButton_Left;
+	memcpy(event.data, &data, sizeof(event.data));
+	packed = OcPackOverlayCommand(event);
+	REQUIRE(packed);
+	uint64_t rawEvent[4] = { (*packed)[0], (*packed)[1], (*packed)[2], (*packed)[3] };
+	back = OcUnpackOverlayCommand(rawEvent);
+	CHECK(back.eventType == vr::VREvent_MouseButtonDown);
+	vr::VREvent_Data_t got{};
+	memcpy(&got, back.data, sizeof(back.data));
+	CHECK(got.mouse.x == 12.5f);
+	CHECK(got.mouse.y == 7.0f);
+	CHECK(got.mouse.button == vr::VRMouseButton_Left);
+
+	// A type too big to cross isn't packed
+	event.eventType = 1u << 24;
+	CHECK_FALSE(OcPackOverlayCommand(event));
+}
+#ifndef _WIN32
+namespace {
+// A child process that sleeps until it's ended, and its start time once it's running
+pid_t SleepingChild(uint64_t& start)
+{
+	const pid_t child = fork();
+	if (child == 0) {
+		for (;;)
+			pause();
+	}
+	start = 0;
+	for (int i = 0; i < 200 && !start; i++) {
+		start = SharedStore::ProcessStartTime((uint32_t)child);
+		if (!start)
+			std::this_thread::sleep_for(std::chrono::milliseconds(5));
+	}
+	return child;
+}
+
+bool EndedByKill(pid_t child)
+{
+	int status = 0;
+	for (int i = 0; i < 400; i++) {
+		if (waitpid(child, &status, WNOHANG) == child)
+			return WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL;
+		std::this_thread::sleep_for(std::chrono::milliseconds(5));
+	}
+	kill(child, SIGKILL);
+	waitpid(child, &status, 0);
+	return false;
+}
+} // namespace
+
+TEST_CASE("Kill_ends_only_the_process_that_started_then")
+{
+	uint64_t start = 0;
+	const pid_t child = SleepingChild(start);
+	REQUIRE(start != 0);
+	// Another start time: a process that took the pid over, not ended
+	CHECK_FALSE(SharedStore::KillProcess((uint32_t)child, start + 1));
+	CHECK_FALSE(SharedStore::KillProcess((uint32_t)child, 0));
+	CHECK(SharedStore::IsSameProcessAlive((uint32_t)child, start));
+	CHECK(SharedStore::KillProcess((uint32_t)child, start));
+	CHECK(EndedByKill(child));
+}
+
+TEST_CASE("Old_scene_application_ignoring_the_quit_is_ended_after_a_while")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	BaseApplications apps(store);
+	uint64_t start = 0;
+	const pid_t child = SleepingChild(start);
+	REQUIRE(start != 0);
+	// Asked to quit for a launch just now: left running
+	store.Update(StoreDoc::Scene, [&](Json::Value& doc) {
+		doc["pid"] = (uint32_t)child;
+		doc["start"] = (Json::UInt64)start;
+		doc["transition"]["state"] = VRApplicationTransition_OldAppQuitSent;
+		doc["transition"]["app_key"] = "oc.test.next";
+		doc["transition"]["old_pid"] = (uint32_t)child;
+		doc["transition"]["old_start"] = (Json::UInt64)start;
+		doc["transition"]["launch"] = true;
+		doc["transition"]["since_ms"] = NowMs();
+	});
+	CHECK(apps.GetTransitionState() == VRApplicationTransition_OldAppQuitSent);
+	CHECK(SharedStore::IsSameProcessAlive((uint32_t)child, start));
+	// Asked over ten seconds ago and still running: ended
+	store.Update(StoreDoc::Scene, [&](Json::Value& doc) { doc["transition"]["since_ms"] = NowMs() - 11000; });
+	apps.GetTransitionState();
+	CHECK(EndedByKill(child));
+}
+
+TEST_CASE("Only_programs_the_store_knows_are_known_processes")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	uint64_t start = 0;
+	const pid_t child = SleepingChild(start);
+	REQUIRE(start != 0);
+	const std::string name = std::to_string(child);
+	// Not in the store
+	CHECK(store.KnownProcessStart((uint32_t)child) == 0);
+	// Listed with another start time: a process that took the pid over
+	store.Update(StoreDoc::Applications, [&](Json::Value& doc) {
+		doc["pids"][name] = "oc.test.echo";
+		doc["pid_starts"][name] = (Json::UInt64)(start + 1);
+	});
+	CHECK(store.KnownProcessStart((uint32_t)child) == 0);
+	// Listed without one: not known well enough to end
+	store.Update(StoreDoc::Applications, [&](Json::Value& doc) { doc["pid_starts"].removeMember(name); });
+	CHECK(store.KnownProcessStart((uint32_t)child) == 0);
+	// The application's, the scene's or an overlay program's start time
+	store.Update(StoreDoc::Applications, [&](Json::Value& doc) { doc["pid_starts"][name] = (Json::UInt64)start; });
+	CHECK(store.KnownProcessStart((uint32_t)child) == start);
+	store.Update(StoreDoc::Applications, [&](Json::Value& doc) { doc = Json::Value(Json::objectValue); });
+	store.Update(StoreDoc::Scene, [&](Json::Value& doc) {
+		doc["pid"] = (uint32_t)child;
+		doc["start"] = (Json::UInt64)start;
+	});
+	CHECK(store.KnownProcessStart((uint32_t)child) == start);
+	store.Update(StoreDoc::Scene, [&](Json::Value& doc) { doc = Json::Value(Json::objectValue); });
+	store.Update(StoreDoc::Overlays, [&](Json::Value& doc) { doc[name]["start"] = (Json::UInt64)start; });
+	CHECK(store.KnownProcessStart((uint32_t)child) == start);
+	kill(child, SIGKILL);
+	int status = 0;
+	waitpid(child, &status, 0);
+	// Gone: not known any more
+	CHECK(store.KnownProcessStart((uint32_t)child) == 0);
+}
+#endif

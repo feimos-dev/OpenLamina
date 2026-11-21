@@ -4,8 +4,10 @@
 #include "conformance.h"
 
 #include "IVRChaperoneSetup_006.h"
+#include "IVRChaperone_004.h"
 #include "IVRCompositor_029.h"
 #include "IVRInput_011.h"
+#include "IVROverlayView_003.h"
 #include "IVROverlay_028.h"
 #include "IVRSettings_003.h"
 #include "IVRSystem_022.h"
@@ -444,12 +446,28 @@ void DashboardSceneCase(CaseContext& c)
 			} else {
 				r["helper_overlay_visible"] = Json::Value();
 			}
+			// The dashboard's panel itself, read through its key: shown, where the document has it
+			vr::VROverlayHandle_t systemUi = vr::k_ulOverlayHandleInvalid;
+			if (ov && ov->FindOverlay("system.systemui", &systemUi) == vr::VROverlayError_None) {
+				r["systemui_visible"] = ov->IsOverlayVisible(systemUi);
+				vr::HmdMatrix34_t centre{};
+				Json::Value pose;
+				if (ov->GetTransformForOverlayCoordinates(systemUi, vr::TrackingUniverseStanding, { { 0.5f, 0.5f } }, &centre) == vr::VROverlayError_None)
+					for (int i = 0; i < 3; i++)
+						pose["p"].append(centre.m[i][3]);
+				r["systemui_position"] = RoundedPosition(pose);
+				r["systemui_set_refused"] = ov->ShowOverlay(systemUi) != vr::VROverlayError_None;
+			}
 			if (in && trigger != vr::k_ulInvalidActionHandle) {
 				vr::IVRInput_011::InputAnalogActionData_t data{};
 				in->GetAnalogActionData(trigger, &data, sizeof(data), vr::k_ulInvalidInputValueHandle);
 				r["action_active_while_open"] = data.bActive;
 			}
 		}
+		vr::VREvent_t posted{};
+		while (ov && ownDashboard != vr::k_ulOverlayHandleInvalid && ov->PollNextOverlayEvent(ownDashboard, &posted, sizeof(posted)))
+			if (posted.eventType == vr::VREvent_ButtonPress && posted.data.controller.button == 7)
+				r["own_dashboard_posted_event"] = true;
 		app.comp->Submit(vr::Eye_Left, tex.get(), nullptr, vr::Submit_Default);
 		app.comp->Submit(vr::Eye_Right, tex.get(), nullptr, vr::Submit_Default);
 		// At about the display's rate (the stand-in doesn't wait), so the overlay app has time to show the panel
@@ -460,6 +478,10 @@ void DashboardSceneCase(CaseContext& c)
 	r["deactivated"] = deactivated;
 	r["open_at_end"] = StoreDocument("dashboard")["open"];
 	if (ov) {
+		// The width the overlay app set on it, applied here
+		float width = 0;
+		ov->GetOverlayWidthInMeters(ownDashboard, &width);
+		r["own_dashboard_width"] = width;
 		ov->DestroyOverlay(ownPlain);
 		ov->DestroyOverlay(ownDashboard);
 	}
@@ -525,8 +547,18 @@ void DashboardOverlayCase(CaseContext& c)
 			vr::EVROverlayError keyError = vr::VROverlayError_None;
 			ov->GetOverlayKey(games, key, sizeof(key), &keyError);
 			gamesKey = key;
-			// Nothing of another program's overlay can be changed
-			r["game_overlay_set_refused"] = ov->SetOverlayWidthInMeters(games, 3) != vr::VROverlayError_None;
+			// Changed through the game, which applies it: read back from here at once
+			r["game_overlay_set"] = (int)ov->SetOverlayWidthInMeters(games, 0.75f);
+			float width = 0;
+			ov->GetOverlayWidthInMeters(games, &width);
+			r["game_overlay_width_read_back"] = width;
+			// An event for it, which the game polls on it
+			if (auto* view = Interface<vr::IVROverlayView_003::IVROverlayView>(c, "IVROverlayView_003")) {
+				vr::VREvent_t posted{};
+				posted.eventType = vr::VREvent_ButtonPress;
+				posted.data.controller.button = 7;
+				view->PostOverlayEvent(games, &posted);
+			}
 		}
 		if (sawOpen && !open && closedAt == std::chrono::steady_clock::time_point::max())
 			closedAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(200);
@@ -676,9 +708,26 @@ void BoundsCase(CaseContext& c, bool commitRoom)
 	callers::Texture tex(ArgSet::Valid, *c.call);
 	for (int frame = 1; frame <= 30; frame++)
 		SceneFrame(app, tex.get());
+	// The play area the chaperone getters answer: the same one the walls are drawn for
+	Json::Value area;
+	{
+		vr::EVRInitError le = vr::VRInitError_None;
+		auto* chaperone = (vr::IVRChaperone_004::IVRChaperone*)c.core->GetGenericInterface("IVRChaperone_004", &le);
+		if (chaperone) {
+			float x = 0, z = 0;
+			area["ret"] = chaperone->GetPlayAreaSize(&x, &z);
+			area["size"] = Json::Value(Json::arrayValue);
+			area["size"].append(std::round(x * 1000) / 1000);
+			area["size"].append(std::round(z * 1000) / 1000);
+			area["calibration"] = (int)chaperone->GetCalibrationState();
+		}
+	}
 	c.core->Cleanup();
 	Json::Value r;
 	Json::Value dump = ReadStandInDump();
+	// Asked of the runtime once for the session, not every frame
+	area["bounds_rect_calls"] = dump["bounds_rect_calls"];
+	c.Record("play area", area);
 	const Json::Value& layers = dump["layers"];
 	const Json::Value lastFrame = layers.size() ? layers[layers.size() - 1]["frame"] : Json::Value();
 	int walls = 0;
@@ -694,6 +743,63 @@ void BoundsCase(CaseContext& c, bool commitRoom)
 	r["walls"] = walls;
 	r["positions"] = positions;
 	c.Record("walls", r);
+}
+
+// A game that calls WaitGetPoses and never Submit, with an overlay shown: each frame it waited for is ended for it
+// (with the overlay), not left to be discarded
+void WaitWithoutSubmitCase(CaseContext& c)
+{
+	using namespace vr::IVROverlay_028;
+	SceneApp app;
+	if (!OpenSceneApp(c, app))
+		return;
+	Json::Value r;
+	auto* ov = Interface<IVROverlay>(c, "IVROverlay_028");
+	if (ov) {
+		vr::VROverlayHandle_t h = vr::k_ulOverlayHandleInvalid;
+		ov->CreateOverlay("oc.test.wait", "Wait", &h);
+		std::vector<uint8_t> grey(64 * 64 * 4, 0x80);
+		ov->SetOverlayRaw(h, grey.data(), 64, 64, 4);
+		ov->SetOverlayWidthInMeters(h, 0.75f);
+		vr::HmdMatrix34_t m = At(0, 1.5f, -2);
+		ov->SetOverlayTransformAbsolute(h, vr::TrackingUniverseStanding, &m);
+		ov->ShowOverlay(h);
+	}
+	for (int frame = 1; frame <= 30; frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		app.comp->WaitGetPoses(poses, 16, nullptr, 0);
+	}
+	c.core->Cleanup();
+	Json::Value dump = ReadStandInDump();
+	r["frames_ended_at_least_25"] = dump["frames_ended"].asInt64() >= 25;
+	bool quad = false;
+	for (const Json::Value& layer : dump["layers"])
+		quad = quad || (layer["type"].asString() == "quad" && layer["size"].size() == 2 && std::fabs(layer["size"][0].asDouble() - 0.75) < 1e-3);
+	r["overlay_quad"] = quad;
+	r["frame_order_errors"] = dump["frame_order_errors"];
+	c.Record("frames", r);
+}
+
+// A game with legacy input looking for its controllers in its first frames: the frame the right hand's controller
+// is first connected on (scripts/controllers_early.json gives the profile)
+void ControllersEarlyCase(CaseContext& c)
+{
+	SceneApp app;
+	if (!OpenSceneApp(c, app))
+		return;
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	Json::Value r;
+	r["first_frame"] = Json::Value();
+	for (int frame = 1; frame <= 20; frame++) {
+		SceneFrame(app, tex.get());
+		const vr::TrackedDeviceIndex_t right = app.sys->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_RightHand);
+		if (right != vr::k_unTrackedDeviceIndexInvalid && app.sys->IsTrackedDeviceConnected(right)) {
+			r["first_frame"] = frame;
+			break;
+		}
+	}
+	c.core->Cleanup();
+	c.Record("connected", r);
 }
 
 // An overlay application with one overlay from memory and nothing else: no WaitGetPoses, so every frame is
@@ -727,6 +833,57 @@ void OverlayAppCase(CaseContext& c)
 	r["frame_order_errors"] = dump["frame_order_errors"];
 	r["frames_at_least_40"] = dump["frames_ended"].asInt() >= 40;
 	c.Record("frames", r);
+}
+
+// An overlay application whose session (or instance) the runtime loses (xr_failures.py's lost_overlay scripts): its
+// overlay from memory is shown for 2.5 s while it polls its events every 11 ms, and loads the manifest (--manifest)
+// 0.5 s in, while its session is lost. The device events and quits it got, in order, the manifest's answer, and what
+// the stand-in saw: the sessions made and lost, and the last session's frames.
+void OverlayAppLossCase(CaseContext& c)
+{
+	using namespace vr::IVROverlay_028;
+	Json::Value r;
+	r["init"] = (int)c.core->Init(vr::VRApplication_Overlay, nullptr);
+	if (r["init"].asInt() != vr::VRInitError_None) {
+		c.Record("loss", r);
+		return;
+	}
+	auto* ov = Interface<IVROverlay>(c, "IVROverlay_028");
+	auto* sys = Interface<vr::IVRSystem_022::IVRSystem>(c, "IVRSystem_022");
+	Json::Value events(Json::arrayValue);
+	if (ov && sys) {
+		vr::VROverlayHandle_t h = vr::k_ulOverlayHandleInvalid;
+		ov->CreateOverlay("oc.helper.loss", "Helper", &h);
+		std::vector<uint8_t> grey(64 * 64 * 4, 0x80);
+		ov->SetOverlayRaw(h, grey.data(), 64, 64, 4);
+		vr::HmdMatrix34_t m = At(0, 1.5f, -2);
+		ov->SetOverlayTransformAbsolute(h, vr::TrackingUniverseStanding, &m);
+		ov->ShowOverlay(h);
+		const auto start = std::chrono::steady_clock::now();
+		const auto end = start + std::chrono::milliseconds(2500);
+		bool manifestLoaded = false;
+		while (std::chrono::steady_clock::now() < end) {
+			if (!manifestLoaded && !c.manifest.empty() && std::chrono::steady_clock::now() >= start + std::chrono::milliseconds(500)) {
+				manifestLoaded = true;
+				auto* in = Interface<vr::IVRInput_011::IVRInput>(c, "IVRInput_011");
+				r["manifest"] = in ? (int)in->SetActionManifestPath(c.manifest.c_str()) : -1;
+			}
+			vr::VREvent_t ev{};
+			while (sys->PollNextEvent(&ev, sizeof(ev))) {
+				if (ev.eventType == vr::VREvent_TrackedDeviceActivated || ev.eventType == vr::VREvent_TrackedDeviceDeactivated
+				    || ev.eventType == vr::VREvent_Quit || ev.eventType == vr::VREvent_DriverRequestedQuit)
+					events.append((int)ev.eventType);
+			}
+			std::this_thread::sleep_for(std::chrono::milliseconds(11));
+		}
+		ov->DestroyOverlay(h);
+	}
+	c.core->Cleanup();
+	r["events"] = events;
+	Json::Value dump = ReadStandInDump();
+	for (const char* key : { "sessions_created", "sessions_lost", "instances_created", "instances_lost", "frames_ended" })
+		r[key] = dump[key];
+	c.Record("loss", r);
 }
 
 // An overlay application's textures of each API, at once: each is copied onto OpenLamina's own D3D11 device (the
@@ -1045,6 +1202,9 @@ const std::map<std::string, CaseFn>& conformance::HelperCases()
 {
 	static const std::map<std::string, CaseFn> cases = {
 		{ "overlay-app", OverlayAppCase },
+		{ "controllers-early", ControllersEarlyCase },
+		{ "wait-without-submit", WaitWithoutSubmitCase },
+		{ "overlay-app-loss", OverlayAppLossCase },
 		{ "overlay-app-two-apis", [](CaseContext& c) {
 			 OverlayAppTexturesCase(c, "textures", { { GfxKind::D3D11, 29, "d3d11" }, { GfxKind::D3D12, 29, "d3d12" } });
 		 } },

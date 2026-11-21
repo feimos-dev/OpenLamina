@@ -643,7 +643,11 @@ struct CompressedHeader {
 	uint32_t count;
 };
 static_assert(sizeof(CompressedHeader) == 12, "the compressed header is 12 bytes");
+// The first byte of the 2-byte header; the second has the space in its low four bits and the range in its high four
+constexpr uint8_t kCompressedTag = 0xB1;
 static_assert(sizeof(VRBoneTransform_t) == 32, "a bone is 32 bytes");
+// The older layout's size: CompressedHeader then the bones, still read
+constexpr uint32_t kOldCompressedBonesSize = sizeof(CompressedHeader) + eBone_Count * sizeof(VRBoneTransform_t);
 
 } // namespace
 
@@ -687,9 +691,9 @@ uint32_t CompressBones(OOVR_EVRSkeletalTransformSpace space, EVRSkeletalMotionRa
 {
 	if (!out || outSize < kCompressedBonesSize || !bones31)
 		return kCompressedBonesSize;
-	CompressedHeader header = { { 'O', 'C', 'S', 'K' }, 1, (uint8_t)space, (uint8_t)range, eBone_Count };
-	// Every platform OpenComposite builds for is little-endian, so the structs go as they are
-	memcpy(out, &header, sizeof(header));
+	// Every platform OpenComposite builds for is little-endian, so the bones go as they are
+	uint8_t header[2] = { kCompressedTag, (uint8_t)(((uint8_t)space & 0xF) | (((uint8_t)range & 0xF) << 4)) };
+	memcpy(out, header, sizeof(header));
 	memcpy((uint8_t*)out + sizeof(header), bones31, sizeof(VRBoneTransform_t) * eBone_Count);
 	return kCompressedBonesSize;
 }
@@ -699,16 +703,29 @@ EVRInputError DecompressBones(const void* in, uint32_t size, std::optional<OOVR_
 {
 	if (!in || !out31)
 		return VRInputError_InvalidParam;
-	CompressedHeader header;
-	if (size != kCompressedBonesSize)
+	uint8_t storedValue;
+	size_t bonesAt;
+	if (size == kCompressedBonesSize) {
+		const uint8_t* header = (const uint8_t*)in;
+		if (header[0] != kCompressedTag)
+			return VRInputError_InvalidCompressedData;
+		storedValue = header[1] & 0xF;
+		bonesAt = 2;
+	} else if (size == kOldCompressedBonesSize) {
+		CompressedHeader header;
+		memcpy(&header, in, sizeof(header));
+		if (memcmp(header.magic, "OCSK", 4) != 0 || header.version != 1 || header.count != eBone_Count)
+			return VRInputError_InvalidCompressedData;
+		storedValue = header.space;
+		bonesAt = sizeof(header);
+	} else {
 		return VRInputError_InvalidCompressedData;
-	memcpy(&header, in, sizeof(header));
-	if (memcmp(header.magic, "OCSK", 4) != 0 || header.version != 1 || header.count != eBone_Count
-	    || (header.space != VRSkeletalTransformSpace_Model && header.space != VRSkeletalTransformSpace_Parent))
+	}
+	if (storedValue != VRSkeletalTransformSpace_Model && storedValue != VRSkeletalTransformSpace_Parent)
 		return VRInputError_InvalidCompressedData;
 
-	memcpy(out31, (const uint8_t*)in + sizeof(header), sizeof(VRBoneTransform_t) * eBone_Count);
-	OOVR_EVRSkeletalTransformSpace space = (OOVR_EVRSkeletalTransformSpace)header.space;
+	memcpy(out31, (const uint8_t*)in + bonesAt, sizeof(VRBoneTransform_t) * eBone_Count);
+	OOVR_EVRSkeletalTransformSpace space = (OOVR_EVRSkeletalTransformSpace)storedValue;
 	if (storedSpace)
 		*storedSpace = space;
 	if (wanted && *wanted != space) {

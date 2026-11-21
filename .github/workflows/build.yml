@@ -63,7 +63,7 @@ jobs:
           ${{ matrix.tests && '-Tests' || '' }}
 
       # Every OpenVR interface version Valve has shipped is offered or set aside with a reason (offline: it compares
-      # interfaces.txt with the source)
+      # interfaces.txt with the source), and how_real.txt is what the source gives
       - name: Interface inventory
         if: matrix.tests && matrix.arch == 'x64'
         run: python scripts/openvr_inventory.py --check
@@ -135,13 +135,25 @@ jobs:
           # Formats the runtime doesn't offer (it has RGBA8 sRGB only), converted into the one it has
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases gfx-d3d11-formats,gfx-d3d12-formats,gfx-vk-formats,gfx-gl-formats --script tests/conformance/scripts/gfx_rgba8_only.json --expect tests/conformance/expect/gfx_formats.json --allow-skip ".*-(vk|gl)(-.*)?" --out conformance/gfx-formats
           if ($LASTEXITCODE) { $failed++ }
+          # Vulkan multisampled textures (resolved), a second queue and dynamic resolution; needs a Vulkan driver
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases gfx-vk-odd,gfx-vk-dynamic-resolution,gfx-vk-msaa-formats --script tests/conformance/scripts/gfx_vk_odd.json --expect tests/conformance/expect/gfx_vk_odd.json --allow-skip "gfx-vk-.*" --out conformance/gfx-vk-odd
+          if ($LASTEXITCODE) { $failed++ }
+          # A game that makes its device again mid-run: the session follows it, or the frames are left out when the
+          # runtime refuses the new device
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases gfx-d3d11-new-device,gfx-d3d11-eyes-two-devices,gfx-d3d12-new-device,gfx-vk-new-device --script tests/conformance/scripts/gfx_all_apis.json --expect tests/conformance/expect/gfx_new_device.json --allow-skip "gfx-(vk|d3d12)-new-device" --out conformance/gfx-new-device
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases gfx-d3d11-new-device,gfx-d3d12-new-device,gfx-vk-new-device --script tests/conformance/scripts/gfx_new_device_refused.json --expect tests/conformance/expect/gfx_new_device_refused.json --allow-skip "gfx-(vk|d3d12)-new-device" --out conformance/gfx-new-device-refused
+          if ($LASTEXITCODE) { $failed++ }
           # The pose and depth a frame was submitted with: used with useSubmittedPose and submitDepth on, not without
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases gfx-d3d11-pose-depth,gfx-d3d12-pose-depth,gfx-vk-pose-depth,gfx-gl-pose-depth --script tests/conformance/scripts/gfx_depth.json --ini tests/conformance/ini/pose_depth.ini --expect tests/conformance/expect/gfx_pose_depth.json --allow-skip ".*-(vk|gl)(-.*)?" --out conformance/gfx-pose-depth
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases gfx-d3d11-pose-depth,gfx-d3d12-pose-depth,gfx-vk-pose-depth,gfx-gl-pose-depth --script tests/conformance/scripts/gfx_depth.json --expect tests/conformance/expect/gfx_pose_depth_off.json --allow-skip ".*-(vk|gl)(-.*)?" --out conformance/gfx-pose-depth-off
           if ($LASTEXITCODE) { $failed++ }
           # OpenGL and Vulkan frames through D3D11 where the runtime has D3D11 alone (they skip without those drivers)
-          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases gfx-gl-interop,gfx-vk-interop,gfx-gl-interop-bounds,gfx-vk-interop-bounds --expect tests/conformance/expect/gfx_interop.json --allow-skip "gfx-(vk|gl)-.*" --out conformance/gfx-interop
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases gfx-gl-interop,gfx-vk-interop,gfx-gl-interop-bounds,gfx-vk-interop-bounds,gfx-gl-interop-odd,gfx-vk-interop-odd,gfx-vk-interop-gpu-wait --expect tests/conformance/expect/gfx_interop.json --allow-skip "gfx-(vk|gl)-.*" --out conformance/gfx-interop
+          if ($LASTEXITCODE) { $failed++ }
+          # OpenGL and Vulkan formats through the interop, copied into D3D11 and converted into the runtime's one format
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases gfx-gl-interop-formats,gfx-vk-interop-formats --script tests/conformance/scripts/gfx_interop_rgba8_only.json --expect tests/conformance/expect/gfx_interop_formats.json --allow-skip "gfx-(vk|gl)-.*" --out conformance/gfx-interop-formats
           if ($LASTEXITCODE) { $failed++ }
           # The events SteamVR sends for session changes: with sessionEvents all of them, without it only the IPD's and the quit
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases session-events --script tests/conformance/scripts/session_events.json --ini tests/conformance/ini/session_events.ini --expect tests/conformance/expect/session_events.json --out conformance/session-events
@@ -158,6 +170,18 @@ jobs:
           if ($LASTEXITCODE) { $failed++ }
           # A bound source that isn't an input path: GetActionBindingInfo leaves it out
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases binding-info --script tests/conformance/scripts/bound_source_odd.json --manifest tests/unit/data/manifest_toggle.json --expect tests/conformance/expect/binding_info.json --out conformance/binding-info
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases binding-info --script tests/conformance/scripts/bound_source_odd.json --manifest tests/unit/data/manifest_haptic_no_bindings.json --expect tests/conformance/expect/binding_info_runtime.json --out conformance/binding-info-runtime
+          if ($LASTEXITCODE) { $failed++ }
+          # Vive trackers by their role: a device per role, and a pose action a tracker's binding file binds read from it
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases vive-trackers --script tests/conformance/scripts/vive_trackers.json --manifest tests/unit/data/manifest_trackers.json --expect tests/conformance/expect/vive_trackers.json --out conformance/vive-trackers
+          if ($LASTEXITCODE) { $failed++ }
+          # The hands as controllers: through XR_EXT_hand_interaction, with hand tracking alone, and shown as Touch controllers
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases hand-controllers --script tests/conformance/scripts/hand_interaction.json --manifest tests/unit/data/manifest_trackers.json --expect tests/conformance/expect/hand_controllers.json --out conformance/hand-controllers
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases hand-controllers --script tests/conformance/scripts/hand_tracking_only.json --manifest tests/unit/data/manifest_trackers.json --expect tests/conformance/expect/hand_controllers_tracking.json --out conformance/hand-controllers-tracking
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases hand-controllers --script tests/conformance/scripts/hand_interaction.json --manifest tests/unit/data/manifest_trackers.json --ini tests/conformance/ini/hand_controller_touch.ini --expect tests/conformance/expect/hand_controllers_touch.json --out conformance/hand-controllers-touch
           if ($LASTEXITCODE) { $failed++ }
           # The compositor's calls with every graphics API offered: the Vulkan extension lists with a null buffer
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --only "IVRCompositor_0(19|2[0-9])" --script tests/conformance/scripts/gfx_all_apis.json --out conformance/compositor-all-apis
@@ -191,7 +215,7 @@ jobs:
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases display-frequency --script tests/conformance/scripts/display_120.json --expect tests/conformance/expect/display_frequency_measured.json --out conformance/display-frequency-measured
           if ($LASTEXITCODE) { $failed++ }
           # OpenLamina's own frames while the game stalls, also while another thread reads input
-          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases own-frames,own-frames-race,own-frames-nothing-shown,own-frames-overlay-churn --repeat 5 --jobs 2 --ini tests/conformance/ini/own_frames.ini --expect tests/conformance/expect/own_frames.json --out conformance/own-frames
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases own-frames,own-frames-race,own-frames-nothing-shown,own-frames-overlay-churn,own-frames-fade --repeat 5 --jobs 2 --ini tests/conformance/ini/own_frames.ini --expect tests/conformance/expect/own_frames.json --out conformance/own-frames
           if ($LASTEXITCODE) { $failed++ }
           # Overlay and background applications on overlay and headless sessions (a background one only while a game
           # runs), and their refusals without them
@@ -254,7 +278,7 @@ jobs:
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --shipped-defaults --cases gfx-d3d11-pose-depth,gfx-d3d12-pose-depth,gfx-vk-pose-depth,gfx-gl-pose-depth --script tests/conformance/scripts/gfx_depth.json --expect tests/conformance/expect/gfx_pose_depth.json --allow-skip ".*-(vk|gl)(-.*)?" --out conformance/defaults-pose-depth
           if ($LASTEXITCODE) { $failed++ }
-          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --shipped-defaults --cases own-frames,own-frames-race,own-frames-nothing-shown,own-frames-overlay-churn --repeat 2 --jobs 2 --expect tests/conformance/expect/own_frames.json --out conformance/defaults-own-frames
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --shipped-defaults --cases own-frames,own-frames-race,own-frames-nothing-shown,own-frames-overlay-churn,own-frames-fade --repeat 2 --jobs 2 --expect tests/conformance/expect/own_frames.json --out conformance/defaults-own-frames
           if ($LASTEXITCODE) { $failed++ }
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --shipped-defaults --cases message-overlay --script tests/conformance/scripts/message_box.json --expect tests/conformance/expect/message_overlay.json --out conformance/defaults-message-overlay
           if ($LASTEXITCODE) { $failed++ }
@@ -272,7 +296,7 @@ jobs:
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases keyboard --script tests/conformance/scripts/keyboard.json --ini tests/conformance/ini/keyboard_us.ini --expect tests/conformance/expect/keyboard.json --out conformance/keyboard
           if ($LASTEXITCODE) { $failed++ }
           # The compositor's statistics, timing and poses per frame
-          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases compositor-stats,mirror --script tests/conformance/scripts/gfx_all_apis.json --ini tests/conformance/ini/mirror_window.ini --expect tests/conformance/expect/compositor.json --out conformance/compositor-stats
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases compositor-stats,mirror,mirror-flipped --script tests/conformance/scripts/gfx_all_apis.json --ini tests/conformance/ini/mirror_window.ini --expect tests/conformance/expect/compositor.json --out conformance/compositor-stats
           if ($LASTEXITCODE) { $failed++ }
           # Without mirrorWindow no window is shown; the mirror texture is given all the same
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases mirror --script tests/conformance/scripts/gfx_all_apis.json --expect tests/conformance/expect/mirror_window_off.json --out conformance/mirror-window-off
@@ -341,6 +365,7 @@ jobs:
         run: |
           python3 tests/conformance/list_games.py --self-test
           python3 tests/conformance/regress.py --self-test
+          python3 scripts/openvr_inventory.py --self-test
 
       # The library, the tests and the unit tests
       - name: Build
@@ -369,6 +394,66 @@ jobs:
           name: linux-${{ matrix.arch }}
           path: build/bin/${{ matrix.lib }}
           if-no-files-found: error
+
+  # Build variants, x64: the C++ library's assertions on (-D_GLIBCXX_ASSERTIONS: bounds and preconditions checked, a
+  # failure aborts), with the stand-in runtime's tests and every conformance run; and the system's OpenXR loader,
+  # jsoncpp and glm (USE_SYSTEM_OPENXR, USE_SYSTEM_GLM), as a distribution would build it, with the unit and stand-in
+  # runtime tests
+  linux-variants:
+    name: Linux x64, ${{ matrix.variant }}
+    runs-on: ubuntu-24.04
+    container: ubuntu:24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - variant: assertions
+            cxxflags: -D_GLIBCXX_ASSERTIONS
+            cmake: ''
+            packages: ''
+            conformance: true
+          - variant: system libraries
+            cxxflags: ''
+            cmake: -DUSE_SYSTEM_OPENXR=ON -DUSE_SYSTEM_GLM=ON
+            packages: libopenxr-dev libjsoncpp-dev libglm-dev
+            conformance: false
+    steps:
+      - name: Build tools
+        env:
+          PACKAGES: ${{ matrix.packages }}
+        run: |
+          apt-get update
+          # shellcheck disable=SC2086 # PACKAGES is a list
+          DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
+            ca-certificates git g++ cmake make automake autoconf libtool python3 libgl-dev libvulkan-dev \
+            xvfb xauth mesa-vulkan-drivers libgl1-mesa-dri libglx-mesa0 $PACKAGES
+
+      - uses: actions/checkout@v7
+        with:
+          submodules: recursive
+
+      - name: Build
+        env:
+          CXXFLAGS: ${{ matrix.cxxflags }}
+          OC_CMAKE_ARGS: ${{ matrix.cmake }}
+        run: sh scripts/ci/build-linux.sh --tests x64 build "$GITHUB_SHA ($GITHUB_REF_NAME)"
+
+      - name: Stand-in runtime
+        run: xvfb-run -a ctest --test-dir build -L runtime --output-on-failure
+
+      - name: Conformance
+        if: matrix.conformance
+        run: xvfb-run -a sh scripts/ci/conformance-linux.sh x64 build conformance
+
+      - uses: actions/upload-artifact@v7
+        if: always() && matrix.conformance
+        with:
+          name: conformance-linux-x64-${{ matrix.variant }}
+          path: |
+            conformance/*/summary.txt
+            conformance/*/results.json
+            conformance/**/logs/
 
   # OpenLamina on Monado's simulated headset (built from source, at MONADO_REF), headless: monado-service with the
   # simulated driver and the null compositor, on Mesa's lavapipe
@@ -413,6 +498,7 @@ jobs:
       # Nothing may end, crash or hang on Monado (no baseline: its answers are its own). On lavapipe no session starts:
       # Monado asks for VK_KHR_external_semaphore_fd and VK_KHR_external_fence_fd, which lavapipe lacks, so OpenLamina's
       # own Vulkan device can't be made and every Init answers as without a headset. The notice says how many started.
+      # Lavapipe is Mesa's only software Vulkan driver, and Ubuntu 24.04's (Mesa 25.2) lacks both: nothing to switch to.
       - name: Conformance
         run: |
           export XDG_RUNTIME_DIR="$RUNNER_TEMP/xdg"

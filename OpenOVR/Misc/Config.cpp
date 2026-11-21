@@ -9,6 +9,11 @@
 #include <filesystem>
 #include <string>
 
+#ifndef _WIN32
+#include <cstdlib>
+#include <dlfcn.h>
+#endif
+
 using vr::HmdColor_t;
 
 Config oovr_global_configuration;
@@ -153,6 +158,17 @@ static string parse_layout(string orig, string name, int line)
 	return val;
 }
 
+// handController: knuckles, oculus_touch, vive_controller or off
+static string parse_handController(string orig, string name, int line)
+{
+	string val = str_tolower(orig);
+	if (val != "knuckles" && val != "oculus_touch" && val != "vive_controller" && val != "off") {
+		BAD_VALUE("Value " + orig + " for " + name + " on line " + to_string(line) + " is none of knuckles, oculus_touch, vive_controller and off");
+	}
+	OOVR_LOGF("Setting config param %s to %s", name.c_str(), val.c_str());
+	return val;
+}
+
 int Config::ini_handler(void* user, const char* pSection,
     const char* pName, const char* pValue,
     int lineno)
@@ -208,6 +224,7 @@ int Config::ini_handler(void* user, const char* pSection,
 			return true;
 		}
 		CFGOPT(layout, keyboardLayout);
+		CFGOPT(handController, handController);
 
 		// Accepted and ignored: Direct3D 10 textures are told apart from Direct3D 11 ones by their interface
 		if (name == "dx10Mode") {
@@ -278,48 +295,77 @@ const Config& Config::Loaded() const
 	return *this;
 }
 
+#ifndef _WIN32
+// The folder of the library's openlamina.ini on Linux: the library's own (bin/), or its parent when the library is in
+// bin/linux64/, so both word sizes of an install read the same bin/openlamina.ini
+static std::filesystem::path linux_library_ini_dir()
+{
+	Dl_info info{};
+	if (!dladdr((void*)&linux_library_ini_dir, &info) || !info.dli_fname || !*info.dli_fname)
+		return {};
+	std::error_code ec;
+	std::filesystem::path dir = std::filesystem::absolute(info.dli_fname, ec).parent_path();
+	if (ec)
+		return {};
+	if (dir.filename() == "linux64")
+		dir = dir.parent_path();
+	return dir;
+}
+
+// $XDG_CONFIG_HOME/openlamina, ~/.config/openlamina when it isn't set (or isn't absolute, as the XDG spec says)
+static std::filesystem::path linux_user_ini_dir()
+{
+	const char* xdg = getenv("XDG_CONFIG_HOME");
+	if (xdg && xdg[0] == '/')
+		return std::filesystem::path(xdg) / "openlamina";
+	const char* home = getenv("HOME");
+	if (home && home[0] == '/')
+		return std::filesystem::path(home) / ".config" / "openlamina";
+	return {};
+}
+#endif
+
 void Config::Read()
 {
-	// If we're on Windows, look for a config file next to the DLL
-	// If we're on Linux, skip that and just check the working directory.
-	int err = -1;
+	// Each file read overrides, key by key, what the ones before it set: on Windows the one next to the DLL, on Linux
+	// the install's bin/ and then the user's config folder; then, on both, the working directory's
+	int found = 0;
+	auto read = [&](const char* what, const std::filesystem::path& dir) {
+		if (dir.empty()) {
+			OOVR_LOGF("No %s config file: its folder isn't known", what);
+			return;
+		}
+		OOVR_LOGF("Checking for %s config file...", what);
+		int err = wini_parse_in(dir, ini_handler, this);
+		if (err == -1)
+			return;
+		found++;
+		if (err > 0) {
+			// err is the line number of the first line ini_parse couldn't read; it read the rest
+			OOVR_LOGF("Warning: the %s config file can't be read on line %d; that line is ignored", what, err);
+		}
+	};
+
 #ifdef _WIN32
 	wchar_t buffer[MAX_PATH];
 	DWORD len = GetModuleFileNameW(HINST_THISCOMPONENT, buffer, MAX_PATH);
-	if (len) {
-		OOVR_LOG("Checking for global config file...");
-		err = wini_parse_in(std::filesystem::path(std::wstring(buffer, len)).parent_path(), ini_handler, this);
-	}
+	if (len)
+		read("global", std::filesystem::path(std::wstring(buffer, len)).parent_path());
+#else
+	read("global", linux_library_ini_dir());
+	read("user", linux_user_ini_dir());
 #endif
 
-	if (err > 0) {
-		// err is the line number of the first line ini_parse couldn't read; it read the rest
-		OOVR_LOGF("Warning: the config file can't be read on line %d; that line is ignored", err);
-	}
+	std::error_code ec;
+	std::filesystem::path workingDir = std::filesystem::current_path(ec);
+	if (!ec)
+		read("app specific", workingDir);
+	else
+		OOVR_LOG("Couldn't get the working directory, so there's no app specific config file");
 
-	{
-		// The working directory's file overrides, key by key, what the first one set
-		std::error_code ec;
-		std::filesystem::path workingDir = std::filesystem::current_path(ec);
-		if (!ec) {
-			OOVR_LOG("Checking for app specific config file...");
-			err = wini_parse_in(workingDir, ini_handler, this);
-		} else {
-			OOVR_LOG("Couldn't get the working directory, so there's no app specific config file");
-			err = -1;
-		}
-	}
-
-	if (err == -1) {
-		// Couldn't open file, no problen since the config file is optional and
-		//  the defaults are set up as the default values for the variables
-		return;
-	} else if (err) {
-		// err is the line number of the first line ini_parse couldn't read; it read the rest
-		OOVR_LOGF("Warning: the config file can't be read on line %d; that line is ignored", err);
-	}
-
-	// Everything should have been set up by ini_handler
+	// No file is no problem: the options are optional, and keep their defaults
+	if (found > 1)
+		OOVR_LOGF("%d config files read; each later one overrides the keys it sets", found);
 }
 
 Config::~Config()

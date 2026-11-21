@@ -16,6 +16,9 @@ namespace Json {
 class Value;
 }
 
+// The SteamVR version GetRuntimeVersion answers: one new enough that games checking for features don't turn them off
+constexpr const char* OPENVR_RUNTIME_VERSION = "2.15.6";
+
 class BaseSystem {
 	// Copied from IVRSystem, because MSVC made me.
 
@@ -53,6 +56,8 @@ private:
 	std::recursive_mutex inputSystemLock;
 	// The input system, looked for (and made, with create) the first time; under inputSystemLock
 	std::shared_ptr<class BaseInput> InputSystem(bool create);
+	// For a program that submits no scene frames (an overlay or background app): brings its controllers up
+	void InputWithoutFrames();
 
 	std::atomic<uint64_t> frameNumber{ 0 };
 

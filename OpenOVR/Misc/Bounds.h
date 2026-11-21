@@ -27,6 +27,11 @@ struct BoundsWall {
 // committed room setup (the store's Chaperone document), else 0 by 0
 XrExtent2Df BoundsPlayArea(const XrExtent2Df* runtime, const Json::Value& chaperoneDoc);
 
+// The play area OpenLamina answers with everywhere (IVRChaperone's getters, GetCalibrationState and the drawn
+// bounds): BoundsPlayArea of the OpenXR runtime's stage bounds (asked of it once per session and after the stage
+// changes) and the store's committed room setup. 0 by 0 without either.
+XrExtent2Df CurrentPlayArea();
+
 // The walls to draw for a play area width (X) by depth (Z), given the tracked points in the stage. With preview (a
 // room setup tool's ShowWorkingSetPreview), every wall, whole, wherever the points are.
 std::vector<BoundsWall> BoundsWalls(float width, float depth, const std::vector<XrVector3f>& points, bool preview = false);

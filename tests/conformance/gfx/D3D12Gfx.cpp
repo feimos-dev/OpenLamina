@@ -219,7 +219,7 @@ public:
 
 } // namespace
 
-std::unique_ptr<GfxApi> MakeD3D12Gfx(std::string* whyNot)
+std::unique_ptr<GfxApi> MakeD3D12Gfx(std::string* whyNot, bool warpOnly)
 {
 	auto g = std::make_unique<D3D12Gfx>();
 	IDXGIFactory4* factory = nullptr;
@@ -228,7 +228,7 @@ std::unique_ptr<GfxApi> MakeD3D12Gfx(std::string* whyNot)
 		return nullptr;
 	}
 	IDXGIAdapter1* adapter = nullptr;
-	if (factory->EnumAdapters1(0, &adapter) == S_OK) {
+	if (!warpOnly && factory->EnumAdapters1(0, &adapter) == S_OK) {
 		if (FAILED(D3D12CreateDevice(adapter, D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&g->device))))
 			g->device = nullptr;
 		adapter->Release();

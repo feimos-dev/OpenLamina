@@ -16,6 +16,7 @@
 #include "Misc/backtrace.h"
 #include "logging.h"
 #include "steamvr_abi.h"
+#include <cstdlib>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -277,9 +278,34 @@ VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal(EVRInitError* peError, EVRAppl
 	return VR_InitInternal2(peError, eApplicationType, NULL);
 }
 
+void oc_abandon_at_exit()
+{
+	// Not under state_mutex: a thread the process's end stopped may hold it
+	if (!running)
+		return;
+	(void)new std::map<std::string, correct_layout_unique>(std::move(interfaces));
+	BackendManager::Abandon();
+}
+
+#ifndef _WIN32
+// A game exiting without VR_Shutdown: runs before the static destructors of the bundled OpenXR loader and of the
+// runtime, which the session's teardown still calls into. Registered per session, as the runtime's statics are made
+// anew each time it is loaded.
+static void ShutdownAtExit()
+{
+	std::lock_guard<std::recursive_mutex> lock(state_mutex);
+	if (!running)
+		return;
+	OOVR_LOG("The program is exiting without VR_Shutdown: shutting OpenLamina down");
+	scene_init_count = 1;
+	refused_init_count = 0;
+	VR_ShutdownInternal();
+}
+#endif
+
 VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(EVRInitError* peError, EVRApplicationType eApplicationType, const char* pStartupInfo)
 {
-	OOVR_LOG_ONCEF("Initializing OpenLamina, a fork of OpenComposite (github.com/feimos-dev/OpenLamina) - revision %s", OC_VERSION);
+	OOVR_LOG_ONCEF("Initializing OpenLamina, a fork of OpenComposite (github.com/feimos-dev/OpenLamina) - revision %s, answering as OpenVR runtime %s", OC_VERSION, OPENVR_RUNTIME_VERSION);
 	if (peError) {
 		*peError = VRInitError_None;
 	}
@@ -367,6 +393,9 @@ VR_INTERFACE uint32_t VR_CALLTYPE VR_InitInternal2(EVRInitError* peError, EVRApp
 		return RefuseInit(peError, backendError != VRInitError_None ? backendError : VRInitError_Init_Internal);
 	}
 	BackendManager::Create(backend);
+#ifndef _WIN32
+	atexit(ShutdownAtExit);
+#endif
 	DrvOpenXR::KeepOverlaysInstance();
 	// An earlier Utility Init not yet shut down is matched by a Shutdown too
 	scene_init_count = utility_init ? 2 : 1;
@@ -511,6 +540,9 @@ VR_INTERFACE void VR_CALLTYPE VR_ShutdownInternal()
 
 	// Shut down OpenXR
 	BackendManager::Reset();
+
+	// The frames' last store edits are written before the program can end
+	SharedStore::Get().Flush();
 
 	// The origin outlives the interfaces (SetTrackingSpace may come without IVRSystem): the next Init starts on the default
 	BaseSystem::currentSpace = XR_REFERENCE_SPACE_TYPE_STAGE;

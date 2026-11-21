@@ -1,0 +1,11 @@
+{
+  "controller_type": "knuckles",
+  "bindings": {
+    "/actions/main": {
+      "sources": [
+        { "path": "/user/hand/right/input/trigger", "mode": "trigger", "inputs": { "pull": { "output": "/actions/main/in/squeeze" } } }
+      ],
+      "poses": [{ "output": "/actions/main/in/hand", "path": "/user/hand/right/pose/raw" }]
+    }
+  }
+}

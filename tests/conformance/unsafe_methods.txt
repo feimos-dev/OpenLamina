@@ -8,3 +8,4 @@ IVRChaperoneSetup_.* (CommitWorkingCopy|ImportFromBufferToWorking) changes the r
 IVROverlay_.* ShowDashboard opens SteamVR's dashboard
 IVRCompositor_.* CompositorQuit quits SteamVR's compositor
 IVRSettings_.* (RemoveSection|RemoveKeyInSection) would remove the null-driver settings mid-run
+IVROverlay_.* ShowMessageOverlay shows a modal message box and waits for a click in the headset (each call would wait out the timeout)

@@ -73,6 +73,41 @@ XrResult XRAPI_CALL LocateHandJoints(XrHandTrackerEXT tracker, const XrHandJoint
 	return XR_SUCCESS;
 }
 
+// --- XR_HTCX_vive_tracker_interaction: the script's trackers ---
+
+struct ViveTrackerPaths {
+	XrStructureType type;
+	void* next;
+	XrPath persistentPath;
+	XrPath rolePath;
+};
+
+uint64_t CurrentFrame()
+{
+	return St().session ? St().session->framesWaited : 0;
+}
+
+XrResult XRAPI_CALL EnumerateViveTrackerPaths(XrInstance, uint32_t capacity, uint32_t* count, ViveTrackerPaths* paths)
+{
+	std::lock_guard<std::recursive_mutex> g(St().lock);
+	if (!count)
+		return XR_ERROR_VALIDATION_FAILURE;
+	std::vector<ViveTrackerPaths> live;
+	for (const ScriptViveTracker& t : GetScript().viveTrackers)
+		if (t.frame <= CurrentFrame())
+			live.push_back({ (XrStructureType)1000103000, nullptr, RtPath(t.persistent), t.role.empty() ? XR_NULL_PATH : RtPath(t.role) });
+	*count = (uint32_t)live.size();
+	if (capacity == 0)
+		return XR_SUCCESS;
+	if (capacity < live.size() || !paths)
+		return XR_ERROR_SIZE_INSUFFICIENT;
+	for (size_t i = 0; i < live.size(); i++) {
+		paths[i].persistentPath = live[i].persistentPath;
+		paths[i].rolePath = live[i].rolePath;
+	}
+	return XR_SUCCESS;
+}
+
 // --- XR_MNDX_xdev_space: one tracker ---
 
 const XrXDevIdMNDX kTrackerId = 1;
@@ -310,6 +345,7 @@ PFN_xrVoidFunction RtExtensionsLookup(const char* name, const char** extension)
 		{ "xrCreateHandTrackerEXT", (PFN_xrVoidFunction)CreateHandTracker, "XR_EXT_hand_tracking" },
 		{ "xrDestroyHandTrackerEXT", (PFN_xrVoidFunction)DestroyHandTracker, "XR_EXT_hand_tracking" },
 		{ "xrLocateHandJointsEXT", (PFN_xrVoidFunction)LocateHandJoints, "XR_EXT_hand_tracking" },
+		{ "xrEnumerateViveTrackerPathsHTCX", (PFN_xrVoidFunction)EnumerateViveTrackerPaths, "XR_HTCX_vive_tracker_interaction" },
 		{ "xrCreateXDevListMNDX", (PFN_xrVoidFunction)CreateXDevList, "XR_MNDX_xdev_space" },
 		{ "xrGetXDevListGenerationNumberMNDX", (PFN_xrVoidFunction)GetXDevListGenerationNumber, "XR_MNDX_xdev_space" },
 		{ "xrEnumerateXDevsMNDX", (PFN_xrVoidFunction)EnumerateXDevs, "XR_MNDX_xdev_space" },

@@ -41,6 +41,17 @@ private:
 	VkDeviceMemory stageMemory = VK_NULL_HANDLE;
 	bool CreateStage(VkFormat format, uint32_t width, uint32_t height);
 	void DestroyStage();
+	// A multisampled image that goes through a blit (flipped bounds, a conversion) is resolved into this image of its
+	// format and size first, as a blit can't read a multisampled one.
+	VkImage resolveImage = VK_NULL_HANDLE;
+	VkDeviceMemory resolveMemory = VK_NULL_HANDLE;
+	bool resolveFailed = false;
+	bool CreateResolveImage(VkFormat format, uint32_t width, uint32_t height);
+	// A single-sampled image for transfers in the app's device, with memory of its own: false (with none left) if it
+	// can't be made
+	bool MakeTransferImage(VkFormat format, uint32_t width, uint32_t height, VkImage& image, VkDeviceMemory& memory);
+	// Frees such an image once the copies through it are over
+	void DestroyTransferImage(VkImage& image, VkDeviceMemory& memory);
 	// The GPU, as the runtime knows it
 	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 
@@ -51,10 +62,13 @@ private:
 	VkDevice appDevice = VK_NULL_HANDLE;
 	VkQueue appQueue = VK_NULL_HANDLE;
 	VkCommandPool appCommandPool = VK_NULL_HANDLE;
+	uint32_t poolFamily = 0;
 	std::vector<VkCommandBuffer> appCommandBuffers{};
 	// A fence for each command buffer, signalled when its last submission is over
 	std::vector<VkFence> imageFences;
-	// Command buffers and fences for count swapchain images: false (with none left) if they can't be made
+	// A semaphore for each, for a copy of a texture on another queue to wait for the game's work there
+	std::vector<VkSemaphore> imageSemaphores;
+	// Command buffers, fences and semaphores for count swapchain images: false (with none left) if they can't be made
 	bool AllocateImageBuffers(uint32_t count);
 	// Frees them once their submissions are over
 	void FreeImageBuffers();

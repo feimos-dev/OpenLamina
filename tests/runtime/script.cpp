@@ -51,6 +51,8 @@ static Script LoadScript()
 		s.viewWidth = root["view_size"][0].asUInt();
 		s.viewHeight = root["view_size"][1].asUInt();
 	}
+	if (root.isMember("max_swapchain_samples"))
+		s.maxSwapchainSamples = root["max_swapchain_samples"].asUInt();
 	if (root.isMember("fov_deg"))
 		s.fovDeg = root["fov_deg"].asFloat();
 	if (root.isMember("ipd"))
@@ -90,6 +92,13 @@ static Script LoadScript()
 		in2.path = i["path"].asString();
 		in2.value = i["value"].asFloat();
 		s.inputs.push_back(in2);
+	}
+	for (const Json::Value& t : root["vive_trackers"]) {
+		ScriptViveTracker tracker;
+		tracker.frame = t["frame"].asUInt64();
+		tracker.persistent = t["persistent"].asString();
+		tracker.role = t["role"].asString();
+		s.viveTrackers.push_back(tracker);
 	}
 	for (const Json::Value& p : root["presence"]) {
 		ScriptPresence pr;
@@ -139,6 +148,7 @@ static Script LoadScript()
 				add(v);
 		}
 	}
+	s.lossUnavailableMs = root["loss_unavailable_ms"].asUInt();
 	for (const Json::Value& r : root["refresh_rates"])
 		s.refreshRates.push_back(r.asFloat());
 	auto addIpd = [&](const Json::Value& e) {

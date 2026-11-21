@@ -1,9 +1,12 @@
 {
  "binding-info/odd source/-/-": {
   "err": 0,
-  "returned_at_least_one": true,
-  "odd_source_left_out": true,
-  "no_blank_entries": true,
+  "haptic_bindings": 1,
+  "haptic_paths_empty": true,
+  "pose_err": 0,
+  "pose_bindings": 1,
+  "pose_device": "/user/hand/right",
+  "pose_input": "/pose/raw",
   "toggle_err": 0,
   "toggle_bindings": 1,
   "device": "/user/hand/right",
@@ -11,6 +14,8 @@
   "mode": "toggle_button",
   "slot": "click",
   "source_type": "trigger",
-  "origin_is_the_right_trigger": true
+  "origin_is_the_right_trigger": true,
+  "no_set_origins_err": 0,
+  "no_set_origins_empty": true
  }
 }

@@ -1,0 +1,4 @@
+{
+ "#": "A game with legacy input finds its controllers in its first frames, before the stand-in gives the session focus on its third (run.py --cases controllers-early --script scripts/controllers_early.json --expect expect/controllers_early.json)",
+ "controllers-early/connected/-/-": { "first_frame": { "near": 1.5, "within": 0.5 } }
+}

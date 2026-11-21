@@ -273,7 +273,7 @@ static bool OtherProgramsAround()
 
 // The scene app's frame statistics in the Scene document, for other programs' GetCumulativeStats: at most once a
 // second, and only while another OpenLamina program is around to read them. Written after the frame was handed over,
-// and never waited for: while another program holds the store they're left for the next second.
+// by the store's writer thread, never waited for.
 static void PublishSceneStats()
 {
 	// Called for each eye, maybe from two threads: the compare-exchange lets one of them through each second
@@ -287,14 +287,15 @@ static void PublishSceneStats()
 	OOVR_Compositor_CumulativeStats stats{};
 	FrameStats::Get().Cumulative(oc_current_pid(), &stats, sizeof(stats));
 	const uint32_t self = oc_current_pid();
-	SharedStore::Get().Update(StoreDoc::Scene, [&](Json::Value& scene) {
+	// Written by the store's writer thread: the frame doesn't wait for the file
+	SharedStore::Get().UpdateLater(StoreDoc::Scene, "frame_stats", [self, stats](Json::Value& scene) {
 		// Only while it's this program's
 		if (!scene.isObject() || !scene["pid"].isUInt() || scene["pid"].asUInt() != self)
 			return;
 		scene["frame_stats"]["presents"] = stats.m_nNumFramePresents;
 		scene["frame_stats"]["dropped"] = stats.m_nNumDroppedFrames;
 		scene["frame_stats"]["reprojected"] = stats.m_nNumReprojectedFrames;
-	}, SharedStore::Wait::Never);
+	});
 }
 
 ovr_enum_t BaseCompositor::Submit(EVREye eye, const Texture_t* texture, const VRTextureBounds_t* bounds, EVRSubmitFlags submitFlags)
@@ -311,6 +312,7 @@ ovr_enum_t BaseCompositor::Submit(EVREye eye, const Texture_t* texture, const VR
 		return VRCompositorError_InvalidBounds;
 	}
 
+	std::lock_guard<std::mutex> submitGuard(submitLock);
 	bool isFirstEye = !leftEyeSubmitted && !rightEyeSubmitted;
 	ovr_enum_t result = VRCompositorError_None;
 
@@ -354,7 +356,7 @@ ovr_enum_t BaseCompositor::Submit(EVREye eye, const Texture_t* texture, const VR
 			result = (ovr_enum_t)BackendManager::Instance().StoreEyeTexture(eye, texture, bounds, submitFlags, isFirstEye);
 
 		if (leftEyeSubmitted && rightEyeSubmitted) {
-			if (!isNullRender && SubmitEndsFrame(explicitTimingMode, usesPostPresentHandoff))
+			if (!isNullRender && SubmitEndsFrame(explicitTimingMode))
 				BackendManager::Instance().SubmitFrames(isInSkybox);
 
 			leftEyeSubmitted = false;
@@ -394,12 +396,13 @@ void BaseCompositor::PostPresentHandoff()
 	//
 	// Some apps provide a GUI through layers that are submitted after any eye textures are submitted. The app then
 	// calls PostPresentHandOff to signal that all data is submitted and compositor can start work. Mimick this by
-	// ending the frame here for a game that calls this, and not at its second Submit.
+	// ending the frame here; in the timing mode where the game says it does that
+	// (Explicit_ApplicationPerformsPostPresentHandoff), the second Submit doesn't. In any other mode the frame was
+	// ended there already, and this ends none.
 
 	// An overlay or background application has no frame of its own to end
 	if (IsHelperSession())
 		return;
-	usesPostPresentHandoff = true;
 	// As in Submit: the session isn't restarted while the frame is ended
 	auto lock = xr_session.lock_shared();
 	BackendManager::Instance().SubmitFrames(isInSkybox);
@@ -796,9 +799,36 @@ bool BaseCompositor::IsMirrorWindowVisible()
 	return MirrorWindow::Get().Visible();
 }
 
+namespace {
+// The eyes whose next image CompositorDumpImages wants: bit 0 the left, bit 1 the right
+std::atomic<int> dumpEyesWanted{ 0 };
+} // namespace
+
 void BaseCompositor::CompositorDumpImages()
 {
-	OC_UNSUPPORTED_VOID("CompositorDumpImages: not supported");
+	if (IsHelperSession())
+		return; // an overlay or background application submits no eyes
+	dumpEyesWanted = 3;
+}
+
+bool BaseCompositor::_WantsDumpImage(vr::EVREye eye)
+{
+	return (dumpEyesWanted.load() & (1 << (int)eye)) != 0;
+}
+
+void BaseCompositor::_OfferDumpImage(vr::EVREye eye, const Image& image)
+{
+	// Once per call: the first image of each eye after it
+	if (!(dumpEyesWanted.fetch_and(~(1 << (int)eye)) & (1 << (int)eye)))
+		return;
+	const std::string folder = oovr_log_folder();
+	const std::filesystem::path path = folder.empty() ? std::filesystem::path(DumpImageName(oc_current_pid(), eye))
+	                                                  : std::filesystem::path(folder) / DumpImageName(oc_current_pid(), eye);
+	std::string why;
+	if (WritePngFile(image, path, &why))
+		OOVR_LOGF("CompositorDumpImages: wrote %s", path.string().c_str());
+	else
+		OOVR_LOGF("CompositorDumpImages: couldn't write %s: %s", path.string().c_str(), why.c_str());
 }
 
 bool BaseCompositor::ShouldAppRenderWithLowResources()
@@ -892,6 +922,7 @@ void BaseCompositor::UnlockGLSharedTextureForAccess(glSharedTextureHandle_t glSh
 
 uint32_t BaseCompositor::GetVulkanInstanceExtensionsRequired(char* pchValue, uint32_t unBufferSize)
 {
+	auto lock = xr_session.lock_shared(); // held while asking: a new instance waits for it
 	if (pchValue && unBufferSize)
 		pchValue[0] = 0;
 #if defined(SUPPORT_VK)
@@ -914,13 +945,50 @@ uint32_t BaseCompositor::GetVulkanInstanceExtensionsRequired(char* pchValue, uin
 
 uint32_t BaseCompositor::GetVulkanDeviceExtensionsRequired(VkPhysicalDevice_T* pPhysicalDevice, char* pchValue, uint32_t unBufferSize)
 {
+	auto lock = xr_session.lock_shared(); // held while asking: a new instance waits for it
 	if (pchValue && unBufferSize)
 		pchValue[0] = 0;
 #if defined(SUPPORT_VK)
+	// The extensions the game's physical device has, where it names one GetOutputDevice answered
+	std::vector<std::string> available;
+	bool knowAvailable = false;
+	if (pPhysicalDevice && KnownPhysicalDevice(pPhysicalDevice)) {
+		uint32_t count = 0;
+		if (vkEnumerateDeviceExtensionProperties(pPhysicalDevice, nullptr, &count, nullptr) == VK_SUCCESS) {
+			std::vector<VkExtensionProperties> props(count);
+			if (vkEnumerateDeviceExtensionProperties(pPhysicalDevice, nullptr, &count, props.data()) >= 0) {
+				for (uint32_t i = 0; i < count && i < props.size(); i++)
+					available.emplace_back(props[i].extensionName);
+				knowAvailable = true;
+			}
+		}
+	}
 #if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX11)
-	if (!xr_ext->xrGetVulkanDeviceExtensionsKHR_Available() && xr_ext->xrGetD3D11GraphicsRequirementsKHR_Available())
-		return ExtensionListSize(InteropVulkanExtensions(true), pchValue, unBufferSize);
+	if (!xr_ext->xrGetVulkanDeviceExtensionsKHR_Available() && xr_ext->xrGetD3D11GraphicsRequirementsKHR_Available()) {
+		// The copies' own, and their GPU-side wait's where the device has them (else they're waited for on the CPU)
+		std::string list = InteropVulkanExtensions(true);
+		const std::string semaphores = knowAvailable ? ExtensionsAmong(InteropVulkanSemaphoreExtensions(), available) : std::string();
+		if (semaphores == InteropVulkanSemaphoreExtensions())
+			list += " " + semaphores;
+		return ExtensionListSize(list.c_str(), pchValue, unBufferSize);
+	}
 #endif
+	if (knowAvailable && xr_ext->xrGetVulkanDeviceExtensionsKHR_Available()) {
+		// The runtime's list, less what the game's physical device lacks: asking for one it lacks fails vkCreateDevice
+		// outright, where without it only the session may fail (and falls back)
+		uint32_t size = 0;
+		XrResult res = xr_ext->xrGetVulkanDeviceExtensionsKHR(xr_instance, xr_system, 0, &size, nullptr);
+		std::string full(size, '\0');
+		if (XR_SUCCEEDED(res) && size > 0)
+			res = xr_ext->xrGetVulkanDeviceExtensionsKHR(xr_instance, xr_system, size, &size, full.data());
+		if (XR_SUCCEEDED(res)) {
+			full.resize(strnlen(full.c_str(), full.size()));
+			const std::string kept = ExtensionsAmong(full, available);
+			if (kept.size() != full.size())
+				OOVR_LOG_ONCEF("GetVulkanDeviceExtensionsRequired: the runtime's \"%s\", of which the game's GPU has \"%s\"", full.c_str(), kept.c_str());
+			return ExtensionListSize(kept.c_str(), pchValue, unBufferSize);
+		}
+	}
 	uint32_t size = 0;
 	XrResult res = xr_ext->xrGetVulkanDeviceExtensionsKHR(xr_instance, xr_system, pchValue ? unBufferSize : 0, &size, pchValue);
 	if (res != XR_ERROR_SIZE_INSUFFICIENT)

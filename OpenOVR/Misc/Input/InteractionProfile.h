@@ -231,6 +231,12 @@ protected:
 	// OpenXR input source names SteamVR calls otherwise on this controller (RawComponents), for example
 	// { "squeeze", "grip" }; a source not in it keeps its name
 	std::map<std::string, std::string> rawSourceNames;
+	// More raw inputs (OpenXR path, SteamVR raw input path), for a component that feeds a second SteamVR input
+	std::vector<std::pair<std::string, std::string>> extraRawComponents;
+
+	/** Takes another controller's properties, reference poses, grip transforms and component transforms, for a
+	 * profile shown to games as that controller */
+	void CopyControllerFrom(const InteractionProfile& other);
 
 	// A map for HMD properties.
 	// Note that for a SteamVR supported device can be extracted from the SteamVR System Report,

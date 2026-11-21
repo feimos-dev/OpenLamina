@@ -1,0 +1,5 @@
+{
+ "#": "The interop formats cases (gfx-gl-interop-formats, gfx-vk-interop-formats): a runtime with D3D11 alone (OpenGL and Vulkan frames are copied into D3D11 textures) that offers one swapchain format, DXGI_FORMAT_R8G8B8A8_UNORM_SRGB (29)",
+ "extensions": ["XR_KHR_D3D11_enable"],
+ "swapchain_formats": [29]
+}

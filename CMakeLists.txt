@@ -255,6 +255,8 @@ add_library(DrvOpenXR STATIC
 	DrvOpenXR/GfxInterop.h
 	DrvOpenXR/OverlayTextureCopy.cpp
 	DrvOpenXR/OverlayTextureCopy.h
+	DrvOpenXR/OverlayTextureShare.cpp
+	DrvOpenXR/OverlayTextureShare.h
 
 	DrvOpenXR/tmp_gfx/TemporaryGraphics.cpp
 	DrvOpenXR/tmp_gfx/TemporaryGraphics.h
@@ -298,6 +300,7 @@ endif ()
 set(OVR_PCH_EXCLUDED
 	OpenOVR/Misc/ini.c
 	OpenOVR/Misc/lodepng.cpp
+	OpenOVR/Misc/stb_image.cpp
 )
 
 # Generate version string from git revision, or supplied OC_VERSION setting
@@ -410,6 +413,8 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/Input/ViveFocus3InteractionProfile.cpp
 	OpenOVR/Misc/Input/PicoInteractionProfile.cpp
 	OpenOVR/Misc/Input/MsftHandInteractionProfile.cpp
+	OpenOVR/Misc/Input/ExtHandInteractionProfile.cpp
+	OpenOVR/Misc/Input/ViveTrackerRoles.cpp
 	OpenOVR/Reimpl/BaseApplications.cpp
 	OpenOVR/Reimpl/BaseChaperone.cpp
 	OpenOVR/Reimpl/BaseChaperoneSetup.cpp
@@ -486,7 +491,10 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/Input/ViveFocus3InteractionProfile.h
 	OpenOVR/Misc/Input/PicoInteractionProfile.h
 	OpenOVR/Misc/Input/MsftHandInteractionProfile.h
+	OpenOVR/Misc/Input/ExtHandInteractionProfile.h
+	OpenOVR/Misc/Input/ViveTrackerRoles.h
 	OpenOVR/Misc/lodepng.h
+	OpenOVR/Misc/StbJpeg.h
 	OpenOVR/Misc/ScopeGuard.h
 	OpenOVR/Reimpl/BaseApplications.h
 	OpenOVR/Reimpl/BaseChaperone.h
@@ -543,7 +551,7 @@ target_include_directories(OCCore PUBLIC OpenOVR ${CMAKE_BINARY_DIR})  # TODO ma
 target_include_directories(OCCore PRIVATE BundledLibs OpenVRHeaders)
 target_compile_definitions(OCCore PRIVATE ${GRAPHICS_API_SUPPORT_FLAGS})
 
-target_link_libraries(OCCore PRIVATE OpenVR Vulkan ${XrLib} ${glmLib})
+target_link_libraries(OCCore PRIVATE OpenVR Vulkan ${XrLib} ${jsoncppLib} ${glmLib})
 
 if (NOT WIN32 AND NOT ANDROID)
 	find_package(OpenGL REQUIRED) # for glGetError()
@@ -781,6 +789,21 @@ get_target_property(output_dir OCOVR LIBRARY_OUTPUT_DIRECTORY)
 add_custom_command(TARGET OCOVR
 	PRE_LINK COMMAND ${CMAKE_COMMAND} -E make_directory ${output_dir})
 
+# The controller models (assets/controllers, the WebXR Input Profiles') in SteamVR's render-model layout, beside the
+# libraries: bin/rendermodels serves bin/ and bin/linux64/. The conversion checks each model's motion as it goes.
+file(GLOB_RECURSE OC_CONTROLLER_ASSETS CONFIGURE_DEPENDS ${CMAKE_SOURCE_DIR}/assets/controllers/*)
+set(OC_RENDERMODELS_DIR ${CMAKE_BINARY_DIR}/bin/rendermodels)
+add_custom_command(
+	OUTPUT ${CMAKE_BINARY_DIR}/rendermodels.stamp
+	COMMAND ${Python_EXECUTABLE} ${CMAKE_SOURCE_DIR}/scripts/rendermodels.py --quiet
+		--assets ${CMAKE_SOURCE_DIR}/assets/controllers --out ${OC_RENDERMODELS_DIR}
+	COMMAND ${CMAKE_COMMAND} -E touch ${CMAKE_BINARY_DIR}/rendermodels.stamp
+	DEPENDS ${CMAKE_SOURCE_DIR}/scripts/rendermodels.py ${OC_CONTROLLER_ASSETS}
+	COMMENT "Converting the controller models"
+)
+add_custom_target(OCRenderModels ALL DEPENDS ${CMAKE_BINARY_DIR}/rendermodels.stamp)
+add_dependencies(OCOVR OCRenderModels)
+
 # Installation
 include(GNUInstallDirs)
 install(TARGETS OCOVR
@@ -792,6 +815,7 @@ install(FILES ${CMAKE_BINARY_DIR}/openvrpaths.vrpath DESTINATION ${PROJECT_NAME}
 install(FILES ${CMAKE_BINARY_DIR}/bin/version.txt
 	DESTINATION "${PROJECT_NAME}/bin"
 )
+install(DIRECTORY ${OC_RENDERMODELS_DIR} DESTINATION "${PROJECT_NAME}/bin")
 
 # === Tests ===
 if (OC_BUILD_TESTS)

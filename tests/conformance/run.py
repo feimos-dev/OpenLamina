@@ -39,7 +39,10 @@ from list_games import pe_machine  # noqa: E402
 ARGSETS = ["valid", "edge", "null", "invalid"]
 APPTYPES_VALID_ONLY = [2, 3, 4, 0]  # Overlay, Background, Utility, Other
 CASES = ["init-matrix", "init-repeat", "init-other-thread", "lookup-before-init", "unknown-interface",
-         "overlay-lifecycle", "input-manifest", "frame-loop", "submit-edges", "applications"]
+         "overlay-lifecycle", "input-manifest", "frame-loop", "submit-edges", "applications", "app-type-answers",
+         "device-properties", "init-again", "chaperone-colours", "submit-refusals", "skeletal-input", "legacy-controller",
+         "render-model-components", "overlay-defaults", "settings-defaults", "application-list", "io-buffer",
+         "helper-app-controllers"]
 TIMEOUT = 60
 CASE_TIMEOUT = 600  # init-repeat starts OpenLamina 200 times
 MAX_REPEAT = 100  # --repeat's bound: each round is a child process
@@ -59,7 +62,9 @@ STEAMVR_FIXTURE = {"OC_TEST_STEAMVR_DIR": str(HERE.parent / "unit" / "data" / "s
 CASE_ENV = {"render-models": STEAMVR_FIXTURE, "state-and-resources": STEAMVR_FIXTURE}
 # SteamVR's answers while vrserver was starting or stopping between children (Retry, AnotherAppLaunching,
 # ShuttingDown): a recording keeps them, a comparison skips them
-STEAMVR_TRANSIENT = {115, 117, 119}
+STEAMVR_TRANSIENT = {115, 117, 119, 310}  # restarting, or its shared namespace gone (310)
+# --keep-running: an Init answering one of these ran while SteamVR was quitting or starting (309: its IPC not up yet)
+STEAMVR_RETRY = STEAMVR_TRANSIENT | {309}
 
 
 def load_versions():
@@ -97,15 +102,14 @@ def key_of(r):
 class Runner:
     def __init__(self, args):
         self.args = args
-        # Absolute: on Linux the children run in a folder of their own (self.work)
         self.out = Path(args.out).resolve()
-        # Where OpenLamina reads openlamina.ini from: next to the DLL on Windows; on Linux only the working directory,
-        # so there the children run in work/ under --out, which holds it
-        self.work = None if os.name == "nt" else self.out / "work"
         # OC_TEST_NO_STEAMVR: OpenLamina finds no SteamVR or Steam config (its settings, resources and legacy
         # binding files), so a run here answers as on CI's runner, which has none
         # Each child gets its own store (OC_STORE_DIR, see child), so one child's settings and events never reach another
         self.env = {"OC_NO_MESSAGE_BOX": "1", "OC_LOG_DIR": str(self.out / "logs"), "OC_TEST_NO_STEAMVR": "1"}
+        if os.name != "nt":
+            # An empty config folder, so the user's own openlamina.ini (~/.config/openlamina) isn't read
+            self.env["XDG_CONFIG_HOME"] = str(self.out / "xdg-config")
         # A store left by an earlier run into the same --out would carry its state into this one
         shutil.rmtree(self.out / "store", ignore_errors=True)
         self.monado = args.xr_runtime.startswith("monado:")
@@ -139,7 +143,7 @@ class Runner:
             raise SystemExit(f"--xr-runtime monado: no manifest {self.manifest}")
         self.out.mkdir(parents=True, exist_ok=True)
         (self.out / "raw").mkdir(exist_ok=True)
-        # The openlamina.ini OpenLamina reads (next to the DLL, or in the children's working directory):
+        # The openlamina.ini OpenLamina reads next to the library (ini_path):
         # ini/features_off.ini (the features that are on by default turned off, so that a case shows one feature at a
         # time), then --ini's keys, which win. --shipped-defaults leaves the first out. Not for SteamVR itself, whose
         # folder that would be.
@@ -149,9 +153,6 @@ class Runner:
         if self.args.ini:
             parts.append(Path(self.args.ini).read_text(encoding="utf-8"))
         self.wrote_ini = bool(parts)
-        if self.work:
-            shutil.rmtree(self.work, ignore_errors=True)
-            self.work.mkdir(parents=True)
         if parts:
             # Taken out again when the run ends (Runner.cleanup), with any file that was there put back
             target = self.ini_path()
@@ -167,7 +168,12 @@ class Runner:
                                 "/d", self.manifest, "/f", view], check=True, capture_output=True)
 
     def ini_path(self):
-        return (self.work or Path(self.runtime).parent) / "openlamina.ini"
+        # Next to the DLL on Windows; on Linux in the install's bin/: the library's folder, or its parent when that is
+        # linux64
+        folder = Path(self.runtime).parent
+        if os.name != "nt" and folder.name == "linux64":
+            folder = folder.parent
+        return folder / "openlamina.ini"
 
     def child(self, extra, raw, timeout=TIMEOUT, env_extra=None, store=None):
         """Runs oc_conformance with its store in store/<store> under --out: by default the child's own (named after its
@@ -181,13 +187,21 @@ class Runner:
         env.update(self.env)
         env["OC_STORE_DIR"] = str(self.out / "store" / (store or Path(raw).stem))
         env.update(env_extra or {})
-        cwd = str(self.work) if self.work else None
+        cwd = None
         if unelevated.integrity_above_medium() and not self.args.ci:
-            return unelevated.run_medium(cmd, env, cwd, timeout)
-        # In a memory-limited job (unelevated.py): a runaway child fails alone
-        return unelevated.run_limited(cmd, env, cwd, timeout, capture=True)[0]
+            code = unelevated.run_medium(cmd, env, cwd, timeout)
+        else:
+            # In a memory-limited job (unelevated.py): a runaway child fails alone
+            code = unelevated.run_limited(cmd, env, cwd, timeout, capture=True)[0]
+        with Runner.keep_lock:
+            Runner.timeouts_in_a_row = Runner.timeouts_in_a_row + 1 if code == 124 else 0
+        return code
 
     keep_lock = threading.Lock()
+    # --keep-running: timeouts in a row (a SteamVR whose server hangs answers no child), and the restarts that made
+    timeouts_in_a_row = 0
+    restarts = 0
+    HUNG_AFTER = 2
 
     def keep_running(self):
         """--keep-running: SteamVR quits all of its programs when the scene application it counts as its first exits
@@ -201,11 +215,28 @@ class Runner:
             return server.lower() in out.stdout.lower()
 
         with Runner.keep_lock:
+            if running() and Runner.timeouts_in_a_row >= Runner.HUNG_AFTER:
+                # Running but answering nobody: its processes ended, so it's started again below
+                print(f"run.py: {Runner.timeouts_in_a_row} timeouts in a row: restarting SteamVR", flush=True)
+                for name in ("vrserver.exe", "vrmonitor.exe", "vrcompositor.exe", "vrdashboard.exe", "vrwebhelper.exe"):
+                    subprocess.run(["taskkill", "/f", "/im", name], capture_output=True)
+                for _ in range(30):
+                    if not running():
+                        break
+                    time.sleep(1)
+                Runner.timeouts_in_a_row = 0
+                Runner.restarts += 1
             if running():
                 return
             subprocess.run(["explorer.exe", exe])
             for _ in range(90):
                 if running():
+                    break
+                time.sleep(1)
+            # Its shared namespace up before the next child, which would otherwise start a SteamVR of its own (whose
+            # namespace goes with that child). Looked for in the pipe list: opening the pipe would count as a client.
+            for _ in range(60):
+                if any(p.lower() == "steamvr_namespace" for p in os.listdir("\\\\.\\pipe\\")):
                     break
                 time.sleep(1)
             time.sleep(8)
@@ -226,7 +257,65 @@ class Runner:
 
     def run_interface(self, version, apptype, argset):
         raw = self.out / "raw" / f"{version}-{apptype}-{argset}.jsonl"
-        raw.unlink(missing_ok=True)
+        done = Path(str(raw) + ".result.json")
+        if self.args.resume:
+            kept = self.resumed(raw, done, {"interface": version, "apptype": apptype, "argset": argset})
+            if kept is not None:
+                return kept
+        for attempt in range(3):
+            raw.unlink(missing_ok=True)
+            done.unlink(missing_ok=True)
+            results = self.interface_records(version, apptype, argset, raw)
+            if self.retry_after_restart(raw, results, attempt):
+                continue
+            # SteamVR's shared namespace gone: Init answered 310, or the program timed out before its first answer
+            # (waiting in Init for the namespace). SteamVR is started again, and the job run again once.
+            hung_in_init = any(r.get("index") == -1 and r.get("status") == "timeout" for r in results)
+            if not (self.args.keep_running and (hung_in_init or any(r.get("init_error") == 310 for r in results))):
+                break
+            print(f"run.py: {raw.name}: {'timed out in Init' if hung_in_init else 'init error 310'}: restarting SteamVR", flush=True)
+            with Runner.keep_lock:
+                Runner.timeouts_in_a_row = Runner.HUNG_AFTER
+        done.write_text(json.dumps(results), encoding="utf-8")
+        return results
+
+    def retry_after_restart(self, raw, records, attempt):
+        """--keep-running: True (after waiting for SteamVR) when the job's Init ran while SteamVR was quitting or
+        starting, so the job is to run again; at most twice."""
+        if not self.args.keep_running or attempt >= 2:
+            return False
+        # Not init-matrix's Init(<app type>) records, whose answers are those errors on purpose
+        records = [r for r in records if not str(r.get("method", "")).startswith("Init(")]
+        bad = sorted({r.get("init_error") for r in records if r.get("init_error") in STEAMVR_RETRY}
+                     | {r.get("ret") for r in records if r.get("method") == "Init" and r.get("ret") in STEAMVR_RETRY})
+        if not bad:
+            return False
+        print(f"run.py: {raw.name}: Init answered {bad} while SteamVR was restarting: running it again", flush=True)
+        if 310 in bad:
+            with Runner.keep_lock:
+                Runner.timeouts_in_a_row = Runner.HUNG_AFTER  # its namespace is gone: started again
+        time.sleep(15)  # until a SteamVR that's quitting has gone; keep_running starts it again before the child
+        return True
+
+    @staticmethod
+    def resumed(raw, done, what):
+        """--resume: a job's records from an earlier run into the same --out. Its saved result if it has one; else, for a
+        run from before results were saved, its answers file if it has any answers, each gap in their indices taken as
+        a call that ended the program (status "lost": whether it crashed, ended or timed out wasn't saved). None when the job is to run again."""
+        if done.exists():
+            return json.loads(done.read_text(encoding="utf-8"))
+        records = read_jsonl(raw)
+        if not records:
+            return None
+        for r in records:
+            r["status"] = "ok"
+        have = {r.get("index") for r in records}
+        for i in range(max([i for i in have if isinstance(i, int)] + [0])):
+            if i not in have:
+                records.append(dict(what, index=i, method=f"<call {i}>", status="lost", resumed=True))
+        return records
+
+    def interface_records(self, version, apptype, argset, raw):
         start, results, attempts = 0, [], 0
         while attempts < 500:
             attempts += 1
@@ -265,7 +354,19 @@ class Runner:
         # With --repeat, each round has its own files, and its records say which round they're from
         stem = f"case-{name}" if round_ is None else f"case-{name}-{round_}"
         raw = self.out / "raw" / f"{stem}.jsonl"
-        raw.unlink(missing_ok=True)
+        done = Path(str(raw) + ".result.json")
+        if self.args.resume and done.exists():
+            return json.loads(done.read_text(encoding="utf-8"))
+        for attempt in range(3):
+            raw.unlink(missing_ok=True)
+            done.unlink(missing_ok=True)
+            records = self.case_records(name, round_, stem, raw)
+            if not self.retry_after_restart(raw, records, attempt):
+                break
+        done.write_text(json.dumps(records), encoding="utf-8")
+        return records
+
+    def case_records(self, name, round_, stem, raw):
         extra = ["--case", name]
         if self.args.manifest:
             extra += ["--manifest", str(Path(self.args.manifest).resolve())]
@@ -518,15 +619,18 @@ def main():
     ap.add_argument("--cases")
     ap.add_argument("--cases-only", action="store_true", help="only the cases of --cases, no interfaces")
     ap.add_argument("--manifest", help="the action manifest for the input-manifest case")
-    ap.add_argument("--ini", help="an openlamina.ini whose keys go where OpenLamina reads them (next to the DLL; on Linux the children's "
-                    "working directory), after ini/features_off.ini's")
+    ap.add_argument("--ini", help="an openlamina.ini whose keys go where OpenLamina reads them (next to the DLL; on Linux the "
+                    "install's bin/), after ini/features_off.ini's")
     ap.add_argument("--shipped-defaults", action="store_true",
                     help="without ini/features_off.ini: OpenLamina's defaults as they ship, but for --ini's keys")
     ap.add_argument("--jobs", type=int, default=4)
     ap.add_argument("--ci", action="store_true")
     ap.add_argument("--allow-failures", action="store_true")
     ap.add_argument("--real-runtime", action="store_true")
-    ap.add_argument("--keep-running", metavar="EXE", help="with --real-runtime: start this (SteamVR's vrstartup.exe) before any child when its server isn't running")
+    ap.add_argument("--keep-running", metavar="EXE", help="with --real-runtime: start this (SteamVR's vrstartup.exe) before any child when its "
+                    "server isn't running, and again when it hangs (two timeouts in a row, a timeout in Init, or an Init answering 310)")
+    ap.add_argument("--resume", action="store_true", help="keep the jobs an earlier run into the same --out finished (their "
+                    "<raw>.result.json, or for an older run their answers), and run only the others")
     ap.add_argument("--repeat", type=int, default=1, help=f"run each case this many times (at most {MAX_REPEAT})")
     ap.add_argument("--case-arg", action="append", metavar="NAME=VALUE", help="passed to every case (repeatable)")
     ap.add_argument("--apptypes", help="the interfaces only under these app types (numbers, comma-separated), with valid arguments")
@@ -547,7 +651,12 @@ def main():
     finally:
         runner.cleanup()
     out = Path(args.out)
-    (out / "results.json").write_text(json.dumps({"runtime": args.runtime, "records": results}, indent=1),
+    meta = {"runtime": args.runtime}
+    if args.keep_running:
+        meta["runtime_restarts"] = Runner.restarts  # a hung SteamVR started again (--keep-running)
+    if args.resume:
+        meta["resumed"] = True  # some records are from an earlier run into the same --out
+    (out / "results.json").write_text(json.dumps(dict(meta, records=results), indent=1),
                                       encoding="utf-8")
     counts = {}
     for r in results:

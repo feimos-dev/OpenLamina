@@ -110,3 +110,21 @@ TEST_CASE("OwnFrameLoop: WhenAppIdle runs no frames while there is nothing to sh
 	std::this_thread::sleep_for(150ms);
 	CHECK(fake.frames <= stopped + 1);
 }
+
+TEST_CASE("OwnFrameLoop: InCallsOnly runs frames only inside the game's calls, on its thread")
+{
+	FakeFrames fake;
+	OwnFrameLoop loop(OwnFrameLoop::Mode::InCallsOnly, nullptr, 10ms, fake.Runner());
+	// The game frames and then goes idle: no thread runs any
+	loop.OnAppFrameStart();
+	loop.OnAppFrameEnd();
+	std::this_thread::sleep_for(100ms);
+	CHECK(fake.frames == 0);
+	// A blocking call runs them, here
+	int calls = 0;
+	loop.RunWhile([&] { return ++calls <= 3; });
+	CHECK(fake.frames == 3);
+	CHECK(fake.lastThread.load() == std::this_thread::get_id());
+	std::this_thread::sleep_for(50ms);
+	CHECK(fake.frames == 3);
+}

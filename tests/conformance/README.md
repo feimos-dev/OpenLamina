@@ -53,6 +53,14 @@ reaches: the C exports of `openvr_api` (`c-api-exports`), the client core's othe
 (`app-type-interfaces`), `IVRMailbox_001` (`mailbox`), `IVRNotifications_002` (`notifications`) and the interfaces
 that keep state across a Shutdown and Init, with SteamVR's resource files (`state-and-resources`).
 
+`app-type-answers` starts each application type in turn (scene, overlay, background, utility, other) and records the
+answers that depend on the session and the controllers: device roles and properties, the compositor's, overlays',
+applications' and chaperone's state. Run it with both controllers on (`scripts/controllers_on.json` on the stand-in;
+switched on with SteamVR), so a SteamVR recording gives the answers to compare with. `steamvr_run_cases.cpp` has more
+of those, run the same way: device properties and roles, a second Init, chaperone bounds and colours, refused submits,
+skeletal input (`manifest_skeleton.json`), legacy controller state, render model components, a new overlay's defaults
+and events, settings defaults, the application list and IVRIOBuffer.
+
 `out/summary.txt` has the counts per status (`ok`, `ended`: OpenLamina ended the program, `crashed`, `timeout`) and
 every record that wasn't ok; `out/results.json` has every record. When a child ends early the runner starts it again
 after the call that ended it, so one bad call doesn't hide the rest. When a child crashes, `crash_report.cpp` writes
@@ -67,11 +75,20 @@ driver (no headset needed) and writes `expected/steamvr-<version>.json`. It back
 SteamVR's settings, room setup and app config first, puts every one back afterwards and fails unless their SHA-256s
 match; `-WhatIf` only lists them. Close SteamVR, Monado and anything VR first.
 
+`-Controllers` loads SteamVR's other drivers beside the null headset, so switched-on Lighthouse controllers take part
+(for `app-type-answers` and `steamvr_run_cases.cpp`). Programs run one at a time (a program that brings SteamVR down
+would take the others with it). A SteamVR whose server stops answering (each child then waits on its shared namespace
+until the timeout) is ended and started again after two timeouts in a row, or at once when a program times out in Init or gets init error 310 (that program then runs again); `results.json` counts these restarts
+(`runtime_restarts`). `-Resume` keeps what an earlier run into the same `-Out` finished (each job's
+`<raw>.result.json`) and runs the rest; `results.json` then has `"resumed": true`. Against a real runtime the methods
+of `unsafe_methods.txt` aren't called (their records say `"skipped": "unsafe"`), among them `ShowMessageOverlay`, which
+waits for a click in the headset: so no recording has SteamVR's answer to it.
+
 `differences.json` lists the differences that are expected between SteamVR's null HMD and OpenLamina (display
 geometry, timing and poses, device properties, handle numbers, the PC's own apps and settings, and the app types
 OpenLamina doesn't support yet), each with its reason. Every other difference is a bug to fix or to explain there.
 An entry matches `interface` and `method` (regexes) and `field`, and, if it has one, `apptype` (a regex of the app type
-numbers). Records SteamVR answered while restarting between children (init errors 115, 117, 119) aren't compared.
+numbers). Records SteamVR answered while restarting between children (init errors 115, 117, 119) or without its shared namespace (310) aren't compared.
 
 An entry with `"arch": "x86"` applies only when `--runtime` is a 32-bit DLL: the reference was recorded by 64-bit
 SteamVR, and answers that hold a pointer are compared as raw bytes, so they are shorter in a 32-bit run.

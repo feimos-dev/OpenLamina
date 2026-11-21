@@ -1,0 +1,4 @@
+{
+  "#": "No controller, the hands tracked (hand-controllers)",
+  "extensions": ["XR_KHR_D3D11_enable", "XR_EXT_hand_tracking"]
+}

@@ -10,8 +10,8 @@
 //   xrDestroyInstance xrDestroySession xrDestroySpace xrDestroySwapchain xrDestroyXDevListMNDX xrEndFrame
 //   xrEndSession xrEnumerateApiLayerProperties xrEnumerateBoundSourcesForAction
 //   xrEnumerateInstanceExtensionProperties xrEnumerateSwapchainFormats xrEnumerateSwapchainImages
-//   xrEnumerateViewConfigurationViews xrEnumerateXDevsMNDX xrGetActionStateBoolean xrGetActionStateFloat
-//   xrGetActionStateVector2f xrGetCurrentInteractionProfile xrGetD3D11GraphicsRequirementsKHR
+//   xrEnumerateViewConfigurationViews xrEnumerateViveTrackerPathsHTCX xrEnumerateXDevsMNDX xrGetActionStateBoolean
+//   xrGetActionStateFloat xrGetActionStateVector2f xrGetCurrentInteractionProfile xrGetD3D11GraphicsRequirementsKHR
 //   xrGetD3D12GraphicsRequirementsKHR xrGetInstanceProcAddr xrGetOpenGLESGraphicsRequirementsKHR
 //   xrGetOpenGLGraphicsRequirementsKHR xrGetReferenceSpaceBoundsRect xrGetSystem xrGetSystemProperties
 //   xrGetVisibilityMaskKHR xrGetVulkanDeviceExtensionsKHR xrGetVulkanGraphicsDeviceKHR
@@ -29,6 +29,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <deque>
 #include <map>
@@ -280,6 +281,14 @@ XrResult XRAPI_CALL CreateInstance(const XrInstanceCreateInfo* info, XrInstance*
 	std::lock_guard<std::recursive_mutex> g(St().lock);
 	if (St().instanceAlive)
 		return XR_ERROR_LIMIT_REACHED;
+	if (std::chrono::steady_clock::now() < St().systemBackAt)
+		return XR_ERROR_RUNTIME_FAILURE; // the runtime is gone after a scripted loss
+#ifdef _WIN32
+	// Kept loaded once used: the loader unloads a runtime whose last instance is destroyed, and the state of a
+	// scripted loss must outlive the lost instance (on Linux, -z nodelete)
+	HMODULE self = nullptr;
+	GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_PIN, (LPCSTR)&CreateInstance, &self);
+#endif
 	std::set<std::string> enabled;
 	for (uint32_t i = 0; i < info->enabledExtensionCount; i++) {
 		std::string name = info->enabledExtensionNames[i];
@@ -289,11 +298,21 @@ XrResult XRAPI_CALL CreateInstance(const XrInstanceCreateInfo* info, XrInstance*
 	}
 	St().instanceAlive = true;
 	St().requirementsQueried.clear();
+	// Each instance's paths are its own, as a real runtime's: a later instance's atoms start further on, so a client
+	// that keeps a lost instance's paths gets wrong ones
+	St().pathIds.clear();
+	St().paths.assign(1 + 1000 * St().instancesMade++, "");
 	St().enabledExtensions = enabled;
 	{
 		Dump& d = GetDump();
 		std::lock_guard<std::mutex> dg(d.lock);
-		d.root = Json::Value(Json::objectValue);
+		// The counts of losses and sessions go on across instances
+		Json::Value kept(Json::objectValue);
+		for (const char* key : { "sessions_created", "sessions_lost", "instances_lost", "instances_created", "action_attaches" })
+			if (d.root.isMember(key))
+				kept[key] = d.root[key];
+		d.root = kept;
+		d.root["instances_created"] = d.root["instances_created"].asUInt64() + 1;
 		d.root["instance"]["extensions"] = Json::Value(Json::arrayValue);
 		for (const std::string& e : enabled)
 			d.root["instance"]["extensions"].append(e);
@@ -302,6 +321,7 @@ XrResult XRAPI_CALL CreateInstance(const XrInstanceCreateInfo* info, XrInstance*
 		d.root["layers"] = Json::Value(Json::arrayValue);
 		d.root["frame_order_errors"] = 0;
 		d.root["refresh_rate_requests"] = 0;
+		d.root["bounds_rect_calls"] = 0;
 	}
 	*instance = kInstance;
 	return XR_SUCCESS;
@@ -315,6 +335,7 @@ XrResult XRAPI_CALL DestroyInstance(XrInstance)
 		St().session.reset();
 		St().events.clear();
 		St().instanceAlive = false;
+		St().instanceLost = false;
 		Dump& d = GetDump();
 		std::lock_guard<std::mutex> dg(d.lock);
 		RtActionsDump(d.root);
@@ -334,6 +355,8 @@ XrResult XRAPI_CALL GetInstanceProperties(XrInstance, XrInstanceProperties* prop
 XrResult XRAPI_CALL PollEvent(XrInstance, XrEventDataBuffer* out)
 {
 	std::lock_guard<std::recursive_mutex> g(St().lock);
+	if (St().instanceLost)
+		return XR_ERROR_INSTANCE_LOST;
 	if (St().events.empty())
 		return XR_EVENT_UNAVAILABLE;
 	*out = St().events.front();
@@ -382,7 +405,7 @@ XrResult XRAPI_CALL StringToPath(XrInstance, const char* str, XrPath* path)
 XrResult XRAPI_CALL PathToString(XrInstance, XrPath path, uint32_t capacity, uint32_t* count, char* buffer)
 {
 	std::lock_guard<std::recursive_mutex> g(St().lock);
-	if (path == XR_NULL_PATH || path >= St().paths.size())
+	if (path == XR_NULL_PATH || path >= St().paths.size() || St().paths[(size_t)path].empty())
 		return XR_ERROR_PATH_INVALID;
 	const std::string& s = St().paths[(size_t)path];
 	*count = (uint32_t)s.size() + 1;
@@ -401,6 +424,13 @@ XrResult XRAPI_CALL GetSystem(XrInstance, const XrSystemGetInfo* info, XrSystemI
 	FAIL_POINT("xrGetSystem");
 	if (info->formFactor != XR_FORM_FACTOR_HEAD_MOUNTED_DISPLAY)
 		return XR_ERROR_FORM_FACTOR_UNSUPPORTED;
+	{
+		std::lock_guard<std::recursive_mutex> g(St().lock);
+		if (St().instanceLost)
+			return XR_ERROR_INSTANCE_LOST;
+		if (std::chrono::steady_clock::now() < St().systemBackAt)
+			return XR_ERROR_FORM_FACTOR_UNAVAILABLE; // gone after a scripted loss
+	}
 	*system = kSystem;
 	return XR_SUCCESS;
 }
@@ -453,7 +483,7 @@ XrResult XRAPI_CALL EnumerateViewConfigurationViews(XrInstance, XrSystemId, XrVi
 		views[i].maxImageRectWidth = 8192;
 		views[i].maxImageRectHeight = 8192;
 		views[i].recommendedSwapchainSampleCount = 1;
-		views[i].maxSwapchainSampleCount = 4;
+		views[i].maxSwapchainSampleCount = GetScript().maxSwapchainSamples;
 	}
 	return XR_SUCCESS;
 }
@@ -464,6 +494,8 @@ XrResult XRAPI_CALL CreateSession(XrInstance, const XrSessionCreateInfo* info, X
 {
 	FAIL_POINT("xrCreateSession");
 	std::lock_guard<std::recursive_mutex> g(St().lock);
+	if (St().instanceLost)
+		return XR_ERROR_INSTANCE_LOST;
 	if (St().session)
 		return XR_ERROR_LIMIT_REACHED;
 	auto session = std::make_unique<RtSession>();
@@ -502,6 +534,11 @@ XrResult XRAPI_CALL CreateSession(XrInstance, const XrSessionCreateInfo* info, X
 		d.root["session"]["binding"] = binding;
 		d.root["session"]["overlay"] = session->overlay;
 	}
+	if (Dump::Enabled()) {
+		Dump& d = GetDump();
+		std::lock_guard<std::mutex> dg(d.lock);
+		d.root["sessions_created"] = d.root["sessions_created"].asUInt64() + 1;
+	}
 	RtSession* raw = session.get();
 	St().session = std::move(session);
 	QueueState(raw, XR_SESSION_STATE_IDLE);
@@ -528,6 +565,10 @@ XrResult XRAPI_CALL BeginSession(XrSession, const XrSessionBeginInfo* info)
 	RtSession* s = St().session.get();
 	if (!s)
 		return XR_ERROR_HANDLE_INVALID;
+	if (St().instanceLost)
+		return XR_ERROR_INSTANCE_LOST;
+	if (s->lost)
+		return XR_ERROR_SESSION_LOST;
 	if (s->running)
 		return XR_ERROR_SESSION_RUNNING;
 	if (info->primaryViewConfigurationType != XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO)
@@ -542,6 +583,10 @@ XrResult XRAPI_CALL EndSession(XrSession)
 	RtSession* s = St().session.get();
 	if (!s)
 		return XR_ERROR_HANDLE_INVALID;
+	if (St().instanceLost)
+		return XR_ERROR_INSTANCE_LOST;
+	if (s->lost)
+		return XR_ERROR_SESSION_LOST;
 	if (!s->running)
 		return XR_ERROR_SESSION_NOT_RUNNING;
 	if (s->state != XR_SESSION_STATE_STOPPING)
@@ -557,6 +602,8 @@ XrResult XRAPI_CALL RequestExitSession(XrSession)
 {
 	std::lock_guard<std::recursive_mutex> g(St().lock);
 	RtSession* s = St().session.get();
+	if (s && s->lost)
+		return XR_ERROR_SESSION_LOST;
 	if (!s || !s->running)
 		return XR_ERROR_SESSION_NOT_RUNNING;
 	s->exitRequested = true;
@@ -636,6 +683,11 @@ XrResult XRAPI_CALL LocateSpace(XrSpace space, XrSpace base, XrTime time, XrSpac
 
 XrResult XRAPI_CALL GetReferenceSpaceBoundsRect(XrSession, XrReferenceSpaceType type, XrExtent2Df* bounds)
 {
+	{
+		Dump& d = GetDump();
+		std::lock_guard<std::mutex> dg(d.lock);
+		d.root["bounds_rect_calls"] = d.root["bounds_rect_calls"].asInt() + 1;
+	}
 	if (type != XR_REFERENCE_SPACE_TYPE_STAGE) {
 		*bounds = { 0, 0 };
 		return XR_SPACE_BOUNDS_UNAVAILABLE;
@@ -814,6 +866,10 @@ XrResult XRAPI_CALL WaitFrame(XrSession, const XrFrameWaitInfo*, XrFrameState* f
 	RtSession* s = St().session.get();
 	if (!s)
 		return XR_ERROR_HANDLE_INVALID;
+	if (St().instanceLost)
+		return XR_ERROR_INSTANCE_LOST;
+	if (s->lost)
+		return XR_ERROR_SESSION_LOST;
 	if (!s->running)
 		return XR_ERROR_SESSION_NOT_RUNNING;
 	// A second wait before the first one's frame began
@@ -826,7 +882,41 @@ XrResult XRAPI_CALL WaitFrame(XrSession, const XrFrameWaitInfo*, XrFrameState* f
 		QueueState(s, XR_SESSION_STATE_VISIBLE);
 	else if (s->framesWaited == 3)
 		QueueState(s, XR_SESSION_STATE_FOCUSED);
-	for (const ScriptEvent& ev : GetScript().events) {
+	for (size_t i = 0; i < GetScript().events.size(); i++) {
+		const ScriptEvent& ev = GetScript().events[i];
+		const bool loss = ev.type == "session_state" && ev.state == "LOSS_PENDING";
+		// A loss is sent once: the session made after it runs on
+		if (loss && ev.frame == s->framesWaited && St().lossesSent.insert(i).second) {
+			QueueState(s, XR_SESSION_STATE_LOSS_PENDING);
+			s->lost = true;
+			St().systemBackAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(GetScript().lossUnavailableMs);
+			if (Dump::Enabled()) {
+				Dump& d = GetDump();
+				std::lock_guard<std::mutex> dg(d.lock);
+				d.root["sessions_lost"] = d.root["sessions_lost"].asUInt64() + 1;
+			}
+			continue;
+		}
+		if (loss)
+			continue;
+		if (ev.type == "instance_lost") {
+			if (ev.frame == s->framesWaited && St().lossesSent.insert(i).second) {
+				St().instanceLost = true;
+				St().systemBackAt = std::chrono::steady_clock::now() + std::chrono::milliseconds(GetScript().lossUnavailableMs);
+				if (Dump::Enabled()) {
+					Dump& d = GetDump();
+					std::lock_guard<std::mutex> dg(d.lock);
+					d.root["instances_lost"] = d.root["instances_lost"].asUInt64() + 1;
+				}
+			}
+			continue;
+		}
+		// EXITING is the user quitting from the runtime: STOPPING first, EXITING once the session has ended
+		if (ev.frame == s->framesWaited && ev.type == "session_state" && ev.state == "EXITING" && s->running) {
+			s->exitRequested = true;
+			QueueState(s, XR_SESSION_STATE_STOPPING);
+			continue;
+		}
 		if (ev.frame == s->framesWaited && ev.type == "session_state")
 			QueueState(s, StateFromName(ev.state));
 		if (ev.frame == s->framesWaited && ev.type == "refresh_rate" && ev.rate > 0)
@@ -848,6 +938,10 @@ XrResult XRAPI_CALL BeginFrame(XrSession, const XrFrameBeginInfo*)
 	RtSession* s = St().session.get();
 	if (!s)
 		return XR_ERROR_HANDLE_INVALID;
+	if (St().instanceLost)
+		return XR_ERROR_INSTANCE_LOST;
+	if (s->lost)
+		return XR_ERROR_SESSION_LOST;
 	if (!s->running)
 		return XR_ERROR_SESSION_NOT_RUNNING;
 	// As Monado answers a headless session: it has no frames to begin
@@ -946,7 +1040,7 @@ void RecordPlacement(Json::Value& entry, XrSpace space, const XrQuaternionf* q, 
 // rect, array_index, format, image (the swapchain's width and height) and (when sample) samples of a sub-image, with the spec's checks of it; prefix names
 // the image in the checks ("depth " for a depth sub-image)
 void RecordSubImage(RtSession* s, Json::Value& entry, const XrSwapchainSubImage& sub, bool sample,
-    std::vector<std::string>& invalid, const std::string& prefix = "")
+    std::vector<std::string>& invalid, const std::string& prefix = "", bool grid = false)
 {
 	const XrRect2Di& r = sub.imageRect;
 	entry["rect"] = Json::Value(Json::arrayValue);
@@ -982,9 +1076,25 @@ void RecordSubImage(RtSession* s, Json::Value& entry, const XrSwapchainSubImage&
 	SwapchainImage image{ s, sc, (uint32_t)sc->lastReleased };
 	Samples samples;
 	std::string why;
-	if (ProbeSamples(image, r, sub.imageArrayIndex, samples, &why))
+	// grid: 8 x 4 more samples, at the cells' centres, rows from the top
+	std::vector<std::pair<float, float>> points;
+	if (grid) {
+		for (int row = 0; row < 4; row++)
+			for (int col = 0; col < 8; col++)
+				points.push_back({ (col + 0.5f) / 8, (row + 0.5f) / 4 });
+	}
+	std::vector<uint32_t> cells;
+	if (ProbeSamples(image, r, sub.imageArrayIndex, samples, &why, grid ? &points : nullptr, &cells)) {
 		entry["samples"] = SamplesJson(samples);
-	else
+		if (grid) {
+			entry["grid"] = Json::Value(Json::arrayValue);
+			for (uint32_t cell : cells) {
+				char hex[9];
+				std::snprintf(hex, sizeof(hex), "%08x", cell);
+				entry["grid"].append(hex);
+			}
+		}
+	} else
 		entry["samples_error"] = why; // a frame that should have pixels says why it hasn't
 }
 
@@ -1111,7 +1221,7 @@ Json::Value RecordLayer(RtSession* s, const XrCompositionLayerBaseHeader* layer,
 		    || eq->lowerVerticalAngle > eq->upperVerticalAngle)
 			Invalid(invalid, "vertical angles out of range");
 		NeedExtension("XR_KHR_composition_layer_equirect2", "equirect2", invalid);
-		RecordSubImage(s, entry, eq->subImage, sample, invalid);
+		RecordSubImage(s, entry, eq->subImage, sample, invalid, "", true);
 		break;
 	}
 	case XR_TYPE_COMPOSITION_LAYER_CUBE_KHR: {
@@ -1187,6 +1297,10 @@ XrResult XRAPI_CALL EndFrame(XrSession, const XrFrameEndInfo* info)
 	RtSession* s = St().session.get();
 	if (!s)
 		return XR_ERROR_HANDLE_INVALID;
+	if (St().instanceLost)
+		return XR_ERROR_INSTANCE_LOST;
+	if (s->lost)
+		return XR_ERROR_SESSION_LOST;
 	if (s->headless || !s->frameOpen) {
 		CountFrameOrderError(); // an end without a begin
 		return XR_ERROR_CALL_ORDER_INVALID;

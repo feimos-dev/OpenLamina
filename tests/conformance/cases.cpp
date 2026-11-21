@@ -86,6 +86,16 @@ Json::Value conformance::ReadStandInDump()
 
 namespace {
 
+// The process id OpenVR's calls answer for this program
+uint32_t ThisProcessId()
+{
+#ifdef _WIN32
+	return (uint32_t)GetCurrentProcessId();
+#else
+	return (uint32_t)getpid();
+#endif
+}
+
 Json::Value Err(int e)
 {
 	Json::Value v;
@@ -1761,8 +1771,9 @@ void InputThreadsCase(CaseContext& c)
 }
 
 // GetActionBindingInfo (expect/binding_info.json), on the stand-in with scripts/bound_source_odd.json and --manifest
-// manifest_toggle.json: an input action is told as the binding file binds it; a vibration from the runtime's bound
-// sources, which here include one that isn't an input path, and that one is left out
+// manifest_toggle.json: each action is told as the binding file binds it, a pose too, and a vibration with no device
+// or input path (as SteamVR answers); the runtime's bound sources, which here include one that isn't an input path,
+// aren't told. GetActionOrigins with no set answers no origins and no error.
 void BindingInfoCase(CaseContext& c)
 {
 	using namespace vr::IVRInput_010;
@@ -1794,20 +1805,26 @@ void BindingInfoCase(CaseContext& c)
 	InputBindingInfo_t info[4]{};
 	uint32_t returned = 99;
 	Json::Value r;
-	// The vibration is answered from the runtime's bound sources: the real bindings come first, the odd source is
-	// the last one the stand-in lists
+	// The vibration: one binding in the file, told with every field empty
 	vr::VRActionHandle_t haptic = 0;
 	in->GetActionHandle("/actions/main/out/haptic", &haptic);
 	r["err"] = (int)in->GetActionBindingInfo(haptic, info, sizeof(info[0]), 4, &returned);
-	r["returned_at_least_one"] = returned >= 1 && returned <= 4;
-	bool oddShown = false;
+	r["haptic_bindings"] = returned;
+	bool allEmpty = true;
 	for (uint32_t i = 0; i < returned && i < 4; i++)
-		oddShown = oddShown || std::string(info[i].rchDevicePathName).find("mnd") != std::string::npos || std::string(info[i].rchModeName).find("1419") != std::string::npos;
-	r["odd_source_left_out"] = !oddShown;
-	bool noBlank = true; // every entry counted is filled in
-	for (uint32_t i = 0; i < returned && i < 4; i++)
-		noBlank = noBlank && info[i].rchDevicePathName[0] != 0;
-	r["no_blank_entries"] = noBlank;
+		allEmpty = allEmpty && !info[i].rchDevicePathName[0] && !info[i].rchInputPathName[0] && !info[i].rchModeName[0];
+	r["haptic_paths_empty"] = allEmpty;
+	// The pose: the right hand's raw pose
+	vr::VRActionHandle_t pose = 0;
+	in->GetActionHandle("/actions/main/in/pose", &pose);
+	memset(info, 0, sizeof(info));
+	returned = 99;
+	r["pose_err"] = (int)in->GetActionBindingInfo(pose, info, sizeof(info[0]), 4, &returned);
+	r["pose_bindings"] = returned;
+	if (returned >= 1) {
+		r["pose_device"] = info[0].rchDevicePathName;
+		r["pose_input"] = info[0].rchInputPathName;
+	}
 	// The toggle is answered from the binding file: a toggle_button on the right trigger
 	memset(info, 0, sizeof(info));
 	returned = 99;
@@ -1825,6 +1842,9 @@ void BindingInfoCase(CaseContext& c)
 	vr::VRInputValueHandle_t right = 0;
 	in->GetInputSourceHandle("/user/hand/right/input/trigger", &right);
 	r["origin_is_the_right_trigger"] = origins[0] == right && origins[1] == vr::k_ulInvalidInputValueHandle;
+	origins[0] = 1;
+	r["no_set_origins_err"] = (int)in->GetActionOrigins(vr::k_ulInvalidActionSetHandle, toggle, origins, 4);
+	r["no_set_origins_empty"] = origins[0] == vr::k_ulInvalidInputValueHandle;
 	c.Record("odd source", r);
 	c.core->Cleanup();
 }
@@ -2289,6 +2309,137 @@ void VelocitiesCase(CaseContext& c)
 	c.core->Cleanup();
 }
 
+// Frames of a game reading the manifest's actions: n frames, each with UpdateActionState on /actions/main
+static void ManifestFrames(CaseContext& c, Frames& f, vr::IVRInput_010::IVRInput* in, vr::VRActionSetHandle_t set, int n)
+{
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	for (int frame = 1; frame <= n; frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+		vr::IVRInput_010::VRActiveActionSet_t active{};
+		active.ulActionSet = set;
+		in->UpdateActionState(&active, sizeof(active), 1);
+		f.comp->Submit(vr::Eye_Left, tex.get(), nullptr, vr::Submit_Default);
+		f.comp->Submit(vr::Eye_Right, tex.get(), nullptr, vr::Submit_Default);
+	}
+}
+
+// The controller type (Prop_ControllerType_String) of each device that has one, by class: "controller" and "tracker"
+static Json::Value DeviceTypes(vr::IVRSystem_022::IVRSystem* sys)
+{
+	Json::Value out(Json::objectValue);
+	for (vr::TrackedDeviceIndex_t i = 1; i < vr::k_unMaxTrackedDeviceCount; i++) {
+		const vr::ETrackedDeviceClass cls = sys->GetTrackedDeviceClass(i);
+		if (cls != vr::TrackedDeviceClass_Controller && cls != vr::TrackedDeviceClass_GenericTracker)
+			continue;
+		char type[256] = {};
+		sys->GetStringTrackedDeviceProperty(i, vr::Prop_ControllerType_String, type, sizeof(type), nullptr);
+		out[cls == vr::TrackedDeviceClass_Controller ? "controller" : "tracker"].append(type);
+	}
+	return out;
+}
+
+// Vive trackers by their role (expect/vive_trackers.json), on the stand-in with scripts/vive_trackers.json and
+// --manifest manifest_trackers.json: a tracker device for each role, with the role's controller type (the left foot's
+// once it connects), and the pose action a waist tracker's binding file binds read from the waist tracker
+void ViveTrackersCase(CaseContext& c)
+{
+	using namespace vr::IVRInput_010;
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	vr::EVRInitError le;
+	auto* in = (IVRInput*)c.core->GetGenericInterface("IVRInput_010", &le);
+	if (!in) {
+		c.Record("no IVRInput_010", Err(le));
+		c.core->Cleanup();
+		return;
+	}
+	in->SetActionManifestPath(c.manifest.c_str());
+	vr::VRActionSetHandle_t set = vr::k_ulInvalidActionSetHandle;
+	vr::VRActionHandle_t waist = 0;
+	in->GetActionSetHandle("/actions/main", &set);
+	in->GetActionHandle("/actions/main/in/waist", &waist);
+	ManifestFrames(c, f, in, set, 10);
+	c.Record("devices before the foot", DeviceTypes(f.sys));
+	ManifestFrames(c, f, in, set, 30);
+	c.Record("devices", DeviceTypes(f.sys));
+
+	Json::Value r;
+	InputPoseActionData_t data{};
+	r["err"] = (int)in->GetPoseActionDataForNextFrame(waist, vr::TrackingUniverseStanding, &data, sizeof(data), vr::k_ulInvalidInputValueHandle);
+	r["active"] = data.bActive;
+	r["valid"] = data.pose.bPoseIsValid;
+	const vr::HmdMatrix34_t& m = data.pose.mDeviceToAbsoluteTracking;
+	r["at"] = ThousandthsOf({ { m.m[0][3], m.m[1][3], m.m[2][3] } });
+	vr::VRInputValueHandle_t waistPath = 0, footPath = 0;
+	in->GetInputSourceHandle("/user/waist", &waistPath);
+	in->GetInputSourceHandle("/user/foot/left", &footPath);
+	r["origin_is_the_waist"] = data.activeOrigin == waistPath && waistPath != vr::k_ulInvalidInputValueHandle;
+	// The origin's device is the waist tracker
+	InputOriginInfo_t origin{};
+	r["origin_info_err"] = (int)in->GetOriginTrackedDeviceInfo(data.activeOrigin, &origin, sizeof(origin));
+	char type[256] = {};
+	f.sys->GetStringTrackedDeviceProperty(origin.trackedDeviceIndex, vr::Prop_ControllerType_String, type, sizeof(type), nullptr);
+	r["origin_device"] = type;
+	// Restricted to the waist it's the same; to the left foot, which the file doesn't bind it on, nothing
+	InputPoseActionData_t restricted{};
+	in->GetPoseActionDataForNextFrame(waist, vr::TrackingUniverseStanding, &restricted, sizeof(restricted), waistPath);
+	r["restricted_to_the_waist"] = restricted.bActive;
+	restricted = {};
+	in->GetPoseActionDataForNextFrame(waist, vr::TrackingUniverseStanding, &restricted, sizeof(restricted), footPath);
+	r["restricted_to_the_foot"] = restricted.bActive;
+	c.Record("waist pose", r);
+	c.core->Cleanup();
+}
+
+// The hands as controllers (expect/hand_controllers*.json), on the stand-in with --manifest manifest_trackers.json:
+// with scripts/hand_interaction.json both hands are Index controllers ("knuckles", or the handController setting's)
+// and the right hand's pinch is the trigger the binding file binds; with scripts/hand_tracking_only.json there is no
+// controller, but the hands' own joints are tracked, and the hands are those controllers all the same
+void HandControllersCase(CaseContext& c)
+{
+	using namespace vr::IVRInput_010;
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	vr::EVRInitError le;
+	auto* in = (IVRInput*)c.core->GetGenericInterface("IVRInput_010", &le);
+	if (!in) {
+		c.Record("no IVRInput_010", Err(le));
+		c.core->Cleanup();
+		return;
+	}
+	in->SetActionManifestPath(c.manifest.c_str());
+	vr::VRActionSetHandle_t set = vr::k_ulInvalidActionSetHandle;
+	vr::VRActionHandle_t squeeze = 0;
+	in->GetActionSetHandle("/actions/main", &set);
+	in->GetActionHandle("/actions/main/in/squeeze", &squeeze);
+	// Hand tracking is checked once a second for a hand without a controller
+	ManifestFrames(c, f, in, set, 30);
+	for (int i = 0; i < 12 && f.sys->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_RightHand) >= 16; i++) {
+		std::this_thread::sleep_for(std::chrono::milliseconds(100));
+		ManifestFrames(c, f, in, set, 2);
+	}
+	c.Record("devices", DeviceTypes(f.sys));
+	Json::Value r;
+	const vr::TrackedDeviceIndex_t right = f.sys->GetTrackedDeviceIndexForControllerRole(vr::TrackedControllerRole_RightHand);
+	r["right_found"] = right < 16;
+	if (right < 16) {
+		char model[256] = {};
+		f.sys->GetStringTrackedDeviceProperty(right, vr::Prop_RenderModelName_String, model, sizeof(model), nullptr);
+		r["render_model"] = model;
+		vr::TrackedDevicePose_t poses[16]{};
+		f.sys->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding, 0, poses, 16);
+		r["pose_valid"] = poses[right].bPoseIsValid;
+	}
+	InputAnalogActionData_t analog{};
+	r["squeeze_err"] = (int)in->GetAnalogActionData(squeeze, &analog, sizeof(analog), vr::k_ulInvalidInputValueHandle);
+	r["squeeze"] = analog.x;
+	c.Record("right hand", r);
+	c.core->Cleanup();
+}
+
 void SubmitEdges(CaseContext& c)
 {
 	Frames f;
@@ -2549,6 +2700,42 @@ void OwnFramesNothingShownCase(CaseContext& c)
 	if (!dump.isNull()) {
 		// The game's 20, or one fewer (its first may be lost to the session's move onto its device)
 		r["only_the_game_frames"] = dump["frames_ended"].asInt64() <= 20;
+		r["frame_order_errors"] = dump["frame_order_errors"];
+	}
+	c.Record("frames", r);
+}
+
+// A game that stalls in a fade to black (expect/own_frames.json, with ownFrames=true): 10 frames, an instant fade to
+// opaque black, 2 more frames, then half a second without any call and nothing else shown. The visible fade keeps
+// OpenLamina's own frames going, and each of them draws it over the game's last frame: at least 30 frames with both the
+// game's frame and an opaque black quad (the fade; nothing else shows a quad here).
+void OwnFramesFadeCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	for (int frame = 0; frame < 10; frame++)
+		GameFrame(f, tex.get());
+	f.comp->FadeToColor(0, 0, 0, 0, 1, false);
+	for (int frame = 0; frame < 2; frame++)
+		GameFrame(f, tex.get());
+	std::this_thread::sleep_for(std::chrono::milliseconds(500));
+	c.core->Cleanup();
+
+	Json::Value r;
+	Json::Value dump = ReadStandInDump();
+	if (!dump.isNull()) {
+		std::map<int64_t, std::pair<bool, bool>> frames; // frame: black quad, projection
+		for (const Json::Value& layer : dump["layers"]) {
+			auto& fr = frames[layer["frame"].asInt64()];
+			fr.first |= layer["type"].asString() == "quad" && layer["samples"]["tl"].asString() == "000000ff";
+			fr.second |= layer["type"].asString() == "projection";
+		}
+		int faded = 0;
+		for (auto& [frame, fr] : frames)
+			faded += fr.first && fr.second;
+		r["faded_frames_at_least_30"] = faded >= 30;
 		r["frame_order_errors"] = dump["frame_order_errors"];
 	}
 	c.Record("frames", r);
@@ -3328,7 +3515,203 @@ void RenderModelsCase(CaseContext& c)
 	}
 	c.Record("answers", r);
 
+	// OpenLamina's own controller models (bin/rendermodels): what SteamVR doesn't have is answered from them
+	r = Json::Value();
+	const char* vive = "htc-vive-left";
+	model = nullptr;
+	r["ret"] = load(vive, &model);
+	if (model) {
+		r["has_vertices"] = model->unVertexCount > 1000;
+		bool inRange = true;
+		for (uint32_t i = 0; i < model->unTriangleCount * 3; i++)
+			inRange = inRange && model->rIndexData[i] < model->unVertexCount;
+		r["indices_in_range"] = inRange;
+		RenderModel_TextureMap_t* tex = nullptr;
+		TextureID_t id = model->diffuseTextureId;
+		r["texture_ret"] = (int)untilLoaded([&] { return rm->LoadTexture_Async(id, &tex); });
+		if (tex) {
+			r["texture"] = std::to_string(tex->unWidth) + "x" + std::to_string(tex->unHeight);
+			rm->FreeTexture(tex);
+		}
+		rm->FreeRenderModel(model);
+	}
+	Json::Value parts(Json::arrayValue);
+	for (uint32_t i = 0; i < rm->GetComponentCount(vive) && i < 16; i++) {
+		char part[64] = {};
+		rm->GetComponentName(vive, i, part, sizeof(part));
+		parts.append(part);
+	}
+	r["components"] = parts;
+	r["has_tip"] = rm->RenderModelHasComponent(vive, "tip");
+	r["trigger_buttons"] = (Json::UInt64)rm->GetComponentButtonMask(vive, "trigger");
+	model = nullptr;
+	r["trigger_ret"] = load("htc-vive-left/trigger", &model);
+	if (model)
+		rm->FreeRenderModel(model);
+	vr::VRControllerState_t touch{};
+	vr::RenderModel_ComponentState_t touchState{};
+	rm->GetComponentState(vive, "trackpad_touch", &touch, &mode, &touchState);
+	r["touch_dot_at_rest"] = touchState.uProperties;
+	touch.ulButtonTouched = vr::ButtonMaskFromId(vr::k_EButton_Axis0);
+	touch.rAxis[0].x = 1.0f;
+	rm->GetComponentState(vive, "trackpad_touch", &touch, &mode, &touchState);
+	r["touch_dot_touched"] = touchState.uProperties;
+	r["touch_dot_moves_right"] = touchState.mTrackingToComponentRenderModel.m[0][3] > 0.015f;
+	vr::RenderModel_ComponentState_t tipState{};
+	r["tip_ret"] = rm->GetComponentState(vive, "tip", nullptr, nullptr, &tipState);
+	char ownOriginal[64] = {};
+	pe = VRRenderModelError_Loading;
+	rm->GetRenderModelOriginalPath(vive, ownOriginal, sizeof(ownOriginal), &pe);
+	r["original"] = ownOriginal;
+	r["original_error"] = (int)pe;
+	c.Record("own controller", r);
+
 	c.core->Cleanup();
+}
+
+// What each application type (scene, overlay, background, utility, other) is answered by the calls whose answers
+// depend on the session and on the controllers, for comparing with SteamVR's: run with controllers on
+// (scripts/controllers_on.json on the stand-in runtime; two controllers switched on with SteamVR). Each type is an
+// Init of its own, a few frames' worth of events pumped first, so the answers are those of a session that has started.
+void AppTypeAnswersCase(CaseContext& c)
+{
+	static const std::pair<vr::EVRApplicationType, const char*> types[] = {
+		{ vr::VRApplication_Scene, "scene" },
+		{ vr::VRApplication_Overlay, "overlay" },
+		{ vr::VRApplication_Background, "background" },
+		{ vr::VRApplication_Utility, "utility" },
+		{ vr::VRApplication_Other, "other" },
+		{ vr::VRApplication_VRMonitor, "vrmonitor" },
+	};
+	for (const auto& [type, name] : types) {
+		const std::string t = name;
+		vr::EVRInitError ie = c.core->Init(type, nullptr);
+		c.Record(t + " Init", Err(ie));
+		if (ie != vr::VRInitError_None)
+			continue;
+		auto get = [&](const char* version) {
+			vr::EVRInitError le = vr::VRInitError_None;
+			void* p = c.core->GetGenericInterface(version, &le);
+			if (!p)
+				c.Record(t + " no " + version, Err(le));
+			return p;
+		};
+		auto* sys = (vr::IVRSystem_022::IVRSystem*)get("IVRSystem_022");
+		auto* comp = (vr::IVRCompositor_029::IVRCompositor*)get("IVRCompositor_029");
+		auto* ov = (vr::IVROverlay_028::IVROverlay*)get("IVROverlay_028");
+		auto* apps = (vr::IVRApplications_007::IVRApplications*)get("IVRApplications_007");
+		auto* chap = (vr::IVRChaperone_004::IVRChaperone*)get("IVRChaperone_004");
+		auto* input = (vr::IVRInput_010::IVRInput*)get("IVRInput_010");
+
+		// The session's start-up events, as a game's first frames would see them
+		if (sys) {
+			vr::VREvent_t ev;
+			int events = 0;
+			for (int frame = 0; frame < 10; frame++) {
+				if (comp && type == vr::VRApplication_Scene) {
+					vr::TrackedDevicePose_t poses[vr::k_unMaxTrackedDeviceCount];
+					comp->WaitGetPoses(poses, vr::k_unMaxTrackedDeviceCount, nullptr, 0);
+				} else {
+					std::this_thread::sleep_for(std::chrono::milliseconds(11));
+				}
+				while (events < 256 && sys->PollNextEvent(&ev, sizeof(ev)))
+					events++;
+			}
+			Json::Value r;
+			r["any"] = events > 0;
+			c.Record(t + " startup events", r);
+		}
+
+		if (sys) {
+			Json::Value r;
+			r["IsInputAvailable"] = sys->IsInputAvailable();
+			r["IsSteamVRDrawingControllers"] = sys->IsSteamVRDrawingControllers();
+			r["ShouldApplicationPause"] = sys->ShouldApplicationPause();
+			r["ShouldApplicationReduceRenderingWork"] = sys->ShouldApplicationReduceRenderingWork();
+			r["HmdActivityLevel"] = (int)sys->GetTrackedDeviceActivityLevel(vr::k_unTrackedDeviceIndex_Hmd);
+			c.Record(t + " IVRSystem state", r);
+
+			for (auto role : { vr::TrackedControllerRole_LeftHand, vr::TrackedControllerRole_RightHand }) {
+				const std::string hand = role == vr::TrackedControllerRole_LeftHand ? "left" : "right";
+				vr::TrackedDeviceIndex_t i = sys->GetTrackedDeviceIndexForControllerRole(role);
+				Json::Value d;
+				d["found"] = i != vr::k_unTrackedDeviceIndexInvalid;
+				if (i != vr::k_unTrackedDeviceIndexInvalid) {
+					d["class"] = (int)sys->GetTrackedDeviceClass(i);
+					d["connected"] = sys->IsTrackedDeviceConnected(i);
+					d["role"] = (int)sys->GetControllerRoleForTrackedDeviceIndex(i);
+					vr::ETrackedPropertyError pe = vr::TrackedProp_Success;
+					d["RoleHint"] = sys->GetInt32TrackedDeviceProperty(i, vr::Prop_ControllerRoleHint_Int32, &pe);
+					d["RoleHint error"] = (int)pe;
+					d["ProvidesBatteryStatus"] = sys->GetBoolTrackedDeviceProperty(i, vr::Prop_DeviceProvidesBatteryStatus_Bool, &pe);
+					d["ProvidesBatteryStatus error"] = (int)pe;
+					float battery = sys->GetFloatTrackedDeviceProperty(i, vr::Prop_DeviceBatteryPercentage_Float, &pe);
+					d["Battery error"] = (int)pe;
+					d["Battery in 0..1"] = battery >= 0.0f && battery <= 1.0f;
+					d["ActivityLevel"] = (int)sys->GetTrackedDeviceActivityLevel(i);
+					vr::VRControllerState_t state{};
+					d["GetControllerState"] = sys->GetControllerState(i, &state, sizeof(state));
+				}
+				c.Record(t + " " + hand + " controller", d);
+			}
+			vr::TrackedDeviceIndex_t sorted[vr::k_unMaxTrackedDeviceCount];
+			Json::Value r2;
+			r2["controllers"] = sys->GetSortedTrackedDeviceIndicesOfClass(vr::TrackedDeviceClass_Controller, sorted, vr::k_unMaxTrackedDeviceCount);
+			c.Record(t + " GetSortedTrackedDeviceIndicesOfClass", r2);
+		}
+
+		if (comp) {
+			Json::Value r;
+			r["GetTrackingSpace"] = (int)comp->GetTrackingSpace();
+			r["CanRenderScene"] = comp->CanRenderScene();
+			r["IsFullscreen"] = comp->IsFullscreen();
+			r["CurrentSceneFocusProcess is this"] = comp->GetCurrentSceneFocusProcess() == ThisProcessId();
+			r["CurrentSceneFocusProcess is none"] = comp->GetCurrentSceneFocusProcess() == 0;
+			r["LastFrameRenderer is this"] = comp->GetLastFrameRenderer() == ThisProcessId();
+			r["IsMirrorWindowVisible"] = comp->IsMirrorWindowVisible();
+			r["ShouldAppRenderWithLowResources"] = comp->ShouldAppRenderWithLowResources();
+			r["IsMotionSmoothingEnabled"] = comp->IsMotionSmoothingEnabled();
+			r["IsMotionSmoothingSupported"] = comp->IsMotionSmoothingSupported();
+			r["IsCurrentSceneFocusAppLoading"] = comp->IsCurrentSceneFocusAppLoading();
+			c.Record(t + " IVRCompositor state", r);
+		}
+
+		if (ov) {
+			Json::Value r;
+			r["IsDashboardVisible"] = ov->IsDashboardVisible();
+			r["PrimaryDashboardDevice"] = (int)ov->GetPrimaryDashboardDevice();
+			vr::VROverlayHandle_t h = vr::k_ulOverlayHandleInvalid;
+			r["CreateOverlay"] = (int)ov->CreateOverlay(("oc.apptype." + t).c_str(), "App type", &h);
+			if (h != vr::k_ulOverlayHandleInvalid)
+				r["DestroyOverlay"] = (int)ov->DestroyOverlay(h);
+			c.Record(t + " IVROverlay state", r);
+		}
+
+		if (apps) {
+			Json::Value r;
+			r["SceneProcessId is this"] = apps->GetCurrentSceneProcessId() == ThisProcessId();
+			r["SceneProcessId is none"] = apps->GetCurrentSceneProcessId() == 0;
+			r["SceneApplicationState"] = (int)apps->GetSceneApplicationState();
+			char key[128] = {};
+			r["GetStartingApplication"] = (int)apps->GetStartingApplication(key, sizeof(key));
+			c.Record(t + " IVRApplications state", r);
+		}
+
+		if (chap) {
+			Json::Value r;
+			r["GetCalibrationState"] = (int)chap->GetCalibrationState();
+			r["AreBoundsVisible"] = chap->AreBoundsVisible();
+			c.Record(t + " IVRChaperone state", r);
+		}
+
+		if (input) {
+			Json::Value r;
+			r["IsUsingLegacyInput"] = input->IsUsingLegacyInput();
+			c.Record(t + " IVRInput state", r);
+		}
+
+		c.core->Cleanup();
+	}
 }
 
 } // namespace
@@ -3368,11 +3751,14 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "events-commit", EventsCommitCase },
 		{ "session-events", SessionEventsCase },
 		{ "velocities", VelocitiesCase },
+		{ "vive-trackers", ViveTrackersCase },
+		{ "hand-controllers", HandControllersCase },
 		{ "submit-edges", SubmitEdges },
 		{ "observer", ObserverCase },
 		{ "own-frames", OwnFramesCase },
 		{ "own-frames-race", OwnFramesRaceCase },
 		{ "own-frames-nothing-shown", OwnFramesNothingShownCase },
+		{ "own-frames-fade", OwnFramesFadeCase },
 		{ "own-frames-overlay-churn", OwnFramesOverlayChurnCase },
 		{ "laser-mouse", LaserMouseCase },
 		{ "message-overlay", MessageOverlayCase },
@@ -3382,12 +3768,14 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "gpu-other-adapter", GpuOtherAdapterCase },
 		{ "display-frequency", DisplayFrequencyCase },
 		{ "render-models", RenderModelsCase },
+		{ "app-type-answers", AppTypeAnswersCase },
 	};
 	static const std::map<std::string, CaseFn> all = [] {
 		std::map<std::string, CaseFn> m = cases;
 		m.insert(GfxCases().begin(), GfxCases().end());
 		m.insert(HelperCases().begin(), HelperCases().end());
 		m.insert(CoverageCases().begin(), CoverageCases().end());
+		m.insert(SteamVRRunCases().begin(), SteamVRRunCases().end());
 		return m;
 	}();
 	return all;

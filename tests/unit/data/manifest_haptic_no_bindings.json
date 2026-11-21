@@ -1,0 +1,9 @@
+{
+  "default_bindings": [],
+  "actions": [
+    { "name": "/actions/main/in/toggle", "type": "boolean" },
+    { "name": "/actions/main/in/pose", "type": "pose" },
+    { "name": "/actions/main/out/haptic", "type": "vibration" }
+  ],
+  "action_sets": [{ "name": "/actions/main", "usage": "leftright" }]
+}

@@ -30,6 +30,15 @@ std::optional<FormatChoice> ChooseSwapchainFormat(GfxApiKind api, int64_t gameFo
 // (DXGI's typeless and typed members alike), if it offers it
 std::optional<int64_t> ChooseDepthSwapchainFormat(GfxApiKind api, int64_t gameFormat, const std::vector<int64_t>& runtimeFormats);
 
+// For a copy between APIs (an OpenGL or Vulkan texture copied through D3D11): the format of another API that holds the
+// same texels (the family's member of the same sRGB-ness; a typeless one as its linear member), or std::nullopt if that
+// API's table has none, or the format is block-compressed or integer
+std::optional<int64_t> SameTexelsIn(GfxApiKind from, int64_t format, GfxApiKind to);
+// Where there's no such format, one a converting copy (an OpenGL blit) can write the values into without losing range:
+// 8-bit RGBA of the same sRGB-ness for formats of 8 bits a channel or fewer, else 16-bit float RGBA; std::nullopt for
+// formats no table knows, and block-compressed or integer ones
+std::optional<int64_t> ConvertibleColourIn(GfxApiKind from, int64_t format, GfxApiKind to);
+
 // Whether the format is an sRGB one, and its family member of the given sRGB-ness (the format itself if the family has
 // none such); for views of a texture whose data a swapchain format reinterprets
 bool FormatIsSrgb(GfxApiKind api, int64_t format);

@@ -64,6 +64,7 @@
 
 #include "script.h"
 
+#include <chrono>
 #include <cstdint>
 #include <deque>
 #include <map>
@@ -182,6 +183,7 @@ struct RtSession {
 	bool overlay = false;
 	bool running = false;
 	bool exitRequested = false; // xrRequestExitSession: xrEndSession then goes on to EXITING, as the spec says
+	bool lost = false; // a scripted LOSS_PENDING: its calls answer XR_ERROR_SESSION_LOST
 	XrSessionState state = XR_SESSION_STATE_UNKNOWN;
 	uint64_t framesWaited = 0;
 	uint64_t framesBegun = 0;
@@ -214,6 +216,11 @@ struct RtState {
 	std::vector<std::string> paths{ "" };
 	XrTime time = 1000000000;
 	bool presenceSent = false;
+	// A scripted loss: the system is gone (xrGetSystem fails) until then; the loss events already sent (by index)
+	std::chrono::steady_clock::time_point systemBackAt{};
+	bool instanceLost = false; // a scripted instance loss, until xrDestroyInstance
+	uint32_t instancesMade = 0;
+	std::set<size_t> lossesSent;
 };
 
 RtState& St();

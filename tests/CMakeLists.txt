@@ -36,7 +36,7 @@ target_include_directories(oc_callers PUBLIC
 	${CMAKE_SOURCE_DIR}/OpenVRHeaders
 	${CMAKE_BINARY_DIR}
 )
-target_link_libraries(oc_callers PUBLIC jsoncpp)
+target_link_libraries(oc_callers PUBLIC ${jsoncppLib})
 if (WIN32)
 	target_link_libraries(oc_callers PUBLIC d3d11)
 	# The generated file is one large translation unit
@@ -56,6 +56,7 @@ add_executable(oc_conformance
 	conformance/gfx_cases.cpp
 	conformance/helper_cases.cpp
 	conformance/coverage_cases.cpp
+	conformance/steamvr_run_cases.cpp
 	conformance/gfx/GfxApi.h
 	conformance/crash_report.cpp
 )
@@ -134,6 +135,7 @@ add_executable(oc_unit_tests
 	unit/KeyboardTests.cpp
 	unit/RenderModelTests.cpp
 	unit/HmdTests.cpp
+	unit/SessionLifecycleTests.cpp
 	unit/DeviceSlotsTests.cpp
 	unit/EntryPointsTests.cpp
 	unit/BaseMailboxTests.cpp
@@ -167,6 +169,9 @@ target_compile_definitions(oc_unit_tests PRIVATE ${GRAPHICS_API_SUPPORT_FLAGS} D
 	OC_TEST_DATA_DIR="${CMAKE_CURRENT_SOURCE_DIR}/unit/data" OC_ECHO_APP="$<TARGET_FILE:oc_echo_app>")
 # The program the launch test starts
 add_dependencies(oc_unit_tests oc_echo_app)
+# The controller models the render model tests read
+add_dependencies(oc_unit_tests OCRenderModels)
+target_compile_definitions(oc_unit_tests PRIVATE OC_TEST_RENDERMODELS="${OC_RENDERMODELS_DIR}")
 if (NOT WIN32)
 	# The runtime library the entry point tests load
 	add_dependencies(oc_unit_tests OCOVR)
@@ -179,5 +184,9 @@ else ()
 endif ()
 add_test(NAME unit COMMAND oc_unit_tests)
 set_tests_properties(unit PROPERTIES LABELS unit)
+if (NOT WIN32)
+	# An empty config folder of its own, so the user's own openlamina.ini (~/.config/openlamina) isn't read
+	set_tests_properties(unit PROPERTIES ENVIRONMENT XDG_CONFIG_HOME=${CMAKE_CURRENT_BINARY_DIR}/unit_config)
+endif ()
 
 add_subdirectory(runtime)

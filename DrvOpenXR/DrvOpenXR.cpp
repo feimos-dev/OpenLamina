@@ -189,6 +189,11 @@ struct InstancePlan {
 	XrGraphicsApiSupportedFlags apiFlags = 0;
 };
 
+// The running instance's plan, set once at start-up: an instance made again after a loss has the same
+static InstancePlan currentPlan;
+// A new instance after a loss whose headset isn't there yet (RemakeInstance keeps it); until FullShutdown
+static bool madeAgain = false;
+
 // The extensions OpenLamina enables, of those available, for a session of that kind
 InstancePlan PlanInstance(const std::set<std::string>& available, SessionKind kind)
 {
@@ -207,8 +212,12 @@ InstancePlan PlanInstance(const std::set<std::string>& available, SessionKind ki
 	}
 #endif
 #if defined(SUPPORT_VK)
+	// XR_KHR_vulkan_enable where it's there (its extension lists are what a game's own device needs), else enable2
 	if (available.count(XR_KHR_VULKAN_ENABLE_EXTENSION_NAME)) {
 		plan.extensions.push_back(XR_KHR_VULKAN_ENABLE_EXTENSION_NAME);
+		plan.apiFlags |= XR_SUPPORTED_GRAPHICS_API_VK;
+	} else if (available.count(XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME)) {
+		plan.extensions.push_back(XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME);
 		plan.apiFlags |= XR_SUPPORTED_GRAPHICS_API_VK;
 	}
 #endif
@@ -238,6 +247,10 @@ InstancePlan PlanInstance(const std::set<std::string>& available, SessionKind ki
 	if (available.count(XR_EXT_HAND_TRACKING_EXTENSION_NAME))
 		plan.extensions.push_back(XR_EXT_HAND_TRACKING_EXTENSION_NAME);
 
+	// Vive trackers by their role (/user/vive_tracker_htcx/role/waist), poses only
+	if (available.contains(OC_XR_HTCX_VIVE_TRACKER_INTERACTION_EXTENSION_NAME))
+		plan.extensions.push_back(OC_XR_HTCX_VIVE_TRACKER_INTERACTION_EXTENSION_NAME);
+
 	if (available.count(XR_MNDX_XDEV_SPACE_EXTENSION_NAME))
 		plan.extensions.push_back(XR_MNDX_XDEV_SPACE_EXTENSION_NAME);
 
@@ -259,6 +272,9 @@ InstancePlan PlanInstance(const std::set<std::string>& available, SessionKind ki
 	         OC_XR_FB_TOUCH_CONTROLLER_PROXIMITY_EXTENSION_NAME, XR_EXT_SAMSUNG_ODYSSEY_CONTROLLER_EXTENSION_NAME, XR_MSFT_HAND_INTERACTION_EXTENSION_NAME })
 		if (available.contains(profileExtension))
 			plan.extensions.push_back(profileExtension);
+	// XR_EXT_hand_interaction's hands are shown as a controller unless handController is off
+	if (oovr_global_configuration.HandController() != "off" && available.contains(OC_XR_EXT_HAND_INTERACTION_EXTENSION_NAME))
+		plan.extensions.push_back(OC_XR_EXT_HAND_INTERACTION_EXTENSION_NAME);
 
 	if (available.contains(XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME))
 		plan.extensions.push_back(XR_KHR_COMPOSITION_LAYER_CYLINDER_EXTENSION_NAME);
@@ -351,8 +367,14 @@ XrResult MakeInstance(const InstancePlan& plan, XrInstance* instance, XrVersion*
 #endif
 
 	XrResult res = DrvOpenXR::CreateInstanceNewestVersion(createInfo, instance, version, xrCreateInstance);
-	if (XR_SUCCEEDED(res))
+	if (XR_SUCCEEDED(res)) {
 		OOVR_LOGF("Created the OpenXR instance for OpenXR %d.%d", (int)XR_VERSION_MAJOR(*version), (int)XR_VERSION_MINOR(*version));
+		XrInstanceProperties properties = { XR_TYPE_INSTANCE_PROPERTIES };
+		if (XR_SUCCEEDED(xrGetInstanceProperties(*instance, &properties))) {
+			OOVR_LOGF("OpenXR runtime: %s %d.%d.%d", properties.runtimeName, (int)XR_VERSION_MAJOR(properties.runtimeVersion),
+			    (int)XR_VERSION_MINOR(properties.runtimeVersion), (int)XR_VERSION_PATCH(properties.runtimeVersion));
+		}
+	}
 	return res;
 }
 
@@ -521,6 +543,7 @@ IBackend* DrvOpenXR::CreateOpenXRBackend(const char* startupInfo, vr::EVRInitErr
 	// Create the OpenXR instance - this is the overall handle that connects us to the runtime, or take the one
 	// VR_IsHmdPresent made for a scene application
 	const InstancePlan plan = PlanInstance(availableExtensions, choice.kind);
+	currentPlan = plan;
 	const std::vector<const char*>& extensions = plan.extensions;
 	const XrGraphicsApiSupportedFlags apiFlags = plan.apiFlags;
 	xr_instance = TakeProbedInstance(plan, &xr_instance_version);
@@ -642,12 +665,58 @@ XrResult DrvOpenXR::SetupSession()
 	OOVR_LOGF("Started OpenXR session on runtime '%s', hand tracking supported: %d",
 	    xr_gbl->systemProperties.systemName, xr_gbl->handTrackingProperties.supportsHandTracking);
 
+	currentBackend->ForgetTrackerSpaces();
+
 	// If required, re-setup the input system for this new session
 	BaseInput* input = GetUnsafeBaseInput();
 	if (input)
 		input->BindInputsForSession();
 
 	currentBackend->OnSessionCreated();
+	return XR_SUCCESS;
+}
+
+XrResult DrvOpenXR::FindSystem()
+{
+	return CreateSystemID();
+}
+
+XrResult DrvOpenXR::RemakeInstance()
+{
+#ifdef _DEBUG
+	// It went with the old instance
+	dbgMessenger = NULL;
+#endif
+	// A new instance made at an earlier try is kept while the headset isn't there yet
+	if (!madeAgain) {
+		if (xr_instance) {
+			if (XR_FAILED(xrDestroyInstance(xr_instance)))
+				OOVR_LOG("xrDestroyInstance of the lost instance failed");
+			xr_instance = XR_NULL_HANDLE;
+		}
+		if (XrResult res = MakeInstance(currentPlan, &xr_instance, &xr_instance_version); XR_FAILED(res)) {
+			OOVR_LOGF("The OpenXR instance can't be made again yet: %d", (int)res);
+			xr_instance = XR_NULL_HANDLE;
+			return res;
+		}
+		// The old function table isn't freed: a thread outside the session lock may still be reading it
+		xr_ext = new XrExt(currentPlan.apiFlags, currentPlan.extensions);
+		madeAgain = true;
+	}
+	if (XrResult res = CreateSystemID(); XR_FAILED(res))
+		return res;
+	uint32_t viewCount = 0;
+	if (XrResult res = xrEnumerateViewConfigurationViews(xr_instance, xr_system, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, 0, &viewCount, nullptr); XR_FAILED(res))
+		return res;
+	std::vector<XrViewConfigurationView> views(viewCount, { XR_TYPE_VIEW_CONFIGURATION_VIEW });
+	if (XrResult res = xrEnumerateViewConfigurationViews(xr_instance, xr_system, XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO, viewCount, &viewCount, views.data()); XR_FAILED(res))
+		return res;
+	// The game sized its textures for two views: a headset with another count isn't one to go on with
+	if (viewCount != XruEyeCount)
+		return XR_ERROR_VIEW_CONFIGURATION_TYPE_UNSUPPORTED;
+	xr_views_list = views;
+	madeAgain = false; // the next loss makes another
+	OOVR_LOG("Made the OpenXR instance again");
 	return XR_SUCCESS;
 }
 
@@ -721,6 +790,7 @@ void DrvOpenXR::FullShutdown()
 	}
 
 	initialised = false;
+	madeAgain = false;
 	currentBackend = nullptr;
 	SetCurrentSessionKind(SessionKind::Scene);
 }

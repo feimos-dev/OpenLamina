@@ -1,0 +1,5 @@
+{
+ "#": "Vulkan and OpenGL games that submit 5 frames and then call WaitGetPoses 20 times without Submit (run.py --cases gfx-vk-wait-without-submit,gfx-gl-wait-without-submit --script scripts/gfx_all_apis.json --ini ini/own_frames.ini --expect expect/gfx_wait_without_submit.json): each frame they waited for is ended inside their next call, on their render thread (OpenGL: with the game's context current), with no frame call out of order",
+ "gfx-vk-wait-without-submit/frames/-/-": { "frames_ended_at_least_22": true, "frame_order_errors": 0 },
+ "gfx-gl-wait-without-submit/frames/-/-": { "frames_ended_at_least_22": true, "frame_order_errors": 0 }
+}

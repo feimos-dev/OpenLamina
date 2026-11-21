@@ -197,16 +197,6 @@ static std::string escapePathString(const std::string& str)
 	return std::string(out.data(), out.size());
 }
 
-static std::string pathFromParts(const std::initializer_list<std::string>& parts)
-{
-	std::string str;
-	for (const std::string& part : parts) {
-		str += "/";
-		str += part;
-	}
-	return str;
-}
-
 // Must be defined non-inline to avoid it ending up in stubs.gen.cpp
 BaseInput::Action::~Action() = default;
 // The input value handles GetInputSourceHandle has handed out (they're pointers): cast_IVH answers null for any
@@ -411,6 +401,13 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 	// no other thread reads input. Taken before evaluatorLock (see its declaration).
 	auto sessionLock = xr_session.lock();
 
+	// While a lost instance is made again: this manifest is the one loaded on the new instance
+	if (rebuildPending) {
+		manifestToRebuild = pchActionManifestPath;
+		rebuildLegacy = false;
+		return vr::VRInputError_None;
+	}
+
 	bool reloading = hasLoadedActions;
 	if (hasLoadedActions) {
 		// It stands to reason that nothing would happen if we try to load the same manifest again
@@ -418,31 +415,7 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 			return vr::VRInputError_None;
 
 		OOVR_LOG("Received another manifest! Restarting session to reattach inputs...");
-		std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
-		for (std::unique_ptr<ActionSet>& as : actionSets.GetItems()) {
-			OC_XR_LOG(xrDestroyActionSet(as->xr));
-		}
-		OC_XR_LOG(xrDestroyActionSet(legacyInputsSet));
-		legacyInputsSet = XR_NULL_HANDLE;
-		eyeGazeAction = XR_NULL_HANDLE;
-		eyeGazeSpace = XR_NULL_HANDLE;
-		if (rawInputsSet != XR_NULL_HANDLE)
-			OC_XR_LOG(xrDestroyActionSet(rawInputsSet));
-		rawInputsSet = XR_NULL_HANDLE;
-		rawActions.clear();
-		rawComponents.clear();
-		evaluators.clear();
-		bindingFiles.clear();
-		aliasedBindingFiles.clear();
-		evaluatedThisSync.clear();
-		legacyEvaluators.clear();
-		{
-			std::lock_guard<std::mutex> queueGuard(hapticQueueLock);
-			pendingHaptics.clear();
-		}
-		actions.Reset();
-		actionSets.Reset();
-		usingLegacyInput = false;
+		DropActions(true);
 	}
 
 	restartingSession = true;
@@ -723,6 +696,7 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 	const std::filesystem::path workingDir = std::filesystem::current_path(cwdError);
 	const std::filesystem::path manifestDir = PathFromUtf8(dirnameOf(pchActionManifestPath));
 
+	trackerPoseRoutes.clear();
 	for (Json::Value item : root["default_bindings"]) try {
 		if (!item.isObject()) {
 			OOVR_LOG("Warning: skipping a default_bindings entry that isn't a JSON object");
@@ -736,6 +710,18 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 		if (found && found->lexically_normal() != (manifestDir / PathFromUtf8(item["binding_url"].asString())).lexically_normal()) {
 			OOVR_LOGF("Loading the user's own bindings for controller type %s: %s", controller_type.c_str(), PathToUtf8(*found).c_str());
 			path = PathToUtf8(*found);
+		}
+
+		// A tracker's binding file: the poses it binds on a tracker's path (/user/waist/pose/raw) are that tracker's
+		if (controller_type.starts_with("vive_tracker")) {
+			const BindingFile tracker = LoadBindingFile(PathFromUtf8(path));
+			for (const auto& [setName, set] : tracker.sets)
+				for (const PoseBinding& pose : set.poses)
+					if (std::optional<ViveTrackerRole> role = ViveTrackerRoleForSteamVRPath(pose.path)) {
+						std::vector<std::string>& roles = trackerPoseRoutes[pose.output];
+						if (std::find(roles.begin(), roles.end(), role->name) == roles.end())
+							roles.push_back(role->name);
+					}
 		}
 
 		// look if we know about this OpenVR name
@@ -777,14 +763,116 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 	return vr::VRInputError_None;
 }
 
+void BaseInput::DropActions(bool destroyHandles)
+{
+	std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
+	if (destroyHandles) {
+		for (std::unique_ptr<ActionSet>& as : actionSets.GetItems()) {
+			OC_XR_LOG(xrDestroyActionSet(as->xr));
+		}
+		if (legacyInputsSet != XR_NULL_HANDLE)
+			OC_XR_LOG(xrDestroyActionSet(legacyInputsSet));
+		if (rawInputsSet != XR_NULL_HANDLE)
+			OC_XR_LOG(xrDestroyActionSet(rawInputsSet));
+	}
+	legacyInputsSet = XR_NULL_HANDLE;
+	eyeGazeAction = XR_NULL_HANDLE;
+	eyeGazeSpace = XR_NULL_HANDLE;
+	trackerPoseAction = XR_NULL_HANDLE;
+	trackerPoseSession = XR_NULL_HANDLE;
+	rawInputsSet = XR_NULL_HANDLE;
+	rawActions.clear();
+	rawComponents.clear();
+	evaluators.clear();
+	bindingFiles.clear();
+	aliasedBindingFiles.clear();
+	evaluatedThisSync.clear();
+	legacyEvaluators.clear();
+	{
+		std::lock_guard<std::mutex> queueGuard(hapticQueueLock);
+		pendingHaptics.clear();
+	}
+	actions.Reset();
+	actionSets.Reset();
+	usingLegacyInput = false;
+}
+
+void BaseInput::_ForgetInstance()
+{
+	auto sessionLock = xr_session.lock();
+	// Paths are the instance's own too: looked up again on the new one
+	pathsStale = true;
+	// Until the new instance has a session, the game's input calls only say what to load on it
+	if (rebuildPending)
+		return; // forgotten at an earlier try
+	rebuildPending = true;
+	rebuildLegacy = false;
+	manifestToRebuild.clear();
+	if (!hasLoadedActions)
+		return;
+	{
+		std::lock_guard<std::mutex> pathGuard(loadedActionsPathLock);
+		manifestToRebuild = loadedActionsPath;
+		loadedActionsPath.clear();
+	}
+	rebuildLegacy = manifestToRebuild.empty();
+	// Their handles went with the old instance: forgotten, not destroyed
+	DropActions(false);
+	for (XrHandTrackerEXT& handTracker : handTrackers)
+		handTracker = XR_NULL_HANDLE;
+	hasLoadedActions = false;
+}
+
+void BaseInput::_RebuildForNewInstance()
+{
+	// Exclusive to the end, as a manifest's loading is
+	auto sessionLock = xr_session.lock();
+	if (pathsStale) {
+		pathsStale = false;
+		for (size_t i = 0; i < allSubactionPathNames.size() && i < allSubactionPaths.size(); i++) {
+			allSubactionPaths[i] = XR_NULL_PATH;
+			OC_XR_LOG(xrStringToPath(xr_instance, allSubactionPathNames[i].c_str(), &allSubactionPaths[i]));
+		}
+		std::fill(handInteractionProfiles.begin(), handInteractionProfiles.end(), nullptr);
+		std::lock_guard<std::mutex> registryGuard(inputHandleRegistryLock);
+		for (auto& [name, handle] : inputHandleRegistry) {
+			handle->devicePath = XR_NULL_PATH;
+			if (!handle->devicePathString.empty())
+				OC_XR_LOG(xrStringToPath(xr_instance, handle->devicePathString.c_str(), &handle->devicePath));
+		}
+	}
+	if (!rebuildPending)
+		return;
+	rebuildPending = false;
+	if (manifestToRebuild.empty() && !rebuildLegacy)
+		return; // the game had no actions
+	OOVR_LOG("Making the game's actions again on the new OpenXR instance");
+	if (!manifestToRebuild.empty()) {
+		if (EVRInputError err = SetActionManifestPath(manifestToRebuild.c_str()); err == vr::VRInputError_None)
+			return;
+		else
+			OOVR_LOGF("The game's manifest couldn't be loaded again (%d): legacy input instead", (int)err);
+	}
+	LoadEmptyManifestIfRequired();
+}
+
 void BaseInput::LoadEmptyManifestIfRequired()
 {
 	if (hasLoadedActions)
 		return;
+	// Asked for, legacy input comes in place of the info set (which would cost a session restart)
+	legacyInputAsked = true;
+	// Not before the game's first frame on its own device: the session restart for it would come anyway, and a
+	// manifest the game loads by then would need another
+	if (!XrBackend::InputsMayAttach())
+		return;
 
-	// As in SetActionManifestPath, exclusive to the end; another thread may have loaded the actions while this waited
+	// As in SetActionManifestPath, exclusive to the end; another thread may have loaded the actions while this waited.
+	// Nor while a lost instance is made again: the actions are made on the new one.
 	auto sessionLock = xr_session.lock();
-	if (hasLoadedActions)
+	if (rebuildPending && manifestToRebuild.empty())
+		rebuildLegacy = true;
+	if (hasLoadedActions || rebuildPending)
 		return;
 
 	restartingSession = true;
@@ -840,10 +928,16 @@ void BaseInput::LoadEmptyManifestIfRequired()
 
 void BaseInput::BindInputsForSession()
 {
+	// Not attached to this session (yet)
+	trackerPoseSession = XR_NULL_HANDLE;
+
 	// This is called from DrvOpenXR::SetupSession. If we requested a session restart ourselves, we're also
 	// going to bind the inputs ourselves anyway, so we don't want to do that twice.
 	// If we didn't request the restart but we also haven't even loaded actions yet, there's nothing to bind yet.
 	if (restartingSession || !hasLoadedActions)
+		return;
+	// No session to bind to (a lost one was destroyed): the one made again binds them
+	if (!xr_gbl || !xr_session.get())
 		return;
 
 	// Since the session has changed, any actionspaces we previously created are now invalid
@@ -892,7 +986,14 @@ void BaseInput::BindInputsForSession()
 	XrSessionActionSetsAttachInfo attachInfo = { XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO };
 	attachInfo.actionSets = sets.data();
 	attachInfo.countActionSets = sets.size();
-	OC_XR_LOG(xrAttachSessionActionSets(xr_session.get(), &attachInfo));
+	const XrResult attached = xrAttachSessionActionSets(xr_session.get(), &attachInfo);
+	OC_XR_LOG(attached);
+	if (XR_SUCCEEDED(attached) && trackerPoseAction != XR_NULL_HANDLE)
+		trackerPoseSession = xr_session.get();
+	// The trackers by role connected before the attach get their spaces now
+	if (TrackerPoseAction() != XR_NULL_HANDLE)
+		if (auto* backend = dynamic_cast<XrBackend*>(BackendManager::Instance().GetBackendInstance()))
+			backend->OnTrackerActionAttached();
 
 	// Setup hand tracking if supported
 	if (xr_gbl->handTrackingProperties.supportsHandTracking) {
@@ -1103,6 +1204,47 @@ XrResult BaseInput::SuggestBindings(XrInteractionProfileSuggestedBinding& sugges
 	return xr_suggest_bindings_logged(suggested);
 }
 
+// With XR_HTCX_vive_tracker_interaction: one pose action for every tracker role, each role a subaction path, bound to
+// each role's grip pose. Its profile is the trackers' own (no binding file is loaded for it), so it's suggested here.
+static XrAction CreateTrackerPoseAction(XrActionSet set)
+{
+	if (!xr_ext->ViveTrackersHTCX_Available())
+		return XR_NULL_HANDLE;
+	std::vector<XrPath> roles;
+	std::vector<XrPath> poses;
+	for (const ViveTrackerRole& role : ViveTrackerRoles()) {
+		XrPath rolePath = XR_NULL_PATH, posePath = XR_NULL_PATH;
+		OC_XR_LOG(xrStringToPath(xr_instance, ViveTrackerRolePath(role).c_str(), &rolePath));
+		OC_XR_LOG(xrStringToPath(xr_instance, (ViveTrackerRolePath(role) + "/input/grip/pose").c_str(), &posePath));
+		if (rolePath == XR_NULL_PATH || posePath == XR_NULL_PATH)
+			continue;
+		roles.push_back(rolePath);
+		poses.push_back(posePath);
+	}
+	XrActionCreateInfo info = { XR_TYPE_ACTION_CREATE_INFO };
+	info.actionType = XR_ACTION_TYPE_POSE_INPUT;
+	strcpy_arr(info.actionName, "tracker-pose");
+	strcpy_arr(info.localizedActionName, "Tracker Pose");
+	info.countSubactionPaths = (uint32_t)roles.size();
+	info.subactionPaths = roles.data();
+	XrAction action = XR_NULL_HANDLE;
+	OC_XR_LOG(xrCreateAction(set, &info, &action));
+	if (action == XR_NULL_HANDLE)
+		return XR_NULL_HANDLE;
+
+	XrPath profile = XR_NULL_PATH;
+	OC_XR_LOG(xrStringToPath(xr_instance, "/interaction_profiles/htc/vive_tracker_htcx", &profile));
+	std::vector<XrActionSuggestedBinding> bindings;
+	for (XrPath pose : poses)
+		bindings.push_back({ action, pose });
+	XrInteractionProfileSuggestedBinding suggested = { XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
+	suggested.interactionProfile = profile;
+	suggested.suggestedBindings = bindings.data();
+	suggested.countSuggestedBindings = (uint32_t)bindings.size();
+	OC_XR_LOG(xr_suggest_bindings_logged(suggested));
+	return action;
+}
+
 void BaseInput::CreateLegacyActions()
 {
 	// Add the stuff required to make the backend work
@@ -1190,6 +1332,10 @@ void BaseInput::CreateLegacyActions()
 		suggested.countSuggestedBindings = 1;
 		OC_XR_LOG(xr_suggest_bindings_logged(suggested));
 	}
+
+	trackerPoseSession = XR_NULL_HANDLE;
+	trackerPoseAction = CreateTrackerPoseAction(legacyInputsSet);
+	trackerPoseActionGeneration++;
 }
 
 // The evaluators' clock: seconds, for the modes' delays and the actions' change times
@@ -1248,9 +1394,10 @@ void BaseInput::SuggestRawInputs(const InteractionProfile& profile, std::vector<
 
 	std::vector<std::pair<std::string, std::string>>& components = rawComponents[&profile];
 	components = profile.RawComponents();
+	std::set<std::string> suggested; // a component feeding two SteamVR inputs is suggested once
 	for (const auto& [xrPath, steamvrPath] : components) {
 		auto action = rawActions.find(WithoutHand(xrPath));
-		if (action == rawActions.end())
+		if (action == rawActions.end() || !suggested.insert(xrPath).second)
 			continue;
 		XrPath path = XR_NULL_PATH;
 		OC_XR_LOG(xrStringToPath(xr_instance, xrPath.c_str(), &path));
@@ -1303,10 +1450,10 @@ bool BaseInput::SuggestRawBindings(const InteractionProfile& profile, const std:
 	return true;
 }
 
-std::optional<std::vector<ActionBinding>> BaseInput::BindingsFromFiles(const Action& action)
+std::optional<std::vector<ActionBinding>> BaseInput::BindingsFromFiles(const Action& action, bool allTypes)
 {
-	// The files bind inputs; a pose, a skeleton and a vibration keep OpenXR's bound sources
-	if (action.type == ActionType::Pose || action.type == ActionType::Skeleton || action.type == ActionType::Vibration)
+	// The files bind inputs, so a pose, a skeleton and a vibration are answered only when allTypes
+	if (!allTypes && (action.type == ActionType::Pose || action.type == ActionType::Skeleton || action.type == ActionType::Vibration))
 		return std::nullopt;
 	std::lock_guard<std::recursive_mutex> evalGuard(evaluatorLock);
 	std::optional<std::vector<ActionBinding>> found;
@@ -1923,7 +2070,53 @@ EVRInputError BaseInput::GetPoseActionData(VRActionHandle_t action, ETrackingUni
 		break;
 	}
 
+	// Bound on no hand: a tracker, if a tracker's binding file binds it
+	if (!pActionData->bActive)
+		TrackerPoseData(act->manifestName, eOrigin, restrictToDevice, pActionData);
+
 	return VRInputError_None;
+}
+
+bool BaseInput::TrackerPoseData(const std::string& action, vr::ETrackingUniverseOrigin origin, const InputValueHandle* restrictToDevice,
+    InputPoseActionData_t* data)
+{
+	auto routes = trackerPoseRoutes.find(action);
+	if (routes == trackerPoseRoutes.end())
+		return false;
+	for (const std::string& roleName : routes->second) {
+		std::optional<ViveTrackerRole> role;
+		for (const ViveTrackerRole& r : ViveTrackerRoles())
+			if (roleName == r.name)
+				role = r;
+		if (!role || (restrictToDevice && restrictToDevice->devicePathString != role->steamvrPath))
+			continue;
+		std::shared_ptr<ITrackedDevice> dev = TrackerForRole(*role);
+		if (!dev)
+			continue;
+		data->bActive = true;
+		data->activeOrigin = vr::k_ulInvalidInputValueHandle;
+		GetInputSourceHandle(role->steamvrPath, &data->activeOrigin);
+		dev->GetPose(origin, &data->pose, TrackingStateType_Now);
+		return true;
+	}
+	return false;
+}
+
+std::shared_ptr<ITrackedDevice> BaseInput::TrackerForRole(const ViveTrackerRole& role)
+{
+	// The tracker with that role: its controller type names it
+	const std::string type = ViveTrackerControllerType(role);
+	for (vr::TrackedDeviceIndex_t i = 0; i < vr::k_unMaxTrackedDeviceCount; i++) {
+		std::shared_ptr<ITrackedDevice> dev = BackendManager::Instance().GetDevice(i);
+		if (!dev || dev->GetTrackedDeviceClass() != vr::TrackedDeviceClass_GenericTracker)
+			continue;
+		char buffer[vr::k_unMaxPropertyStringSize] = {};
+		vr::ETrackedPropertyError err = vr::TrackedProp_Success;
+		dev->GetStringTrackedDeviceProperty(vr::Prop_ControllerType_String, buffer, sizeof(buffer), &err);
+		if (err == vr::TrackedProp_Success && type == buffer)
+			return dev;
+	}
+	return nullptr;
 }
 
 EVRInputError BaseInput::GetPoseActionDataRelativeToNow(VRActionHandle_t action, ETrackingUniverseOrigin eOrigin, float fPredictedSecondsFromNow, InputPoseActionData_t* pActionData, uint32_t unActionDataSize, VRInputValueHandle_t ulRestrictToDevice)
@@ -2494,10 +2687,17 @@ EVRInputError BaseInput::GetActionOrigins(VRActionSetHandle_t actionSetHandle, V
     VR_ARRAY_COUNT(originOutCount) VRInputValueHandle_t* originsOut, uint32_t originOutCount)
 {
 	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
-	GET_ACTION_SET_FROM_HANDLE(set, actionSetHandle);
 	GET_ACTION_FROM_HANDLE(act, digitalActionHandle);
+	if (!originsOut && originOutCount)
+		return VRInputError_InvalidParam;
+	// No set: no origins, and no error, as SteamVR answers
+	if (actionSetHandle == vr::k_ulInvalidActionSetHandle) {
+		if (originsOut)
+			ZeroMemory(originsOut, originOutCount * sizeof(*originsOut));
+		return VRInputError_None;
+	}
+	GET_ACTION_SET_FROM_HANDLE(set, actionSetHandle);
 
-	// TODO find something that passes in non-matching values and see what results it wants, or try it with SteamVR
 	if (act->set != set) {
 		// The action isn't in that set: no origins for it there
 		OOVR_LOGF("GetActionOrigins: set mismatch %s vs %s", set->name.c_str(), act->fullName.c_str());
@@ -2507,8 +2707,6 @@ EVRInputError BaseInput::GetActionOrigins(VRActionSetHandle_t actionSetHandle, V
 	if (act->type == ActionType::EyeTracking)
 		return VRInputError_InvalidHandle;
 
-	if (!originsOut && originOutCount)
-		return VRInputError_InvalidParam;
 	if (originsOut)
 		ZeroMemory(originsOut, originOutCount * sizeof(*originsOut));
 
@@ -2680,8 +2878,8 @@ EVRInputError BaseInput::GetActionBindingInfo(VRActionHandle_t actionHandle, OOV
 		return VRInputError_None;
 
 	// From the controllers' binding files, as SteamVR answers: OpenXR's bound sources have no mode or slot, and
-	// nothing for a d-pad
-	if (std::optional<std::vector<ActionBinding>> fromFiles = BindingsFromFiles(*action)) {
+	// nothing for a d-pad. A pose and a skeleton are listed too, and a vibration with no device or input path.
+	if (std::optional<std::vector<ActionBinding>> fromFiles = BindingsFromFiles(*action, true)) {
 		uint32_t written = 0;
 		for (const ActionBinding& b : *fromFiles) {
 			if (written >= unBindingInfoCount)
@@ -2711,57 +2909,17 @@ EVRInputError BaseInput::GetActionBindingInfo(VRActionHandle_t actionHandle, OOV
 
 	// TODO should we return an error if there are no sources bound?
 
-	// The bindings written, in order, without the sources left out
+	// A vibration's binding is told with every field empty, as SteamVR answers: one per bound output (a source that
+	// isn't one is left out)
 	uint32_t written = 0;
 	for (size_t i = 0; i < boundActionPaths.size() && written < unBindingInfoCount; i++) {
-		OOVR_InputBindingInfo_t& info = bindingInfo[written];
-		XrPath path = boundActionPaths[i];
-
-		uint32_t pathLen = 0;
-		OC_XR_LOG(xrPathToString(xr_instance, path, 0, &pathLen, nullptr));
-		if (pathLen == 0)
-			continue; // the path couldn't be read: this binding is left out
-		std::vector<char> chars(pathLen);
-		OC_XR_LOG(xrPathToString(xr_instance, path, chars.size(), &pathLen, chars.data()));
-		std::string pathStr(chars.data(), chars.size());
-
-		std::vector<std::string> parts;
-		stringSplit(pathStr, parts);
-		if (parts.size() < 5) {
-			// Not a /user/<a>/<b>/input/<c> path: this binding is left out
-			OOVR_LOG_ONCEF("A bound source path with fewer than five parts, left out: %s", pathStr.c_str());
+		char chars[XR_MAX_PATH_LENGTH] = {};
+		uint32_t len = 0;
+		if (XR_FAILED(xrPathToString(xr_instance, boundActionPaths[i], sizeof(chars), &len, chars)))
 			continue;
-		}
-
-		// The last part of the string - which is something like '/user/hand/right/input/a/click' - is the mode
-		strcpy_arr(info.rchModeName, parts.back().c_str());
-
-		// Hardcode the first three parts of the string as being the device path, and the 4th and 5th ones as
-		// being the input path.
-		std::string devicePath = pathFromParts({ parts.at(0), parts.at(1), parts.at(2) });
-		std::string inputPath = pathFromParts({ parts.at(3), parts.at(4) });
-		strcpy_arr(info.rchDevicePathName, devicePath.c_str());
-		strcpy_arr(info.rchInputPathName, inputPath.c_str());
-
-		// FIXME replace this initial hacky thing
-		switch (action->type) {
-		case ActionType::Boolean:
-			strcpy_arr(info.rchModeName, "button");
-			strcpy_arr(info.rchInputSourceType, "button");
-			break;
-		case ActionType::Vector1:
-			strcpy_arr(info.rchModeName, "trigger");
-			strcpy_arr(info.rchInputSourceType, "trigger");
-			break;
-		case ActionType::Vector2:
-			strcpy_arr(info.rchModeName, "joystick");
-			strcpy_arr(info.rchInputSourceType, "joystick");
-			break;
-		default:
-			OOVR_LOGF("Unimplemented action type %d for %s: no mode name", static_cast<int>(action->type), pathStr.c_str());
-			break;
-		}
-		written++;
+		const std::string path(chars, strnlen(chars, sizeof(chars)));
+		if (path.starts_with("/user/") && path.find("/output/") != std::string::npos)
+			written++;
 	}
 	if (punReturnedBindingInfoCount)
 		*punReturnedBindingInfoCount = written;
@@ -2865,6 +3023,9 @@ std::shared_ptr<ITrackedDevice> BaseInput::ivhToDev(VRInputValueHandle_t handle)
 		hand = ITrackedDevice::HAND_RIGHT;
 		break;
 	default:
+		// A tracker by the path SteamVR binds its pose on
+		if (std::optional<ViveTrackerRole> role = ViveTrackerRoleForSteamVRPath(ivh->devicePathString))
+			return TrackerForRole(*role);
 		OOVR_SOFT_ABORTF("Cannot get invalid device from handle '%s'", ivh->path.c_str());
 		return nullptr;
 	}

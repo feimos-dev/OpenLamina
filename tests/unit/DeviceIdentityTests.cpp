@@ -33,20 +33,29 @@ TEST_CASE("Hmd_default_row_matches_todays_answers")
 
 TEST_CASE("Unknown_system_reports_itself")
 {
-	DeviceIdentity hmd = HmdIdentity("A runtime nobody has heard of");
-	CHECK(hmd.modelNumber == "A runtime nobody has heard of");
-	CHECK(hmd.manufacturer == "A runtime nobody has heard of");
-	CHECK(hmd.manufacturer != "Oculus");
-	CHECK(hmd.serial == "A runtime nobody has heard of-head");
+	DeviceIdentity hmd = HmdIdentity("A headset nobody has heard of", {}, 0x1234, "Some Runtime 1.0");
+	CHECK(hmd.modelNumber == "A headset nobody has heard of");
+	// The maker isn't the model's name: the vendor's, else the runtime's
+	CHECK(hmd.manufacturer == "Some");
+	CHECK(HmdIdentity("Meta Quest 3", {}, 0x2833, "Oculus").manufacturer == "Oculus");
+	CHECK(HmdIdentity("Valve Index", {}, 0x28de, "SteamVR/OpenXR").manufacturer == "Valve");
+	CHECK(HmdIdentity("Vive", {}, 0x0bb4, "").manufacturer == "HTC");
+	CHECK(HmdManufacturer(0x045e, "Windows Mixed Reality Runtime") == "WindowsMR");
+	CHECK(HmdManufacturer(42, "Monado(XRT) by Collabora et al 'v21.0.0'") == "Monado");
+	CHECK(HmdManufacturer(0, "").empty());
+	CHECK(HmdManufacturer(1, "SteamVR/OpenXR") == "SteamVR");
+	hmd = HmdIdentity("A headset nobody has heard of");
+	CHECK(hmd.manufacturer == "Oculus"); // nothing to go by: the generic answer
+	CHECK(hmd.serial == "A headset nobody has heard of-head");
 	// What games branch on stays as it was
 	CHECK(hmd.trackingSystem == "oculus");
 	CHECK(hmd.controllerType == "oculus");
 
 	// libmonado's device name and serial, where it gives them
-	DeviceIdentity monado = HmdIdentity("Monado: Fake", { "Fake HMD", "SN0" });
+	DeviceIdentity monado = HmdIdentity("Monado: Fake", { "Fake HMD", "SN0" }, 42, "Monado(XRT) by Collabora et al");
 	CHECK(monado.modelNumber == "Fake HMD");
 	CHECK(monado.serial == "SN0");
-	CHECK(monado.manufacturer == "Monado: Fake");
+	CHECK(monado.manufacturer == "Monado");
 }
 
 TEST_CASE("Controllers_and_headset_have_different_serials")

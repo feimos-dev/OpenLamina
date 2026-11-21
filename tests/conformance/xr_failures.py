@@ -64,6 +64,59 @@ def check(name, want, out):
             misses.append(f"frame-loop: {len(quits)} VREvent_Quit polled (frames {quits}), expected {want['quit_events']}")
         elif "quit_from_frame" in want and quits and quits[0] < want["quit_from_frame"]:
             misses.append(f"frame-loop: VREvent_Quit polled at frame {quits[0]}, expected from frame {want['quit_from_frame']}")
+    if "device_events" in want:
+        # A loss: the devices deactivated (101), then activated again (100) on the new session, in that order (after
+        # any activations at the start); the runtime asks for no quit (704)
+        seq = [e for r in frames for e in r.get("events", []) if e in (100, 101, 704)]
+        rest = iter(seq)
+        if not all(any(e == w for e in rest) for w in want["device_events"]):
+            misses.append(f"frame-loop: device events {seq}, expected {want['device_events']} in that order")
+        if 704 in seq:
+            misses.append("frame-loop: VREvent_DriverRequestedQuit polled after a loss")
+    for key, at_least in (("sessions_lost", False), ("sessions_created_min", True), ("instances_lost", False), ("instances_created_min", True)):
+        if key in want:
+            dump = json.loads(dump_path.read_text(encoding="utf-8")) if dump_path.exists() else {}
+            name = key.removesuffix("_min")
+            got = dump.get(name, 0)
+            if (got < want[key]) if at_least else (got != want[key]):
+                misses.append(f"frame-loop: the runtime saw {got} {name.replace('_', ' ')}, expected {'at least ' if at_least else ''}{want[key]}")
+    if "loss_record" in want:
+        # A helper program's loss (case overlay-app-loss): its device events in order, no quit, and a session made again
+        # that ran frames
+        r = by_method.get(("overlay-app-loss", "loss")) or {}
+        want_r = want["loss_record"]
+        events = r.get("events", [])
+        rest = iter(events)
+        if not all(any(e == w for e in rest) for w in want_r["device_events"]):
+            misses.append(f"overlay-app-loss: device events {events}, expected {want_r['device_events']} in that order")
+        if 700 in events or 704 in events:
+            misses.append(f"overlay-app-loss: a quit polled after a loss ({events})")
+        for key, value in want_r.items():
+            if key.endswith("_min") and (r.get(key.removesuffix("_min")) or 0) < value:
+                misses.append(f"overlay-app-loss: {key.removesuffix('_min')} {r.get(key.removesuffix('_min'))}, expected at least {value}")
+            elif key in ("sessions_lost", "instances_lost", "manifest") and r.get(key) != value:
+                misses.append(f"overlay-app-loss: {key} {r.get(key)}, expected {value}")
+    if "rebuilt_actions" in want:
+        # Case input-frames through an instance loss: the last instance has the game's manifest's actions and their
+        # bindings
+        path = out / "raw" / "case-input-frames.dump.json"
+        dump = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        if dump.get("instances_lost") != 1 or dump.get("instances_created", 0) < 2:
+            misses.append(f"input-frames: {dump.get('instances_lost')} instances lost and {dump.get('instances_created')} made, expected 1 and at least 2")
+        names = {a.get("name") for a in dump.get("actions", [])}
+        missing = [n for n in want["rebuilt_actions"] if n not in names]
+        if missing:
+            misses.append(f"input-frames: the new instance has no actions {missing}")
+        if not dump.get("suggested_bindings"):
+            misses.append("input-frames: the new instance had no bindings suggested")
+    if "action_attaches_min" in want:
+        # Case input-frames through a session or instance loss: the game's actions are attached to the session made
+        # again too
+        path = out / "raw" / "case-input-frames.dump.json"
+        dump = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+        lost = (dump.get("sessions_lost") or 0) + (dump.get("instances_lost") or 0)
+        if lost != 1 or dump.get("action_attaches", 0) < want["action_attaches_min"]:
+            misses.append(f"input-frames: {lost} sessions or instances lost and {dump.get('action_attaches')} action attaches, expected 1 and at least {want['action_attaches_min']}")
     if "old_event_quits" in want:
         # IVRSystem_009's events (case old-events): the quit arrives, and nothing is written past the 32-byte event
         olds = [r for r in records if r.get("case") == "old-events" and str(r.get("method", "")).startswith("frame ")]

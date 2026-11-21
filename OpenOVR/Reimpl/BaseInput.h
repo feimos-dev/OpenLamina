@@ -4,6 +4,7 @@
 // FIXME don't do that, it's ugly and slows down the build when modifying headers
 
 #include "Drivers/Backend.h"
+#include "Misc/Input/ViveTrackerRoles.h"
 #include <algorithm>
 #include <array>
 #include <atomic>
@@ -243,6 +244,12 @@ public:
 	typedef OOVR_VRSkeletalSummaryData_t VRSkeletalSummaryData_t;
 
 	XrHandTrackerEXT handTrackers[2] = { XR_NULL_HANDLE, XR_NULL_HANDLE };
+
+	/** With XR_HTCX_vive_tracker_interaction: the one pose action of every tracker role (each role's path is one of
+	 * its subaction paths), in OpenLamina's own action set; null without it or before the actions are made */
+	XrAction TrackerPoseAction() const { return trackerPoseSession != XR_NULL_HANDLE && trackerPoseSession == xr_session.get() ? trackerPoseAction : XR_NULL_HANDLE; }
+	/** Counts the tracker actions made: a new one needs new spaces */
+	uint64_t TrackerPoseActionGeneration() const { return trackerPoseActionGeneration; }
 
 	// ---------------  Handle management   --------------- //
 
@@ -484,6 +491,12 @@ public: // INTERNAL FUNCTIONS
 	 */
 	void LoadEmptyManifestIfRequired();
 
+	// The OpenXR instance is lost: the actions' handles went with it, and are forgotten (the session lock held)
+	void _ForgetInstance();
+	// On the new instance and its session: the actions and bindings are made again from the manifest that was loaded
+	// (or legacy input's), if _ForgetInstance forgot any
+	void _RebuildForNewInstance();
+
 	/**
 	 * Update the input stuff, called by BaseSystem.
 	 *
@@ -508,7 +521,22 @@ public: // INTERNAL FUNCTIONS
 	void GetHandSpace(ITrackedDevice::TrackedDeviceType hand, XrSpace& space, bool aimPose);
 
 	bool AreActionsLoaded();
+	// The game asked for legacy input: it's loaded (at once, or at its next call once it may be attached), with no info
+	// set before it
+	bool LegacyInputAsked() const { return legacyInputAsked; }
 
+private:
+	// The actions, action sets and their evaluators go (destroyHandles: with xrDestroyActionSet; not when the instance
+	// they belonged to is gone)
+	void DropActions(bool destroyHandles);
+	// The manifest (empty for legacy input) whose actions _ForgetInstance forgot, to be loaded again; under the session
+	// lock
+	std::string manifestToRebuild;
+	bool rebuildPending = false;
+	bool rebuildLegacy = false; // legacy input's actions are made again (there's no manifest to)
+	bool pathsStale = false; // the cached paths are the lost instance's
+
+public:
 	/** One hand's laser for pointing at overlays (LaserMouse) */
 	struct HandPointer {
 		XrPosef aim; // the aim pose: the laser runs along its -Z
@@ -751,6 +779,12 @@ public:
 					return info;
 				}
 			}
+			// A tracker by the path SteamVR binds its pose on: /user/waist, /user/foot/left
+			if (std::optional<ViveTrackerRole> role = ViveTrackerRoleForSteamVRPath(path)) {
+				info.type = InputSource::OTHER;
+				info.devicePath = role->steamvrPath;
+				return info;
+			}
 			// Trackers are named by their role or serial: /user/vive_tracker_htcx/role/waist
 			static const std::string trackerPrefix = "/user/vive_tracker";
 			if (path.starts_with(trackerPrefix)) {
@@ -871,6 +905,7 @@ private:
 
 	// Set under the exclusive session lock; read without it on the way in to LoadEmptyManifestIfRequired
 	std::atomic<bool> hasLoadedActions = false;
+	std::atomic<bool> legacyInputAsked = false;
 	std::string loadedActionsPath;
 	std::mutex loadedActionsPathLock; // read before the session lock, to answer a repeated manifest at once
 	bool usingLegacyInput = false;
@@ -895,6 +930,19 @@ private:
 	int DominantHandIndex(HandAlias alias) const;
 
 	XrActionSet legacyInputsSet = XR_NULL_HANDLE;
+
+	// In the legacy set when XR_HTCX_vive_tracker_interaction is enabled: every tracker role's grip pose
+	XrAction trackerPoseAction = XR_NULL_HANDLE;
+	std::atomic<XrSession> trackerPoseSession{ XR_NULL_HANDLE }; // the session the action is attached to
+	std::atomic<uint64_t> trackerPoseActionGeneration{ 0 };
+	// The pose actions (manifest names, lower-cased) the game's binding files for trackers bind, and the roles they
+	// bind them on (waist, left_foot...)
+	std::map<std::string, std::vector<std::string>> trackerPoseRoutes;
+	/** A pose action's data from the tracker whose role a tracker's binding file binds it on; false if none does */
+	bool TrackerPoseData(const std::string& action, vr::ETrackingUniverseOrigin origin, const InputValueHandle* restrictToDevice,
+	    InputPoseActionData_t* data);
+	/** The tracker with that role; null if none has it */
+	static std::shared_ptr<ITrackedDevice> TrackerForRole(const ViveTrackerRole& role);
 
 	// In the legacy set when XR_EXT_eye_gaze_interaction is enabled: the gaze pose, and its space in this session
 	XrAction eyeGazeAction = XR_NULL_HANDLE;
@@ -932,8 +980,8 @@ private:
 	 * controller has to one of the manifest's actions or bindings holds a haptic; false (nothing done) if not */
 	bool SuggestRawBindings(const InteractionProfile& profile, const std::string& bindingsPath, std::vector<XrActionSuggestedBinding>& bindings);
 	/** An input action's bindings on the controllers in use, from their binding files; nothing if no controller in
-	 * use has one, or for a pose, a skeleton or a vibration. Takes evaluatorLock. */
-	std::optional<std::vector<ActionBinding>> BindingsFromFiles(const Action& action);
+	 * use has one, or for a pose, a skeleton or a vibration unless allTypes. Takes evaluatorLock. */
+	std::optional<std::vector<ActionBinding>> BindingsFromFiles(const Action& action, bool allTypes = false);
 	/** One hand's raw inputs (index into allSubactionPaths) on a profile, by SteamVR path, into state */
 	void ReadRawInputs(size_t hand, const InteractionProfile& profile, RawInputState& state);
 	/** The old input's evaluator for a controller's profile, evaluated once per sync; null if it has none.
@@ -1053,9 +1101,11 @@ std::string HandBoneName(vr::BoneIndex_t bone, bool rightHand);
 /** The inverse of BaseInput::ParentSpaceSkeletonToModelSpace */
 void ModelSpaceSkeletonToParentSpace(vr::VRBoneTransform_t* joints);
 
-/** Compressed bone data, OpenComposite's own format: little-endian { char magic[4] = "OCSK"; uint16_t version = 1;
- * uint8_t space; uint8_t range; uint32_t count = 31; } then the 31 transforms */
-constexpr uint32_t kCompressedBonesSize = 12 + 31 * sizeof(vr::VRBoneTransform_t);
+/** Compressed bone data, OpenComposite's own format: a 2-byte header { uint8_t tag = 0xB1; uint8_t space | range << 4; }
+ * then the 31 transforms, little-endian (sizeof(VRBoneTransform_t) * boneCount + 2, the OpenVR header's limit). The
+ * older layout, { char magic[4] = "OCSK"; uint16_t version = 1;
+ * uint8_t space; uint8_t range; uint32_t count = 31; } then the transforms (1004 bytes), is still read. */
+constexpr uint32_t kCompressedBonesSize = 2 + 31 * sizeof(vr::VRBoneTransform_t);
 /** Writes the bones into out if outSize is big enough; the size needed (kCompressedBonesSize) */
 uint32_t CompressBones(OOVR_EVRSkeletalTransformSpace space, vr::EVRSkeletalMotionRange range, const vr::VRBoneTransform_t* bones31, void* out, uint32_t outSize);
 /** Reads bones back into out31, converted to the space wanted. *storedSpace (if given) is the space they were in. */

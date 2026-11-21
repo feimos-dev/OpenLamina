@@ -1,0 +1,4 @@
+{
+ "#": "A game that calls WaitGetPoses 30 times and never Submit, with an overlay shown (run.py --cases wait-without-submit --ini ini/own_frames.ini --expect expect/wait_without_submit.json): each frame it waited for is ended for it, inside its next WaitGetPoses, with the overlay; none is discarded, and no frame call is out of order",
+ "wait-without-submit/frames/-/-": { "frames_ended_at_least_25": true, "overlay_quad": true, "frame_order_errors": 0 }
+}

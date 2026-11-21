@@ -6,7 +6,14 @@
 //               (on Linux the D3D extensions are left out, a script left with no graphics API gets the default one,
 //               and XR_KHR_win32_convert_performance_counter_time is XR_KHR_convert_timespec_time),
 //   "ipd": 0.063, "display_hz": 90, "stage_bounds": [width, depth],
+//   "max_swapchain_samples": 4 (the views' maxSwapchainSampleCount),
 //   "events":   [{ "frame": 60, "type": "session_state", "state": "LOSS_PENDING" }]
+//               (LOSS_PENDING loses the session for real, once per process: its calls answer XR_ERROR_SESSION_LOST
+//               from then on, and xrGetSystem answers XR_ERROR_FORM_FACTOR_UNAVAILABLE for loss_unavailable_ms;
+//               EXITING on a running session is the user quitting: STOPPING, then EXITING after xrEndSession;
+//               { "frame": 60, "type": "instance_lost" } loses the instance, once per process, as a dead monado-service
+//               does: xrPollEvent and the frame, session and system calls answer XR_ERROR_INSTANCE_LOST until
+//               xrDestroyInstance, and xrCreateInstance fails for loss_unavailable_ms),
 //               (or { "frame": 10, "type": "refresh_rate", "rate": 120 }: the display changes to that rate, announced
 //               with XrEventDataDisplayRefreshRateChangedFB),
 //   "fail":     [{ "function": "xrEndFrame", "result": "XR_ERROR_RUNTIME_FAILURE", "after": 29, "count": 1 }]
@@ -31,7 +38,11 @@
 //               the velocities are given as they are, always valid: not corrected for poseInActionSpace, nor for the
 //               base space's own motion; "/user/head" places the HMD, at (0, 1.7, 0) without it),
 //   "refresh_rates": [90]   (XR_FB_display_refresh_rate's rates; without it, display_hz alone),
-//   "ipd_change": { "frame": 30, "ipd": 0.07 }   (or a list: the IPD from that frame on)
+//   "ipd_change": { "frame": 30, "ipd": 0.07 }   (or a list: the IPD from that frame on),
+//   "vive_trackers": [{ "persistent": "/devices/htc/vive_trackerLHR-1", "role": "/user/vive_tracker_htcx/role/waist",
+//               "frame": 0 }]   (XR_HTCX_vive_tracker_interaction's trackers, listed from their frame on and announced
+//               with XrEventDataViveTrackerConnectedHTCX at it (from frame 1); an empty role is a tracker without one;
+//               a tracker's pose is the script's pose of <role>/input/grip/pose)
 //
 // The dump (only when OC_TEST_RUNTIME_DUMP is set: without it nothing is recorded or read back) keeps whole layer
 // records for frames 1-64, every 32nd frame after, and the last frame ended, at most kDumpLayerCap records; the
@@ -90,6 +101,11 @@ struct ScriptPose {
 	XrVector3f angular{ 0, 0, 0 };
 };
 
+struct ScriptViveTracker {
+	uint64_t frame = 0;
+	std::string persistent, role;
+};
+
 struct ScriptIpd {
 	uint64_t frame = 0;
 	float ipd = 0.063f;
@@ -104,6 +120,7 @@ struct Script {
 	std::set<std::string> extensions = { "XR_KHR_vulkan_enable" };
 #endif
 	uint32_t viewWidth = 1920, viewHeight = 1920;
+	uint32_t maxSwapchainSamples = 4;
 	float fovDeg = 45;
 	float ipd = 0.063f;
 	float cantDeg = 0;
@@ -122,6 +139,8 @@ struct Script {
 	std::map<std::string, std::vector<ScriptPose>> poses;
 	std::vector<float> refreshRates; // empty: displayHz alone
 	std::vector<ScriptIpd> ipdChanges;
+	std::vector<ScriptViveTracker> viveTrackers;
+	uint32_t lossUnavailableMs = 0; // how long the system is gone after a scripted LOSS_PENDING
 };
 
 // The scripted pose of a path at a frame (the last entry whose from_frame has been reached), nullptr if none

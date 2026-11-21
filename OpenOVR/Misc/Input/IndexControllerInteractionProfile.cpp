@@ -53,7 +53,11 @@ IndexControllerInteractionProfile::IndexControllerInteractionProfile()
 	this->propertiesMap = {
 		{ vr::Prop_TrackingSystemName_String, { "lighthouse" } },
 		{ vr::Prop_ModelNumber_String, { "Knuckles Left", "Knuckles Right" } },
-		{ vr::Prop_ControllerType_String, { GetOpenVRName().value() } }
+		{ vr::Prop_ControllerType_String, { GetOpenVRName().value() } },
+		// As SteamVR answers for an Index controller: the third axis (Axis2) is the grip's force, and the buttons are the
+		// system, menu and grip ones and the first three axes
+		{ vr::Prop_Axis2Type_Int32, { (int32_t)vr::k_eControllerAxis_Trigger } },
+		{ vr::Prop_SupportedButtons_Uint64, { (uint64_t)0x700000007ull } },
 	};
 
 	/*

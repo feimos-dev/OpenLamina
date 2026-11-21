@@ -70,9 +70,10 @@ TEST_CASE("Compressed_round_trip")
 {
 	std::vector<vr::VRBoneTransform_t> hand = TestHand();
 	std::vector<uint8_t> buffer(kCompressedBonesSize);
-	CHECK(kCompressedBonesSize == 1004);
-	CHECK(CompressBones(VRSkeletalTransformSpace_Model, vr::VRSkeletalMotionRange_WithController, hand.data(), buffer.data(), (uint32_t)buffer.size()) == 1004);
-	CHECK(std::string((const char*)buffer.data(), 4) == "OCSK");
+	// Within the size the OpenVR header promises: a bone per transform and 2 bytes
+	CHECK(kCompressedBonesSize == 994);
+	CHECK(CompressBones(VRSkeletalTransformSpace_Model, vr::VRSkeletalMotionRange_WithController, hand.data(), buffer.data(), (uint32_t)buffer.size()) == 994);
+	CHECK(buffer[0] == 0xB1);
 
 	vr::VRBoneTransform_t out[31];
 	OOVR_EVRSkeletalTransformSpace stored = VRSkeletalTransformSpace_Parent;
@@ -113,12 +114,12 @@ TEST_CASE("Decompress_rejects_garbage")
 	CompressBones(VRSkeletalTransformSpace_Model, vr::VRSkeletalMotionRange_WithController, hand.data(), buffer.data(), (uint32_t)buffer.size());
 	vr::VRBoneTransform_t out[31];
 
-	std::vector<uint8_t> wrongMagic = buffer;
-	wrongMagic[0] = 'X';
-	CHECK(DecompressBones(wrongMagic.data(), (uint32_t)wrongMagic.size(), std::nullopt, out) == vr::VRInputError_InvalidCompressedData);
-	std::vector<uint8_t> wrongVersion = buffer;
-	wrongVersion[4] = 2;
-	CHECK(DecompressBones(wrongVersion.data(), (uint32_t)wrongVersion.size(), std::nullopt, out) == vr::VRInputError_InvalidCompressedData);
+	std::vector<uint8_t> wrongTag = buffer;
+	wrongTag[0] = 'X';
+	CHECK(DecompressBones(wrongTag.data(), (uint32_t)wrongTag.size(), std::nullopt, out) == vr::VRInputError_InvalidCompressedData);
+	std::vector<uint8_t> wrongSpace = buffer;
+	wrongSpace[1] = 7;
+	CHECK(DecompressBones(wrongSpace.data(), (uint32_t)wrongSpace.size(), std::nullopt, out) == vr::VRInputError_InvalidCompressedData);
 	CHECK(DecompressBones(buffer.data(), (uint32_t)buffer.size() - 1, std::nullopt, out) == vr::VRInputError_InvalidCompressedData);
 	std::vector<uint8_t> garbage(kCompressedBonesSize, 0xAB);
 	CHECK(DecompressBones(garbage.data(), (uint32_t)garbage.size(), std::nullopt, out) == vr::VRInputError_InvalidCompressedData);
@@ -129,9 +130,9 @@ TEST_CASE("Compressed_buffer_too_small_reports_size")
 {
 	std::vector<vr::VRBoneTransform_t> hand = TestHand();
 	uint8_t tooSmall[100] = {};
-	CHECK(CompressBones(VRSkeletalTransformSpace_Model, vr::VRSkeletalMotionRange_WithController, hand.data(), tooSmall, sizeof(tooSmall)) == 1004);
+	CHECK(CompressBones(VRSkeletalTransformSpace_Model, vr::VRSkeletalMotionRange_WithController, hand.data(), tooSmall, sizeof(tooSmall)) == 994);
 	CHECK(tooSmall[0] == 0); // nothing written
-	CHECK(CompressBones(VRSkeletalTransformSpace_Model, vr::VRSkeletalMotionRange_WithController, hand.data(), nullptr, 0) == 1004);
+	CHECK(CompressBones(VRSkeletalTransformSpace_Model, vr::VRSkeletalMotionRange_WithController, hand.data(), nullptr, 0) == 994);
 }
 
 namespace {
@@ -210,4 +211,21 @@ TEST_CASE("Default_reference_poses_exist_without_a_controller")
 		CHECK_FALSE(InteractionProfile::GetDefaultSkeletalReferencePose(hand, 99).has_value());
 	}
 	CHECK_FALSE(InteractionProfile::GetDefaultSkeletalReferencePose(ITrackedDevice::HAND_NONE, VRSkeletalReferencePose_Fist).has_value());
+}
+
+TEST_CASE("Decompress_reads_the_older_layout")
+{
+	// { "OCSK", version 1, space, range, count 31 } then the bones: 1004 bytes
+	std::vector<vr::VRBoneTransform_t> hand = TestHand();
+	std::vector<uint8_t> old(12 + 31 * sizeof(vr::VRBoneTransform_t));
+	const uint8_t header[12] = { 'O', 'C', 'S', 'K', 1, 0, (uint8_t)VRSkeletalTransformSpace_Model, 0, 31, 0, 0, 0 };
+	memcpy(old.data(), header, sizeof(header));
+	memcpy(old.data() + 12, hand.data(), 31 * sizeof(vr::VRBoneTransform_t));
+	vr::VRBoneTransform_t out[31];
+	OOVR_EVRSkeletalTransformSpace stored = VRSkeletalTransformSpace_Parent;
+	CHECK(DecompressBones(old.data(), (uint32_t)old.size(), std::nullopt, out, &stored) == vr::VRInputError_None);
+	CHECK(stored == VRSkeletalTransformSpace_Model);
+	CheckSame(hand, out);
+	old[0] = 'X';
+	CHECK(DecompressBones(old.data(), (uint32_t)old.size(), std::nullopt, out) == vr::VRInputError_InvalidCompressedData);
 }

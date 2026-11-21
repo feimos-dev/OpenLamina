@@ -1,0 +1,158 @@
+{
+ "#": "The Vulkan frame cases under a runtime with XR_KHR_vulkan_enable2 alone (run.py --cases gfx-vk-basic,gfx-vk-bounds --script scripts/gfx_vk_enable2.json --expect expect/gfx_vk_enable2.json): what expect/gfx.json has for them, but for the swapchain images' sizes",
+ "gfx-vk-basic/frame/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:views[0].invalid": [],
+  "dump:views[1].invalid": [],
+  "dump:views[0].samples.tl": "ff0000ff",
+  "dump:views[0].samples.tr": "00ff00ff",
+  "dump:views[0].samples.bl": "0000ffff",
+  "dump:views[0].samples.br": "ffffffff",
+  "dump:views[0].samples.c": "808080ff",
+  "dump:views[1].samples.tl": "0000ffff",
+  "dump:views[1].samples.tr": "ff0000ff",
+  "dump:views[1].samples.bl": "ffffffff",
+  "dump:views[1].samples.br": "00ff00ff",
+  "dump:views[1].samples.c": "808080ff"
+ },
+ "gfx-vk-bounds/full/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   768,
+   768
+  ],
+  "dump:views[0].samples.tl": "ff0000ff",
+  "dump:views[0].samples.tr": "00ff00ff",
+  "dump:views[0].samples.bl": "0000ffff",
+  "dump:views[0].samples.br": "ffffffff",
+  "dump:views[1].invalid": [],
+  "dump:views[1].rect": [
+   0,
+   0,
+   768,
+   768
+  ],
+  "dump:views[1].samples.tl": "0000ffff",
+  "dump:views[1].samples.tr": "ff0000ff",
+  "dump:views[1].samples.bl": "ffffffff",
+  "dump:views[1].samples.br": "00ff00ff"
+ },
+ "gfx-vk-bounds/halves/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   1024,
+   1024
+  ],
+  "dump:views[0].samples.tl": "ff0000ff",
+  "dump:views[0].samples.tr": "ff0000ff",
+  "dump:views[0].samples.bl": "0000ffff",
+  "dump:views[0].samples.br": "0000ffff",
+  "dump:views[0].samples.c": "0000ffff",
+  "dump:views[1].invalid": [],
+  "dump:views[1].rect": [
+   0,
+   0,
+   1024,
+   1024
+  ],
+  "dump:views[1].samples.tl": "00ff00ff",
+  "dump:views[1].samples.tr": "00ff00ff",
+  "dump:views[1].samples.bl": "ffffffff",
+  "dump:views[1].samples.br": "ffffffff",
+  "dump:views[1].samples.c": "ffffffff"
+ },
+ "gfx-vk-bounds/flipped/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   640,
+   640
+  ],
+  "dump:views[0].samples.tl": "0000ffff",
+  "dump:views[0].samples.tr": "ffffffff",
+  "dump:views[0].samples.bl": "ff0000ff",
+  "dump:views[0].samples.br": "00ff00ff",
+  "dump:views[1].invalid": [],
+  "dump:views[1].rect": [
+   0,
+   0,
+   640,
+   640
+  ],
+  "dump:views[1].samples.tl": "ffffffff",
+  "dump:views[1].samples.tr": "00ff00ff",
+  "dump:views[1].samples.bl": "0000ffff",
+  "dump:views[1].samples.br": "ff0000ff"
+ },
+ "gfx-vk-bounds/flipped halves/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   600,
+   600
+  ],
+  "dump:views[0].samples.tl": "0000ffff",
+  "dump:views[0].samples.tr": "0000ffff",
+  "dump:views[0].samples.bl": "ff0000ff",
+  "dump:views[0].samples.br": "ff0000ff",
+  "dump:views[1].invalid": [],
+  "dump:views[1].rect": [
+   0,
+   0,
+   600,
+   600
+  ],
+  "dump:views[1].samples.tl": "ffffffff",
+  "dump:views[1].samples.tr": "ffffffff",
+  "dump:views[1].samples.bl": "00ff00ff",
+  "dump:views[1].samples.br": "00ff00ff"
+ },
+ "gfx-vk-bounds/stacked/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   896,
+   896
+  ],
+  "dump:views[0].samples.tl": "ff0000ff",
+  "dump:views[0].samples.tr": "00ff00ff",
+  "dump:views[0].samples.bl": "ff0000ff",
+  "dump:views[0].samples.br": "00ff00ff",
+  "dump:views[0].samples.c": "00ff00ff",
+  "dump:views[1].invalid": [],
+  "dump:views[1].rect": [
+   0,
+   0,
+   896,
+   896
+  ],
+  "dump:views[1].samples.tl": "0000ffff",
+  "dump:views[1].samples.tr": "ffffffff",
+  "dump:views[1].samples.bl": "0000ffff",
+  "dump:views[1].samples.br": "ffffffff",
+  "dump:views[1].samples.c": "ffffffff"
+ }
+}
