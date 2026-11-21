@@ -100,8 +100,15 @@ Filename: "{app}\OpenLamina.exe"; Parameters: "--use-openlamina"; Description: "
 Filename: "{app}\OpenLamina.exe"; Description: "Open OpenLamina"; Flags: postinstall skipifsilent nowait unchecked
 
 [UninstallDelete]
-; What OpenLamina and its app wrote there: applist.json, apps-config.json, openlamina.ini, updates.json.
-Type: filesandordirs; Name: "{app}"
+; What OpenLamina and its app wrote there: applist.json, apps-config.json, openlamina.ini, updates.json. The whole
+; folder only where Setup always puts it: a folder given with /DIR= may hold files that were never OpenLamina's.
+Type: filesandordirs; Name: "{app}"; Check: InDefaultFolder
+Type: files; Name: "{app}\bin\applist.json"; Check: not InDefaultFolder
+Type: files; Name: "{app}\bin\apps-config.json"; Check: not InDefaultFolder
+Type: files; Name: "{app}\bin\openlamina.ini"; Check: not InDefaultFolder
+Type: files; Name: "{app}\updates.json"; Check: not InDefaultFolder
+Type: dirifempty; Name: "{app}\bin"; Check: not InDefaultFolder
+Type: dirifempty; Name: "{app}"; Check: not InDefaultFolder
 
 [Code]
 function HasParam(Name: String): Boolean;
@@ -137,6 +144,13 @@ begin
   if not Result then
     SuppressibleMsgBox('OpenLamina needs the .NET Framework 4.8, which Windows 10 (version 1903 and later) and ' +
       'Windows 11 come with. Install it from Microsoft, then run this again.', mbCriticalError, MB_OK, IDOK);
+end;
+
+// Checked when installing, for [UninstallDelete].
+function InDefaultFolder: Boolean;
+begin
+  Result := CompareText(RemoveBackslashUnlessRoot(ExpandConstant('{app}')),
+    RemoveBackslashUnlessRoot(ExpandConstant('{userpf}\OpenLamina'))) = 0;
 end;
 
 function App: String;
