@@ -2404,8 +2404,11 @@ EVRInputError BaseInput::GetSkeletalBoneData(VRActionHandle_t actionHandle, EVRS
 	// before the runtime names a profile)
 	glm::mat4 transform = profile ? profile->GetGripToSteamVRTransform(hand) : glm::mat4(1.0f);
 
-	if (!XrHandJointsToSkeleton(jointLocations, isRight, pTransformArray, transform))
+	if (!XrHandJointsToSkeleton(jointLocations, isRight, pTransformArray, transform)) {
+		// It may have filled some bones before it failed: none of them go out with the estimate's answer
+		ClearBones(pTransformArray, unTransformArrayCount);
 		return getEstimatedBoneData(hand, eTransformSpace, eMotionRange, std::span<VRBoneTransform_t, eBone_Count>(pTransformArray, eBone_Count));
+	}
 
 	// Without a controller we get a hand positioned relative to floor space, change that to be relative to the fake controller pose
 	if (usingFakePose) {
