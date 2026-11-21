@@ -1,0 +1,225 @@
+{
+ "#": "The new-device cases under a runtime that refuses the session for the new device (run.py --cases gfx-d3d11-new-device,gfx-d3d12-new-device,gfx-vk-new-device --script scripts/gfx_new_device_refused.json --expect expect/gfx_new_device_refused.json): the new device's frames are left out (102, or D3D12's 104) and the game isn't told to quit.",
+ "gfx-d3d11-new-device/first device/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   512,
+   512
+  ],
+  "dump:views[0].image": [
+   512,
+   512
+  ],
+  "dump:views[0].format": 29,
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].rect": [
+   0,
+   0,
+   512,
+   512
+  ],
+  "dump:views[1].image": [
+   512,
+   512
+  ],
+  "dump:views[1].format": 29,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  }
+ },
+ "gfx-d3d11-new-device/new device/-/-": {
+  "left": 102,
+  "quit": false,
+  "right": 102
+ },
+ "gfx-d3d12-new-device/first device/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   512,
+   512
+  ],
+  "dump:views[0].image": [
+   512,
+   512
+  ],
+  "dump:views[0].format": 29,
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].rect": [
+   0,
+   0,
+   512,
+   512
+  ],
+  "dump:views[1].image": [
+   512,
+   512
+  ],
+  "dump:views[1].format": 29,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  }
+ },
+ "gfx-d3d12-new-device/new device/-/-": {
+  "left": 104,
+  "quit": false,
+  "right": 104
+ },
+ "gfx-vk-new-device/first device/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   512,
+   512
+  ],
+  "dump:views[0].image": [
+   512,
+   512
+  ],
+  "dump:views[0].format": 43,
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].rect": [
+   0,
+   0,
+   512,
+   512
+  ],
+  "dump:views[1].image": [
+   512,
+   512
+  ],
+  "dump:views[1].format": 43,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  }
+ },
+ "gfx-vk-new-device/new device/-/-": {
+  "left": 102,
+  "quit": false,
+  "right": 102
+ }
+}

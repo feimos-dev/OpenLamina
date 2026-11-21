@@ -44,15 +44,11 @@ VkCompositor::VkCompositor(const vr::Texture_t* initialTexture)
 		OOVR_LOG("vkCreateCommandPool failed: Vulkan textures can't be copied");
 		appCommandPool = VK_NULL_HANDLE;
 	}
+	poolFamily = poolInfo.queueFamilyIndex;
 }
 
-bool VkCompositor::CreateStage(VkFormat format, uint32_t width, uint32_t height)
+bool VkCompositor::MakeTransferImage(VkFormat format, uint32_t width, uint32_t height, VkImage& image, VkDeviceMemory& memory)
 {
-	VkFormatProperties properties{};
-	if (format != VK_FORMAT_UNDEFINED)
-		vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &properties);
-	if (FormatIsSrgb(GfxApiKind::Vulkan, (int64_t)format) || !(properties.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT))
-		return false;
 	VkImageCreateInfo info{ VK_STRUCTURE_TYPE_IMAGE_CREATE_INFO };
 	info.imageType = VK_IMAGE_TYPE_2D;
 	info.format = format;
@@ -64,36 +60,68 @@ bool VkCompositor::CreateStage(VkFormat format, uint32_t width, uint32_t height)
 	info.usage = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT;
 	info.sharingMode = VK_SHARING_MODE_EXCLUSIVE;
 	info.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-	if (vkCreateImage(appDevice, &info, nullptr, &stageImage) != VK_SUCCESS) {
-		stageImage = VK_NULL_HANDLE;
+	if (vkCreateImage(appDevice, &info, nullptr, &image) != VK_SUCCESS) {
+		image = VK_NULL_HANDLE;
 		return false;
 	}
 	VkMemoryRequirements requirements{};
-	vkGetImageMemoryRequirements(appDevice, stageImage, &requirements);
+	vkGetImageMemoryRequirements(appDevice, image, &requirements);
 	VkMemoryAllocateInfo allocate{ VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO };
 	allocate.allocationSize = requirements.size;
 	allocate.memoryTypeIndex = VkFindMemoryType(physicalDevice, requirements.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-	if (allocate.memoryTypeIndex == UINT32_MAX || vkAllocateMemory(appDevice, &allocate, nullptr, &stageMemory) != VK_SUCCESS)
-		stageMemory = VK_NULL_HANDLE;
-	if (!stageMemory || vkBindImageMemory(appDevice, stageImage, stageMemory, 0) != VK_SUCCESS) {
-		DestroyStage();
+	if (allocate.memoryTypeIndex == UINT32_MAX || vkAllocateMemory(appDevice, &allocate, nullptr, &memory) != VK_SUCCESS)
+		memory = VK_NULL_HANDLE;
+	if (!memory || vkBindImageMemory(appDevice, image, memory, 0) != VK_SUCCESS) {
+		vkDestroyImage(appDevice, image, nullptr);
+		if (memory)
+			vkFreeMemory(appDevice, memory, nullptr);
+		image = VK_NULL_HANDLE;
+		memory = VK_NULL_HANDLE;
 		return false;
 	}
 	return true;
 }
 
-void VkCompositor::DestroyStage()
+void VkCompositor::DestroyTransferImage(VkImage& image, VkDeviceMemory& memory)
 {
-	if (!stageImage && !stageMemory)
+	if (!image && !memory)
 		return;
 	// Frames copied through it may still be on the queue
 	vkQueueWaitIdle(appQueue);
-	if (stageImage)
-		vkDestroyImage(appDevice, stageImage, nullptr);
-	if (stageMemory)
-		vkFreeMemory(appDevice, stageMemory, nullptr);
-	stageImage = VK_NULL_HANDLE;
-	stageMemory = VK_NULL_HANDLE;
+	if (image)
+		vkDestroyImage(appDevice, image, nullptr);
+	if (memory)
+		vkFreeMemory(appDevice, memory, nullptr);
+	image = VK_NULL_HANDLE;
+	memory = VK_NULL_HANDLE;
+}
+
+bool VkCompositor::CreateResolveImage(VkFormat format, uint32_t width, uint32_t height)
+{
+	// A resolve writes it and a blit reads it
+	VkFormatProperties properties{};
+	vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &properties);
+	const VkFormatFeatureFlags needed = VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_COLOR_ATTACHMENT_BIT;
+	if ((properties.optimalTilingFeatures & needed) != needed)
+		return false;
+	return MakeTransferImage(format, width, height, resolveImage, resolveMemory);
+}
+
+bool VkCompositor::CreateStage(VkFormat format, uint32_t width, uint32_t height)
+{
+	VkFormatProperties properties{};
+	if (format != VK_FORMAT_UNDEFINED)
+		vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &properties);
+	if (FormatIsSrgb(GfxApiKind::Vulkan, (int64_t)format) || !(properties.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT))
+		return false;
+	return MakeTransferImage(format, width, height, stageImage, stageMemory);
+}
+
+void VkCompositor::DestroyStage()
+{
+	DestroyTransferImage(stageImage, stageMemory);
+	DestroyTransferImage(resolveImage, resolveMemory);
+	resolveFailed = false;
 }
 
 VkCompositor::~VkCompositor()
@@ -116,14 +144,23 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 		return;
 	}
 
-	// OpenXR only guarantees that the queue we initially gave it will have ownership of our swapchain image
-	// We could safeguard against any insane applications with a queue that we manage and copy to it,
-	// but it's simpler (and likely more performant) to just assume our app is sane.
-	if (appQueue != tex->m_pQueue) {
-		OOVR_LOG_ONCE("A Vulkan texture on another queue than the first one: not used");
+	// The command buffers are of the first texture's device and queue family
+	if (tex->m_pDevice != appDevice) {
+		OOVR_LOG_ONCE("A Vulkan texture of another device than the first one: not used");
 		lastResult = XR_ERROR_VALIDATION_FAILURE;
 		return;
 	}
+	// A texture on another queue of the same family is copied on the session's queue, which the runtime syncs with,
+	// after the game's work on its own queue. A queue of another family would need the images handed across families:
+	// not used.
+	const bool otherQueue = tex->m_pQueue != appQueue;
+	if (otherQueue && tex->m_nQueueFamilyIndex != poolFamily) {
+		OOVR_LOG_ONCEF("A Vulkan texture on a queue of family %u, not the first texture's %u: not used", tex->m_nQueueFamilyIndex, poolFamily);
+		lastResult = XR_ERROR_VALIDATION_FAILURE;
+		return;
+	}
+	if (otherQueue)
+		OOVR_LOG_ONCE("A Vulkan texture on another queue than the first one: copied after the game's work on it");
 	if (!appCommandPool) {
 		lastResult = XR_ERROR_RUNTIME_FAILURE;
 		return;
@@ -137,11 +174,17 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 		OC_UNSUPPORTED_VOID("A Vulkan texture of no size (%u x %u)", tex->m_nWidth, tex->m_nHeight);
 	}
 
-	bool usable = chain != XR_NULL_HANDLE && tex->m_nWidth == createInfo.width && tex->m_nHeight == createInfo.height
-	    && tex->m_nSampleCount == createSourceSamples && (int64_t)tex->m_nFormat == createInfoFormat && texture->eColorSpace == createColourSpace;
+	// A texture that fits in the swapchain is copied to its origin, and the area shown: a smaller one (dynamic
+	// resolution) keeps the swapchain, and a bigger one makes one that holds both sizes, so a size that comes and goes
+	// doesn't make a new swapchain each time
+	const bool sameKind = chain != XR_NULL_HANDLE && tex->m_nSampleCount == createSourceSamples && (int64_t)tex->m_nFormat == createInfoFormat
+	    && texture->eColorSpace == createColourSpace;
+	bool usable = sameKind && tex->m_nWidth <= createInfo.width && tex->m_nHeight <= createInfo.height;
 
 	if (!usable) {
 		OOVR_LOG("Generating new swap chain");
+		const uint32_t width = sameKind ? std::max(tex->m_nWidth, createInfo.width) : tex->m_nWidth;
+		const uint32_t height = sameKind ? std::max(tex->m_nHeight, createInfo.height) : tex->m_nHeight;
 
 		// First, delete the old chain if necessary
 		if (chain)
@@ -156,8 +199,8 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 		createInfo.createFlags = 0;
 		createInfo.usageFlags = XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT;
 		createInfo.faceCount = 1;
-		createInfo.width = tex->m_nWidth;
-		createInfo.height = tex->m_nHeight;
+		createInfo.width = width;
+		createInfo.height = height;
 		createInfo.mipCount = 1;
 		// A runtime that has no multisampled swapchains of that count gets a single-sampled one, the image resolved into it
 		createSourceSamples = tex->m_nSampleCount;
@@ -178,12 +221,15 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 		createInfoFormat = (int64_t)tex->m_nFormat;
 		createColourSpace = texture->eColorSpace;
 		if (convertFormat) {
-			// A blit converts between formats that have it (and not from a multisampled image)
+			// A blit converts between formats that have it; a multisampled image is resolved into an image of its format
+			// for it first
 			VkFormatProperties from{}, to{};
 			vkGetPhysicalDeviceFormatProperties(physicalDevice, (VkFormat)tex->m_nFormat, &from);
 			vkGetPhysicalDeviceFormatProperties(physicalDevice, (VkFormat)createInfo.format, &to);
-			if (tex->m_nSampleCount > 1 || !(from.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT)
+			if ((tex->m_nSampleCount > 1 && !CreateResolveImage((VkFormat)tex->m_nFormat, width, height))
+			    || !(from.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_SRC_BIT)
 			    || !(to.optimalTilingFeatures & VK_FORMAT_FEATURE_BLIT_DST_BIT)) {
+				DestroyStage();
 				// Submit answers InvalidTexture; the eye is left out
 				chain = XR_NULL_HANDLE;
 				createInfo = {};
@@ -196,7 +242,7 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 			// blit doesn't encode them again
 			if (FormatIsSrgb(GfxApiKind::Vulkan, createInfo.format) && !FormatIsSrgb(GfxApiKind::Vulkan, (int64_t)tex->m_nFormat)
 			    && WantsSrgb(GfxApiKind::Vulkan, (int64_t)tex->m_nFormat, texture->eColorSpace)
-			    && !CreateStage((VkFormat)FormatWithSrgb(GfxApiKind::Vulkan, createInfo.format, false), tex->m_nWidth, tex->m_nHeight))
+			    && !CreateStage((VkFormat)FormatWithSrgb(GfxApiKind::Vulkan, createInfo.format, false), width, height))
 				OOVR_LOGF("No image of swapchain format %d's linear sibling to blit into: the blit encodes the values again, and they show too bright", (int)createInfo.format);
 		}
 
@@ -291,16 +337,54 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 		auto tex = static_cast<vr::VRVulkanTextureArrayData_t*>(texture->handle);
 		arrayLayer = tex->m_unArrayIndex;
 	}
-	// A blit converts, and flips where the bounds run backwards (invertUsingShaders: always used); a multisampled image
-	// can't be blitted, and is resolved as it is
+	// A blit converts, and flips where the bounds run backwards (invertUsingShaders: always used). A multisampled image
+	// is resolved into the resolve image first, which the blit reads; into a multisampled swapchain it can only be
+	// copied, as it is.
 	const bool flip = area.flipX || area.flipY;
-	if (flip && tex->m_nSampleCount > 1)
+	const bool wantBlit = convertFormat || flip || oovr_global_configuration.InvertUsingShaders();
+	const bool multisampled = tex->m_nSampleCount > 1;
+	if (wantBlit && multisampled && createInfo.sampleCount == 1 && !resolveImage && !resolveFailed) {
+		resolveFailed = !CreateResolveImage((VkFormat)tex->m_nFormat, createInfo.width, createInfo.height);
+		if (resolveFailed)
+			OOVR_LOGF("No image to resolve a multisampled Vulkan image of format %d into for a blit", (int)tex->m_nFormat);
+	}
+	const bool resolveFirst = wantBlit && multisampled && resolveImage;
+	if (flip && multisampled && !resolveFirst)
 		OOVR_LOG_ONCE("A multisampled Vulkan image with flipped bounds: shown as it is, not flipped");
-	if ((convertFormat || flip || oovr_global_configuration.InvertUsingShaders()) && tex->m_nSampleCount <= 1) {
+	if (wantBlit && (!multisampled || resolveFirst)) {
+		VkImage blitSource = (VkImage)tex->m_nImage;
+		uint32_t blitLayer = arrayLayer;
+		if (resolveFirst) {
+			// The area, resolved to the same place in the resolve image (whose contents before don't matter)
+			VkImageMemoryBarrier toDst = barrier;
+			toDst.image = resolveImage;
+			toDst.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT | VK_ACCESS_TRANSFER_WRITE_BIT;
+			toDst.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			toDst.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+			toDst.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+			// After the last frame's blit from it, which may be on the queue still
+			vkCmdPipelineBarrier(currentCommandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toDst);
+			VkImageResolve resolve = {};
+			resolve.srcSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, arrayLayer, 1 };
+			resolve.srcOffset = { (int32_t)area.x0, (int32_t)area.y0, 0 };
+			resolve.dstSubresource = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1 };
+			resolve.dstOffset = { (int32_t)area.x0, (int32_t)area.y0, 0 };
+			resolve.extent = { area.Width(), area.Height(), 1 };
+			vkCmdResolveImage(currentCommandBuffer, (VkImage)tex->m_nImage, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, resolveImage,
+			    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &resolve);
+			VkImageMemoryBarrier toSrc = toDst;
+			toSrc.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			toSrc.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+			toSrc.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+			toSrc.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+			vkCmdPipelineBarrier(currentCommandBuffer, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &toSrc);
+			blitSource = resolveImage;
+			blitLayer = 0;
+		}
 		VkImageBlit region = {};
 		region.srcSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 		region.srcSubresource.mipLevel = 0;
-		region.srcSubresource.baseArrayLayer = arrayLayer;
+		region.srcSubresource.baseArrayLayer = blitLayer;
 		region.srcSubresource.layerCount = 1;
 		// Reversed offsets flip
 		region.srcOffsets[0] = { (int)(area.flipX ? area.x1 : area.x0), (int)(area.flipY ? area.y1 : area.y0), 0 };
@@ -323,7 +407,7 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 		}
 		vkCmdBlitImage( //
 		    currentCommandBuffer, // commandbuffer
-		    (VkImage)tex->m_nImage, // srcImage
+		    blitSource, // srcImage
 		    VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, // srcImageLayout
 		    stageImage ? stageImage : swapchainImages.at(currentIndex).image, // dstImage
 		    VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, // dstImageLayout
@@ -405,8 +489,30 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 	submitInfo.commandBufferCount = 1;
 	submitInfo.pCommandBuffers = &currentCommandBuffer;
 
-	if (vkFailed(SubmitWithImageFence(tex->m_pQueue, submitInfo, currentIndex) ? VK_SUCCESS : VK_ERROR_UNKNOWN, "vkQueueSubmit"))
+	// A texture on another queue: the copy waits for a semaphore that queue signals after the game's work
+	const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+	if (otherQueue) {
+		VkSubmitInfo signal = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+		signal.signalSemaphoreCount = 1;
+		signal.pSignalSemaphores = &imageSemaphores.at(currentIndex);
+		if (vkFailed(vkQueueSubmit(tex->m_pQueue, 1, &signal, VK_NULL_HANDLE), "vkQueueSubmit (the texture's queue)"))
+			return;
+		submitInfo.waitSemaphoreCount = 1;
+		submitInfo.pWaitSemaphores = &imageSemaphores.at(currentIndex);
+		submitInfo.pWaitDstStageMask = &waitStage;
+	}
+
+	if (vkFailed(SubmitWithImageFence(appQueue, submitInfo, currentIndex) ? VK_SUCCESS : VK_ERROR_UNKNOWN, "vkQueueSubmit")) {
+		if (otherQueue) {
+			// The semaphore is waited for anyway, so it isn't left signalled
+			VkSubmitInfo drain = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
+			drain.waitSemaphoreCount = 1;
+			drain.pWaitSemaphores = &imageSemaphores.at(currentIndex);
+			drain.pWaitDstStageMask = &waitStage;
+			SubmitWithImageFence(appQueue, drain, currentIndex);
+		}
 		return;
+	}
 
 	// Release the swapchain - OpenXR will use the last-released image in a swapchain
 	SwapchainCallFailed(xrReleaseSwapchainImage(chain, &releaseInfo), "xrReleaseSwapchainImage");
@@ -515,6 +621,14 @@ bool VkCompositor::AllocateImageBuffers(uint32_t count)
 			return false;
 		}
 	}
+	VkSemaphoreCreateInfo semaphoreInfo = { VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO };
+	imageSemaphores.assign(count, VK_NULL_HANDLE);
+	for (VkSemaphore& semaphore : imageSemaphores) {
+		if (vkCreateSemaphore(appDevice, &semaphoreInfo, nullptr, &semaphore) != VK_SUCCESS) {
+			FreeImageBuffers();
+			return false;
+		}
+	}
 	return true;
 }
 
@@ -530,6 +644,11 @@ void VkCompositor::FreeImageBuffers()
 			vkDestroyFence(appDevice, fence, nullptr);
 	}
 	imageFences.clear();
+	for (VkSemaphore semaphore : imageSemaphores) {
+		if (semaphore)
+			vkDestroySemaphore(appDevice, semaphore, nullptr);
+	}
+	imageSemaphores.clear();
 	if (!appCommandBuffers.empty() && appCommandPool)
 		vkFreeCommandBuffers(appDevice, appCommandPool, (uint32_t)appCommandBuffers.size(), appCommandBuffers.data());
 	appCommandBuffers.clear();

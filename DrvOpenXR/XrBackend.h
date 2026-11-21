@@ -322,7 +322,19 @@ private:
 	void PollGenericTrackers();
 
 	// False if the texture can't be used (logged): no session switch then, or the switch was undone
-	bool CheckOrInitCompositors(const vr::Texture_t* tex);
+	// moveToNewDevice: the session is made again on the texture's device (FollowEyeTextureDevice), once the checks
+	// that can be made before the old session goes down have passed
+	bool CheckOrInitCompositors(const vr::Texture_t* tex, bool moveToNewDevice = false);
+	// The texture is of the session's API (D3D11 or D3D12) but on another device than the session's
+	bool TextureOnOtherDevice(const vr::Texture_t* tex);
+	// Whether an eye texture's device is followed if the game moved to another one (another GPU, or a device made again
+	// after a device loss): move set if it is to be; false if it's on another device and can't be, and the eye is left out
+	bool FollowEyeTextureDevice(const vr::Texture_t* tex, bool& move);
+	// The session is being made again on the device a game moved to: if that fails, the game isn't told to quit
+	std::atomic<bool> rebuildingForNewDevice{ false };
+	std::atomic<int> deviceRebuilds{ 0 };
+	// Makes the temporary graphics device the backend was made with, if there's none: false if it can't be made
+	static bool MakeTemporaryGraphics();
 	std::unique_ptr<Compositor> compositors[XruEyeCount];
 	// The D3D11 mirror texture of each eye (an ID3D11Texture2D of OpenLamina's own on the game's device), which the
 	// game's frames are copied into once it has asked for one (mirrorWanted); under mirrorLock
@@ -599,4 +611,6 @@ private:
 	// OpenGL or Vulkan frames copied through D3D11, whose device graphicsBinding has (GfxInterop.h)
 	std::unique_ptr<class GfxInterop> gfxInterop;
 	static std::unique_ptr<class TemporaryGraphics> temporaryGraphics;
+	// Which temporary graphics APIs the backend may use
+	inline static bool tmpGfxVulkan = false, tmpGfxD3D11 = false;
 };

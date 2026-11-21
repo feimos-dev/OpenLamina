@@ -48,6 +48,9 @@ class GfxApi {
 public:
 	// nullptr, with why in *whyNot, when no device of the kind can be made here
 	static std::unique_ptr<GfxApi> Create(GfxKind kind, std::string* whyNot); // WARP for the D3D kinds when no adapter
+	// D3D12 on WARP whether or not there is an adapter (D3D12 has one device per adapter: a second device of another
+	// object than the first is on another adapter); the other kinds as Create
+	static std::unique_ptr<GfxApi> CreateOnWarp(GfxKind kind, std::string* whyNot);
 	// The test pattern (above), w x h, in nativeFormat (the API's own enum value), with samples samples and arraySize
 	// layers: layer i has the pattern of eye (eye + i) % 2, so a layer shown is told from another (multisampled
 	// arrays: each layer the same)
@@ -56,6 +59,9 @@ public:
 	virtual GfxTexture Depth(uint32_t w, uint32_t h, float value) = 0;
 	// Waits until everything the device was asked to do is done
 	virtual void Flush() = 0;
+	// Vulkan: textures made after it are filled on, and name, a second queue of the same family; false (nothing
+	// changed) where the API or the device has none
+	virtual bool UseOtherQueue() { return false; }
 	virtual ~GfxApi() = default;
 };
 
@@ -181,7 +187,7 @@ std::unique_ptr<GfxApi> MakeVkGfx(std::string* whyNot);
 std::unique_ptr<GfxApi> MakeGLGfx(std::string* whyNot);
 #ifdef _WIN32
 std::unique_ptr<GfxApi> MakeD3D11Gfx(std::string* whyNot);
-std::unique_ptr<GfxApi> MakeD3D12Gfx(std::string* whyNot);
+std::unique_ptr<GfxApi> MakeD3D12Gfx(std::string* whyNot, bool warpOnly = false);
 std::unique_ptr<GfxApi> MakeD3D10Gfx(std::string* whyNot);
 gfx::Texels TexelsOfDxgi(int64_t format);
 #endif

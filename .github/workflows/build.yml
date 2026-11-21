@@ -135,6 +135,15 @@ jobs:
           # Formats the runtime doesn't offer (it has RGBA8 sRGB only), converted into the one it has
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases gfx-d3d11-formats,gfx-d3d12-formats,gfx-vk-formats,gfx-gl-formats --script tests/conformance/scripts/gfx_rgba8_only.json --expect tests/conformance/expect/gfx_formats.json --allow-skip ".*-(vk|gl)(-.*)?" --out conformance/gfx-formats
           if ($LASTEXITCODE) { $failed++ }
+          # Vulkan multisampled textures (resolved), a second queue and dynamic resolution; needs a Vulkan driver
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases gfx-vk-odd,gfx-vk-dynamic-resolution,gfx-vk-msaa-formats --script tests/conformance/scripts/gfx_vk_odd.json --expect tests/conformance/expect/gfx_vk_odd.json --allow-skip "gfx-vk-.*" --out conformance/gfx-vk-odd
+          if ($LASTEXITCODE) { $failed++ }
+          # A game that makes its device again mid-run: the session follows it, or the frames are left out when the
+          # runtime refuses the new device
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases gfx-d3d11-new-device,gfx-d3d11-eyes-two-devices,gfx-d3d12-new-device,gfx-vk-new-device --script tests/conformance/scripts/gfx_all_apis.json --expect tests/conformance/expect/gfx_new_device.json --allow-skip "gfx-(vk|d3d12)-new-device" --out conformance/gfx-new-device
+          if ($LASTEXITCODE) { $failed++ }
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases gfx-d3d11-new-device,gfx-d3d12-new-device,gfx-vk-new-device --script tests/conformance/scripts/gfx_new_device_refused.json --expect tests/conformance/expect/gfx_new_device_refused.json --allow-skip "gfx-(vk|d3d12)-new-device" --out conformance/gfx-new-device-refused
+          if ($LASTEXITCODE) { $failed++ }
           # The pose and depth a frame was submitted with: used with useSubmittedPose and submitDepth on, not without
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases gfx-d3d11-pose-depth,gfx-d3d12-pose-depth,gfx-vk-pose-depth,gfx-gl-pose-depth --script tests/conformance/scripts/gfx_depth.json --ini tests/conformance/ini/pose_depth.ini --expect tests/conformance/expect/gfx_pose_depth.json --allow-skip ".*-(vk|gl)(-.*)?" --out conformance/gfx-pose-depth
           if ($LASTEXITCODE) { $failed++ }

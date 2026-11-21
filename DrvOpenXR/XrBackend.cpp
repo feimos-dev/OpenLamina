@@ -106,25 +106,10 @@ XrBackend::XrBackend(bool useVulkanTmpGfx, bool useD3D11TmpGfx)
 	memset(projectionViews, 0, sizeof(projectionViews));
 
 	// setup temporaryGraphics
-
-#if defined(SUPPORT_VK)
-	if (useVulkanTmpGfx) {
-		temporaryGraphics = std::make_unique<TemporaryVk>();
-		if (!temporaryGraphics->usable)
-			temporaryGraphics.reset(); // D3D11 next
-	}
-#endif
-
-#if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
-	if (!temporaryGraphics && useD3D11TmpGfx) {
-		temporaryGraphics = std::make_unique<TemporaryD3D11>();
-		if (!temporaryGraphics->usable)
-			temporaryGraphics.reset();
-	}
-#endif
-
+	tmpGfxVulkan = useVulkanTmpGfx;
+	tmpGfxD3D11 = useD3D11TmpGfx;
 	// Without one, CreateOpenXRBackend gives up (HasTemporaryGraphics)
-	if (!temporaryGraphics)
+	if (!MakeTemporaryGraphics())
 		OOVR_LOG("No temporary graphics API available for the OpenXR session");
 
 	// setup the device indexes
@@ -383,14 +368,14 @@ static void EnqueueQuit()
 }
 
 /* Submitting Frames */
-bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
+bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex, bool moveToNewDevice)
 {
 	// A texture OpenComposite can't use: the eye is left out and Submit answers InvalidTexture
 	if (!tex || !tex->handle)
 		return false;
 
 	// Check we're using the session with the application's device
-	if (!usingApplicationGraphicsAPI) {
+	if (!usingApplicationGraphicsAPI || moveToNewDevice) {
 		if (appGraphicsUnusable)
 			return false; // tried once already: the session stays on the temporary device
 		// Not while the session is lost: the first Submit after it's made again moves it to the game's device
@@ -529,8 +514,24 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 		// Another thread may have set the session up on the game's device, or given up on it, while this one waited
 		if (appGraphicsUnusable)
 			return false;
-		if (usingApplicationGraphicsAPI)
+		// A move another thread has made already, or one there's no session on the game's device for: the usual path
+		if (moveToNewDevice && !(usingApplicationGraphicsAPI && TextureOnOtherDevice(tex)))
 			return CheckOrInitCompositors(tex);
+		if (usingApplicationGraphicsAPI && !moveToNewDevice)
+			return CheckOrInitCompositors(tex);
+		if (moveToNewDevice) {
+			deviceRebuilds++;
+			// Without a device to fall back on, a refused session would end the game
+			if (!MakeTemporaryGraphics()) {
+				OOVR_LOG_ONCE("The game's eye textures are on another device than the session's, and there's no temporary device to fall back on: left out");
+				return false;
+			}
+			OOVR_LOG("The game's eye textures are on another device than the session's: making the session again on it");
+			rebuildingForNewDevice = true;
+			// An eye already stored this frame is of the old session's swapchains
+			for (XrCompositionLayerProjectionView& view : projectionViews)
+				view.subImage.swapchain = XR_NULL_HANDLE;
+		}
 
 		usingApplicationGraphicsAPI = true;
 
@@ -549,6 +550,8 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 			appGraphicsUnusable = true;
 			if (!temporaryGraphics || XR_FAILED(RebuildSession(RebuildReason::AppGraphics))) {
 				OnSessionLost(); // not even the temporary device gets a session: lost until one can be made
+			} else if (rebuildingForNewDevice) {
+				OOVR_LOG("The game's frames on its new device can't be shown: they're left out");
 			} else {
 				OOVR_LOG("The game's frames can't be shown: telling the game to quit");
 				EnqueueQuit();
@@ -793,6 +796,7 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 
 		// Real graphics binding should be setup now - get rid of temporary graphics
 		temporaryGraphics.reset();
+		rebuildingForNewDevice = false;
 	}
 
 	// Copied textures' compositors are made from their D3D11 copies (StoreEyeTexture)
@@ -807,6 +811,62 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex)
 		ready = ready && compositor != nullptr;
 	}
 	return ready;
+}
+
+bool XrBackend::FollowEyeTextureDevice(const vr::Texture_t* tex, bool& move)
+{
+	// The session is made again through CheckOrInitCompositors' first-time path, which checks the new device before the
+	// old session goes down, with a temporary device to fall back on. Eye textures only (an overlay or a skybox may be on
+	// a device of its own), and a few times a run at most, so eyes on two devices don't make sessions frame after frame.
+	// D3D11 and D3D12 only: the old session's objects are freed on the old device, which their COM references keep
+	// alive, where a Vulkan game may have destroyed its old VkDevice already.
+	move = false;
+	if (!usingApplicationGraphicsAPI || gfxInterop || !TextureOnOtherDevice(tex))
+		return true;
+	if (deviceRebuilds >= 3) {
+		OOVR_LOG_ONCE("The game's eye textures are on another device than the session's once more: left out");
+		return false;
+	}
+	move = true;
+	return true;
+}
+
+bool XrBackend::TextureOnOtherDevice(const vr::Texture_t* tex)
+{
+	const auto* binding = graphicsBinding ? (const XrBaseInStructure*)graphicsBinding->asVoid() : nullptr;
+	if (!tex || !tex->handle || !binding)
+		return false;
+	switch (tex->eType) {
+#if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+	case vr::TextureType_DirectX: {
+		if (binding->type != XR_TYPE_GRAPHICS_BINDING_D3D11_KHR)
+			return false;
+#if defined(SUPPORT_DX10)
+		// Direct3D 10 textures go through the bridge device, which is the session's
+		if (DX10Compositor::AsD3D10Texture(tex))
+			return false;
+#endif
+		ComPtr<ID3D11Device> device;
+		((ID3D11Texture2D*)tex->handle)->GetDevice(&device);
+		return device && device.Get() != ((const XrGraphicsBindingD3D11KHR*)binding)->device;
+	}
+#endif
+#if defined(SUPPORT_DX) && defined(SUPPORT_DX12)
+	case vr::TextureType_DirectX12: {
+		if (binding->type != XR_TYPE_GRAPHICS_BINDING_D3D12_KHR)
+			return false;
+		auto* data = (D3D12TextureData_t*)tex->handle;
+		if (!data->m_pResource)
+			return false;
+		ComPtr<ID3D12Device> device;
+		data->m_pResource->GetDevice(IID_PPV_ARGS(&device));
+		return device && device.Get() != ((const XrGraphicsBindingD3D12KHR*)binding)->device;
+	}
+#endif
+	default:
+		// OpenGL's context is the current one, which a game may change for its own reasons
+		return false;
+	}
 }
 
 void XrBackend::WaitForTrackingData()
@@ -982,7 +1042,12 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 			frameNewFrameReadyMs = std::chrono::duration<float, std::milli>(now - frameStart).count();
 	});
 
-	if (!CheckOrInitCompositors(texture)) {
+	bool moveToNewDevice = false;
+	if (!FollowEyeTextureDevice(texture, moveToNewDevice)) {
+		projectionViews[eye].subImage.swapchain = XR_NULL_HANDLE;
+		return kCompositorTextureIsOnWrongDevice;
+	}
+	if (!CheckOrInitCompositors(texture, moveToNewDevice)) {
 		// A texture OpenComposite can't use (logged): this eye is left out of the frame
 		projectionViews[eye].subImage.swapchain = XR_NULL_HANDLE;
 		return appOnOtherAdapter ? kCompositorTextureIsOnWrongDevice : kCompositorInvalidTexture;
@@ -3865,6 +3930,28 @@ void XrBackend::BindInfoSet()
 	info.countActionSets = 1;
 	info.actionSets = &infoSet;
 	OC_XR_LOG(xrAttachSessionActionSets(xr_session.get(), &info));
+}
+
+bool XrBackend::MakeTemporaryGraphics()
+{
+	if (temporaryGraphics)
+		return true;
+#if defined(SUPPORT_VK)
+	if (tmpGfxVulkan) {
+		temporaryGraphics = std::make_unique<TemporaryVk>();
+		if (!temporaryGraphics->usable)
+			temporaryGraphics.reset(); // D3D11 next
+	}
+#endif
+
+#if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+	if (!temporaryGraphics && tmpGfxD3D11) {
+		temporaryGraphics = std::make_unique<TemporaryD3D11>();
+		if (!temporaryGraphics->usable)
+			temporaryGraphics.reset();
+	}
+#endif
+	return temporaryGraphics != nullptr;
 }
 
 const void* XrBackend::GetCurrentGraphicsBinding()

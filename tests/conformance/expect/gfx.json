@@ -1,5 +1,5 @@
 {
- "#": "The frame and overlay cases (run.py --cases <the gfx-* and overlay-* cases of build.yml's gfx step> --script scripts/gfx_all_apis.json --expect expect/gfx.json): the test pattern of gfx/GfxApi.h as the stand-in runtime read back the last projection layer's views or the last quad layer (dump:). gfx-<api>-basic (D3D10 too, through the D3D11 path): 1024 x 1024 RGBA8 sRGB per eye with full bounds; eye 1's quadrants are rotated once clockwise. overlay-raw-<api>: a 64 x 64 RGBA image set with SetOverlayRaw on a scene app of that API, and read back with GetOverlayImageData (short: a buffer a byte too small). overlay-texture-readback-<api>: a 64 x 64 texture overlay read back. gfx-d3d11-odd: a 1 x 1 texture (eye 0 all white, eye 1 all green), 4097 x 2049, 4x MSAA R8G8B8A8_TYPELESS, slice 1 of a two-slice array (SubmitWithArrayIndex; slice 1 has the other eye's pattern) and an sRGB texture under ColorSpace_Linear (into R8G8B8A8_UNORM, 28), each found in the dump by its size. gfx-<api>-bounds: the whole texture (768 x 768 per eye), side-by-side halves of one 2048 x 1024 texture of eye 0's pattern ({0,0,0.5,1} and {0.5,0,1,1}), the whole flipped ({0,1,1,0}, 640 x 640: shown upside down), flipped halves of one 1200 x 600 texture, and one above the other in one 896 x 1792 texture ({0,0,1,0.5} and {0,0.5,1,1}: the left eye is the top half as shown, or OpenGL's bottom half, whose v counts from the bottom row); each view's rect is the bounds' area, at the origin of a swapchain image of the texture's size (image:). Known failures are in expect/gfx_known.json. The centre (c) of a whole texture is the pattern's mid-grey block.",
+ "#": "The frame and overlay cases (run.py --cases <the gfx-* and overlay-* cases of build.yml's gfx step> --script scripts/gfx_all_apis.json --expect expect/gfx.json): the test pattern of gfx/GfxApi.h as the stand-in runtime read back the last projection layer's views or the last quad layer (dump:). gfx-<api>-basic (D3D10 too, through the D3D11 path): 1024 x 1024 RGBA8 sRGB per eye with full bounds; eye 1's quadrants are rotated once clockwise. overlay-raw-<api>: a 64 x 64 RGBA image set with SetOverlayRaw on a scene app of that API, and read back with GetOverlayImageData (short: a buffer a byte too small). overlay-texture-readback-<api>: a 64 x 64 texture overlay read back. gfx-d3d11-odd: a 1 x 1 texture (eye 0 all white, eye 1 all green), 4097 x 2049, 4x MSAA R8G8B8A8_TYPELESS, slice 1 of a two-slice array (SubmitWithArrayIndex; slice 1 has the other eye's pattern) and an sRGB texture under ColorSpace_Linear (into R8G8B8A8_UNORM, 28), each found in the dump by its size. gfx-<api>-bounds: the whole texture (768 x 768 per eye), side-by-side halves of one 2048 x 1024 texture of eye 0's pattern ({0,0,0.5,1} and {0.5,0,1,1}), the whole flipped ({0,1,1,0}, 640 x 640: shown upside down), flipped halves of one 1200 x 600 texture, and one above the other in one 896 x 1792 texture ({0,0,1,0.5} and {0,0.5,1,1}: the left eye is the top half as shown, or OpenGL's bottom half, whose v counts from the bottom row); each view's rect is the bounds' area, at the origin of a swapchain image of the texture's size (image:; Vulkan's swapchain grows instead, to hold each size the eye's texture has had, so its later cases' images are of the cases before too). Known failures are in expect/gfx_known.json. The centre (c) of a whole texture is the pattern's mid-grey block.",
  "gfx-d3d11-basic/frame/-/-": {
   "left": 0,
   "right": 0,
@@ -777,8 +777,8 @@
    600
   ],
   "dump:views[0].image": [
-   1200,
-   600
+   2048,
+   1024
   ],
   "dump:views[0].samples.tl": "0000ffff",
   "dump:views[0].samples.tr": "0000ffff",
@@ -792,8 +792,8 @@
    600
   ],
   "dump:views[1].image": [
-   1200,
-   600
+   2048,
+   1024
   ],
   "dump:views[1].samples.tl": "ffffffff",
   "dump:views[1].samples.tr": "ffffffff",
@@ -812,7 +812,7 @@
    896
   ],
   "dump:views[0].image": [
-   896,
+   2048,
    1792
   ],
   "dump:views[0].samples.tl": "ff0000ff",
@@ -828,7 +828,7 @@
    896
   ],
   "dump:views[1].image": [
-   896,
+   2048,
    1792
   ],
   "dump:views[1].samples.tl": "0000ffff",

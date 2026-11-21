@@ -6,6 +6,7 @@
 //               (on Linux the D3D extensions are left out, a script left with no graphics API gets the default one,
 //               and XR_KHR_win32_convert_performance_counter_time is XR_KHR_convert_timespec_time),
 //   "ipd": 0.063, "display_hz": 90, "stage_bounds": [width, depth],
+//   "max_swapchain_samples": 4 (the views' maxSwapchainSampleCount),
 //   "events":   [{ "frame": 60, "type": "session_state", "state": "LOSS_PENDING" }]
 //               (LOSS_PENDING loses the session for real, once per process: its calls answer XR_ERROR_SESSION_LOST
 //               from then on, and xrGetSystem answers XR_ERROR_FORM_FACTOR_UNAVAILABLE for loss_unavailable_ms;
@@ -119,6 +120,7 @@ struct Script {
 	std::set<std::string> extensions = { "XR_KHR_vulkan_enable" };
 #endif
 	uint32_t viewWidth = 1920, viewHeight = 1920;
+	uint32_t maxSwapchainSamples = 4;
 	float fovDeg = 45;
 	float ipd = 0.063f;
 	float cantDeg = 0;

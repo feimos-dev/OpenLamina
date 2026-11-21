@@ -1,0 +1,296 @@
+{
+ "#": "A game that makes its device again mid-run (run.py --cases gfx-d3d11-new-device,gfx-d3d11-eyes-two-devices,gfx-d3d12-new-device,gfx-vk-new-device --script scripts/gfx_all_apis.json --expect expect/gfx_new_device.json): 512 x 512 frames of its first device, then 576 x 576 ones of a new device. D3D11: the session is made again on the new device and shows them. D3D12's second device is on WARP (D3D12 has one device per adapter), which isn't the runtime's adapter: the runtime refuses its session, and the frames are left out (104, TextureIsOnWrongDevice); with WARP the only adapter, as on CI, that case is skipped. Vulkan isn't followed: the new device's frames are refused (102, InvalidTexture). The game is never told to quit. gfx-d3d11-eyes-two-devices: the left eye on one device and the right on another: the session follows a few times, ending on the right eye's device, and the left is then left out (104); no frame names a swapchain of a session that's gone.",
+ "gfx-d3d11-new-device/first device/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   512,
+   512
+  ],
+  "dump:views[0].image": [
+   512,
+   512
+  ],
+  "dump:views[0].format": 29,
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].rect": [
+   0,
+   0,
+   512,
+   512
+  ],
+  "dump:views[1].image": [
+   512,
+   512
+  ],
+  "dump:views[1].format": 29,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  }
+ },
+ "gfx-d3d11-new-device/new device/-/-": {
+  "left": 0,
+  "quit": false,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   576,
+   576
+  ],
+  "dump:views[0].image": [
+   576,
+   576
+  ],
+  "dump:views[0].format": 29,
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].rect": [
+   0,
+   0,
+   576,
+   576
+  ],
+  "dump:views[1].image": [
+   576,
+   576
+  ],
+  "dump:views[1].format": 29,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  }
+ },
+ "gfx-d3d12-new-device/first device/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   512,
+   512
+  ],
+  "dump:views[0].image": [
+   512,
+   512
+  ],
+  "dump:views[0].format": 29,
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].rect": [
+   0,
+   0,
+   512,
+   512
+  ],
+  "dump:views[1].image": [
+   512,
+   512
+  ],
+  "dump:views[1].format": 29,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  }
+ },
+ "gfx-d3d12-new-device/new device/-/-": {
+  "left": 104,
+  "quit": false,
+  "right": 104
+ },
+ "gfx-vk-new-device/first device/-/-": {
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].rect": [
+   0,
+   0,
+   512,
+   512
+  ],
+  "dump:views[0].image": [
+   512,
+   512
+  ],
+  "dump:views[0].format": 43,
+  "dump:views[0].invalid": [],
+  "dump:views[0].samples.tl": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[0].samples.tr": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[0].samples.bl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[0].samples.br": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[0].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  },
+  "dump:views[1].rect": [
+   0,
+   0,
+   512,
+   512
+  ],
+  "dump:views[1].image": [
+   512,
+   512
+  ],
+  "dump:views[1].format": 43,
+  "dump:views[1].invalid": [],
+  "dump:views[1].samples.tl": {
+   "near": "0000ffff",
+   "within": 2
+  },
+  "dump:views[1].samples.tr": {
+   "near": "ff0000ff",
+   "within": 2
+  },
+  "dump:views[1].samples.bl": {
+   "near": "ffffffff",
+   "within": 2
+  },
+  "dump:views[1].samples.br": {
+   "near": "00ff00ff",
+   "within": 2
+  },
+  "dump:views[1].samples.c": {
+   "near": "808080ff",
+   "within": 2
+  }
+ },
+ "gfx-vk-new-device/new device/-/-": {
+  "left": 102,
+  "quit": false,
+  "right": 102
+ },
+ "gfx-d3d11-eyes-two-devices/eyes on two devices/-/-": {
+  "left": 104,
+  "right": 0,
+  "quit": false,
+  "no_invalid_layers": true
+ }
+}
