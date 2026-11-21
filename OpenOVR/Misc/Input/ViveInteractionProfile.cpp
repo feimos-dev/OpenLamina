@@ -77,26 +77,24 @@ std::optional<vr::EVRSkeletalTrackingLevel> ViveWandInteractionProfile::GetOpenV
 	return vr::VRSkeletalTracking_Estimated;
 }
 
-const InteractionProfile::LegacyBindings* ViveWandInteractionProfile::GetLegacyBindings(const std::string& handPath) const
+InteractionProfile::LegacyBindings ViveWandInteractionProfile::MakeLegacyBindings(const std::string& handPath) const
 {
-	static LegacyBindings bindings = {};
+	LegacyBindings bindings = {};
 
-	if (!bindings.menu) {
-		//		bindings.system = "input/system/click"; - causes issues on Oculus runtime
-		bindings.dashboard = "input/system/click";
-		bindings.menu = "input/menu/click";
-		bindings.stickX = "input/trackpad/x";
-		bindings.stickY = "input/trackpad/y";
-		bindings.stickBtn = "input/trackpad/click";
-		bindings.stickBtnTouch = "input/trackpad/touch";
-		bindings.trigger = "input/trigger/value";
-		bindings.triggerClick = "input/trigger/click";
-		bindings.triggerTouch = "input/trigger/value";
-		bindings.grip = "input/squeeze/click";
-		bindings.haptic = "output/haptic";
-		bindings.gripPoseAction = "input/grip/pose";
-		bindings.aimPoseAction = "input/aim/pose";
-	}
+	//		bindings.system = "input/system/click"; - causes issues on Oculus runtime
+	bindings.dashboard = "input/system/click";
+	bindings.menu = "input/menu/click";
+	bindings.stickX = "input/trackpad/x";
+	bindings.stickY = "input/trackpad/y";
+	bindings.stickBtn = "input/trackpad/click";
+	bindings.stickBtnTouch = "input/trackpad/touch";
+	bindings.trigger = "input/trigger/value";
+	bindings.triggerClick = "input/trigger/click";
+	bindings.triggerTouch = "input/trigger/value";
+	bindings.grip = "input/squeeze/click";
+	bindings.haptic = "output/haptic";
+	bindings.gripPoseAction = "input/grip/pose";
+	bindings.aimPoseAction = "input/aim/pose";
 
-	return &bindings;
+	return bindings;
 }

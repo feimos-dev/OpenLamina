@@ -58,20 +58,18 @@ std::optional<vr::EVRSkeletalTrackingLevel> KhrSimpleInteractionProfile::GetOpen
 	return vr::VRSkeletalTracking_Estimated;
 }
 
-const InteractionProfile::LegacyBindings* KhrSimpleInteractionProfile::GetLegacyBindings(const std::string& handPath) const
+InteractionProfile::LegacyBindings KhrSimpleInteractionProfile::MakeLegacyBindings(const std::string& handPath) const
 {
-	static LegacyBindings bindings = {};
-	if (!bindings.menu) {
-		// The stick, system button and grip are unsupported
+	LegacyBindings bindings = {};
+	// The stick, system button and grip are unsupported
 
-		bindings.trigger = "input/select/click";
-		bindings.triggerClick = "input/select/click";
-		bindings.menu = "input/menu/click";
+	bindings.trigger = "input/select/click";
+	bindings.triggerClick = "input/select/click";
+	bindings.menu = "input/menu/click";
 
-		bindings.haptic = "output/haptic";
+	bindings.haptic = "output/haptic";
 
-		bindings.gripPoseAction = "input/grip/pose";
-		bindings.aimPoseAction = "input/aim/pose";
-	}
-	return &bindings;
+	bindings.gripPoseAction = "input/grip/pose";
+	bindings.aimPoseAction = "input/aim/pose";
+	return bindings;
 }

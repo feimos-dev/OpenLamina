@@ -120,15 +120,13 @@ std::optional<vr::EVRSkeletalTrackingLevel> ExtHandInteractionProfile::GetOpenVR
 	return vr::VRSkeletalTracking_Full;
 }
 
-const InteractionProfile::LegacyBindings* ExtHandInteractionProfile::GetLegacyBindings(const std::string& handPath) const
+InteractionProfile::LegacyBindings ExtHandInteractionProfile::MakeLegacyBindings(const std::string& handPath) const
 {
-	static LegacyBindings bindings = {};
-	if (!bindings.trigger) {
-		bindings.trigger = "input/pinch_ext/value";
-		bindings.triggerClick = "input/pinch_ext/value";
-		bindings.grip = "input/grasp_ext/value";
-		bindings.gripPoseAction = "input/grip/pose";
-		bindings.aimPoseAction = "input/aim/pose";
-	}
-	return &bindings;
+	LegacyBindings bindings = {};
+	bindings.trigger = "input/pinch_ext/value";
+	bindings.triggerClick = "input/pinch_ext/value";
+	bindings.grip = "input/grasp_ext/value";
+	bindings.gripPoseAction = "input/grip/pose";
+	bindings.aimPoseAction = "input/aim/pose";
+	return bindings;
 }

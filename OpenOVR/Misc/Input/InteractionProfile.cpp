@@ -79,6 +79,16 @@ bool InteractionProfile::IsInputPathValid(const std::string& inputPath) const
 	return validInputPaths.find(inputPath) != validInputPaths.end();
 }
 
+const InteractionProfile::LegacyBindings* InteractionProfile::GetLegacyBindings(const std::string& handPath) const
+{
+	// The profile doesn't change once made: both hands' bindings are made once, from whichever thread asks first
+	std::call_once(legacyBindingsMade, [this] {
+		legacyBindings[0] = MakeLegacyBindings("/user/hand/left");
+		legacyBindings[1] = MakeLegacyBindings("/user/hand/right");
+	});
+	return &legacyBindings[handPath == "/user/hand/left" ? 0 : 1];
+}
+
 void InteractionProfile::AddLegacyBindings(const LegacyControllerActions& ctrl, std::vector<XrActionSuggestedBinding>& bindings) const
 {
 	auto create = [&](XrAction action, const char* path) {

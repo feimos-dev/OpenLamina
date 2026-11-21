@@ -76,41 +76,36 @@ std::optional<vr::EVRSkeletalTrackingLevel> ViveFocus3InteractionProfile::GetOpe
 	return vr::VRSkeletalTracking_Estimated;
 }
 
-const InteractionProfile::LegacyBindings* ViveFocus3InteractionProfile::GetLegacyBindings(const std::string& handPath) const
+InteractionProfile::LegacyBindings ViveFocus3InteractionProfile::MakeLegacyBindings(const std::string& handPath) const
 {
-	static LegacyBindings allBindings[2] = { {}, {} };
-	int hand = handPath == "/user/hand/left" ? vr::Eye_Left : vr::Eye_Right;
-	LegacyBindings& bindings = allBindings[hand];
+	LegacyBindings bindings = {};
 
-	if (!bindings.menu) {
-		bindings = {};
-		bindings.stickX = "input/thumbstick/x";
-		bindings.stickY = "input/thumbstick/y";
-		bindings.stickBtn = "input/thumbstick/click";
-		bindings.stickBtnTouch = "input/thumbstick/touch";
+	bindings.stickX = "input/thumbstick/x";
+	bindings.stickY = "input/thumbstick/y";
+	bindings.stickBtn = "input/thumbstick/click";
+	bindings.stickBtnTouch = "input/thumbstick/touch";
 
-		bindings.trigger = "input/trigger/value";
-		bindings.triggerClick = "input/trigger/click";
-		bindings.triggerTouch = "input/trigger/touch";
+	bindings.trigger = "input/trigger/value";
+	bindings.triggerClick = "input/trigger/click";
+	bindings.triggerTouch = "input/trigger/touch";
 
-		bindings.grip = "input/squeeze/value";
+	bindings.grip = "input/squeeze/value";
 
-		bindings.haptic = "output/haptic";
+	bindings.haptic = "output/haptic";
 
-		bindings.gripPoseAction = "input/grip/pose";
-		bindings.aimPoseAction = "input/aim/pose";
+	bindings.gripPoseAction = "input/grip/pose";
+	bindings.aimPoseAction = "input/aim/pose";
 
-		if (handPath == "/user/hand/left") {
-			bindings.menu = "input/y/click";
-			bindings.btnA = "input/x/click";
+	if (handPath == "/user/hand/left") {
+		bindings.menu = "input/y/click";
+		bindings.btnA = "input/x/click";
 
-			// The menu button is SteamVR's menu
-			bindings.system = "input/menu/click";
-		} else {
-			bindings.menu = "input/b/click";
-			bindings.btnA = "input/a/click";
-		}
+		// The menu button is SteamVR's menu
+		bindings.system = "input/menu/click";
+	} else {
+		bindings.menu = "input/b/click";
+		bindings.btnA = "input/a/click";
 	}
 
-	return &bindings;
+	return bindings;
 }

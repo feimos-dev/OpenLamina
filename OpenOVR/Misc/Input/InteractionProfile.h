@@ -9,6 +9,7 @@
 #include <glm/gtc/matrix_inverse.hpp>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <unordered_set>
@@ -226,9 +227,19 @@ protected:
 	};
 
 	/*
-	 * Returns a legacy bindings struct for the given interaction profile.
+	 * Makes the legacy bindings struct for a hand of this profile. Called once per hand (GetLegacyBindings keeps it).
 	 */
-	virtual const LegacyBindings* GetLegacyBindings(const std::string& handPath) const = 0;
+	virtual LegacyBindings MakeLegacyBindings(const std::string& handPath) const = 0;
+
+public:
+	/** The legacy bindings for a hand ("/user/hand/left", or the right for any other path), made on the first call */
+	const LegacyBindings* GetLegacyBindings(const std::string& handPath) const;
+
+private:
+	mutable std::once_flag legacyBindingsMade;
+	mutable LegacyBindings legacyBindings[2];
+
+protected:
 
 	// The set of valid input paths for an interaction profile. An interaction profile should fill this in its constructor.
 	std::unordered_set<std::string> validInputPaths;

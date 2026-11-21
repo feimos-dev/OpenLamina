@@ -13,6 +13,7 @@
 #include "Misc/Input/MsftHandInteractionProfile.h"
 #include "Misc/Input/OculusInteractionProfile.h"
 #include "Misc/Input/PicoInteractionProfile.h"
+#include "Misc/Input/ReverbG2InteractionProfile.h"
 #include "Misc/Input/ViveCosmosInteractionProfile.h"
 #include "Misc/Input/ViveFocus3InteractionProfile.h"
 #include "Misc/Input/ViveInteractionProfile.h"
@@ -284,4 +285,34 @@ TEST_CASE("No_profiles_before_the_instance")
 	REQUIRE(xr_ext == nullptr);
 	CHECK(InteractionProfile::GetProfileList().empty());
 	CHECK(InteractionProfile::GetProfileByPath("/interaction_profiles/khr/simple_controller") == nullptr);
+}
+
+TEST_CASE("Every_legacy_binding_is_an_input_of_its_profile")
+{
+	XrExt all(0, { XR_EXT_SAMSUNG_ODYSSEY_CONTROLLER_EXTENSION_NAME, OC_XR_FB_TOUCH_CONTROLLER_PROXIMITY_EXTENSION_NAME,
+	                 OC_XR_FB_TOUCH_CONTROLLER_PRO_EXTENSION_NAME, OC_XR_META_TOUCH_CONTROLLER_PLUS_EXTENSION_NAME,
+	                 OC_XR_HTC_VIVE_COSMOS_CONTROLLER_INTERACTION_EXTENSION_NAME, OC_XR_HTC_VIVE_FOCUS3_CONTROLLER_INTERACTION_EXTENSION_NAME,
+	                 OC_XR_BD_CONTROLLER_INTERACTION_EXTENSION_NAME, XR_MSFT_HAND_INTERACTION_EXTENSION_NAME,
+	                 OC_XR_EXT_HAND_INTERACTION_EXTENSION_NAME });
+	InteractionProfile::ProfileList profiles = InteractionProfile::CreateProfiles(all);
+	profiles.emplace_back(std::make_unique<ReverbG2InteractionProfile>());
+	CHECK(profiles.size() > 10);
+	for (const auto& profile : profiles) {
+		for (const std::string hand : { "/user/hand/left", "/user/hand/right" }) {
+			const auto* b = profile->GetLegacyBindings(hand);
+			REQUIRE(b);
+			// The same table on every call
+			CHECK(profile->GetLegacyBindings(hand) == b);
+			// The dashboard's system button is left out of the valid paths on purpose
+			for (const char* path : { b->system, b->menu, b->menuTouch, b->btnA, b->btnATouch, b->trackpadX, b->trackpadY,
+			         b->trackpadTouch, b->trackpadForce, b->stickX, b->stickY, b->stickBtn, b->stickBtnTouch, b->trigger,
+			         b->triggerClick, b->triggerTouch, b->triggerProximity, b->thumbProximity, b->triggerCurl, b->grip,
+			         b->haptic, b->gripPoseAction, b->aimPoseAction }) {
+				if (!path)
+					continue;
+				INFO(profile->GetPath(), " ", hand, "/", path);
+				CHECK(profile->IsInputPathValid(hand + "/" + path));
+			}
+		}
+	}
 }

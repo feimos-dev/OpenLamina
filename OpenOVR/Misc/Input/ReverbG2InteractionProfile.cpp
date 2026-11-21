@@ -128,34 +128,30 @@ std::optional<vr::EVRSkeletalTrackingLevel> ReverbG2InteractionProfile::GetOpenV
 	return vr::VRSkeletalTracking_Estimated;
 }
 
-const InteractionProfile::LegacyBindings* ReverbG2InteractionProfile::GetLegacyBindings(const std::string& handPath) const
+InteractionProfile::LegacyBindings ReverbG2InteractionProfile::MakeLegacyBindings(const std::string& handPath) const
 {
-	static LegacyBindings allBindings[2] = { {}, {} };
-	int hand = handPath == "/user/hand/left" ? vr::Eye_Left : vr::Eye_Right;
-	LegacyBindings& bindings = allBindings[hand];
+	LegacyBindings bindings = {};
 
-	if (!bindings.menu) {
-		bindings.system = "input/menu/click";
-		bindings.stickX = "input/thumbstick/x";
-		bindings.stickY = "input/thumbstick/y";
-		bindings.stickBtn = "input/thumbstick/click";
-		bindings.trigger = "input/trigger/value";
-		bindings.triggerClick = "input/trigger/value";
-		bindings.triggerTouch = "input/trigger/value";
-		bindings.grip = "input/squeeze/value";
-		bindings.haptic = "output/haptic";
-		bindings.gripPoseAction = "input/grip/pose";
-		bindings.aimPoseAction = "input/aim/pose";
+	bindings.system = "input/menu/click";
+	bindings.stickX = "input/thumbstick/x";
+	bindings.stickY = "input/thumbstick/y";
+	bindings.stickBtn = "input/thumbstick/click";
+	bindings.trigger = "input/trigger/value";
+	bindings.triggerClick = "input/trigger/value";
+	bindings.triggerTouch = "input/trigger/value";
+	bindings.grip = "input/squeeze/value";
+	bindings.haptic = "output/haptic";
+	bindings.gripPoseAction = "input/grip/pose";
+	bindings.aimPoseAction = "input/aim/pose";
 
-		// TODO: figure out mappings for buttons on controllers
-		if (handPath == "/user/hand/left") {
-			bindings.btnA = "input/x/click";
-			bindings.menu = "input/y/click";
-		} else {
-			bindings.btnA = "input/a/click";
-			bindings.menu = "input/b/click";
-		}
+	// TODO: figure out mappings for buttons on controllers
+	if (handPath == "/user/hand/left") {
+		bindings.btnA = "input/x/click";
+		bindings.menu = "input/y/click";
+	} else {
+		bindings.btnA = "input/a/click";
+		bindings.menu = "input/b/click";
 	}
 
-	return &bindings;
+	return bindings;
 }
