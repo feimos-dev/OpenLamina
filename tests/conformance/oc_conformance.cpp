@@ -203,6 +203,7 @@ int main(int argc, char** argv)
 		cc.out = &out;
 		cc.caseName = args["--case"];
 		cc.args = caseArgs;
+		cc.runtimePath = args["--runtime"];
 		cc.manifest = args.count("--manifest") ? args["--manifest"] : (ctx.dataDir / "manifest_basic.json").string();
 		it->second(cc);
 		return 0;

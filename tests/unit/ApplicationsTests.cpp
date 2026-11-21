@@ -903,15 +903,21 @@ TEST_CASE("Launch_waits_for_the_scene_application_to_quit")
 	EventRecorder recorder;
 	REQUIRE(apps.AddApplicationManifest(PathToUtf8(WriteEchoManifest(dir.path, "oc.test.next")).c_str()) == VRApplicationError_None);
 
-	// A scene application without a session yet isn't waited for
+	// Launched with no scene application: nobody to wait for; it's the starting application (as SteamVR answers)
+	// until its session starts
 	fs::create_directories(dir.path / "first");
 	REQUIRE(apps.AddApplicationManifest(PathToUtf8(WriteEchoManifest(dir.path / "first", "oc.test.first")).c_str()) == VRApplicationError_None);
 	CHECK(apps.LaunchApplication("oc.test.first") == VRApplicationError_None);
 	CHECK(CountEvents(vr::VREvent_Quit) == 0);
-	CHECK(apps.GetTransitionState() == VRApplicationTransition_None);
+	CHECK(apps.GetTransitionState() == VRApplicationTransition_NewAppLaunched);
+	char starting[64] = {};
+	CHECK(apps.GetStartingApplication(starting, sizeof(starting)) == VRApplicationError_None);
+	CHECK(std::string(starting) == "oc.test.first");
 
-	// This program is the scene application, and launches another
+	// This program becomes the scene application instead (the first one never starts a session): that launch is
+	// over, and this one launches another
 	BaseApplications::SetSceneProcess(store, true);
+	CHECK(apps.GetTransitionState() == VRApplicationTransition_None);
 	postedEvents.clear();
 	CHECK(apps.LaunchApplication("oc.test.next") == VRApplicationError_None);
 	REQUIRE(CountEvents(vr::VREvent_Quit) == 1);
@@ -937,6 +943,72 @@ TEST_CASE("Launch_waits_for_the_scene_application_to_quit")
 	BaseApplications::SetSceneProcess(store, true);
 	CHECK(CountEvents((vr::EVREventType)1305) == 1);
 	CHECK(apps.GetTransitionState() == VRApplicationTransition_None);
+	BaseApplications::SetSceneProcess(store, false);
+}
+
+TEST_CASE("Launch_with_none_running_starts_until_its_session")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	BaseApplications apps(store);
+	AppType type(vr::VRApplication_Scene);
+	EventRecorder recorder;
+	REQUIRE(apps.AddApplicationManifest(PathToUtf8(WriteEchoManifest(dir.path, "oc.test.first")).c_str()) == VRApplicationError_None);
+	fs::create_directories(dir.path / "other");
+	REQUIRE(apps.AddApplicationManifest(PathToUtf8(WriteEchoManifest(dir.path / "other", "oc.test.other")).c_str()) == VRApplicationError_None);
+
+	CHECK(apps.LaunchApplication("oc.test.first") == VRApplicationError_None);
+	CHECK(apps.GetTransitionState() == VRApplicationTransition_NewAppLaunched);
+	CHECK(CountEvents(vr::VREvent_SceneApplicationStateChanged) == 1);
+	CHECK(CountEvents((vr::EVREventType)1302) == 1); // the new application started
+	// Another launch waits for it
+	CHECK(apps.LaunchApplication("oc.test.other") == VRApplicationError_LaunchInProgress);
+
+	// Its session: no longer starting
+	REQUIRE(apps.IdentifyApplication(0, "oc.test.first") == VRApplicationError_None);
+	BaseApplications::SetSceneProcess(store, true);
+	CHECK(CountEvents((vr::EVREventType)1305) == 1);
+	CHECK(apps.GetTransitionState() == VRApplicationTransition_None);
+	BaseApplications::SetSceneProcess(store, false);
+}
+
+TEST_CASE("Launch_with_none_running_that_fails_isnt_starting")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	BaseApplications apps(store);
+	AppType type(vr::VRApplication_Scene);
+	EventRecorder recorder;
+	Json::Value app(Json::objectValue);
+	app["app_key"] = "oc.test.missing";
+	app["launch_type"] = "binary";
+	app["binary_path"] = PathToUtf8(dir.path / "does_not_exist"); // no .exe: refused before the launch on Linux
+	Json::Value root(Json::objectValue);
+	root["applications"].append(app);
+	const fs::path manifest = dir.path / "missing.vrmanifest";
+	std::ofstream(manifest) << root.toStyledString();
+	REQUIRE(apps.AddApplicationManifest(PathToUtf8(manifest).c_str()) == VRApplicationError_None);
+
+	CHECK(apps.LaunchApplication("oc.test.missing") == VRApplicationError_LaunchFailed);
+	CHECK(apps.GetTransitionState() == VRApplicationTransition_None);
+	CHECK(CountEvents((vr::EVREventType)1301) == 1); // aborted
+}
+
+TEST_CASE("A_switch_keeps_its_launch_when_another_becomes_the_scene_application")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	BaseApplications apps(store);
+	AppType type(vr::VRApplication_Scene);
+	// A switch's new application launched (the old one gone): kept while a third program's session starts
+	store.Update(StoreDoc::Scene, [&](Json::Value& doc) {
+		doc["transition"]["state"] = VRApplicationTransition_NewAppLaunched;
+		doc["transition"]["app_key"] = "oc.test.next";
+		doc["transition"]["old_pid"] = 12345;
+		doc["transition"]["since_ms"] = NowMs();
+	});
+	BaseApplications::SetSceneProcess(store, true);
+	CHECK(apps.GetTransitionState() == VRApplicationTransition_NewAppLaunched);
 	BaseApplications::SetSceneProcess(store, false);
 }
 

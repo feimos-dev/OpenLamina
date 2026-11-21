@@ -1,0 +1,8 @@
+{
+ "#": "A switch between two scene applications, watched by a utility application (run.py --cases scene-switch --expect expect/scene_switch.json), as SteamVR answers it: launched with none running, the application is Starting until its session; launched while another runs, the old one is Quitting with the new one starting, then nothing runs and the new one is Starting; the old one gets VREvent_Quit.",
+ "scene-switch/observer/-/-": { "init": 0 },
+ "scene-switch/AddApplicationManifest/-/-": { "ret": 0 },
+ "scene-switch/switch/-/-": { "launch_a": 0, "a_running": true, "launch_b": 0, "b_running": true, "b_ended": true, "a_starting": true, "a_quitting_for_b": true, "b_starting": true },
+ "scene-switch/scene app a/-/-": { "init": 0, "frames": true, "quit_event": true },
+ "scene-switch/scene app b/-/-": { "init": 0, "frames": true, "quit_event": false }
+}
