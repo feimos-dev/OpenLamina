@@ -7,6 +7,7 @@
 #include <optional>
 #define BASE_IMPL
 
+#include "Misc/AppManifest.h"
 #include "Misc/Config.h"
 #include "Misc/Fade.h"
 #include "Misc/FrameStats.h"
@@ -695,8 +696,9 @@ void BaseCompositor::SetOverlayFromFile(const char* pchFilePath, Compositor_Over
 {
 	if (!pchFilePath || !*pchFilePath)
 		return;
-	std::string why;
-	std::optional<Image> image = LoadImageFile(std::filesystem::path(std::u8string((const char8_t*)pchFilePath)), &why);
+	std::string why = "its name isn't UTF-8";
+	const std::filesystem::path path = PathFromUtf8(pchFilePath);
+	std::optional<Image> image = path.empty() ? std::nullopt : LoadImageFile(path, &why);
 	if (!image) {
 		OOVR_LOGF("SetOverlayFromFile: %s isn't shown: %s", pchFilePath, why.c_str());
 		return;
@@ -815,9 +817,9 @@ void BaseCompositor::_OfferDumpImage(vr::EVREye eye, const Image& image)
 	                                                  : std::filesystem::path(folder) / DumpImageName(oc_current_pid(), eye);
 	std::string why;
 	if (WritePngFile(image, path, &why))
-		OOVR_LOGF("CompositorDumpImages: wrote %s", path.string().c_str());
+		OOVR_LOGF("CompositorDumpImages: wrote %s", PathToUtf8(path).c_str());
 	else
-		OOVR_LOGF("CompositorDumpImages: couldn't write %s: %s", path.string().c_str(), why.c_str());
+		OOVR_LOGF("CompositorDumpImages: couldn't write %s: %s", PathToUtf8(path).c_str(), why.c_str());
 }
 
 bool BaseCompositor::ShouldAppRenderWithLowResources()

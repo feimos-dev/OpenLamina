@@ -2,6 +2,7 @@
 #define BASE_IMPL
 #include "BaseScreenshots.h"
 
+#include "../Misc/AppManifest.h"
 #include "../Misc/Image.h"
 #include "../Misc/ProgramEvents.h"
 
@@ -56,16 +57,18 @@ const Request* FindAny(ScreenshotHandle_t handle)
 	return nullptr;
 }
 
+// Empty if it isn't UTF-8 (nothing can be written there)
 std::filesystem::path PathOf(const std::string& utf8)
 {
-	return std::filesystem::path(std::u8string(reinterpret_cast<const char8_t*>(utf8.data()), utf8.size()));
+	return PathFromUtf8(utf8);
 }
 
-// The destination name with the extension of the format written: .png
+// The destination name with the extension of the format written: .png (empty for an empty or unusable name)
 std::filesystem::path WithPng(const std::string& destination)
 {
 	std::filesystem::path path = PathOf(destination);
-	path.replace_extension(".png");
+	if (!path.empty())
+		path.replace_extension(".png");
 	return path;
 }
 
@@ -75,9 +78,12 @@ bool CopyInto(const char* source, const std::string& destination)
 		return true; // nothing asked for
 	std::error_code ec;
 	const std::filesystem::path to = WithPng(destination);
+	const std::filesystem::path from = PathOf(source);
+	if (to.empty() || from.empty())
+		return false;
 	if (to.has_parent_path())
 		std::filesystem::create_directories(to.parent_path(), ec);
-	std::filesystem::copy_file(PathOf(source), to, std::filesystem::copy_options::overwrite_existing, ec);
+	std::filesystem::copy_file(from, to, std::filesystem::copy_options::overwrite_existing, ec);
 	return !ec;
 }
 

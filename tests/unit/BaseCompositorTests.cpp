@@ -199,6 +199,7 @@ TEST_CASE("The_interop_extension_list_fills_the_buffer_it_fits_in")
 	CHECK(std::string(BaseCompositor::InteropVulkanExtensions(true)).find("VK_KHR_external_memory_win32") != std::string::npos);
 }
 
+#include "Misc/AppManifest.h"
 #include "Misc/Image.h"
 #include "Reimpl/BaseScreenshots.h"
 
@@ -266,6 +267,41 @@ TEST_CASE("Screenshots_the_compositor_takes_are_the_next_frame_written_as_png")
 	BaseScreenshots::_FailEyeImages();
 
 	std::error_code ec;
+	std::filesystem::remove_all(dir, ec);
+}
+
+TEST_CASE("Screenshot_names_that_are_empty_or_not_UTF8_fail_the_shot")
+{
+	BaseScreenshots screenshots;
+	using Error = BaseScreenshots::EVRScreenshotError;
+	const std::filesystem::path dir = std::filesystem::temp_directory_path()
+	    / ("oc_shots_names_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+	// 0xFC alone (a Latin-1 u with diaeresis) isn't UTF-8
+	const std::string notUtf8 = PathToUtf8(dir) + "/J\xFCrgen", vrFile = PathToUtf8(dir / "vr");
+
+	vr::ScreenshotHandle_t handle = vr::k_unScreenshotHandleInvalid;
+	REQUIRE(screenshots.TakeStereoScreenshot(&handle, notUtf8.c_str(), vrFile.c_str()) == Error::VRScreenshotError_None);
+	CHECK_NOTHROW(BaseScreenshots::_OfferEyeImage(vr::Eye_Left, Filled(1, 1, 0xff0000ff)));
+	CHECK_NOTHROW(BaseScreenshots::_OfferEyeImage(vr::Eye_Right, Filled(1, 1, 0xff0000ff)));
+	CHECK_FALSE(BaseScreenshots::_WantsEyeImages());
+
+	// An empty name is no file, not ".png" in the working directory
+	std::error_code ec;
+	const bool strayBefore = std::filesystem::exists(".png", ec);
+	REQUIRE(screenshots.RequestScreenshot(&handle, vr::VRScreenshotType_Mono, "", nullptr) == Error::VRScreenshotError_None);
+	BaseScreenshots::_OfferEyeImage(vr::Eye_Left, Filled(1, 1, 0xff0000ff));
+	CHECK_FALSE(BaseScreenshots::_WantsEyeImages());
+	if (!strayBefore) {
+		CHECK_FALSE(std::filesystem::exists(".png", ec));
+		std::filesystem::remove(".png", ec);
+	}
+
+	// A file name for the scene overlay that isn't UTF-8 shows nothing
+	BaseCompositor compositor;
+	vr::Compositor_OverlaySettings settings;
+	compositor.GetOverlayDefaults(&settings);
+	CHECK_NOTHROW(compositor.SetOverlayFromFile("J\xFCrgen.png", &settings));
+
 	std::filesystem::remove_all(dir, ec);
 }
 
