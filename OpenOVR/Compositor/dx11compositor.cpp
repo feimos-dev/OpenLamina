@@ -243,6 +243,12 @@ DX11Compositor::~DX11Compositor()
 		cube_pshader->Release();
 	if (constBuffer)
 		constBuffer->Release();
+	if (quad_sampleState)
+		quad_sampleState->Release();
+	if (fs_vshader)
+		fs_vshader->Release();
+	if (fs_pshader)
+		fs_pshader->Release();
 	if (context1)
 		context1->Release();
 	if (ownState)

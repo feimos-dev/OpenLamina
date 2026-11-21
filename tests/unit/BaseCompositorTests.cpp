@@ -22,6 +22,36 @@ TEST_CASE("Vk_extensions_size_insufficient_answers_needed_size")
 
 #include "Compositor/compositor.h"
 
+#if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+#include "Compositor/dx11compositor.h"
+
+TEST_CASE("A_D3D11_compositor_releases_every_object_it_made_on_the_device")
+{
+	ID3D11Device* device = nullptr;
+	if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, nullptr)) || !device) {
+		MESSAGE("No WARP device here");
+		return;
+	}
+	D3D11_TEXTURE2D_DESC desc{};
+	desc.Width = desc.Height = 4;
+	desc.MipLevels = desc.ArraySize = 1;
+	desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	desc.SampleDesc.Count = 1;
+	desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	ID3D11Texture2D* tex = nullptr;
+	REQUIRE(SUCCEEDED(device->CreateTexture2D(&desc, nullptr, &tex)));
+	device->AddRef();
+	const ULONG before = device->Release();
+	{
+		DX11Compositor compositor(tex);
+	}
+	device->AddRef();
+	CHECK(device->Release() == before);
+	tex->Release();
+	device->Release();
+}
+#endif
+
 TEST_CASE("Bounds_with_no_area_show_the_whole_texture_on_that_axis")
 {
 	TextureRegion r;
