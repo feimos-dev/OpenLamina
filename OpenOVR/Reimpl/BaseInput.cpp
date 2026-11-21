@@ -167,7 +167,7 @@ static void stringSplit(const std::string& str, std::vector<std::string>& items)
 }
 
 // Converts an arbitrary application-supplied string to one we can use with OpenXR
-static std::string escapePathString(const std::string& str)
+std::string BaseInput::EscapePathString(const std::string& str)
 {
 	std::vector<char> out;
 	out.reserve(str.length() + 10);
@@ -188,7 +188,7 @@ static std::string escapePathString(const std::string& str)
 
 		// Just print out the hex code
 		char hex[3];
-		snprintf(hex, sizeof(hex), "%02x", c);
+		snprintf(hex, sizeof(hex), "%02x", (unsigned char)c);
 		out.push_back('.');
 		out.push_back(hex[0]);
 		out.push_back(hex[1]);
@@ -652,7 +652,7 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 	std::set<std::string> usedSetNames;
 	for (const std::unique_ptr<ActionSet>& as : actionSets.GetItems()) {
 		XrActionSetCreateInfo createInfo = { XR_TYPE_ACTION_SET_CREATE_INFO };
-		std::string safeName = escapePathString(as->name);
+		std::string safeName = EscapePathString(as->name);
 		strcpy_arr(createInfo.actionSetName, safeName.c_str());
 		strcpy_arr(createInfo.localizedActionSetName, localizedName(as->manifestName, as->name, usedSetNames).c_str());
 
@@ -667,7 +667,7 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 			continue;
 
 		XrActionCreateInfo info = { XR_TYPE_ACTION_CREATE_INFO };
-		std::string safeName = escapePathString(act->shortName);
+		std::string safeName = EscapePathString(act->shortName);
 		strcpy_arr(info.actionName, safeName.c_str());
 		strcpy_arr(info.localizedActionName, localizedName(act->manifestName, act->shortName, usedActionNames[act->set]).c_str());
 		info.actionType = XR_ACTION_TYPE_VIBRATION_OUTPUT;

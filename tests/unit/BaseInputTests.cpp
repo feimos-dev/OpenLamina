@@ -185,3 +185,13 @@ TEST_CASE("Registry_finds_a_long_name_by_its_full_spelling")
 	CHECK(sets.LookupItem(sets.LookupHandle(longName)) == set);
 	CHECK(sets.LookupItem("/actions/other") == nullptr);
 }
+
+TEST_CASE("Escaped_names_keep_each_byte_apart")
+{
+	CHECK(BaseInput::EscapePathString("main_set") == "main_set");
+	CHECK(BaseInput::EscapePathString("Fire") == "_fire");
+	CHECK(BaseInput::EscapePathString("a b") == "a.20b");
+	// UTF-8 bytes past 0x7f, each its own code: é and è differ
+	CHECK(BaseInput::EscapePathString("\xc3\xa9") == ".c3.a9");
+	CHECK(BaseInput::EscapePathString("\xc3\xa9") != BaseInput::EscapePathString("\xc3\xa8"));
+}

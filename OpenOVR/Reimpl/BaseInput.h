@@ -649,6 +649,9 @@ public:
 		return std::isnan(value) ? 0.0f : std::clamp(value, 0.0f, 1.0f);
 	}
 
+	/** An application's name as one OpenXR takes for an action or action set: each byte it can't take as its hex code */
+	static std::string EscapePathString(const std::string& str);
+
 public: // The action sets and the registries are public for the unit tests
 	enum class ActionSetUsage {
 		LeftRight = 0, // User can bind each side separately
