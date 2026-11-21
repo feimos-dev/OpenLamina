@@ -33,6 +33,8 @@ void WriteStack(FILE* f, CONTEXT* context)
 		symbols = true;
 		SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
 		SymInitialize(process, nullptr, TRUE);
+	} else {
+		SymRefreshModuleList(process); // modules loaded since the last report
 	}
 
 	void* frames[64] = {};
