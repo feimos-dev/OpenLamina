@@ -306,11 +306,11 @@ TEST_CASE("Joystick_maxzone_not_above_deadzone_and_no_number")
 		r.Step(At(kStick, 0.5f, 0));
 		CHECK(r.out.analog["/move"].x == 1.0f);
 	}
-	// A raw value that isn't a number reads as the centre
+	// An axis whose raw value isn't a number reads as centred; the other axis is kept
 	Runner r(Source("joystick", { { "position", "/move" } }, { { "deadzone_pct", "10" }, { "maxzone_pct", "90" } }, kStick));
 	r.Step(At(kStick, std::numeric_limits<float>::quiet_NaN(), 0.5f));
 	CHECK(r.out.analog["/move"].x == 0.0f);
-	CHECK(r.out.analog["/move"].y == 0.0f);
+	CHECK(r.out.analog["/move"].y == doctest::Approx(0.5f));
 }
 
 TEST_CASE("Dpad_quadrants_with_deadzone")
