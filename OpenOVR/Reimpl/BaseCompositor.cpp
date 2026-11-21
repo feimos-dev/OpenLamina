@@ -7,6 +7,7 @@
 #include <optional>
 #define BASE_IMPL
 
+#include "Misc/AppManifest.h"
 #include "Misc/Config.h"
 #include "Misc/Fade.h"
 #include "Misc/FrameStats.h"
@@ -83,9 +84,12 @@ ovr_enum_t BaseCompositor::WaitGetPoses(TrackedDevicePose_t* renderPoseArray, ui
     TrackedDevicePose_t* gamePoseArray, uint32_t gamePoseArrayCount)
 {
 
-	// Assume this method isn't being called between frames, b/c it really shouldn't be.
-	leftEyeSubmitted = false;
-	rightEyeSubmitted = false;
+	// A new frame: no eye submitted (after a Submit another thread is in, which reads and sets them under the lock)
+	{
+		std::lock_guard<std::mutex> submitGuard(submitLock);
+		leftEyeSubmitted = false;
+		rightEyeSubmitted = false;
+	}
 
 	// An overlay or background application runs no frames of its own: the poses, and the answer SteamVR gives it
 	if (IsHelperSession()) {
@@ -455,9 +459,14 @@ void BaseCompositor::GetCumulativeStats(OOVR_Compositor_CumulativeStats* pStats,
 		const uint32_t pid = scene["pid"].isUInt() ? scene["pid"].asUInt() : 0;
 		if (pid && SharedStore::IsSameProcessAlive(pid, scene["start"].isUInt64() ? scene["start"].asUInt64() : 0)) {
 			stats.m_nPid = pid;
-			stats.m_nNumFramePresents = scene["frame_stats"]["presents"].asUInt();
-			stats.m_nNumDroppedFrames = scene["frame_stats"]["dropped"].asUInt();
-			stats.m_nNumReprojectedFrames = scene["frame_stats"]["reprojected"].asUInt();
+			// Read with the types checked: a document of another shape answers 0, as jsoncpp throws for the wrong type
+			const Json::Value& frameStats = scene["frame_stats"];
+			auto count = [&](const char* name) -> uint32_t {
+				return frameStats.isObject() && frameStats[name].isUInt() ? frameStats[name].asUInt() : 0;
+			};
+			stats.m_nNumFramePresents = count("presents");
+			stats.m_nNumDroppedFrames = count("dropped");
+			stats.m_nNumReprojectedFrames = count("reprojected");
 		}
 		memset(pStats, 0, nStatsSizeInBytes);
 		memcpy(pStats, &stats, std::min<size_t>(nStatsSizeInBytes, sizeof(stats)));
@@ -695,8 +704,9 @@ void BaseCompositor::SetOverlayFromFile(const char* pchFilePath, Compositor_Over
 {
 	if (!pchFilePath || !*pchFilePath)
 		return;
-	std::string why;
-	std::optional<Image> image = LoadImageFile(std::filesystem::path(std::u8string((const char8_t*)pchFilePath)), &why);
+	std::string why = "its name isn't UTF-8";
+	const std::filesystem::path path = PathFromUtf8(pchFilePath);
+	std::optional<Image> image = path.empty() ? std::nullopt : LoadImageFile(path, &why);
 	if (!image) {
 		OOVR_LOGF("SetOverlayFromFile: %s isn't shown: %s", pchFilePath, why.c_str());
 		return;
@@ -815,9 +825,9 @@ void BaseCompositor::_OfferDumpImage(vr::EVREye eye, const Image& image)
 	                                                  : std::filesystem::path(folder) / DumpImageName(oc_current_pid(), eye);
 	std::string why;
 	if (WritePngFile(image, path, &why))
-		OOVR_LOGF("CompositorDumpImages: wrote %s", path.string().c_str());
+		OOVR_LOGF("CompositorDumpImages: wrote %s", PathToUtf8(path).c_str());
 	else
-		OOVR_LOGF("CompositorDumpImages: couldn't write %s: %s", path.string().c_str(), why.c_str());
+		OOVR_LOGF("CompositorDumpImages: couldn't write %s: %s", PathToUtf8(path).c_str(), why.c_str());
 }
 
 bool BaseCompositor::ShouldAppRenderWithLowResources()

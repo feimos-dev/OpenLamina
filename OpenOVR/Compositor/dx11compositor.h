@@ -47,7 +47,6 @@ protected:
 	ID3D11Device* device = nullptr;
 	ID3D11DeviceContext* context = nullptr;
 
-	ID3D11ShaderResourceView* quad_texture_view;
 	ID3D11SamplerState* quad_sampleState = nullptr;
 	ID3D11VertexShader* fs_vshader = nullptr;
 	ID3D11PixelShader* fs_pshader = nullptr;

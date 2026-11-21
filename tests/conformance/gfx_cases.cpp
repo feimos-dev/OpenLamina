@@ -567,6 +567,26 @@ void VkOdd(CaseContext& c)
 		c.Record(o.name, r);
 		first = false;
 	}
+
+	// Fields a game left 0: no image yet (refused as an invalid texture), and a sample count of 0 (taken as 1)
+	GfxTexture left = s.gfx->Pattern(512, 512, kVkRGBA8Srgb, 0);
+	GfxTexture right = s.gfx->Pattern(512, 512, kVkRGBA8Srgb, 1);
+	s.gfx->Flush();
+	Json::Value r;
+	if (!left.Made() || !right.Made()) {
+		r["error"] = "the pattern textures couldn't be made";
+	} else {
+		GfxTexture noImage = left;
+		noImage.vk.m_nImage = 0;
+		vr::TrackedDevicePose_t poses[16];
+		s.comp->WaitGetPoses(poses, 16, nullptr, 0);
+		r["no_image"] = (int)s.comp->Submit(vr::Eye_Left, noImage.Texture(), &kFull, vr::Submit_Default);
+		GfxTexture noSamplesLeft = left, noSamplesRight = right;
+		noSamplesLeft.vk.m_nSampleCount = noSamplesRight.vk.m_nSampleCount = 0;
+		s.Frames(4, noSamplesLeft, noSamplesRight, kFull, kFull, r);
+		r["dump_join"] = RectJoin(512, 512);
+	}
+	c.Record("fields left 0", r);
 }
 
 // A Vulkan game whose textures change size from frame to frame (dynamic resolution): 800, 640, 720 and then 960 pixels a
@@ -1376,6 +1396,7 @@ const std::map<std::string, CaseFn>& conformance::GfxCases()
 		{ "overlay-texture-readback-vk", [](CaseContext& c) { OverlayTextureReadback(c, GfxKind::Vulkan, kVkRGBA8Srgb); } },
 		{ "overlay-texture-readback-gl", [](CaseContext& c) { OverlayTextureReadback(c, GfxKind::OpenGL, kGlSRGB8Alpha8); } },
 		{ "gfx-d3d10-basic", [](CaseContext& c) { Basic(c, GfxKind::D3D10, kDxgiRGBA8Srgb); } },
+		{ "overlay-texture-readback-d3d10", [](CaseContext& c) { OverlayTextureReadback(c, GfxKind::D3D10, kDxgiRGBA8Srgb); } },
 		// As the basic ones, under a script whose runtime has D3D11 alone (expect/gfx_interop.json)
 		{ "gfx-gl-interop", [](CaseContext& c) { Basic(c, GfxKind::OpenGL, kGlSRGB8Alpha8); } },
 		{ "gfx-gl-interop-bounds", [](CaseContext& c) { Bounds(c, GfxKind::OpenGL, kGlSRGB8Alpha8); } },

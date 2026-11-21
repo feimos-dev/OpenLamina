@@ -21,6 +21,9 @@
 VkCompositor::VkCompositor(const vr::Texture_t* initialTexture)
 {
 	auto* tex = (vr::VRVulkanTextureData_t*)initialTexture->handle;
+	// Without a device nothing can be made: CopyToSwapchain answers InvalidTexture
+	if (!tex || !tex->m_pDevice)
+		return;
 
 	appDevice = tex->m_pDevice;
 	appQueue = tex->m_pQueue;
@@ -30,7 +33,8 @@ VkCompositor::VkCompositor(const vr::Texture_t* initialTexture)
 	poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
 	// Its command buffers go to the app's queue: use the family the backend found that queue in, else the app's word
 	poolInfo.queueFamilyIndex = tex->m_nQueueFamilyIndex;
-	auto* binding = (const XrGraphicsBindingVulkanKHR*)((XrBackend*)BackendManager::Instance().GetBackendInstance())->GetCurrentGraphicsBinding();
+	auto* backend = dynamic_cast<XrBackend*>(BackendManager::Instance().GetBackendInstance());
+	auto* binding = backend ? (const XrGraphicsBindingVulkanKHR*)backend->GetCurrentGraphicsBinding() : nullptr;
 	if (binding && binding->type == XR_TYPE_GRAPHICS_BINDING_VULKAN_KHR && binding->device == tex->m_pDevice) {
 		VkQueue queue = VK_NULL_HANDLE;
 		vkGetDeviceQueue(binding->device, binding->queueFamilyIndex, binding->queueIndex, &queue);
@@ -129,7 +133,7 @@ VkCompositor::~VkCompositor()
 	FreeImageBuffers();
 	DestroyStage();
 	// destroying command pool also frees command buffers
-	if (appCommandPool)
+	if (appCommandPool && !buffersLeft)
 		vkDestroyCommandPool(appDevice, appCommandPool, nullptr);
 }
 
@@ -138,11 +142,13 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 	const vr::VRVulkanTextureData_t* tex = (vr::VRVulkanTextureData_t*)texture->handle;
 
 	// XR_ERROR_VALIDATION_FAILURE: Submit answers InvalidTexture
-	if (!tex || !tex->m_pDevice || !tex->m_pQueue) {
+	if (!tex || !tex->m_pDevice || !tex->m_pQueue || !tex->m_nImage) {
 		OOVR_LOG_ONCE("Cannot use NULL Vulkan image data (VRVulkanTextureData_t)");
 		lastResult = XR_ERROR_VALIDATION_FAILURE;
 		return;
 	}
+	// A sample count left 0 is a single-sampled image
+	const uint32_t sampleCount = std::max(1u, tex->m_nSampleCount);
 
 	// The command buffers are of the first texture's device and queue family
 	if (tex->m_pDevice != appDevice) {
@@ -177,7 +183,7 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 	// A texture that fits in the swapchain is copied to its origin, and the area shown: a smaller one (dynamic
 	// resolution) keeps the swapchain, and a bigger one makes one that holds both sizes, so a size that comes and goes
 	// doesn't make a new swapchain each time
-	const bool sameKind = chain != XR_NULL_HANDLE && tex->m_nSampleCount == createSourceSamples && (int64_t)tex->m_nFormat == createInfoFormat
+	const bool sameKind = chain != XR_NULL_HANDLE && sampleCount == createSourceSamples && (int64_t)tex->m_nFormat == createInfoFormat
 	    && texture->eColorSpace == createColourSpace;
 	bool usable = sameKind && tex->m_nWidth <= createInfo.width && tex->m_nHeight <= createInfo.height;
 
@@ -186,13 +192,12 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 		const uint32_t width = sameKind ? std::max(tex->m_nWidth, createInfo.width) : tex->m_nWidth;
 		const uint32_t height = sameKind ? std::max(tex->m_nHeight, createInfo.height) : tex->m_nHeight;
 
-		// First, delete the old chain if necessary
-		if (chain)
-			xrDestroySwapchain(chain);
-
-		// Free old command buffers if necessary
+		// The copies into the old chain's images finish first (FreeImageBuffers waits for them), then it goes
 		FreeImageBuffers();
 		DestroyStage();
+		if (chain)
+			xrDestroySwapchain(chain);
+		chain = XR_NULL_HANDLE;
 
 		// Make eye render buffer
 		createInfo = { XR_TYPE_SWAPCHAIN_CREATE_INFO };
@@ -203,8 +208,8 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 		createInfo.height = height;
 		createInfo.mipCount = 1;
 		// A runtime that has no multisampled swapchains of that count gets a single-sampled one, the image resolved into it
-		createSourceSamples = tex->m_nSampleCount;
-		createInfo.sampleCount = xr_main_view(XruEyeLeft).maxSwapchainSampleCount < tex->m_nSampleCount ? 1 : tex->m_nSampleCount;
+		createSourceSamples = sampleCount;
+		createInfo.sampleCount = xr_main_view(XruEyeLeft).maxSwapchainSampleCount < sampleCount ? 1 : sampleCount;
 		createInfo.arraySize = 1;
 
 		// The runtime's format for it: its own, or one it's blitted into (vkCmdBlitImage converts)
@@ -322,6 +327,7 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 	barrier.subresourceRange.levelCount = 1;
 	barrier.subresourceRange.baseArrayLayer = 0;
 	barrier.subresourceRange.layerCount = 1;
+	barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 
 	vkCmdPipelineBarrier(
 	    currentCommandBuffer,
@@ -473,6 +479,8 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 	// transition swapchain image back to COLOR_ATTACHMENT_OPTIMAL for runtime
 	barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 	barrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT | VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 	vkCmdPipelineBarrier(
 	    currentCommandBuffer, //
 	    VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
@@ -576,7 +584,10 @@ bool VkCompositor::CopyDepth(const vr::Texture_t* depth)
 	barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
 	barrier.srcQueueFamilyIndex = barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
 	barrier.image = swapchainImages[index].image;
-	barrier.subresourceRange = { VK_IMAGE_ASPECT_DEPTH_BIT, 0, 1, 0, 1 };
+	// A barrier on an image of a depth-stencil format names both aspects
+	const VkFormat depthFormat = (VkFormat)createInfo.format;
+	const bool stencil = depthFormat == VK_FORMAT_D16_UNORM_S8_UINT || depthFormat == VK_FORMAT_D24_UNORM_S8_UINT || depthFormat == VK_FORMAT_D32_SFLOAT_S8_UINT;
+	barrier.subresourceRange = { (VkImageAspectFlags)(VK_IMAGE_ASPECT_DEPTH_BIT | (stencil ? VK_IMAGE_ASPECT_STENCIL_BIT : 0)), 0, 1, 0, 1 };
 	barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
 	vkCmdPipelineBarrier(cmd, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr, 1, &barrier);
 	// A depth image is copied whole: mip 0, layer 0
@@ -634,10 +645,19 @@ bool VkCompositor::AllocateImageBuffers(uint32_t count)
 
 void VkCompositor::FreeImageBuffers()
 {
-	// Not freed under a submission that still runs
+	// Not freed under a submission that still runs: one that hasn't ended in a second leaves them all (leaked, logged)
+	bool done = true;
 	for (VkFence fence : imageFences) {
-		if (fence)
-			vkWaitForFences(appDevice, 1, &fence, VK_TRUE, 1000000000ull);
+		if (fence && vkWaitForFences(appDevice, 1, &fence, VK_TRUE, 1000000000ull) != VK_SUCCESS)
+			done = false;
+	}
+	if (!done) {
+		OOVR_LOG_ONCE("A Vulkan copy didn't finish in time: its command buffers and fences are left");
+		buffersLeft = true;
+		imageFences.clear();
+		imageSemaphores.clear();
+		appCommandBuffers.clear();
+		return;
 	}
 	for (VkFence fence : imageFences) {
 		if (fence)

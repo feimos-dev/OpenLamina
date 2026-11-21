@@ -1,6 +1,9 @@
 #include "Fade.h"
 
 #include <algorithm>
+#ifdef _WIN32
+#include <unknwn.h>
+#endif
 #include <chrono>
 #include <cmath>
 
@@ -121,6 +124,7 @@ bool SkyboxRequest::Set(const vr::Texture_t* in, uint32_t count)
 {
 	if (!SkyboxTexturesValid(in, count))
 		return false;
+	Hold(false);
 	textures.assign(in, in + count);
 	vulkan.assign(count, vr::VRVulkanTextureData_t{});
 	d3d12.assign(count, vr::D3D12TextureData_t{});
@@ -131,11 +135,13 @@ bool SkyboxRequest::Set(const vr::Texture_t* in, uint32_t count)
 			d3d12[i] = *(const vr::D3D12TextureData_t*)in[i].handle;
 	}
 	Fix();
+	Hold(true);
 	return true;
 }
 
 void SkyboxRequest::Clear()
 {
+	Hold(false);
 	textures.clear();
 	vulkan.clear();
 	d3d12.clear();
@@ -143,14 +149,52 @@ void SkyboxRequest::Clear()
 
 void SkyboxRequest::Copy(const SkyboxRequest& other)
 {
+	Hold(false);
 	textures = other.textures;
 	vulkan = other.vulkan;
 	d3d12 = other.d3d12;
 	Fix();
+	Hold(true);
+}
+
+bool SkyboxRequest::HeldAlive() const
+{
+#ifdef _WIN32
+	return std::all_of(textures.begin(), textures.end(),
+	    [](const vr::Texture_t& t) { return t.eType == vr::TextureType_DirectX || t.eType == vr::TextureType_DirectX12; });
+#else
+	return textures.empty();
+#endif
+}
+
+void SkyboxRequest::Hold(bool take)
+{
+#ifdef _WIN32
+	auto hold = [take](void* object) {
+		if (!object)
+			return;
+		// Every COM interface starts with IUnknown's
+		auto* unknown = reinterpret_cast<IUnknown*>(object);
+		if (take)
+			unknown->AddRef();
+		else
+			unknown->Release();
+	};
+	for (size_t i = 0; i < textures.size(); i++) {
+		if (textures[i].eType == vr::TextureType_DirectX) {
+			hold(textures[i].handle);
+		} else if (textures[i].eType == vr::TextureType_DirectX12 && i < d3d12.size()) {
+			hold(d3d12[i].m_pResource);
+			hold(d3d12[i].m_pCommandQueue);
+		}
+	}
+#else
+	(void)take;
+#endif
 }
 
 // The copied Vulkan and D3D12 textures' handles point to the copies of what they pointed to (the game's structs are
-// often on its stack). The images themselves are the game's: it keeps them alive while they are its skybox.
+// often on its stack). Direct3D textures are kept alive by Hold's references; Vulkan and OpenGL images are the game's.
 void SkyboxRequest::Fix()
 {
 	for (size_t i = 0; i < textures.size(); i++) {

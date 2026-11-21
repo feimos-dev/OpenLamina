@@ -12,6 +12,12 @@
 #include <GLES3/gl32.h>
 #endif
 
+#if defined(SUPPORT_GL) || defined(SUPPORT_GLES)
+// Set if the driver lacks one of the OpenGL functions loaded below (GLCompositor's constructor, which tries again until
+// it has them all: a first try may have run with no context current). OpenGL ES links them, and never sets it.
+static bool glFunctionsMissing = false;
+#endif
+
 // OpenGL compositor
 #ifdef SUPPORT_GL
 
@@ -27,7 +33,6 @@
 
 // On Linux these seem to already be defined
 #ifdef _WIN32
-typedef void(APIENTRY* PFNGLGETTEXTURELEVELPARAMETERIVPROC)(GLuint texture, GLint level, GLenum pname, GLint* params);
 typedef void(APIENTRY* PFNGLCOPYIMAGESUBDATAPROC)(GLuint srcName, GLenum srcTarget, GLint srcLevel, GLint srcX, GLint srcY, GLint srcZ,
     GLuint dstName, GLenum dstTarget, GLint dstLevel, GLint dstX, GLint dstY, GLint dstZ, GLsizei srcWidth, GLsizei srcHeight, GLsizei srcDepth);
 typedef void(APIENTRY* PFNGLGENFRAMEBUFFERSPROC)(GLsizei n, GLuint* framebuffers);
@@ -45,9 +50,7 @@ typedef void(APIENTRY* PFNGLFRAMEBUFFERRENDERBUFFERPROC)(GLenum target, GLenum a
 #define GL_COLOR_ATTACHMENT0 0x8CE0
 #endif
 
-static PFNGLGETTEXTURELEVELPARAMETERIVPROC glGetTextureLevelParameteriv = nullptr;
-// Set if the driver lacks one of the functions below (GLCompositor's constructor)
-static bool glFunctionsMissing = false;
+static bool glFunctionsLoaded = false;
 static PFNGLCOPYIMAGESUBDATAPROC glCopyImageSubData = nullptr;
 static PFNGLBINDFRAMEBUFFERPROC glBindFramebuffer = nullptr;
 static PFNGLGENFRAMEBUFFERSPROC glGenFramebuffers = nullptr;
@@ -93,6 +96,12 @@ static PFNGLFRAMEBUFFERRENDERBUFFERPROC glFramebufferRenderbuffer = nullptr;
 #ifndef GL_TEXTURE_2D_ARRAY
 #define GL_TEXTURE_2D_ARRAY 0x8C1A
 #endif
+#ifndef GL_TEXTURE_BINDING_2D_ARRAY
+#define GL_TEXTURE_BINDING_2D_ARRAY 0x8C1D
+#endif
+#ifndef GL_TEXTURE_BINDING_2D_MULTISAMPLE
+#define GL_TEXTURE_BINDING_2D_MULTISAMPLE 0x9104
+#endif
 #ifndef GL_TEXTURE_DEPTH
 #define GL_TEXTURE_DEPTH 0x8071
 #endif
@@ -110,14 +119,14 @@ static void* getGlProcAddr(const char* name)
 }
 GLCompositor::GLCompositor(GLuint initialTexture)
 {
-	if (!glGetTextureLevelParameteriv) {
+	if (!glFunctionsLoaded) {
 		// A function the driver doesn't have: no OpenGL copies (Submit answers RequestFailed), nothing ends
+		bool missing = false;
 #define LOAD_FUNC(x)                                    \
 	if (!(*(void**)& x = (void*)getGlProcAddr(#x))) { \
-		OOVR_LOG("Could not get function " #x);         \
-		glFunctionsMissing = true;                      \
+		OOVR_LOG_ONCE("Could not get function " #x);    \
+		missing = true;                                 \
 	}
-		LOAD_FUNC(glGetTextureLevelParameteriv);
 		LOAD_FUNC(glCopyImageSubData);
 		LOAD_FUNC(glBindFramebuffer);
 		LOAD_FUNC(glGenFramebuffers);
@@ -128,6 +137,8 @@ GLCompositor::GLCompositor(GLuint initialTexture)
 		LOAD_FUNC(glBindRenderbuffer);
 		LOAD_FUNC(glGetRenderbufferParameteriv);
 		LOAD_FUNC(glFramebufferRenderbuffer);
+		glFunctionsMissing = missing;
+		glFunctionsLoaded = !missing;
 	}
 #undef LOAD_FUNC
 	if (glFunctionsMissing)
@@ -243,13 +254,19 @@ void GLBaseCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::V
 			glBindRenderbuffer(GL_RENDERBUFFER, (GLuint)previous);
 			return;
 		}
+		// The game's binding of the target is put back after
+		const GLenum binding = target == GL_TEXTURE_2D_ARRAY ? GL_TEXTURE_BINDING_2D_ARRAY
+		    : target == GL_TEXTURE_2D_MULTISAMPLE           ? GL_TEXTURE_BINDING_2D_MULTISAMPLE
+		                                                    : GL_TEXTURE_BINDING_2D;
+		GLint previous = 0;
+		glGetIntegerv(binding, &previous);
 		glBindTexture(target, src); // Sadly even GLES3.2 doesn't have glGetTextureLevelParameteriv which takes the image directly
 		glGetTexLevelParameteriv(target, 0, GL_TEXTURE_WIDTH, &inputWidth);
 		glGetTexLevelParameteriv(target, 0, GL_TEXTURE_HEIGHT, &inputHeight);
 		glGetTexLevelParameteriv(target, 0, GL_TEXTURE_INTERNAL_FORMAT, &rawFormat);
 		if (array)
 			glGetTexLevelParameteriv(target, 0, GL_TEXTURE_DEPTH, &layers);
-		glBindTexture(target, 0);
+		glBindTexture(target, (GLuint)previous);
 	};
 	query();
 	if (!renderbuffer && !array && inputWidth <= 0) {
@@ -342,8 +359,9 @@ void GLBaseCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::V
 	}
 
 #if defined(SUPPORT_GL) && !defined(_WIN32)
-	const auto binding = (XrGraphicsBindingOpenGLXlibKHR*)((XrBackend*)BackendManager::Instance().GetBackendInstance())->GetCurrentGraphicsBinding();
-	if (binding->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_XLIB_KHR && binding->glxContext != glXGetCurrentContext())
+	auto* backend = dynamic_cast<XrBackend*>(BackendManager::Instance().GetBackendInstance());
+	const auto binding = backend ? (XrGraphicsBindingOpenGLXlibKHR*)backend->GetCurrentGraphicsBinding() : nullptr;
+	if (binding && binding->type == XR_TYPE_GRAPHICS_BINDING_OPENGL_XLIB_KHR && binding->glxContext != glXGetCurrentContext())
 		glFinish();
 #endif
 

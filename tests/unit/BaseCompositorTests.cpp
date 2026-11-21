@@ -22,6 +22,68 @@ TEST_CASE("Vk_extensions_size_insufficient_answers_needed_size")
 
 #include "Compositor/compositor.h"
 
+#if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+#include "Compositor/dx11compositor.h"
+
+TEST_CASE("A_D3D11_compositor_releases_every_object_it_made_on_the_device")
+{
+	ID3D11Device* device = nullptr;
+	if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, nullptr)) || !device) {
+		MESSAGE("No WARP device here");
+		return;
+	}
+	D3D11_TEXTURE2D_DESC desc{};
+	desc.Width = desc.Height = 4;
+	desc.MipLevels = desc.ArraySize = 1;
+	desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	desc.SampleDesc.Count = 1;
+	desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	ID3D11Texture2D* tex = nullptr;
+	REQUIRE(SUCCEEDED(device->CreateTexture2D(&desc, nullptr, &tex)));
+	device->AddRef();
+	const ULONG before = device->Release();
+	{
+		DX11Compositor compositor(tex);
+	}
+	device->AddRef();
+	CHECK(device->Release() == before);
+	tex->Release();
+	device->Release();
+}
+
+TEST_CASE("A_D3D11_compositor_reads_back_only_textures_of_its_device")
+{
+	ID3D11Device* devices[2] = {};
+	for (ID3D11Device*& d : devices)
+		if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &d, nullptr, nullptr)))
+			d = nullptr;
+	ID3D11Texture2D* textures[2] = {};
+	D3D11_TEXTURE2D_DESC desc{};
+	desc.Width = desc.Height = 4;
+	desc.MipLevels = desc.ArraySize = 1;
+	desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	desc.SampleDesc.Count = 1;
+	desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+	if (devices[0] && devices[1] && SUCCEEDED(devices[0]->CreateTexture2D(&desc, nullptr, &textures[0]))
+	    && SUCCEEDED(devices[1]->CreateTexture2D(&desc, nullptr, &textures[1]))) {
+		DX11Compositor compositor(textures[0]);
+		Image out;
+		vr::Texture_t own{ textures[0], vr::TextureType_DirectX, vr::ColorSpace_Auto };
+		vr::Texture_t other{ textures[1], vr::TextureType_DirectX, vr::ColorSpace_Auto };
+		CHECK(compositor.ReadbackToCpu(&own, nullptr, out));
+		CHECK_FALSE(compositor.ReadbackToCpu(&other, nullptr, out));
+	} else {
+		MESSAGE("No WARP devices here");
+	}
+	for (ID3D11Texture2D* t : textures)
+		if (t)
+			t->Release();
+	for (ID3D11Device* d : devices)
+		if (d)
+			d->Release();
+}
+#endif
+
 TEST_CASE("Bounds_with_no_area_show_the_whole_texture_on_that_axis")
 {
 	TextureRegion r;
@@ -199,6 +261,7 @@ TEST_CASE("The_interop_extension_list_fills_the_buffer_it_fits_in")
 	CHECK(std::string(BaseCompositor::InteropVulkanExtensions(true)).find("VK_KHR_external_memory_win32") != std::string::npos);
 }
 
+#include "Misc/AppManifest.h"
 #include "Misc/Image.h"
 #include "Reimpl/BaseScreenshots.h"
 
@@ -266,6 +329,41 @@ TEST_CASE("Screenshots_the_compositor_takes_are_the_next_frame_written_as_png")
 	BaseScreenshots::_FailEyeImages();
 
 	std::error_code ec;
+	std::filesystem::remove_all(dir, ec);
+}
+
+TEST_CASE("Screenshot_names_that_are_empty_or_not_UTF8_fail_the_shot")
+{
+	BaseScreenshots screenshots;
+	using Error = BaseScreenshots::EVRScreenshotError;
+	const std::filesystem::path dir = std::filesystem::temp_directory_path()
+	    / ("oc_shots_names_" + std::to_string(std::chrono::steady_clock::now().time_since_epoch().count()));
+	// 0xFC alone (a Latin-1 u with diaeresis) isn't UTF-8
+	const std::string notUtf8 = PathToUtf8(dir) + "/J\xFCrgen", vrFile = PathToUtf8(dir / "vr");
+
+	vr::ScreenshotHandle_t handle = vr::k_unScreenshotHandleInvalid;
+	REQUIRE(screenshots.TakeStereoScreenshot(&handle, notUtf8.c_str(), vrFile.c_str()) == Error::VRScreenshotError_None);
+	CHECK_NOTHROW(BaseScreenshots::_OfferEyeImage(vr::Eye_Left, Filled(1, 1, 0xff0000ff)));
+	CHECK_NOTHROW(BaseScreenshots::_OfferEyeImage(vr::Eye_Right, Filled(1, 1, 0xff0000ff)));
+	CHECK_FALSE(BaseScreenshots::_WantsEyeImages());
+
+	// An empty name is no file, not ".png" in the working directory
+	std::error_code ec;
+	const bool strayBefore = std::filesystem::exists(".png", ec);
+	REQUIRE(screenshots.RequestScreenshot(&handle, vr::VRScreenshotType_Mono, "", nullptr) == Error::VRScreenshotError_None);
+	BaseScreenshots::_OfferEyeImage(vr::Eye_Left, Filled(1, 1, 0xff0000ff));
+	CHECK_FALSE(BaseScreenshots::_WantsEyeImages());
+	if (!strayBefore) {
+		CHECK_FALSE(std::filesystem::exists(".png", ec));
+		std::filesystem::remove(".png", ec);
+	}
+
+	// A file name for the scene overlay that isn't UTF-8 shows nothing
+	BaseCompositor compositor;
+	vr::Compositor_OverlaySettings settings;
+	compositor.GetOverlayDefaults(&settings);
+	CHECK_NOTHROW(compositor.SetOverlayFromFile("J\xFCrgen.png", &settings));
+
 	std::filesystem::remove_all(dir, ec);
 }
 

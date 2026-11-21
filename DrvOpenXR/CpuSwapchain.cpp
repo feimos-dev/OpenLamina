@@ -25,7 +25,8 @@ std::set<CpuSwapchain*>& LiveSet()
 
 const XrBaseInStructure* CurrentBinding()
 {
-	auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
+	// None, or another backend's (the tests' stand-ins): no binding
+	auto* backend = dynamic_cast<XrBackend*>(BackendManager::Instance().GetBackendInstance());
 	if (!backend || !xr_session.get())
 		return nullptr;
 	return (const XrBaseInStructure*)backend->GetCurrentGraphicsBinding();

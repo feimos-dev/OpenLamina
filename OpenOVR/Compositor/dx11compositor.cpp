@@ -243,6 +243,12 @@ DX11Compositor::~DX11Compositor()
 		cube_pshader->Release();
 	if (constBuffer)
 		constBuffer->Release();
+	if (quad_sampleState)
+		quad_sampleState->Release();
+	if (fs_vshader)
+		fs_vshader->Release();
+	if (fs_pshader)
+		fs_pshader->Release();
 	if (context1)
 		context1->Release();
 	if (ownState)
@@ -865,6 +871,13 @@ bool DX11Compositor::ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTexture
 	auto* src = tex ? (ID3D11Texture2D*)tex->handle : nullptr;
 	if (!src)
 		return false;
+	// Only a texture of this compositor's device can be copied with its context
+	ComPtr<ID3D11Device> textureDevice;
+	src->GetDevice(&textureDevice);
+	if (textureDevice.Get() != device) {
+		OOVR_LOG_ONCE("A D3D11 texture of another device can't be read back here");
+		return false;
+	}
 	D3D11_TEXTURE2D_DESC desc;
 	src->GetDesc(&desc);
 	const TexelLayout layout = TexelLayoutOfDxgi(desc.Format);
