@@ -1093,14 +1093,6 @@ private:
 	EVRInputError getEstimatedBoneData(ITrackedDevice::TrackedDeviceType hand, EVRSkeletalTransformSpace transformSpace, EVRSkeletalMotionRange eMotionRange, std::span<VRBoneTransform_t, eBone_Count> boneData);
 	/** Each hand's touches for the estimated skeleton (left, right) */
 	std::array<HandTouchEase, 2> handTouches;
-
-	/**
-	 * Some games (i.e. newer Unity games) won't explicitly call SetActionManifestPath, but instead will set the path through
-	 * the Steamworks web interface. If this is the case, we'll never be able to set the actions! So instead, we must discover if this is the case.
-	 * This method should only be called when a game is trying to retrieve action data (the GetXActionData family of functions).
-	 */
-	void checkIfActionsMustBeDiscoveredFromSteam();
-	bool triedDiscoveringManifest = false;
 };
 
 // Valve's 31-bone hand skeleton, its hierarchy and names, and OpenComposite's compressed bone data

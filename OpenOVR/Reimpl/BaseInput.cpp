@@ -50,8 +50,6 @@ using namespace vr;
 
 #include "../DrvOpenXR/XrBackend.h"
 
-// On Android, the application must supply a function to load the contents of a file
-
 /**
  * Macro for creating an Action object from a handle and verifying isn't invalid.
  * If it is invalid, it will cause the surrounding function to return VRInputError_InvalidHandle.
@@ -78,7 +76,6 @@ using namespace vr;
 		}                                                            \
 	} while (0)
 
-// This is a duplicate from BaseClientCore.cpp
 // Manifests and binding files as SteamVR reads them (BOM, comments, trailing commas: Misc/JsonFile.h); false with
 // the reason in error if the file can't be read or isn't JSON
 // path is UTF-8, as OpenVR passes it; one that isn't (an older game's ANSI path) is tried as the system code page on
