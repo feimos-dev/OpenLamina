@@ -657,7 +657,7 @@ static bool IsFinite(const glm::vec3& v)
 static XrBackend* OverlayBackend()
 {
 	BackendManager* manager = BackendManager::InstancePtr();
-	return manager ? (XrBackend*)manager->GetBackendInstance() : nullptr;
+	return manager ? dynamic_cast<XrBackend*>(manager->GetBackendInstance()) : nullptr;
 }
 
 // The seated origin in the standing one (none if the runtime can't say)
@@ -4622,7 +4622,7 @@ EVROverlayError BaseOverlay::GetOverlayFlags(VROverlayHandle_t ulOverlayHandle, 
 BaseOverlay::VRMessageOverlayResponse BaseOverlay::ShowMessageOverlay(const char* pchText, const char* pchCaption, const char* pchButton0Text, const char* pchButton1Text, const char* pchButton2Text, const char* pchButton3Text)
 {
 	// Shown in frames of OpenLamina's own, run here until a button is clicked: without them, it can't be
-	auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
+	XrBackend* backend = OverlayBackend();
 	// (on an OpenGL session, only on the thread where its context is current)
 	if (!oovr_global_configuration.OwnFrames() || !backend || !backend->OwnFramesHere() || !backend->sessionActive)
 		OC_UNSUPPORTED(VRMessageOverlayResponse_CouldntFindSystemOverlay, "ShowMessageOverlay: no frames of OpenLamina's own to show it in (ownFrames)");
