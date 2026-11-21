@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Net.Http;
 using System.Security.Cryptography;
+using System.Threading;
 using System.Threading.Tasks;
 
 namespace RuntimeSwitcher.Core
@@ -29,38 +30,56 @@ namespace RuntimeSwitcher.Core
             }
         }
 
+        /// <summary>A download that receives nothing for this long is given up.</summary>
+        public static readonly TimeSpan DefaultReadTimeout = TimeSpan.FromSeconds(60);
+
         /// <summary>
         /// Downloads <paramref name="asset"/> to <paramref name="destination"/> and keeps it only if its SHA-256 is the
         /// one GitHub lists. <paramref name="progress"/> gets 0–100. Returns the file open for reading, with only
         /// reading shared, so it can't be changed or replaced between the check and its use; dispose it after.
+        /// Throws an IOException when nothing arrives for <paramref name="readTimeout"/> (default
+        /// <see cref="DefaultReadTimeout"/>), and an InvalidDataException for more bytes than GitHub lists.
         /// </summary>
         public static async Task<FileStream> DownloadAsync(ReleaseAsset asset, string destination,
-            IProgress<int> progress)
+            IProgress<int> progress, TimeSpan readTimeout = default)
         {
             if (asset.Sha256 == null)
                 throw new InvalidDataException($"GitHub lists no SHA-256 for {asset.Name}.");
+            if (readTimeout <= TimeSpan.Zero)
+                readTimeout = DefaultReadTimeout;
             Directory.CreateDirectory(Path.GetDirectoryName(destination));
             string part = destination + ".part";
 
-            using (HttpResponseMessage response = await Client.Value
-                       .GetAsync(asset.DownloadUrl, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false))
+            try
             {
-                response.EnsureSuccessStatusCode();
-                long total = response.Content.Headers.ContentLength ?? asset.Size;
-                using (Stream input = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
-                using (var output = new FileStream(part, FileMode.Create, FileAccess.Write, FileShare.None))
+                using (HttpResponseMessage response = await Client.Value
+                           .GetAsync(asset.DownloadUrl, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false))
                 {
-                    var buffer = new byte[81920];
-                    long done = 0;
-                    int read;
-                    while ((read = await input.ReadAsync(buffer, 0, buffer.Length).ConfigureAwait(false)) > 0)
+                    response.EnsureSuccessStatusCode();
+                    long total = response.Content.Headers.ContentLength ?? asset.Size;
+                    using (Stream input = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
+                    using (var output = new FileStream(part, FileMode.Create, FileAccess.Write, FileShare.None))
                     {
-                        await output.WriteAsync(buffer, 0, read).ConfigureAwait(false);
-                        done += read;
-                        if (total > 0)
-                            progress?.Report((int)Math.Min(100, done * 100 / total));
+                        var buffer = new byte[81920];
+                        long done = 0;
+                        int read;
+                        while ((read = await ReadWithin(input, buffer, response, readTimeout).ConfigureAwait(false)) > 0)
+                        {
+                            done += read;
+                            if (asset.Size > 0 && done > asset.Size)
+                                throw new InvalidDataException(
+                                    $"{asset.Name} was refused: it is larger than the {asset.Size} bytes GitHub lists.");
+                            await output.WriteAsync(buffer, 0, read).ConfigureAwait(false);
+                            if (total > 0)
+                                progress?.Report((int)Math.Min(100, done * 100 / total));
+                        }
                     }
                 }
+            }
+            catch
+            {
+                TryDelete(part);
+                throw;
             }
 
             if (File.Exists(destination))
@@ -87,6 +106,41 @@ namespace RuntimeSwitcher.Core
             {
                 file.Dispose();
                 throw;
+            }
+        }
+
+        /// <summary>
+        /// One read, given up after <paramref name="timeout"/> without data: the response is closed, which ends the
+        /// read on any platform (a cancellation token isn't honoured by every network stream once the read started).
+        /// </summary>
+        private static async Task<int> ReadWithin(Stream input, byte[] buffer, HttpResponseMessage response,
+            TimeSpan timeout)
+        {
+            Task<int> read = input.ReadAsync(buffer, 0, buffer.Length);
+            using (var stopDelay = new CancellationTokenSource())
+            {
+                if (await Task.WhenAny(read, Task.Delay(timeout, stopDelay.Token)).ConfigureAwait(false) == read)
+                {
+                    stopDelay.Cancel();
+                    return await read.ConfigureAwait(false);
+                }
+            }
+
+            response.Dispose();
+            // The read then fails; its exception is observed here and replaced by the one below.
+            _ =read.ContinueWith(t => _ = t.Exception, TaskContinuationOptions.OnlyOnFaulted);
+            throw new IOException($"The download stopped: nothing arrived for {timeout.TotalSeconds:0} seconds.");
+        }
+
+        private static void TryDelete(string file)
+        {
+            try
+            {
+                File.Delete(file);
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                // Overwritten by the next download.
             }
         }
 

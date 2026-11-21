@@ -2,6 +2,10 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
+using System.Net;
+using System.Net.Sockets;
+using System.Text;
+using System.Threading.Tasks;
 using RuntimeSwitcher.Core;
 using Xunit;
 
@@ -364,6 +368,139 @@ namespace RuntimeSwitcher.Tests
             {
                 File.Delete(file);
             }
+        }
+    }
+
+    public class DownloadTests : IDisposable
+    {
+        private readonly string _folder = Path.Combine(Path.GetTempPath(), "oc-tests-" + Guid.NewGuid().ToString("N"));
+        private readonly TcpListener _listener = new TcpListener(IPAddress.Loopback, 0);
+
+        public DownloadTests() => _listener.Start();
+
+        public void Dispose()
+        {
+            _listener.Stop();
+            if (Directory.Exists(_folder))
+                Directory.Delete(_folder, true);
+        }
+
+        private static string Sha256Hex(byte[] data)
+        {
+            using (var sha = System.Security.Cryptography.SHA256.Create())
+                return BitConverter.ToString(sha.ComputeHash(data)).Replace("-", "").ToLowerInvariant();
+        }
+
+        /// <summary>
+        /// Answers one request with <paramref name="body"/> (a Content-Length of all of it); with <paramref name="stall"/>,
+        /// sends only its first half and then nothing until the client goes or ten seconds pass.
+        /// </summary>
+        private async Task Serve(byte[] body, bool stall = false)
+        {
+            using (TcpClient client = await _listener.AcceptTcpClientAsync())
+            using (NetworkStream stream = client.GetStream())
+            {
+                var request = new byte[65536];
+                int got = 0;
+                while (got < request.Length)
+                {
+                    int n = await stream.ReadAsync(request, got, request.Length - got);
+                    if (n == 0)
+                        return;
+                    got += n;
+                    if (Encoding.ASCII.GetString(request, 0, got).Contains("\r\n\r\n"))
+                        break;
+                }
+
+                byte[] head = Encoding.ASCII.GetBytes(
+                    $"HTTP/1.1 200 OK\r\nContent-Length: {body.Length}\r\nConnection: close\r\n\r\n");
+                try
+                {
+                    await stream.WriteAsync(head, 0, head.Length);
+                    await stream.WriteAsync(body, 0, stall ? body.Length / 2 : body.Length);
+                    await stream.FlushAsync();
+                }
+                catch (IOException)
+                {
+                    // The client stopped reading (a refused download).
+                    return;
+                }
+
+                if (stall)
+                {
+                    try
+                    {
+                        await stream.ReadAsync(new byte[1], 0, 1).WaitAsync(TimeSpan.FromSeconds(10));
+                    }
+                    catch (Exception e) when (e is IOException || e is TimeoutException || e is ObjectDisposedException)
+                    {
+                    }
+                }
+            }
+        }
+
+        private ReleaseAsset Asset(string sha256, long size) => new ReleaseAsset
+        {
+            Name = "OpenLamina-Windows-Installer.exe",
+            DownloadUrl = $"http://127.0.0.1:{((IPEndPoint)_listener.LocalEndpoint).Port}/setup.exe",
+            Sha256 = sha256,
+            Size = size,
+        };
+
+        private string Destination => Path.Combine(_folder, "1.0.0", "OpenLamina-Windows-Installer.exe");
+
+        [Fact]
+        public async Task AFileWithTheListedDigestIsKeptAndReturnedOpen()
+        {
+            byte[] body = Encoding.ASCII.GetBytes("the setup");
+            Task server = Serve(body);
+            using (FileStream file = await Updater.DownloadAsync(Asset(Sha256Hex(body), body.Length), Destination, null))
+            {
+                var read = new byte[body.Length + 1];
+                Assert.Equal(body.Length, file.Read(read, 0, read.Length));
+                Assert.Equal(body, read.Take(body.Length).ToArray());
+            }
+
+            await server.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.False(File.Exists(Destination + ".part"));
+        }
+
+        [Fact]
+        public async Task AFileWithAnotherDigestIsRefusedAndDeleted()
+        {
+            byte[] body = Encoding.ASCII.GetBytes("not the setup");
+            Task server = Serve(body);
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                Updater.DownloadAsync(Asset(new string('0', 64), body.Length), Destination, null));
+            await server.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.False(File.Exists(Destination));
+            Assert.False(File.Exists(Destination + ".part"));
+        }
+
+        [Fact]
+        public async Task AFileLargerThanListedIsRefused()
+        {
+            byte[] body = new byte[200000];
+            Task server = Serve(body);
+            await Assert.ThrowsAsync<InvalidDataException>(() =>
+                Updater.DownloadAsync(Asset(Sha256Hex(body), 1000), Destination, null));
+            await server.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.False(File.Exists(Destination));
+            Assert.False(File.Exists(Destination + ".part"));
+        }
+
+        [Fact]
+        public async Task ADownloadThatStopsArrivingIsGivenUp()
+        {
+            byte[] body = new byte[1000];
+            Task server = Serve(body, stall: true);
+            Task<FileStream> download = Updater.DownloadAsync(Asset(Sha256Hex(body), body.Length), Destination, null,
+                TimeSpan.FromSeconds(1));
+            Assert.Same(download, await Task.WhenAny(download, Task.Delay(TimeSpan.FromSeconds(8))));
+            await Assert.ThrowsAsync<IOException>(() => download);
+            await server.WaitAsync(TimeSpan.FromSeconds(10));
+            Assert.False(File.Exists(Destination));
+            Assert.False(File.Exists(Destination + ".part"));
         }
     }
 

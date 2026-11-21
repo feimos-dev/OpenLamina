@@ -354,7 +354,9 @@ namespace RuntimeSwitcher
             }
             catch (Exception e) when (e is System.Net.Http.HttpRequestException || e is TaskCanceledException ||
                                       e is IOException || e is UnauthorizedAccessException ||
-                                      e is InvalidDataException || e is System.ComponentModel.Win32Exception)
+                                      e is InvalidDataException || e is System.ComponentModel.Win32Exception ||
+                                      e is InvalidOperationException || e is ArgumentException ||
+                                      e is FormatException)
             {
                 Program.HoldWindowMutex();
                 _progress.Visible = false;
