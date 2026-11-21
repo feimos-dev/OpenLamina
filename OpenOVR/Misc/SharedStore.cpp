@@ -732,13 +732,15 @@ bool SharedStore::WriteUpdate(StoreDoc doc, const std::function<void(Json::Value
 			// Kept for a look, and replaced below, starting from the last good copy if there is one
 			fs::path bad = path;
 			bad += ".bad";
-			Replace(path, bad);
+			// A writer that mustn't wait leaves it for the next one, rather than replace it without keeping it
+			if (!Replace(path, bad, retry) && !retry)
+				return false;
 			OOVR_LOGF("Store document %s doesn't parse; kept as %s", path.filename().string().c_str(), bad.filename().string().c_str());
 			fs::path good = path;
 			good += ".bak";
 			std::string goodText;
 			Json::Value goodRoot;
-			if (ReadShared(good, goodText, 4) == ReadResult::Ok && ParseDoc(goodText, goodRoot) && goodRoot["data"].isObject()) {
+			if (ReadShared(good, goodText, retry ? 4 : 1) == ReadResult::Ok && ParseDoc(goodText, goodRoot) && goodRoot["data"].isObject()) {
 				data = goodRoot["data"];
 				OOVR_LOGF("Store document %s restored from its last good copy", path.filename().string().c_str());
 			}

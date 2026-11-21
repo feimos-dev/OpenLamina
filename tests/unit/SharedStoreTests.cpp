@@ -156,6 +156,25 @@ TEST_CASE("Store_writer_that_does_not_wait_gives_up_on_a_document_held_open")
 	CHECK(store.Update(StoreDoc::Scene, [](Json::Value& d) { d["x"] = 2; }, SharedStore::Wait::Never));
 	CHECK(store.Read(StoreDoc::Scene)["x"].asInt() == 2);
 }
+
+TEST_CASE("Store_writer_that_does_not_wait_leaves_a_corrupt_document_it_cant_set_aside")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	const fs::path doc = dir.path / "scene.json";
+	std::ofstream(doc) << "{ not json";
+	// Readable, but not to be moved while it's open
+	HANDLE held = CreateFileW(doc.c_str(), GENERIC_READ, FILE_SHARE_READ, nullptr, OPEN_EXISTING, FILE_ATTRIBUTE_NORMAL, nullptr);
+	REQUIRE(held != INVALID_HANDLE_VALUE);
+	auto start = std::chrono::steady_clock::now();
+	CHECK_FALSE(store.Update(StoreDoc::Scene, [](Json::Value& d) { d["x"] = 1; }, SharedStore::Wait::Never));
+	CHECK(std::chrono::steady_clock::now() - start < std::chrono::milliseconds(200));
+	CHECK(Contents(doc) == "{ not json");
+	CloseHandle(held);
+	CHECK(store.Update(StoreDoc::Scene, [](Json::Value& d) { d["x"] = 1; }, SharedStore::Wait::Never));
+	CHECK(Contents(dir.path / "scene.json.bad") == "{ not json");
+	CHECK(store.Read(StoreDoc::Scene)["x"].asInt() == 1);
+}
 #endif
 
 TEST_CASE("Store_survives_corrupt_document")
