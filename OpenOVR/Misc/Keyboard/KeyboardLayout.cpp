@@ -47,35 +47,46 @@ static wstring pullstring(wstring& in)
 	return word;
 }
 
-static wchar_t escapeChar(const wstring& str)
+// The key's character; false for an unknown escape sequence
+static bool escapeChar(const wstring& str, wchar_t& out)
 {
-	if (str[0] != '\\')
-		return str[0];
+	if (str[0] != '\\') {
+		out = str[0];
+		return true;
+	}
 
 	wchar_t esc = str[1];
 
 	switch (esc) {
 	case 't':
-		return '\t';
+		out = '\t';
+		return true;
 	case '\\':
-		return '\\';
+		out = '\\';
+		return true;
 	case 'n':
-		return '\n';
+		out = '\n';
+		return true;
 	case 'b':
-		return '\b'; // Backspace
+		out = '\b'; // Backspace
+		return true;
 	case 's':
-		return ' '; // For whitespace-deliminated stuff
+		out = ' '; // For whitespace-deliminated stuff
+		return true;
 	case 'z':
-		return '\x01'; // Shift
+		out = '\x01'; // Shift
+		return true;
 	case 'c':
-		return '\x02'; // Caps lock
+		out = '\x02'; // Caps lock
+		return true;
 	case 'q':
-		return '\x03'; // Done
+		out = '\x03'; // Done
+		return true;
 	}
 
 	string utf = VRKeyboard::WideToUtf8(str);
-
-	{ OOVR_LOGF("Unknown escape sequence '%s'", utf.c_str()); return 0; } // the built-in layout is broken: no keyboard
+	OOVR_LOGF("Unknown escape sequence '%s'", utf.c_str());
+	return false;
 }
 
 KeyboardLayout::KeyboardLayout(std::vector<char> data)
@@ -120,7 +131,8 @@ KeyboardLayout::KeyboardLayout(std::vector<char> data)
 	while (!contents.empty()) {
 		size_t newlinePos = contents.find_first_of('\n');
 		wstring line = contents.substr(0, newlinePos);
-		contents.erase(0, newlinePos + 1);
+		// The last line may have no newline after it
+		contents.erase(0, newlinePos == wstring::npos ? wstring::npos : newlinePos + 1);
 
 		wstrim(line);
 		if (line.empty())
@@ -146,7 +158,8 @@ KeyboardLayout::KeyboardLayout(std::vector<char> data)
 		}
 
 		if (op == L"width") {
-			width = std::stoi(pullstring(line));
+			// Not a number: no width (std::stoi would throw)
+			width = (int)Numbers::ToFloat(pullstring(line), 0);
 			continue;
 		}
 
@@ -172,8 +185,9 @@ KeyboardLayout::KeyboardLayout(std::vector<char> data)
 			continue;
 		}
 
-		wchar_t ch = escapeChar(pullstring(line));
-		wchar_t shift = escapeChar(pullstring(line));
+		wchar_t ch = 0, shift = 0;
+		if (!escapeChar(pullstring(line), ch) || !escapeChar(pullstring(line), shift))
+			return; // the built-in layout is broken: no keyboard
 
 		wstring wx, wy;
 

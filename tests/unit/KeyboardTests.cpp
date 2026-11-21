@@ -48,6 +48,23 @@ const KeyboardLayout::Key* KeyFor(const KeyboardLayout& layout, wchar_t ch)
 
 } // namespace
 
+TEST_CASE("A_keyboard_layout_s_last_line_needs_no_newline")
+{
+	// The last line adds no key, so the parser can't grow memory whatever it does with it
+	const std::string text = "key a A 0 0\nbank bc BC\nwidth 10";
+	KeyboardLayout layout(std::vector<char>(text.begin(), text.end()));
+	CHECK(layout.Valid());
+	CHECK(layout.GetKeymap().size() == 3);
+}
+
+TEST_CASE("A_keyboard_layout_with_an_unknown_escape_or_width_is_no_layout")
+{
+	const std::string escape = "width 10\nkey \\x X 0 0\n";
+	CHECK_FALSE(KeyboardLayout(std::vector<char>(escape.begin(), escape.end())).Valid());
+	const std::string width = "width wide\nkey a A 0 0\n";
+	CHECK_FALSE(KeyboardLayout(std::vector<char>(width.begin(), width.end())).Valid());
+}
+
 TEST_CASE("Typing_builds_text_and_events")
 {
 	REQUIRE(Us());
