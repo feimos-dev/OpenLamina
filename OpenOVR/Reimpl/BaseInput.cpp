@@ -771,12 +771,14 @@ EVRInputError BaseInput::SetActionManifestPath(const char* pchActionManifestPath
 	}
 
 	// remaining profiles: the user's own bindings for them if there are any, else our backup path
-	for (auto& [name, profiles] : OpenVRNameToProfile) {
+	for (auto& [name, profiles] : OpenVRNameToProfile) try {
 		std::optional<std::filesystem::path> own = FindBindingFile(appKey, name, userBindings, workingDir, {}, "", legacyUserBindings);
 		if (own)
 			OOVR_LOGF("Loading the user's own bindings for controller type %s: %s", name.c_str(), PathToUtf8(*own).c_str());
 		for (InteractionProfile* profile : profiles)
 			LoadBindingsSet(*profile, own ? PathToUtf8(*own) : backupPath);
+	} catch (const std::exception& e) {
+		OOVR_SOFT_ABORTF("Skipping the bindings for controller type %s: %s", name.c_str(), e.what());
 	}
 
 	// Attach everything to the current session
