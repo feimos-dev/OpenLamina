@@ -3,6 +3,7 @@
 #include "../Misc/Keyboard/VRKeyboard.h" // TODO don't import from OCOVR, and remove the "../"
 #include "../Misc/OverlayMaths.h"
 #include "../Misc/ProgramEvents.h"
+#include <atomic>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -209,6 +210,9 @@ private:
 	std::string keyboardCache;
 
 	std::recursive_mutex layersLock;
+	// Calls in ShowMessageOverlay, which the destructor waits for (it closes the box): they use the overlays' state
+	// until they return
+	std::atomic<int> messageBoxCalls{ 0 };
 
 	// The D3D11 shader resource views GetOverlayTexture handed out and ReleaseNativeOverlayHandle hasn't released.
 	// Under layersLock.

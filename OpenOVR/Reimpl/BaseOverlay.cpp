@@ -579,6 +579,13 @@ bool BaseOverlay::ParentsShown(const OverlayData& child) const
 
 BaseOverlay::~BaseOverlay()
 {
+	// A message box shown on another thread (OpenLamina shutting down under it) ends at its next pass, and uses the
+	// overlays' state until it has returned: waited for, a few seconds at most
+	for (int i = 0; i < 5000 && messageBoxCalls.load() > 0; i++) {
+		CloseMessageOverlay();
+		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	}
+
 	// An open dashboard closes with the scene app
 	if (dash && SceneDashboard() && dash->dashboard.Open()) {
 		const uint32_t self = oc_current_pid();
@@ -4663,6 +4670,7 @@ BaseOverlay::VRMessageOverlayResponse BaseOverlay::ShowMessageOverlay(const char
 		if (pointing->message) {
 			busy = true;
 		} else {
+			messageBoxCalls++;
 			pointing->closeMessage = false;
 			pointing->message = std::move(message);
 			pointing->cursorShown = false;
@@ -4745,13 +4753,18 @@ BaseOverlay::VRMessageOverlayResponse BaseOverlay::ShowMessageOverlay(const char
 	});
 
 	std::unique_ptr<Pointing::Message> shown;
+	bool closed = false;
 	{
 		std::lock_guard<std::recursive_mutex> lock(layersLock);
 		shown = std::move(pointing->message);
 		pointing->cursorShown = false;
+		closed = pointing->closeMessage;
 	}
 	shown.reset();
-	if (!ran)
+	// Nothing of this object from here on: the destructor (OpenLamina shutting down) may go on once this is let go
+	messageBoxCalls--;
+	// Closed (CloseMessageOverlay, or a shutdown that stopped the frames) or ended with the session: the game's quit
+	if (!ran && !closed)
 		OC_UNSUPPORTED(VRMessageOverlayResponse_CouldntFindSystemOverlay, "ShowMessageOverlay: OpenLamina's own frames stopped");
 	return answer >= 0 ? (VRMessageOverlayResponse)answer : VRMessageOverlayResponse_ApplicationQuit;
 }
