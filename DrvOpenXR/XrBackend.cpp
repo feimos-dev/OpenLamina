@@ -2729,7 +2729,8 @@ void XrBackend::RecoverLostSession(std::mutex* passLock)
 			return xr_session.try_lock();
 		return xr_session.lock();
 	}();
-	if (!lock.IsHeld())
+	// Exclusively, or not at all: a pass run inside a blocking call of the program's holds the lock shared
+	if (!lock.IsExclusive())
 		return; // the next pass tries again
 	lastRecoveryTry = now.time_since_epoch().count();
 	std::unique_lock<std::mutex> pass;

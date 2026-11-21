@@ -196,8 +196,11 @@ public:
 	SessionLock(SessionWrapper& p, TryExclusive);
 	~SessionLock();
 	operator XrSession&();
-	// Whether this thread holds the lock, through this SessionLock or an outer one
+	// Whether this thread holds the lock, shared or exclusive, through this SessionLock or an outer one
 	bool IsHeld() const { return thread_lock != Held::Unlocked; }
+	// Whether this thread holds it exclusively: what a try for the exclusive lock is asked after, since under a shared
+	// hold of the thread's own the try takes nothing and IsHeld is true all the same
+	bool IsExclusive() const { return thread_lock == Held::Exclusive; }
 };
 
 // The runtime's time now, through XR_KHR_win32_convert_performance_counter_time (Windows) or

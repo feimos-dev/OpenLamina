@@ -117,6 +117,24 @@ TEST_CASE("SessionLock: nested requests of the same or a weaker kind change noth
 	}
 }
 
+TEST_CASE("SessionLock: a try for the exclusive lock under the thread's own shared hold isn't exclusive")
+{
+	SessionWrapper w;
+	{
+		SessionLock free = w.try_lock();
+		CHECK(free.IsHeld());
+		CHECK(free.IsExclusive());
+	}
+	SessionLock outer = w.lock_shared();
+	CHECK_FALSE(outer.IsExclusive());
+	SessionLock inner = w.try_lock();
+	CHECK(inner.IsHeld());
+	CHECK_FALSE(inner.IsExclusive());
+	// Still shared: another thread's shared request gets through
+	Contender reader(w, false);
+	CHECK(WaitFor([&] { return reader.got.load(); }));
+}
+
 TEST_CASE("SessionLock: two threads upgrading at once both get through")
 {
 	SessionWrapper w;
