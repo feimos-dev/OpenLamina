@@ -745,8 +745,10 @@ float BaseSystem::SGetIpd()
 {
 	std::shared_ptr<IHMD> dev = BackendManager::Instance().GetPrimaryHMD();
 	float ipd = dev->GetIPD();
-	static float lastIpd = NAN;
-	if (std::isnan(lastIpd) || std::fabs(ipd - lastIpd) > 1e-5) {
+	// Asked from any thread
+	static std::atomic<float> lastIpd{ NAN };
+	const float last = lastIpd.load();
+	if (std::isnan(last) || std::fabs(ipd - last) > 1e-5) {
 		lastIpd = ipd;
 		OOVR_LOGF("IPD: %f", ipd);
 	}
