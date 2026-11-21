@@ -400,12 +400,13 @@ public:
 			}
 			return {};
 		}
+		// The tries' errors, and the game's own earlier ones, aren't this copy's (at most 32: the context reports each
+		// one once)
+		for (int i = 0; i < 32 && glGetError() != GL_NO_ERROR; i++) {
+		}
 		if (!lockObjects(interopDevice, 1, &copy->object)) {
 			OOVR_LOG_ONCE("Graphics interop: wglDXLockObjectsNV failed: frame left out");
 			return {};
-		}
-		// The game's own earlier errors aren't this copy's (at most 32: the context reports each one once)
-		for (int i = 0; i < 32 && glGetError() != GL_NO_ERROR; i++) {
 		}
 		// The game's state is put back afterwards: its framebuffers, scissor and sRGB conversion (a blit with it on
 		// would convert the texels)
