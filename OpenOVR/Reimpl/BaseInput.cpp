@@ -375,8 +375,10 @@ BaseInput::BaseInput()
 }
 BaseInput::~BaseInput()
 {
+	// The trackers are the current session's (BindInputsForSession forgets older ones); with no session they went
+	// with the last one
 	for (XrHandTrackerEXT& handTracker : handTrackers) {
-		if (handTracker != XR_NULL_HANDLE && xr_ext)
+		if (handTracker != XR_NULL_HANDLE && xr_ext && xr_session.get() != XR_NULL_HANDLE)
 			xr_ext->xrDestroyHandTrackerEXT(handTracker);
 		handTracker = XR_NULL_HANDLE;
 	}
@@ -947,8 +949,10 @@ void BaseInput::LoadEmptyManifestIfRequired()
 
 void BaseInput::BindInputsForSession()
 {
-	// Not attached to this session (yet)
+	// Not attached to this session (yet), and the hand trackers went with the session they were made on
 	trackerPoseSession = XR_NULL_HANDLE;
+	for (XrHandTrackerEXT& handTracker : handTrackers)
+		handTracker = XR_NULL_HANDLE;
 
 	// This is called from DrvOpenXR::SetupSession. If we requested a session restart ourselves, we're also
 	// going to bind the inputs ourselves anyway, so we don't want to do that twice.
@@ -1020,7 +1024,11 @@ void BaseInput::BindInputsForSession()
 		for (int i = 0; i < 2; i++) {
 			createInfo.hand = i == 0 ? XR_HAND_LEFT_EXT : XR_HAND_RIGHT_EXT;
 			createInfo.handJointSet = XR_HAND_JOINT_SET_DEFAULT_EXT;
-			OC_XR_LOG(xr_ext->xrCreateHandTrackerEXT(xr_session.get(), &createInfo, &handTrackers[i]));
+			XrHandTrackerEXT tracker = XR_NULL_HANDLE;
+			XrResult res = xr_ext->xrCreateHandTrackerEXT(xr_session.get(), &createInfo, &tracker);
+			OC_XR_LOG(res);
+			if (XR_SUCCEEDED(res))
+				handTrackers[i] = tracker;
 		}
 	}
 }
