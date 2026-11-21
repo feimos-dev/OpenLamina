@@ -243,9 +243,12 @@ def main(command, *args):
                 continue
             for asset in release.get("assets") or []:
                 digest = asset.get("digest") or ""
-                if asset.get("name") == asset_name and re.fullmatch(r"sha256:[0-9a-fA-F]{64}", digest):
+                # An https address on github.com, as GitHub gives every release file; anything else isn't fetched
+                url = asset.get("browser_download_url") or ""
+                if (asset.get("name") == asset_name and re.fullmatch(r"sha256:[0-9a-fA-F]{64}", digest)
+                        and url.startswith("https://github.com/") and not re.search(r"\s", url)):
                     if best is None or key > best[0]:
-                        best = (key, version, asset["browser_download_url"], digest[7:].lower())
+                        best = (key, version, url, digest[7:].lower())
         if best:
             print("\t".join(best[1:]))
 

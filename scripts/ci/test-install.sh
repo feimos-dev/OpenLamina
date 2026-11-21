@@ -1,7 +1,7 @@
 #!/bin/sh
 # Tries the Linux archive's install.sh on a scratch home folder: install, switch both ways, keep the owner's files,
 # uninstall (moving the owner's files aside), dated backups, a read-only paths file refused, and the paths file's other
-# keys kept throughout. No network, no Steam.
+# keys kept throughout; --update with a stand-in curl. No network, no Steam.
 #
 #   scripts/ci/test-install.sh dist/OpenLamina-Linux.tar.gz
 set -eu
@@ -138,4 +138,58 @@ if grep -q "Kept the files" "$work/log"; then
 	fail "--uninstall without files of the owner's kept some: $(cat "$work/log")"
 fi
 
-echo "install.sh: install, status, reinstall, --steamvr, --openlamina and --uninstall work."
+# --update against a release list and archive served by a stand-in curl: the address must be on github.com, the
+# SHA-256 must match, and the newest version is chosen
+mkdir -p "$work/stub"
+cat >"$work/stub/curl" <<'EOF'
+#!/bin/sh
+for url; do :; done
+case $url in
+https://api.github.com/*) cat "$STUB_RELEASES" ;;
+https://github.com/*) cat "$STUB_ARCHIVE" ;;
+*) exit 22 ;;
+esac
+EOF
+chmod +x "$work/stub/curl"
+export STUB_RELEASES="$work/releases.json" STUB_ARCHIVE="$archive"
+sha=sha256:$(sha256sum "$archive" | cut -d' ' -f1)
+good_url=https://github.com/feimos-dev/OpenLamina/releases/download/v99999.0.0/OpenLamina-Linux.tar.gz
+# releases <url or -> <digest> <tag> <prerelease> [<tag> <prerelease> ...]: one release per tag, each with the archive
+releases() {
+	python3 -c '
+import json, sys
+url, digest, rest = sys.argv[1], sys.argv[2], sys.argv[3:]
+out = []
+for tag, pre in zip(rest[::2], rest[1::2]):
+    asset = {"name": "OpenLamina-Linux.tar.gz", "digest": digest, "size": 1}
+    if url != "-":
+        asset["browser_download_url"] = url
+    out.append({"tag_name": tag, "prerelease": pre == "true", "draft": False, "assets": [asset]})
+print(json.dumps(out))' "$@" >"$STUB_RELEASES"
+}
+update() {
+	PATH="$work/stub:$PATH" sh "$installer" --update "$@" >"$work/log" 2>&1
+}
+
+releases - "$sha" v99999.0.0 false
+update || fail "--update with a release without an address failed: $(cat "$work/log")"
+grep -q "No newer release" "$work/log" || fail "--update took a release without an address: $(cat "$work/log")"
+releases http://example.com/OpenLamina-Linux.tar.gz "$sha" v99999.0.0 false
+update || fail "--update with a release elsewhere failed: $(cat "$work/log")"
+grep -q "No newer release" "$work/log" || fail "--update took a release that isn't on github.com: $(cat "$work/log")"
+releases "$good_url" sha256:0000000000000000000000000000000000000000000000000000000000000000 v99999.0.0 false
+if update; then
+	fail "--update installed an archive whose SHA-256 isn't the listed one."
+fi
+grep -q "was refused" "$work/log" || fail "--update didn't say why it refused the archive: $(cat "$work/log")"
+[ ! -e "$copy" ] || fail "--update installed a refused archive."
+releases "$good_url" "$sha" v99999.0.0-rc.2 true v99999.0.0-rc.10 true v99998.0.0 false
+update || fail "--update failed: $(cat "$work/log")"
+grep -q "Downloading OpenLamina 99998.0.0" "$work/log" || fail "--update didn't choose 99998.0.0: $(cat "$work/log")"
+update --pre || fail "--update --pre failed: $(cat "$work/log")"
+grep -q "Downloading OpenLamina 99999.0.0-rc.10" "$work/log" || fail "--update --pre didn't choose 99999.0.0-rc.10: $(cat "$work/log")"
+[ -f "$copy/bin/linux64/vrclient.so" ] || fail "--update didn't install the archive."
+expect "$steamvr
+/opt/other-runtime" "--update, which leaves the switch as it is"
+
+echo "install.sh: install, status, reinstall, --steamvr, --openlamina, --uninstall and --update work."
