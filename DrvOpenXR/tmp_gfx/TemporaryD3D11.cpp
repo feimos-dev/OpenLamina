@@ -13,10 +13,11 @@ static IDXGIAdapter1* d3d_get_adapter(const LUID& adapter_luid)
 	// Turn the LUID into a specific graphics device adapter
 	IDXGIAdapter1* final_adapter = nullptr;
 	IDXGIAdapter1* curr_adapter = nullptr;
-	IDXGIFactory1* dxgi_factory;
+	IDXGIFactory1* dxgi_factory = nullptr;
 	DXGI_ADAPTER_DESC1 adapter_desc;
 
-	CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)(&dxgi_factory));
+	if (FAILED(CreateDXGIFactory1(__uuidof(IDXGIFactory1), (void**)(&dxgi_factory))) || !dxgi_factory)
+		return nullptr;
 
 	int curr = 0;
 	while (dxgi_factory->EnumAdapters1(curr++, &curr_adapter) == S_OK) {
