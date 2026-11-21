@@ -887,4 +887,8 @@ TEST_CASE("Hand_model_tip_is_answered_before_input_is_made")
 	OOVR_RenderModel_ComponentState_t cs{};
 	// No input to ask where the aim is: the model's own place
 	CHECK(rm.GetComponentState("renderLeftHand", "tip", &state, nullptr, &cs));
+
+	// A tracker isn't a hand: the backend isn't asked for one
+	rm.GetComponentState("vive_tracker", "tip", &state, nullptr, &cs);
+	CHECK(hands.backend->otherHandsAsked == 0);
 }
