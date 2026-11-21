@@ -1,6 +1,7 @@
 [
  { "#": "Fields regress.py skips: values that change from run to run (or from machine to machine), so a baseline can't pin them. Each entry has interface, method and field regexes, as differences.json's, and its reason. Found by comparing three full stand-in runs on one PC; a field that differs on CI's runner gets its entry here too." },
  { "interface": "IVRCompositor_\\d+", "method": "GetLastPosePredictionIDs", "field": "out", "apptype": "3", "reason": "a background app's session runs OpenLamina's empty frames until the app runs one: how many have run when it asks" },
+ { "interface": "IVRSystem_\\d+", "method": "IsInputAvailable", "field": "ret", "apptype": "3", "reason": "a background app's session runs OpenLamina's empty frames until the app runs one: whether input focus has come yet when it asks (true once on CI's Linux x86 runner, where it was false)" },
  { "interface": "IVROverlay_\\d+", "method": "WaitFrameSync", "field": "ret", "apptype": "3", "reason": "a background app's session runs OpenLamina's empty frames until the app runs one: whether one starts within the timeout" },
  { "interface": "frame-loop", "method": "frame 1", "field": "events", "reason": "how many session state changes (each a SceneApplicationStateChanged) arrive before the first frame's poll: 4 to 6 on CI" },
  { "interface": "IVRApplications_\\d+", "method": "GetCurrentSceneProcessId", "field": "ret", "reason": "the scene app's process id" },
