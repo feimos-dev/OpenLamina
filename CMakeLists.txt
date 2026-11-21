@@ -807,8 +807,12 @@ add_dependencies(OCOVR OCRenderModels)
 
 # Installation
 include(GNUInstallDirs)
+# A shared library is a LIBRARY on Linux and a RUNTIME (the DLL) on Windows
 install(TARGETS OCOVR
 	LIBRARY
+	DESTINATION "${PROJECT_NAME}/${VRCLIENT_DIR}"
+	COMPONENT Runtime
+	RUNTIME
 	DESTINATION "${PROJECT_NAME}/${VRCLIENT_DIR}"
 	COMPONENT Runtime
 )
