@@ -233,7 +233,7 @@ TEST_CASE("A_tab_label_is_kept_short_and_its_characters_whole")
 	Dashboard d(Dashboard::Button::MenuLong);
 	d.isAlive = [](uint32_t, uint64_t) { return true; };
 	Json::Value doc = OverlaysWithDashboard(222, 77);
-	// A long name, and one character beyond 16 bits, which used to turn the whole label into question marks
+	// A long name is cut; a character beyond 16 bits leaves the rest of its label as it is
 	doc["222"]["overlays"][0]["name"] = std::string(100000, 'x');
 	doc["222"]["overlays"][1]["thumbnail"] = false;
 	doc["222"]["overlays"][1]["name"] = "\xC3\xA9t\xC3\xA9 \xF0\x9F\x98\x80";
