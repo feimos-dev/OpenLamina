@@ -7,6 +7,8 @@
 
 #include <filesystem>
 #include <fstream>
+#include <random>
+#include <string>
 
 namespace {
 // A 4x4 PNG of four quadrants (red, green / blue, white) at path
@@ -26,7 +28,16 @@ void WriteQuadrantsPng(const std::filesystem::path& path)
 
 std::filesystem::path Scratch(const char8_t* name)
 {
-	return std::filesystem::temp_directory_path() / "oc_canvas_tests" / std::filesystem::path(std::u8string(name));
+	// This process's own folder, so that two test runs at once don't share files; removed at exit
+	static const struct Folder {
+		std::filesystem::path path = std::filesystem::temp_directory_path() / ("oc_canvas_tests_" + std::to_string(std::random_device {}()));
+		~Folder()
+		{
+			std::error_code ec;
+			std::filesystem::remove_all(path, ec);
+		}
+	} folder;
+	return folder.path / std::filesystem::path(std::u8string(name));
 }
 } // namespace
 

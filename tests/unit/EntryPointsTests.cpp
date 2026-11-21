@@ -13,6 +13,7 @@
 #include <dlfcn.h>
 #include <filesystem>
 #include <fstream>
+#include <random>
 #include <string>
 
 namespace {
@@ -211,7 +212,7 @@ std::filesystem::path MakeConfig(const std::filesystem::path& configRoot, const 
 TEST_CASE("SteamVR is found from the config folder")
 {
 	namespace fs = std::filesystem;
-	const fs::path base = fs::temp_directory_path() / "oc_entry_points_home";
+	const fs::path base = fs::temp_directory_path() / ("oc_entry_points_home_" + std::to_string(std::random_device {}()));
 	fs::remove_all(base);
 
 	SUBCASE("XDG_CONFIG_HOME")

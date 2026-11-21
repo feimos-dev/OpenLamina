@@ -9,6 +9,8 @@
 
 #include <filesystem>
 #include <fstream>
+#include <random>
+#include <string>
 
 namespace {
 std::filesystem::path Data(const char* name)
@@ -131,7 +133,7 @@ TEST_CASE("Binding_file_binds_a_raw_input_of_the_controller")
 
 TEST_CASE("Manifest_localization_picks_the_language_and_merges_files")
 {
-	std::filesystem::path dir = std::filesystem::temp_directory_path() / "oc_localization_test";
+	std::filesystem::path dir = std::filesystem::temp_directory_path() / ("oc_localization_test_" + std::to_string(std::random_device {}()));
 	std::filesystem::create_directories(dir);
 	{
 		std::ofstream out(dir / "fr.json", std::ios::binary);

@@ -7,6 +7,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <random>
 #include <sstream>
 #include <string>
 #include <thread>
@@ -16,7 +17,7 @@ namespace fs = std::filesystem;
 
 namespace {
 struct TempFile {
-	fs::path path = fs::temp_directory_path() / ("oc_jsonfile_test_" + std::to_string(std::hash<std::thread::id>()(std::this_thread::get_id())) + ".json");
+	fs::path path = fs::temp_directory_path() / ("oc_jsonfile_test_" + std::to_string(std::random_device {}()) + ".json");
 	TempFile() { fs::remove(path); }
 	~TempFile() { fs::remove(path); }
 	void Write(const std::string& text) const { std::ofstream(path, std::ios::binary) << text; }
