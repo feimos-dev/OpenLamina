@@ -7,6 +7,7 @@
 #include "Misc/Input/IndexControllerInteractionProfile.h"
 #include "Misc/Input/KhrSimpleInteractionProfile.h"
 #include "Misc/Input/OculusInteractionProfile.h"
+#include "Misc/Input/ViveInteractionProfile.h"
 #include "Misc/Input/ViveTrackerInteractionProfile.h"
 #include "Misc/SoftFail.h"
 #include "XrController.h"
@@ -104,14 +105,51 @@ TEST_CASE("Index_controller_identity")
 	DeviceIdentity right = ControllerIdentity(index, vr::TrackedControllerRole_RightHand);
 	CHECK(right.controllerType == "knuckles");
 	CHECK(right.renderModel == "{indexcontroller}valve_controller_knu_1_0_right");
-	CHECK(right.registeredDeviceType == "oculus/F00BAAF00F_Controller_Right");
+	// As SteamVR's Lighthouse driver answers: its prefix and the serial; the Index driver's input profile
+	CHECK(right.registeredDeviceType == "valve/index_controller" + right.serial);
+	CHECK(right.inputProfilePath == "{indexcontroller}/input/index_controller_profile.json");
+	CHECK(ControllerIdentity(index, vr::TrackedControllerRole_RightHand, "LHR-1F0DBAC0").registeredDeviceType
+	    == "valve/index_controllerLHR-1F0DBAC0");
+	// Without the runtime's serial, the one made of the hand
+	CHECK(right.registeredDeviceType == "valve/index_controllerknuckles-right");
 	CHECK(right.role == vr::TrackedControllerRole_RightHand);
 	CHECK((right.supportedButtons & vr::ButtonMaskFromId(vr::k_EButton_SteamVR_Trigger)) != 0);
 	CHECK((right.supportedButtons & vr::ButtonMaskFromId(vr::k_EButton_SteamVR_Touchpad)) != 0); // the trackpad and stick are Axis0
 
 	DeviceIdentity left = ControllerIdentity(index, vr::TrackedControllerRole_LeftHand);
 	CHECK(left.renderModel == "{indexcontroller}valve_controller_knu_1_0_left");
-	CHECK(left.registeredDeviceType == "oculus/F00BAAF00F_Controller_Left");
+	CHECK(left.registeredDeviceType == "valve/index_controller" + left.serial);
+	CHECK(left.inputProfilePath == "{indexcontroller}/input/index_controller_profile.json");
+}
+
+TEST_CASE("Controllers_have_their_SteamVR_driver_input_profile")
+{
+	ViveWandInteractionProfile vive;
+	DeviceIdentity wand = ControllerIdentity(vive, vr::TrackedControllerRole_LeftHand, "LHR-0000");
+	CHECK(wand.inputProfilePath == "{htc}/input/vive_controller_profile.json");
+	CHECK(wand.registeredDeviceType == "oculus/F00BAAF00F_Controller_Left");
+
+	// The Oculus driver's device type stays, with its Touch input profile
+	OculusTouchInteractionProfile touch;
+	DeviceIdentity right = ControllerIdentity(touch, vr::TrackedControllerRole_RightHand);
+	CHECK(right.inputProfilePath == "{oculus}/input/touch_profile.json");
+	CHECK(right.registeredDeviceType == "oculus/F00BAAF00F_Controller_Right");
+
+	// A controller SteamVR has no driver for: none, so the tracking system's name is answered
+	KhrSimpleInteractionProfile simple;
+	CHECK(ControllerIdentity(simple, vr::TrackedControllerRole_RightHand).inputProfilePath.empty());
+}
+
+TEST_CASE("Headset_maker_from_the_device_name")
+{
+	// libmonado's device name starts with a known maker: that one, not the runtime's name
+	CHECK(HmdIdentity("Monado: Pimax Dream Air", { "Pimax Dream Air", "P5" }, 0, "Monado(XRT) by Collabora et al").manufacturer
+	    == "Pimax");
+	CHECK(HmdIdentity("Monado: Valve Index", { "Valve Index", "" }, 0, "Monado(XRT)").manufacturer == "Valve");
+	// The vendor ID still comes first
+	CHECK(HmdIdentity("x", { "Pimax Crystal", "" }, 0x28de, "Monado").manufacturer == "Valve");
+	// An unknown first word: the runtime's name, as before
+	CHECK(HmdIdentity("Monado: Simulated HMD", { "Simulated HMD", "" }, 0, "Monado(XRT)").manufacturer == "Monado");
 }
 
 TEST_CASE("Touch_buttons_include_A_and_B_on_right")
