@@ -340,6 +340,12 @@ TEST_CASE("Settings_supersample_store_beats_ini")
 		settings.SetFloat("steam.app.4242", "resolutionScale", 225.0f);
 		AppId app("4242");
 		CHECK(BaseSettings::RenderScale(store, 1.25f) == 3.0f);
+		// A game's percentage that isn't one leaves the global scale
+		settings.SetFloat("steam.app.4242", "resolutionScale", 0.0f);
+		CHECK(BaseSettings::RenderScale(store, 1.25f) == 2.0f);
+		settings.SetFloat("steam.app.4242", "resolutionScale", 1e6f);
+		CHECK(BaseSettings::RenderScale(store, 1.25f) == 2.0f);
+		settings.SetFloat("steam.app.4242", "resolutionScale", 225.0f);
 		// Nonsense isn't a scale: the ini's instead, still with the app's
 		settings.SetFloat("steamvr", "supersampleScale", -1.0f);
 		CHECK(BaseSettings::RenderScale(store, 1.25f) == doctest::Approx(1.25 * 1.5));
