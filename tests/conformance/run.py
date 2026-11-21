@@ -735,7 +735,7 @@ def main():
     known_hit = set()
     # "lost": a call that ended the program in an older run that --resume kept
     bad = [r for r in results if r["status"] in ("ended", "crashed", "timeout", "lost")]
-    lines =[f"{k}: {v}" for k, v in sorted(counts.items())] + [""]
+    lines = [f"{k}: {v}" for k, v in sorted(counts.items())] + [""]
     if args.repeat > 1:
         lines += round_summary(results, args.repeat) + [""]
     problems = 0

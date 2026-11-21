@@ -274,7 +274,7 @@ def process_alive(pid):
     kernel32.OpenProcess.restype = wintypes.HANDLE
     kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
     kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
-    h =kernel32.OpenProcess(0x00100000 | 0x1000, False, pid)  # SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION
+    h = kernel32.OpenProcess(0x00100000 | 0x1000, False, pid)  # SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION
     if not h:
         return False
     alive = kernel32.WaitForSingleObject(h, 0) != 0
