@@ -372,15 +372,12 @@ std::optional<LibMonado::Battery> LibMonado::BatteryForRole(const char* role)
 {
 	if (!Available() || !api->getBatteryStatus || !role)
 		return std::nullopt;
-	{
-		std::lock_guard guard(lock);
-		auto it = batteryCache.find(role);
-		if (it != batteryCache.end() && std::chrono::steady_clock::now() - it->second.first < std::chrono::seconds(1))
-			return it->second.second;
-	}
+	std::lock_guard guard(lock);
+	auto it = batteryCache.find(role);
+	if (it != batteryCache.end() && std::chrono::steady_clock::now() - it->second.first < std::chrono::seconds(1))
+		return it->second.second;
 	// The role's own device (libmonado's roles are device indices): two controllers may share a name
 	std::optional<Battery> battery;
-	std::lock_guard guard(lock);
 	int32_t index = -1;
 	if (api->getDeviceFromRole && api->getDeviceFromRole(root, role, &index) == 0 && index >= 0)
 		battery = BatteryAt((uint32_t)index);
