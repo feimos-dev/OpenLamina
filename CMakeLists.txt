@@ -612,10 +612,16 @@ if (OC_BACKTRACE)
 
 		list(JOIN libunwind_CONFIGURE_FLAGS " " libunwind_CONFIGURE_FLAGS)
 
+		# One job per logical core, as many as the machine has and no more
+		cmake_host_system_information(RESULT OC_LIBUNWIND_JOBS QUERY NUMBER_OF_LOGICAL_CORES)
+		if (NOT OC_LIBUNWIND_JOBS GREATER 0)
+			set(OC_LIBUNWIND_JOBS 1)
+		endif ()
+
 		ExternalProject_Add(libunwind
 			BUILD_IN_SOURCE 1
 			CONFIGURE_COMMAND sh -c "autoreconf -i && <SOURCE_DIR>/configure --prefix=<INSTALL_DIR> ${libunwind_CONFIGURE_FLAGS}"
-			BUILD_COMMAND make -j${CMAKE_BUILD_PARALLEL_LEVEL}
+			BUILD_COMMAND make -j${OC_LIBUNWIND_JOBS}
 			INSTALL_COMMAND make install
 			LOG_CONFIGURE 1
 			LOG_BUILD 1
