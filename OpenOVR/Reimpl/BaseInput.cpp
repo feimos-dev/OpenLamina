@@ -2502,6 +2502,13 @@ EVRInputError BaseInput::getRealSkeletalSummary(ITrackedDevice::TrackedDeviceTyp
 			break;
 		}
 
+		// A joint the runtime has no position for (an occluded finger) reads as zero: the estimate answers instead
+		const XrSpaceLocationFlags valid = XR_SPACE_LOCATION_POSITION_VALID_BIT;
+		if (!(metacarpal.locationFlags & valid) || !(proximal.locationFlags & valid) || !(tip.locationFlags & valid)) {
+			ZeroMemory(pSkeletalSummaryData, sizeof(VRSkeletalSummaryData_t));
+			return getEstimatedSkeletalSummary(hand, pSkeletalSummaryData);
+		}
+
 		glm::vec3 metacarpalProximalDelta = X2G_v3f(metacarpal.pose.position) - X2G_v3f(proximal.pose.position);
 		glm::vec3 tipProximalDelta = X2G_v3f(tip.pose.position) - X2G_v3f(proximal.pose.position);
 
