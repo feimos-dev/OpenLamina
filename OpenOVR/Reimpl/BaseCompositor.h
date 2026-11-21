@@ -1,5 +1,6 @@
 #pragma once
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstring>
@@ -197,14 +198,15 @@ public:
 	static const char* InteropVulkanExtensions(bool device)
 	{
 		return device ? "VK_KHR_external_memory VK_KHR_external_memory_win32 VK_KHR_dedicated_allocation VK_KHR_get_memory_requirements2"
-		              : "VK_KHR_external_memory_capabilities VK_KHR_get_physical_device_properties2";
+		              : "VK_KHR_external_memory_capabilities VK_KHR_external_semaphore_capabilities VK_KHR_get_physical_device_properties2";
 	}
 	// The physical devices GetOutputDevice named: the only ones GetVulkanDeviceExtensionsRequired asks about (a game
 	// may pass anything, and a pointer that isn't a physical device can't be told apart from one)
 	static void NotePhysicalDevice(void* physicalDevice)
 	{
 		std::lock_guard<std::mutex> lock(physicalDevicesLock);
-		if (physicalDevice && physicalDevices.size() < 16)
+		if (physicalDevice && physicalDevices.size() < 16
+		    && std::find(physicalDevices.begin(), physicalDevices.end(), physicalDevice) == physicalDevices.end())
 			physicalDevices.push_back(physicalDevice);
 	}
 	static bool KnownPhysicalDevice(void* physicalDevice)

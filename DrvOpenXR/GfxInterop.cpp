@@ -558,7 +558,8 @@ public:
 		VkImage image = VK_NULL_HANDLE;
 		VkDeviceMemory memory = VK_NULL_HANDLE;
 	};
-	std::map<VkImage, Copy> copies;
+	// By image and layer: an array's eyes each have their own
+	std::map<std::pair<VkImage, uint32_t>, Copy> copies;
 
 	vr::ETextureType Type() const override { return vr::TextureType_Vulkan; }
 
@@ -729,9 +730,9 @@ public:
 		return true;
 	}
 
-	Copy* CopyFor(const vr::VRVulkanTextureData_t* data)
+	Copy* CopyFor(const vr::VRVulkanTextureData_t* data, uint32_t layer)
 	{
-		VkImage src = (VkImage)data->m_nImage;
+		const std::pair<VkImage, uint32_t> src{ (VkImage)data->m_nImage, layer };
 		auto it = copies.find(src);
 		if (it != copies.end() && it->second.width == data->m_nWidth && it->second.height == data->m_nHeight
 		    && it->second.format == (VkFormat)data->m_nFormat)
@@ -844,7 +845,7 @@ public:
 			OOVR_LOG_ONCE("Graphics interop: no Vulkan command buffer for the game's queue family");
 			return {};
 		}
-		Copy* copy = CopyFor(data);
+		Copy* copy = CopyFor(data, layer);
 		if (!copy)
 			return {};
 
