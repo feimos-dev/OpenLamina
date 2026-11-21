@@ -35,13 +35,14 @@ std::string GetEnv(const std::string& var);
 // working directory
 std::string oovr_log_folder();
 
-#define OOVR_ABORT(msg)                                        \
-	do {                                                       \
-		oovr_abort_raw(__FILE__, __LINE__, __FUNCTION__, msg); \
+// The message is text, not a format: a % in it (a stringised expression) is printed as it is
+#define OOVR_ABORT(msg)                                                       \
+	do {                                                                      \
+		oovr_abort_raw(__FILE__, __LINE__, __FUNCTION__, "%s", nullptr, msg); \
 	} while (0)
-#define OOVR_ABORT_T(msg, title)                                      \
-	do {                                                              \
-		oovr_abort_raw(__FILE__, __LINE__, __FUNCTION__, msg, title); \
+#define OOVR_ABORT_T(msg, title)                                            \
+	do {                                                                    \
+		oovr_abort_raw(__FILE__, __LINE__, __FUNCTION__, "%s", title, msg); \
 	} while (0)
 #define OOVR_ABORTF(msg, ...)                                                        \
 	do {                                                                             \
