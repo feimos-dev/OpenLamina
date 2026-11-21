@@ -14,6 +14,7 @@
 #include "Misc/SharedStore.h"
 #include "Misc/SteamClient.h"
 #include "Misc/backtrace.h"
+#include "Misc/xrutil.h"
 #include "logging.h"
 #include "steamvr_abi.h"
 #include <cstdlib>
@@ -544,13 +545,18 @@ VR_INTERFACE void VR_CALLTYPE VR_ShutdownInternal()
 	// OpenLamina's own frames draw from the interfaces (the overlays): stopped before they go
 	DrvOpenXR::StopOwnFrames();
 
-	// Reset interfaces
-	// Do this first, while the OVR session is still available in case they
-	//  need to use it for cleanup.
-	interfaces.clear();
+	{
+		// Calls in flight on other threads hold the session lock: they end before the interfaces and the backend go
+		auto sessionLock = xr_session.lock();
 
-	// Shut down OpenXR
-	BackendManager::Reset();
+		// Reset interfaces
+		// Do this first, while the OVR session is still available in case they
+		//  need to use it for cleanup.
+		interfaces.clear();
+
+		// Shut down OpenXR
+		BackendManager::Reset();
+	}
 
 	// The frames' last store edits are written before the program can end
 	SharedStore::Get().Flush();
