@@ -82,6 +82,9 @@ bool xr_utils::PoseFromSpace(vr::TrackedDevicePose_t* pose, XrSpace space, vr::E
 		return false;
 	}
 	auto baseSpace = xr_space_from_tracking_origin(origin);
+	// A space the runtime wouldn't make (see XrSessionGlobals) has no pose in it: the runtime isn't asked with no handle
+	if (space == XR_NULL_HANDLE || baseSpace == XR_NULL_HANDLE)
+		return false;
 
 	XrSpaceVelocity velocity{ XR_TYPE_SPACE_VELOCITY };
 	XrSpaceLocation info{ XR_TYPE_SPACE_LOCATION, &velocity, 0, {} };
