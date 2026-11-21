@@ -48,7 +48,9 @@ try {
 		return 0;
 	if (pchBuffer && unBufferLen >= (uint64_t)size) {
 		file.seekg(0);
-		file.read(pchBuffer, size);
+		// A file that can't be read whole (it shrank, or failed) isn't answered as if it had been
+		if (!file.read(pchBuffer, size))
+			return 0;
 	}
 	return (uint32_t)size;
 } catch (const std::exception&) {
