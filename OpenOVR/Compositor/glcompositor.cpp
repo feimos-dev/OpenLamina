@@ -12,6 +12,12 @@
 #include <GLES3/gl32.h>
 #endif
 
+#if defined(SUPPORT_GL) || defined(SUPPORT_GLES)
+// Set if the driver lacks one of the OpenGL functions loaded below (GLCompositor's constructor, which tries again until
+// it has them all: a first try may have run with no context current). OpenGL ES links them, and never sets it.
+static bool glFunctionsMissing = false;
+#endif
+
 // OpenGL compositor
 #ifdef SUPPORT_GL
 
@@ -44,9 +50,6 @@ typedef void(APIENTRY* PFNGLFRAMEBUFFERRENDERBUFFERPROC)(GLenum target, GLenum a
 #define GL_COLOR_ATTACHMENT0 0x8CE0
 #endif
 
-// Set if the driver lacks one of the functions below (GLCompositor's constructor, which tries again until it has them
-// all: a first try may have run with no context current)
-static bool glFunctionsMissing = false;
 static bool glFunctionsLoaded = false;
 static PFNGLCOPYIMAGESUBDATAPROC glCopyImageSubData = nullptr;
 static PFNGLBINDFRAMEBUFFERPROC glBindFramebuffer = nullptr;
