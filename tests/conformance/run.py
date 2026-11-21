@@ -161,6 +161,10 @@ class Runner:
         if unelevated.integrity_above_medium() and self.manifest:
             if not self.args.ci:
                 return  # children run at medium integrity (unelevated.run_medium)
+            if not os.environ.get("CI"):
+                # It isn't put back: only on a CI runner, which sets CI
+                raise SystemExit("--ci makes the stand-in this machine's active OpenXR runtime and leaves it so: only on "
+                                 "a CI runner (CI set in the environment); elevated here, children run unelevated without it")
             # CI's VM is elevated: the loader ignores XR_RUNTIME_JSON, so make the runtime the active one. In both
             # registry views: a 32-bit loader reads the 32-bit one (WOW6432Node)
             for view in ("/reg:64", "/reg:32"):
@@ -734,7 +738,7 @@ def main():
     known = load_known(args.known_failures)
     known_hit = set()
     bad = [r for r in results if r["status"] in ("ended", "crashed", "timeout")]
-    lines = [f"{k}: {v}" for k, v in sorted(counts.items())] + [""]
+    lines =[f"{k}: {v}" for k, v in sorted(counts.items())] + [""]
     if args.repeat > 1:
         lines += round_summary(results, args.repeat) + [""]
     problems = 0
