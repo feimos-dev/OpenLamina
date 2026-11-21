@@ -2833,11 +2833,18 @@ uint32_t BaseOverlay::GetOverlayRenderingPid(VROverlayHandle_t ulOverlayHandle)
 		return 0;
 	return overlay->renderingPid;
 }
+EVROverlayError BaseOverlay::FlagOutOfRange(VROverlayHandle_t ulOverlayHandle)
+{
+	Json::Value remote;
+	if (!LiveOverlay(ulOverlayHandle) && !RemoteOverlayEntry(ulOverlayHandle, remote))
+		return VROverlayError_InvalidHandle;
+	return VROverlayError_InvalidParameter;
+}
 EVROverlayError BaseOverlay::SetOverlayFlag(VROverlayHandle_t ulOverlayHandle, VROverlayFlags eOverlayFlag, bool bEnabled)
 {
-	// A flag of 64 or more (or a negative one) has no bit in the mask
+	// A flag of 64 or more (or a negative one) has no bit in the mask; a handle that's no overlay is answered first
 	if ((uint32_t)eOverlayFlag >= 64)
-		return VROverlayError_InvalidParameter;
+		return FlagOutOfRange(ulOverlayHandle);
 	OcOverlayCommand command;
 	command.kind = OcOverlayCommand::Flag;
 	command.flag = (uint32_t)eOverlayFlag;
@@ -2858,7 +2865,7 @@ EVROverlayError BaseOverlay::SetOverlayFlag(VROverlayHandle_t ulOverlayHandle, V
 EVROverlayError BaseOverlay::GetOverlayFlag(VROverlayHandle_t ulOverlayHandle, VROverlayFlags eOverlayFlag, bool* pbEnabled)
 {
 	if ((uint32_t)eOverlayFlag >= 64)
-		return VROverlayError_InvalidParameter;
+		return FlagOutOfRange(ulOverlayHandle);
 	Json::Value remote;
 	if (RemoteOverlayEntry(ulOverlayHandle, remote)) {
 		if (!pbEnabled)

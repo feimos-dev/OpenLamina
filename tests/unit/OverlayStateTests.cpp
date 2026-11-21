@@ -84,6 +84,9 @@ TEST_CASE("A_flag_number_without_a_bit_is_refused")
 	CHECK(overlays.SetOverlayFlag(h, (OOVR_VROverlayFlags)67, true) == VROverlayError_InvalidParameter);
 	CHECK(overlays.SetOverlayFlag(h, (OOVR_VROverlayFlags)-1, true) == VROverlayError_InvalidParameter);
 	CHECK(overlays.GetOverlayFlag(h, (OOVR_VROverlayFlags)67, &on) == VROverlayError_InvalidParameter);
+	// A handle that's no overlay is answered as such first
+	CHECK(overlays.SetOverlayFlag((VROverlayHandle_t)0x1234, (OOVR_VROverlayFlags)67, true) == VROverlayError_InvalidHandle);
+	CHECK(overlays.GetOverlayFlag((VROverlayHandle_t)0x1234, (OOVR_VROverlayFlags)67, &on) == VROverlayError_InvalidHandle);
 	// Bit 3 (67 taken modulo 64) is untouched
 	uint32_t all = 0xffffffff;
 	CHECK(overlays.GetOverlayFlags(h, &all) == VROverlayError_None);
