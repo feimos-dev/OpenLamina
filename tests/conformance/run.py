@@ -62,7 +62,7 @@ STEAMVR_FIXTURE = {"OC_TEST_STEAMVR_DIR": str(HERE.parent / "unit" / "data" / "s
 CASE_ENV = {"render-models": STEAMVR_FIXTURE, "state-and-resources": STEAMVR_FIXTURE}
 # SteamVR's answers while vrserver was starting or stopping between children (Retry, AnotherAppLaunching,
 # ShuttingDown): a recording keeps them, a comparison skips them
-STEAMVR_TRANSIENT = {115, 117, 119, 310}  # restarting, or its shared namespace gone (310)
+STEAMVR_TRANSIENT = {115, 117, 119, 306, 310}  # restarting, its compositor not up (306), or its shared namespace gone (310)
 # --keep-running: an Init answering one of these ran while SteamVR was quitting or starting (309: its IPC not up yet)
 STEAMVR_RETRY = STEAMVR_TRANSIENT | {309}
 
@@ -188,18 +188,28 @@ class Runner:
         env["OC_STORE_DIR"] = str(self.out / "store" / (store or Path(raw).stem))
         env.update(env_extra or {})
         cwd = None
+        answers_before = len(read_jsonl(Path(raw)))
         if unelevated.integrity_above_medium() and not self.args.ci:
             code = unelevated.run_medium(cmd, env, cwd, timeout)
         else:
             # In a memory-limited job (unelevated.py): a runaway child fails alone
             code = unelevated.run_limited(cmd, env, cwd, timeout, capture=True)[0]
         with Runner.keep_lock:
-            Runner.timeouts_in_a_row = Runner.timeouts_in_a_row + 1 if code == 124 else 0
+            if code != 124:
+                Runner.timeouts_in_a_row, Runner.last_timeout_job = 0, None
+            elif len(read_jsonl(Path(raw))) == answers_before or Runner.last_timeout_job != str(raw):
+                # A child that timed out at its first call, or in another job than the last timeout's. A second call
+                # that blocks in the same job (GetKeyboardText once the keyboard is open, through the class and its
+                # function table) is that call's own answer, not a server that stopped answering.
+                Runner.timeouts_in_a_row += 1
+                Runner.last_timeout_job = str(raw)
         return code
 
     keep_lock = threading.Lock()
-    # --keep-running: timeouts in a row (a SteamVR whose server hangs answers no child), and the restarts that made
+    # --keep-running: timeouts in a row (a SteamVR whose server hangs answers no child), the job of the last one, and
+    # the restarts that made
     timeouts_in_a_row = 0
+    last_timeout_job = None
     restarts = 0
     HUNG_AFTER = 2
 
@@ -538,11 +548,15 @@ def compare(results, expected_path, differences_path, arch):
             continue
         if e.get("init_error") in STEAMVR_TRANSIENT:
             continue  # SteamVR was restarting between children: no reference for this record
+        # A record of a call through the function table ("FnTable:<version>") is the same call as the class's: an entry
+        # for the interface is for both
+        who = r.get("interface", r.get("case", ""))
+        names = {who, who[len("FnTable:"):]} if who.startswith("FnTable:") else {who}
         for field in ("ret", "out", "init_error", "lookup_error"):
             if r.get(field) == e.get(field):
                 continue
             # An entry may also name the app types it's for ("apptype": a regex of their numbers)
-            if any(re.fullmatch(d["interface"], r.get("interface", r.get("case", ""))) and re.fullmatch(d["method"], r.get("method", ""))
+            if any(any(re.fullmatch(d["interface"], n) for n in names) and re.fullmatch(d["method"], r.get("method", ""))
                    and d["field"] == field and ("apptype" not in d or re.fullmatch(d["apptype"], str(r.get("apptype", ""))))
                    for d in allowed):
                 continue

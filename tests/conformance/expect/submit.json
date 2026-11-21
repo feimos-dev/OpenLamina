@@ -1,5 +1,5 @@
 {
- "#": "Submit's edge cases on the stand-in (run.py --cases submit-edges --expect). Windows refuses a Background app at Init (121); on Linux it may Init, and its Submit answers 103 (IsNotSceneApplication).",
+ "#": "Submit's edge cases on the stand-in (run.py --cases submit-edges --expect). A texture without a handle is refused (102, InvalidTexture) and its eye isn't counted, as SteamVR answers, so the other eye's texture after it is taken. A cube map skybox needs the runtime's equirect layers, which the stand-in hasn't (1, RequestFailed). Windows refuses a Background app at Init (121); on Linux it may Init, and its Submit answers 103 (IsNotSceneApplication).",
  "submit-edges/left/-/-": {
   "ret": 0
  },
@@ -10,10 +10,10 @@
   "ret": 0
  },
  "submit-edges/left null/-/-": {
-  "ret": 0
+  "ret": 102
  },
  "submit-edges/right not null/-/-": {
-  "ret": 102
+  "ret": 0
  },
  "submit-edges/left DXGI format 78/-/-": {
   "ret": 105,

@@ -1,5 +1,5 @@
 {
- "#": "The old overlay calls on the stand-in (run.py --cases old-overlay --script scripts/keyboard.json --ini ini/keyboard_us.ini --expect expect/old_overlay.json). Events in SDK 0.9.x's 32-byte layout (keyboard user value at 16, nothing past 32): a character typed with the laser on the overlay's keyboard (KeyboardCharInput, 1201), then one on the system's; NoDashboardTab as 007's bit number 3 is GetOverlayFlags 8; SideBySide_Parallel as 028's mask 1 << 10 is 1024 and 007's bit 10; 001's SetOverlayTexture with no SetGraphicsDevice is 24 (InvalidTexture).",
+ "#": "The old overlay calls on the stand-in (run.py --cases old-overlay --script scripts/keyboard.json --ini ini/keyboard_us.ini --expect expect/old_overlay.json). Events in SDK 0.9.x's 32-byte layout (keyboard user value at 16, nothing past 32): a character typed with the laser on the overlay's keyboard (KeyboardCharInput, 1201), then one on the system's; NoDashboardTab as 007's bit number 3 is GetOverlayFlags 8; SideBySide_Parallel as 028's mask 1 << 10 is 1024 and 007's bit 10; 001's visibility can't be set (12, PermissionDenied) and is manual, as SteamVR answers; its SetOverlayTexture with no SetGraphicsDevice is 24 (InvalidTexture).",
  "old-overlay/CreateOverlay/-/-": {
   "ret": 0
  },
@@ -29,9 +29,9 @@
   "value": 0.5
  },
  "old-overlay/IVROverlay_001 visibility/-/-": {
-  "set": 0,
+  "set": 12,
   "get": 0,
-  "value": 1,
+  "value": 0,
   "system overlay visible": false
  },
  "old-overlay/IVROverlay_001 SetOverlayTexture/-/-": {

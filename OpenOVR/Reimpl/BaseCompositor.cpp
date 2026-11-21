@@ -305,7 +305,9 @@ ovr_enum_t BaseCompositor::Submit(EVREye eye, const Texture_t* texture, const VR
 		OOVR_LOG_ONCE("A VRApplication_Background or Overlay app is submitting frames: refused");
 		return VRCompositorError_IsNotSceneApplication;
 	}
-	if (!texture || (eye != Eye_Left && eye != Eye_Right))
+	// A texture without a handle is refused, as SteamVR does: the eye counts as not submitted (Sparc submits null
+	// textures for both eyes, and gets no frame either way)
+	if (!texture || !texture->handle || (eye != Eye_Left && eye != Eye_Right))
 		return VRCompositorError_InvalidTexture;
 	if (!BoundsAreNumbers(bounds)) {
 		OOVR_LOG_ONCE("Texture bounds that aren't numbers: Submit refused");
@@ -333,30 +335,14 @@ ovr_enum_t BaseCompositor::Submit(EVREye eye, const Texture_t* texture, const VR
 	else
 		rightEyeSubmitted = true;
 
-	// Handle null textures
-	// Rather surprisingly, it's perfectly valid to pass null textures to SteamVR. So far, I've
-	// only seen this used in Sparc (see #19). If a game tries to do this, ensure that either neither or
-	// both eyes do so, and don't actually send a frame to LibOVR.
-	bool textureNull = texture->handle == nullptr;
-	if (isFirstEye) {
-		isNullRender = textureNull;
-	} else if (textureNull != isNullRender) {
-		// One eye null and the other not: this frame isn't submitted, and the next starts afresh
-		OOVR_LOG_ONCE("One eye's texture is null and the other's isn't: that frame is dropped");
-		leftEyeSubmitted = false;
-		rightEyeSubmitted = false;
-		return VRCompositorError_InvalidTexture;
-	}
-
 	{
 		// Turns out games (Beat Saber in particular) really do not like the session being restarted
 		// while they're in the middle of submitting a frame.
 		auto lock = xr_session.lock_shared();
-		if (!textureNull)
-			result = (ovr_enum_t)BackendManager::Instance().StoreEyeTexture(eye, texture, bounds, submitFlags, isFirstEye);
+		result = (ovr_enum_t)BackendManager::Instance().StoreEyeTexture(eye, texture, bounds, submitFlags, isFirstEye);
 
 		if (leftEyeSubmitted && rightEyeSubmitted) {
-			if (!isNullRender && SubmitEndsFrame(explicitTimingMode))
+			if (SubmitEndsFrame(explicitTimingMode))
 				BackendManager::Instance().SubmitFrames(isInSkybox);
 
 			leftEyeSubmitted = false;
@@ -523,24 +509,24 @@ uint32_t BaseCompositor::GetLastError(char* pchBuffer, uint32_t unBufferSize)
 	return 0;
 }
 
+// The old compositor window's vsync and gamma (IVRCompositor_005-008): SteamVR answers vsync on and a gamma of 1
+// whatever was set, as the frames go to the headset, not a window
 void BaseCompositor::SetVSync(bool bVSync)
 {
-	oldVSync = bVSync;
 }
 
 bool BaseCompositor::GetVSync()
 {
-	return oldVSync;
+	return true;
 }
 
 void BaseCompositor::SetGamma(float fGamma)
 {
-	oldGamma = fGamma;
 }
 
 float BaseCompositor::GetGamma()
 {
-	return oldGamma;
+	return 1.0f;
 }
 
 void BaseCompositor::SetGraphicsDevice(OOVR_Compositor_DeviceType eType, void* pDevice)
@@ -602,15 +588,18 @@ void BaseCompositor::GetOverlayDefaults(Compositor_OverlaySettings* pSettings)
 {
 	if (!pSettings)
 		return;
-	// A flat, opaque quad a metre away, its whole texture
+	// SteamVR's: a curved, opaque quad 3 m wide, 1.25 m away, its whole texture, with a grid of 20; the size is left 0
 	*pSettings = {};
-	pSettings->size = sizeof(Compositor_OverlaySettings);
+	pSettings->curved = true;
 	pSettings->antialias = true;
-	pSettings->scale = 1.0f;
-	pSettings->distance = 1.0f;
+	pSettings->scale = 3.0f;
+	pSettings->distance = 1.25f;
 	pSettings->alpha = 1.0f;
 	pSettings->uScale = 1.0f;
 	pSettings->vScale = 1.0f;
+	pSettings->gridDivs = 20.0f;
+	pSettings->gridWidth = 0.01f;
+	pSettings->gridScale = 20.0f;
 	for (int i = 0; i < 4; i++)
 		pSettings->transform.m[i][i] = 1.0f;
 }
@@ -667,9 +656,9 @@ void BaseCompositor::ShowSceneOverlay(const Image& image, const Compositor_Overl
 		return;
 	Compositor_OverlaySettings settings;
 	GetOverlayDefaults(&settings);
-	// An older struct is as long as its size says
-	if (pSettings && pSettings->size > 0)
-		memcpy(&settings, pSettings, std::min<size_t>(pSettings->size, sizeof(settings)));
+	// An older struct is as long as its size says; a size of 0 is the whole struct, as GetOverlayDefaults gives it
+	if (pSettings)
+		memcpy(&settings, pSettings, pSettings->size > 0 ? std::min<size_t>(pSettings->size, sizeof(settings)) : sizeof(settings));
 	auto overlay = std::make_shared<SceneOverlayImage>();
 	if (!SceneOverlayFrom(image, settings, *overlay)) {
 		backend->SetSceneOverlay(nullptr);
@@ -1034,6 +1023,9 @@ bool BaseCompositor::IsCurrentSceneFocusAppLoading()
 ovr_enum_t BaseCompositor::SetStageOverride_Async(const char* pchRenderModelPath, const HmdMatrix34_t* pTransform,
     const OOVR_Compositor_StageRenderSettings* pRenderSettings, uint32_t nSizeOfRenderSettings)
 {
+	// SteamVR refuses a stage override without a render model
+	if (!pchRenderModelPath)
+		return VRCompositorError_RequestFailed;
 	OOVR_SOFT_ABORT("Stage override not implemented");
 	return VRCompositorError_None;
 }
@@ -1046,7 +1038,7 @@ void BaseCompositor::ClearStageOverride()
 bool BaseCompositor::GetCompositorBenchmarkResults(Compositor_BenchmarkResults* pBenchmarkResults, uint32_t nSizeOfBenchmarkResults)
 {
 	if (!pBenchmarkResults)
-		return true;
+		return false;
 
 	// No benchmark is run: the measured rate is taken to be the recommended one
 	uint32_t width = 0, height = 0;

@@ -327,8 +327,8 @@ TEST_CASE("The scene overlay is the part of its image the settings pick, ahead o
 	SceneOverlayImage out;
 	REQUIRE(BaseCompositor::SceneOverlayFrom(image, settings, out));
 	CHECK(out.image.width == 4);
-	CHECK(out.width == 1.0f);
-	CHECK(out.inHead.m[2][3] == doctest::Approx(-1.0f)); // a metre ahead
+	CHECK(out.width == 3.0f); // SteamVR's defaults: 3 m wide, 1.25 m ahead
+	CHECK(out.inHead.m[2][3] == doctest::Approx(-1.25f));
 	CHECK(out.inHead.m[0][0] == doctest::Approx(1.0f));
 
 	// The right half, at half alpha, 2 m ahead and 0.5 m wide, moved up by the transform (row-major, as OpenVR's)

@@ -1219,14 +1219,16 @@ EVRApplicationError BaseApplications::RegisterSubprocess(uint32_t nPid)
 	return VRApplicationError_None;
 }
 
+// IVRApplications_001's home application: none is set (NoApplication, as SteamVR answers), and none can be
+// (InvalidApplication, SteamVR's answer to any key)
 EVRApplicationError BaseApplications::GetHomeApplication(char* pchAppKeyBuffer, uint32_t unAppKeyBufferLen)
 {
 	Clear(pchAppKeyBuffer, unAppKeyBufferLen);
-	return VRApplicationError_UnknownApplication;
+	return VRApplicationError_NoApplication;
 }
 
 EVRApplicationError BaseApplications::SetHomeApplication(const char* pchAppKey)
 {
-	OC_UNSUPPORTED(VRApplicationError_UnknownApplication, "SetHomeApplication (IVRApplications_001): there's no home "
+	OC_UNSUPPORTED(VRApplicationError_InvalidApplication, "SetHomeApplication (IVRApplications_001): there's no home "
 	                                                      "application on OpenXR");
 }

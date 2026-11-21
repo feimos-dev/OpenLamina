@@ -41,7 +41,7 @@
   "adapter_set": true
  },
  "old-calls/AttachToWindow/-/-": {
-  "ret": true
+  "ret": false
  },
  "old-calls/LoadRenderModel renderLeftHand/-/-": {
   "ret": true,

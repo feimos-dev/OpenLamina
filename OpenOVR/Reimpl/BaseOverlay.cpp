@@ -91,7 +91,6 @@ public:
 	uint64_t flags = 0; // as masks: flag n is 1 << n
 	float texelAspect = 1;
 	float gamma = 1.0f; // IVROverlay_001-006
-	int visibility = 0; // IVROverlay_001's VROverlayVisibility
 	uint32_t systemOverlaySceneProcess = 0; // IVROverlay_001
 	// CreateDashboardOverlay's pair: shown only in the dashboard, while it's the one chosen (the thumbnail never)
 	bool dashboard = false;
@@ -3473,6 +3472,9 @@ EVROverlayError BaseOverlay::SetOverlayGamma(VROverlayHandle_t ulOverlayHandle, 
 
 EVROverlayError BaseOverlay::GetOverlayGamma(VROverlayHandle_t ulOverlayHandle, float* pfGamma)
 {
+	// SteamVR writes the default gamma before it looks the overlay up
+	if (pfGamma)
+		*pfGamma = 1.0f;
 	USEH();
 	if (!pfGamma)
 		return VROverlayError_InvalidParameter;
@@ -3480,19 +3482,18 @@ EVROverlayError BaseOverlay::GetOverlayGamma(VROverlayHandle_t ulOverlayHandle, 
 	return VROverlayError_None;
 }
 
+// IVROverlay_001's visibility (manual or system): SteamVR refuses to set it, whatever the overlay, and answers every
+// overlay manual
 EVROverlayError BaseOverlay::SetOverlayVisibility(VROverlayHandle_t ulOverlayHandle, OOVR_VROverlayVisibility eOverlayVisibility)
 {
-	USEH_LOCKED();
-	overlay->visibility = (int)eOverlayVisibility;
-	return VROverlayError_None;
+	return VROverlayError_PermissionDenied;
 }
 
 EVROverlayError BaseOverlay::GetOverlayVisibility(VROverlayHandle_t ulOverlayHandle, OOVR_VROverlayVisibility* peOverlayVisibility)
 {
-	USEH();
 	if (!peOverlayVisibility)
 		return VROverlayError_InvalidParameter;
-	*peOverlayVisibility = (OOVR_VROverlayVisibility)overlay->visibility;
+	*peOverlayVisibility = OOVR_VROverlayVisibility_Manual;
 	return VROverlayError_None;
 }
 
@@ -3537,6 +3538,9 @@ bool BaseOverlay::PollNextOverlayEventOld(VROverlayHandle_t ulOverlayHandle, VRE
 
 EVROverlayError BaseOverlay::SetOverlayTextureForDevice(VROverlayHandle_t ulOverlayHandle, void* pTexture)
 {
+	// The overlay first, as SteamVR checks it
+	if (!LiveOverlay(ulOverlayHandle))
+		return VROverlayError_InvalidHandle;
 	Texture_t texture = { pTexture, TextureType_DirectX, ColorSpace_Auto };
 	BaseCompositor* compositor = GetUnsafeBaseCompositor();
 	if (!compositor || !compositor->OldDeviceTextureType(&texture.eType))

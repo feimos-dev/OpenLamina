@@ -1214,9 +1214,9 @@ void BaseSystem::GetEyeOutputViewport(EVREye eEye, uint32_t* pnX, uint32_t* pnY,
 
 bool BaseSystem::AttachToWindow(void* hWnd)
 {
-	// The OpenXR runtime shows the frames on the headset itself: there's no window to use, and nothing for the game to
-	// do differently, so this succeeds
-	return true;
+	// The OpenXR runtime shows the frames on the headset itself: there's no window to attach to. SteamVR answers false
+	// too, so the old games that call this carry on without one
+	return false;
 }
 
 bool BaseSystem::LoadRenderModel(const char* pchRenderModelName, vr::IVRRenderModels_001::RenderModel_t* pRenderModel)

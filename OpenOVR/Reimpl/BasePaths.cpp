@@ -6,7 +6,7 @@
 
 vr::ETrackedPropertyError BasePaths::StringToHandle(OOVR_PathHandle_t* pHandle, const char* pchPath)
 {
-	if (!pHandle || !pchPath)
+	if (!pHandle || !pchPath || !*pchPath)
 		return vr::TrackedProp_InvalidOperation;
 	std::lock_guard<std::mutex> guard(lock);
 	auto it = handles.find(pchPath);
@@ -14,7 +14,7 @@ vr::ETrackedPropertyError BasePaths::StringToHandle(OOVR_PathHandle_t* pHandle, 
 		if (paths.size() >= kMaxPaths)
 			return vr::TrackedProp_InvalidOperation;
 		paths.emplace_back(pchPath);
-		it = handles.emplace(pchPath, (OOVR_PathHandle_t)paths.size()).first;
+		it = handles.emplace(pchPath, kFirstHandle + (OOVR_PathHandle_t)paths.size() - 1).first;
 	}
 	*pHandle = it->second;
 	return vr::TrackedProp_Success;
@@ -29,9 +29,9 @@ vr::ETrackedPropertyError BasePaths::HandleToString(OOVR_PathHandle_t pHandle, c
 	std::string path;
 	{
 		std::lock_guard<std::mutex> guard(lock);
-		if (pHandle == 0 || pHandle > paths.size())
+		if (pHandle < kFirstHandle || pHandle - kFirstHandle >= paths.size())
 			return vr::TrackedProp_InvalidOperation;
-		path = paths[(size_t)(pHandle - 1)];
+		path = paths[(size_t)(pHandle - kFirstHandle)];
 	}
 	uint32_t needed = (uint32_t)path.size() + 1;
 	if (punBufferSizeUsed)

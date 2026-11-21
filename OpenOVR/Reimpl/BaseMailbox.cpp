@@ -8,10 +8,10 @@ typedef BaseMailbox::MboxErr MboxErr;
 
 MboxErr BaseMailbox::RegisterMailbox(const char* name, OOVR_mbox_handle* handle)
 {
-	if (!name || !handle) {
+	if (!name || !*name || !handle) {
 		if (handle)
 			*handle = 0;
-		return VR_MBox_NoMessage;
+		return VR_MBox_InvalidParameter;
 	}
 
 	// The same name gives the same handle for as long as it's registered
@@ -26,22 +26,34 @@ MboxErr BaseMailbox::RegisterMailbox(const char* name, OOVR_mbox_handle* handle)
 	return VR_MBox_None;
 }
 
+bool BaseMailbox::Registered(OOVR_mbox_handle mbox) const
+{
+	for (const auto& h : handles)
+		if (h.second == mbox)
+			return true;
+	return false;
+}
+
 MboxErr BaseMailbox::UnregisterMailbox(OOVR_mbox_handle mbox)
 {
 	std::lock_guard<std::mutex> lock(mutex);
 	for (auto it = handles.begin(); it != handles.end(); ++it) {
 		if (it->second == mbox) {
 			handles.erase(it);
-			break;
+			OOVR_LOGF("Unregistered mailbox ID %d", (int)mbox);
+			return VR_MBox_None;
 		}
 	}
-	OOVR_LOGF("Unregistered mailbox ID %d", (int)mbox);
-	return VR_MBox_None;
+	return VR_MBox_InvalidHandle;
 }
 
 MboxErr BaseMailbox::SendMessage(OOVR_mbox_handle mbox, const char* type, const char* message)
 {
-	OOVR_LOGF("Pretending to send mailbox message, type '%s' contents '%s'", type ? type : "(null)", message ? message : "(null)");
+	// SteamVR refuses a message with no address or none at all, and sends any other on (to a mailbox of its own
+	// processes, which needn't be this program's)
+	if (!type || !*type || !message)
+		return VR_MBox_InvalidParameter;
+	OOVR_LOGF("Pretending to send mailbox message, type '%s' contents '%s'", type, message);
 	return VR_MBox_None;
 }
 
@@ -54,13 +66,13 @@ MboxErr BaseMailbox::ReadMessage(OOVR_mbox_handle mboxHandle, char* outBuf, uint
 	// In both cases, set msgLen
 	// If we don't have a message, return an unknown error code other than 0 and 2 (HL:A doesn't care).
 
-	uint32_t lenScratch = 0;
-	if (!msgLen) {
-		msgLen = &lenScratch;
-	}
+	if (!msgLen)
+		return VR_MBox_InvalidParameter;
 	*msgLen = 0;
 
 	std::lock_guard<std::mutex> lock(mutex);
+	if (!Registered(mboxHandle))
+		return VR_MBox_InvalidHandle;
 	if (!readySent) {
 		static const char msg[] = R"({ "type": "ready" })";
 		const uint32_t len = (uint32_t)(sizeof(msg) - 1);

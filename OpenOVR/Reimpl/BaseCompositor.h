@@ -156,9 +156,7 @@ private:
 	// its eyes from two threads
 	std::mutex submitLock;
 
-	// The old compositor window calls (IVRCompositor_005-008) and SetGraphicsDevice (005, 006)
-	bool oldVSync = true;
-	float oldGamma = 1.0f;
+	// SetGraphicsDevice (IVRCompositor_005, 006)
 	OOVR_Compositor_DeviceType oldDeviceType = OOVR_Compositor_DeviceType_None;
 
 	std::atomic<bool> isInSkybox{ false };
@@ -174,8 +172,6 @@ private:
 	uint32_t lastPoseId = 0;
 	std::mutex posesLock;
 
-	// True if the current frame has only nullptr textures supplied, and should be ignored
-	std::atomic<bool> isNullRender{ false };
 	std::atomic<int32_t> explicitTimingMode{ 0 };
 	// What the game last set with SetTrackingSpace
 	std::atomic<int> trackingUniverse{ vr::TrackingUniverseStanding };

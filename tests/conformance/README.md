@@ -71,14 +71,17 @@ bypasses it: such a crash has no report.
 ## The SteamVR reference
 
 `record-steamvr.ps1 -Conformance <oc_conformance.exe> -Out <dir>` runs everything against SteamVR with its null
-driver (no headset needed) and writes `expected/steamvr-<version>.json`. It backs up the OpenVR paths file and
+driver (no headset needed) and writes `expected/steamvr-<version>.json` (with `reference.py`: one record per line,
+sorted, so a new recording's diff is a line for each answer that changed). It backs up the OpenVR paths file and
 SteamVR's settings, room setup and app config first, puts every one back afterwards and fails unless their SHA-256s
 match; `-WhatIf` only lists them. Close SteamVR, Monado and anything VR first.
 
 `-Controllers` loads SteamVR's other drivers beside the null headset, so switched-on Lighthouse controllers take part
 (for `app-type-answers` and `steamvr_run_cases.cpp`). Programs run one at a time (a program that brings SteamVR down
 would take the others with it). A SteamVR whose server stops answering (each child then waits on its shared namespace
-until the timeout) is ended and started again after two timeouts in a row, or at once when a program times out in Init or gets init error 310 (that program then runs again); `results.json` counts these restarts
+until the timeout) is ended and started again after two timeouts in a row (each in another program than the last, or at
+a program's first call: a second call that blocks in the same program is its own answer), or at once when a program
+times out in Init or gets init error 310 (that program then runs again); `results.json` counts these restarts
 (`runtime_restarts`). `-Resume` keeps what an earlier run into the same `-Out` finished (each job's
 `<raw>.result.json`) and runs the rest; `results.json` then has `"resumed": true`. Against a real runtime the methods
 of `unsafe_methods.txt` aren't called (their records say `"skipped": "unsafe"`), among them `ShowMessageOverlay`, which
