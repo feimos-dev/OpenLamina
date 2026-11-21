@@ -131,9 +131,6 @@ def load(file):
         sys.exit(f"install.sh: {file} isn't an OpenVR paths file (\"runtime\" isn't a list of folders).")
     return data
 
-# Written next to the real file (a symlink stays a symlink), with its permissions, after a backup named by the date and
-# time (an earlier backup is never overwritten). A file that can't be written, as when made read-only to keep SteamVR
-# from changing it, is refused and left as it is.
 def discard(temp):
     try:
         if os.path.isfile(temp):
@@ -141,6 +138,9 @@ def discard(temp):
     except OSError:
         pass
 
+# Written next to the real file (a symlink stays a symlink), with its permissions, after a backup named by the date and
+# time (an earlier backup is never overwritten). A file that can't be written, as when made read-only to keep SteamVR
+# from changing it, is refused and left as it is.
 def save(file, data, old):
     file = os.path.realpath(file)
     folder = os.path.dirname(file)
