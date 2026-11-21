@@ -634,7 +634,7 @@ bool LoadFailed(const std::shared_future<std::shared_ptr<const LoadedModel>>& lo
 
 static std::shared_ptr<const LoadedModel> LoadModel(const string& name, std::shared_ptr<const RmModel> own);
 
-size_t BaseRenderModels::MostLoadsAtOnce()
+size_t BaseRenderModels::_MostLoadsAtOnce()
 {
 	LoadQueue& queue = Queue();
 	std::lock_guard<std::mutex> guard(queue.lock);

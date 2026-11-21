@@ -931,8 +931,8 @@ TEST_CASE("Render_model_loads_run_a_few_at_a_time")
 		CHECK((int)rm.LoadRenderModel_Async(name.c_str(), &model) == 100);
 	}
 	BaseRenderModels::WaitForLoads();
-	CHECK(BaseRenderModels::MostLoadsAtOnce() >= 1);
-	CHECK(BaseRenderModels::MostLoadsAtOnce() <= 3);
+	CHECK(BaseRenderModels::_MostLoadsAtOnce() >= 1);
+	CHECK(BaseRenderModels::_MostLoadsAtOnce() <= 3);
 }
 
 TEST_CASE("Render_model_names_that_failed_make_room_for_new_ones")

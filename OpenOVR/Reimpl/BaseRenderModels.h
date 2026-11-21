@@ -22,7 +22,7 @@ public: // INTERNAL FUNCTIONS
 	static void WaitForLoads();
 
 	/** The most model loads that have run at the same time (tests) */
-	static size_t MostLoadsAtOnce();
+	static size_t _MostLoadsAtOnce();
 
 	/** LoadRenderModel_Async waited for: the model's answer, never Loading */
 	OOVR_EVRRenderModelError LoadRenderModelNow(const char* pchRenderModelName, OOVR_RenderModel_t** ppRenderModel);
