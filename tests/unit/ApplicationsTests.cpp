@@ -234,6 +234,20 @@ TEST_CASE("Applications_registry_calls")
 	CHECK(CurrentProcessAppKey(store) == "steam.app.620980");
 }
 
+TEST_CASE("Identified_process_adds_no_empty_members")
+{
+	TempDir dir;
+	SharedStore store(dir.path);
+	BaseApplications apps(store);
+
+	CHECK(apps.IdentifyApplication(0, "oc.test.identified") == VRApplicationError_None);
+	const Json::Value doc = store.Read(StoreDoc::Applications);
+	REQUIRE(doc.isObject());
+	CHECK(doc["pids"].isObject());
+	for (const std::string& name : doc.getMemberNames())
+		CHECK_MESSAGE(!doc[name].isNull(), name);
+}
+
 TEST_CASE("Temporary_manifest_goes_with_its_process")
 {
 	TempDir dir;

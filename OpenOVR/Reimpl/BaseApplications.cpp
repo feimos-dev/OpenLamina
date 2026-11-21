@@ -129,12 +129,14 @@ void RecordProcess(Json::Value& doc, uint32_t pid, const std::string& key)
 {
 	std::string name = std::to_string(pid);
 	doc["pids"][name] = key;
-	if (doc["pid_auto"].isObject())
+	// Looked at through the const document: a missing member isn't added as null to what's written back
+	const Json::Value& read = doc;
+	if (read["pid_auto"].isObject())
 		doc["pid_auto"].removeMember(name);
 	uint64_t start = SharedStore::ProcessStartTime(pid);
 	if (start)
 		doc["pid_starts"][name] = (Json::UInt64)start;
-	else if (doc["pid_starts"].isObject())
+	else if (read["pid_starts"].isObject())
 		doc["pid_starts"].removeMember(name);
 }
 
@@ -163,7 +165,7 @@ bool UpdateApplications(SharedStore& store, const std::function<void(Json::Value
 		}
 		// The start times of the processes that are no longer listed
 		for (const char* listing : { "pid_starts", "pid_auto" }) {
-			if (doc.isMember(listing) && doc[listing].isObject() && doc["pids"].isObject()) {
+			if (doc.isMember(listing) && doc[listing].isObject() && doc.isMember("pids") && doc["pids"].isObject()) {
 				for (const std::string& p : doc[listing].getMemberNames())
 					if (!doc["pids"].isMember(p))
 						doc[listing].removeMember(p);
@@ -431,7 +433,8 @@ EVRApplicationError BaseApplications::LaunchForTransition(SharedStore& store, co
 		return launched;
 	}
 	store.Update(StoreDoc::Scene, [&](Json::Value& scene) {
-		if (scene.isObject() && StringOr(scene["transition"]["app_key"]) == appKey)
+		const Json::Value& read = scene;
+		if (scene.isObject() && StringOr(read["transition"]["app_key"]) == appKey)
 			scene.removeMember("transition");
 	});
 	AnnounceTransitionAborted();
@@ -500,10 +503,11 @@ void BaseApplications::AddThisProcess(SharedStore& store)
 	const std::string key = CurrentProcessAppKey(store);
 	UpdateApplications(store, [&](Json::Value& doc) {
 		// IdentifyApplication's entry for this process stays as it is
-		const Json::Value starts = doc.get("pid_starts", Json::Value());
-		const bool listed = doc["pids"].isObject() && doc["pids"].isMember(name)
+		const Json::Value& read = doc;
+		const Json::Value& starts = read["pid_starts"];
+		const bool listed = read["pids"].isObject() && read["pids"].isMember(name)
 		    && (!starts.isObject() || UInt64Or(starts[name], 0) == start || !start);
-		const bool automatic = doc["pid_auto"].isObject() && BoolOr(doc["pid_auto"][name], false);
+		const bool automatic = read["pid_auto"].isObject() && BoolOr(read["pid_auto"][name], false);
 		if (listed && !automatic)
 			return;
 		RecordProcess(doc, pid, key);
@@ -599,7 +603,8 @@ EVRApplicationError BaseApplications::AskSceneApplicationToQuit(const std::strin
 		if (!OcPostEventTo(store, scenePid, vr::VREvent_Quit, vr::k_unTrackedDeviceIndexInvalid, data)) {
 			// Not asked after all: nothing to wait for (a transition for another application or scene app stays)
 			store.Update(StoreDoc::Scene, [&](Json::Value& doc) {
-				if (doc.isObject() && PidOf(doc["transition"]["old_pid"]) == scenePid && StringOr(doc["transition"]["app_key"]) == appKey)
+				const Json::Value& read = doc;
+				if (doc.isObject() && PidOf(read["transition"]["old_pid"]) == scenePid && StringOr(read["transition"]["app_key"]) == appKey)
 					doc.removeMember("transition");
 			});
 			return VRApplicationError_IPCFailed;
