@@ -192,8 +192,9 @@ class Runner:
         if unelevated.integrity_above_medium() and not self.args.ci:
             code = unelevated.run_medium(cmd, env, cwd, timeout)
         else:
-            # In a memory-limited job (unelevated.py): a runaway child fails alone
-            code = unelevated.run_limited(cmd, env, cwd, timeout, capture=True)[0]
+            # In a memory-limited job (unelevated.py): a runaway child fails alone. Its output isn't kept: its answers
+            # are in raw
+            code = unelevated.run_limited(cmd, env, cwd, timeout, quiet=True)
         with Runner.keep_lock:
             if code != 124:
                 Runner.timeouts_in_a_row, Runner.last_timeout_job = 0, None

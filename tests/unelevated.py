@@ -3,6 +3,7 @@
 integrity level is above medium (an elevated process).
 
   unelevated.py [--env NAME=VALUE]... [--cwd DIR] [--timeout SECONDS] -- COMMAND [ARGS...]
+  unelevated.py --self-test
 
 Not elevated (or not on Windows): runs COMMAND directly. At high integrity on Windows: starts COMMAND with a copy of
 this process's token lowered to medium integrity (DuplicateTokenEx, SetTokenInformation(TokenIntegrityLevel),
@@ -11,9 +12,11 @@ code. Its output goes to this process's output.
 """
 
 import argparse
+import itertools
 import os
 import subprocess
 import sys
+import time
 
 
 def _win():
@@ -56,9 +59,14 @@ PROCESS_MEMORY_LIMIT = 2 * 1024 ** 3
 JOB_MEMORY_LIMIT = 3 * 1024 ** 3
 
 
+def warn(text):
+    print(f"unelevated.py: {text}", file=sys.stderr, flush=True)
+
+
 def memory_limited_job():
     """A job object whose processes may commit PROCESS_MEMORY_LIMIT each and JOB_MEMORY_LIMIT together (Windows; None
-    elsewhere or if it can't be made). Processes a member starts are members too."""
+    elsewhere or if it can't be made). Processes a member starts are members too, and closing the job ends every
+    process still in it."""
     if os.name != "nt":
         return None
     ctypes, wintypes, advapi32, kernel32 = _win()
@@ -77,14 +85,17 @@ def memory_limited_job():
     kernel32.CreateJobObjectW.restype = wintypes.HANDLE
     job = kernel32.CreateJobObjectW(None, None)
     if not job:
+        warn("no job object: the child runs without a memory limit")
         return None
     info = EXTENDED()
-    info.BasicLimitInformation.LimitFlags = 0x100 | 0x200  # JOB_OBJECT_LIMIT_PROCESS_MEMORY | JOB_OBJECT_LIMIT_JOB_MEMORY
+    # JOB_OBJECT_LIMIT_PROCESS_MEMORY | JOB_OBJECT_LIMIT_JOB_MEMORY | JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+    info.BasicLimitInformation.LimitFlags = 0x100 | 0x200 | 0x2000
     info.ProcessMemoryLimit = PROCESS_MEMORY_LIMIT
     info.JobMemoryLimit = JOB_MEMORY_LIMIT
     kernel32.SetInformationJobObject.argtypes = [wintypes.HANDLE, ctypes.c_int, ctypes.c_void_p, wintypes.DWORD]
     if not kernel32.SetInformationJobObject(job, 9, ctypes.byref(info), ctypes.sizeof(info)):  # ExtendedLimitInformation
         kernel32.CloseHandle(job)
+        warn("no job limits: the child runs without a memory limit")
         return None
     return job
 
@@ -94,33 +105,73 @@ def assign_to_job(job, process_handle):
         return False
     ctypes, wintypes, advapi32, kernel32 = _win()
     kernel32.AssignProcessToJobObject.argtypes = [wintypes.HANDLE, wintypes.HANDLE]
-    return bool(kernel32.AssignProcessToJobObject(job, process_handle))
+    if kernel32.AssignProcessToJobObject(job, process_handle):
+        return True
+    warn(f"AssignProcessToJobObject failed ({ctypes.get_last_error()}): the child runs without a memory limit")
+    return False
+
+
+def end_job(job):
+    """Ends every process in the job; False if it couldn't"""
+    if job is None:
+        return False
+    ctypes, wintypes, advapi32, kernel32 = _win()
+    kernel32.TerminateJobObject.argtypes = [wintypes.HANDLE, wintypes.UINT]
+    return bool(kernel32.TerminateJobObject(job, 124))
 
 
 def close_job(job):
+    """Closes the job, which ends every process still in it (JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE)"""
     if job is not None:
         ctypes, wintypes, advapi32, kernel32 = _win()
         kernel32.CloseHandle(job)
 
 
-def run_limited(command, env, cwd, timeout, capture=False):
-    """subprocess.run in a memory-limited job (not elevated, or not on Windows): its exit code, 124 on a timeout;
-    with capture, (code, stdout, stderr)"""
+def run_limited(command, env, cwd, timeout, quiet=False):
+    """subprocess.run in a memory-limited job (not elevated, or not on Windows): its exit code, 124 on a timeout. With
+    quiet, its output is discarded as it comes (none of it is held here). What it started and left running is ended
+    when it ends or times out: on Windows everything in its job, elsewhere its process group."""
+    out = subprocess.DEVNULL if quiet else None
+    if os.name != "nt":
+        import signal
+        p = subprocess.Popen(command, env=env, cwd=cwd, stdout=out, stderr=out, start_new_session=True)
+        try:
+            return p.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            return 124
+        finally:
+            try:
+                os.killpg(p.pid, signal.SIGKILL)
+            except OSError:
+                pass  # nothing left in its group
+            try:
+                p.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                warn(f"process {p.pid} didn't end after SIGKILL")
+
+    ctypes, wintypes, advapi32, kernel32 = _win()
     job = memory_limited_job()
-    p = subprocess.Popen(command, env=env, cwd=cwd, stdout=subprocess.PIPE if capture else None,
-                         stderr=subprocess.PIPE if capture else None)
-    if job is not None:
-        assign_to_job(job, int(p._handle))
+    # CREATE_SUSPENDED: in the job before it runs, so nothing it starts escapes the job
+    p = subprocess.Popen(command, env=env, cwd=cwd, stdout=out, stderr=out, creationflags=0x4)
     try:
-        out, err = p.communicate(timeout=timeout)
-        code = p.returncode
-    except subprocess.TimeoutExpired:
-        p.kill()
-        out, err = p.communicate()
-        code = 124
+        assign_to_job(job, int(p._handle))
+        ntdll = ctypes.WinDLL("ntdll")
+        ntdll.NtResumeProcess.argtypes = [wintypes.HANDLE]
+        if ntdll.NtResumeProcess(int(p._handle)) != 0:
+            warn("NtResumeProcess failed")
+            p.kill()
+        try:
+            return p.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            if not end_job(job):
+                p.kill()
+            try:
+                p.wait(timeout=10)
+            except subprocess.TimeoutExpired:
+                warn(f"process {p.pid} didn't end after its timeout")
+            return 124
     finally:
         close_job(job)
-    return (code, out, err) if capture else code
 
 
 def run_medium(command, env, cwd, timeout):
@@ -185,7 +236,8 @@ def run_medium(command, env, cwd, timeout):
     kernel32.ResumeThread(pi.hThread)
     wait = kernel32.WaitForSingleObject(pi.hProcess, int(timeout * 1000))
     if wait != 0:  # WAIT_TIMEOUT
-        kernel32.TerminateProcess(pi.hProcess, 124)
+        if not end_job(job):
+            kernel32.TerminateProcess(pi.hProcess, 124)
         kernel32.WaitForSingleObject(pi.hProcess, 5000)
         print(f"unelevated.py: timed out after {timeout} s", file=sys.stderr)
         result = 124
@@ -211,8 +263,103 @@ def run(command, env_pairs, cwd, timeout):
     return run_medium(command, env, cwd, timeout)
 
 
+def process_alive(pid):
+    if os.name != "nt":
+        try:
+            with open(f"/proc/{pid}/stat", encoding="utf-8") as f:
+                return f.read().rsplit(")", 1)[1].split()[0] != "Z"
+        except OSError:
+            return False
+    ctypes, wintypes, advapi32, kernel32 = _win()
+    kernel32.OpenProcess.restype = wintypes.HANDLE
+    kernel32.WaitForSingleObject.argtypes = [wintypes.HANDLE, wintypes.DWORD]
+    kernel32.CloseHandle.argtypes = [wintypes.HANDLE]
+    h =kernel32.OpenProcess(0x00100000 | 0x1000, False, pid)  # SYNCHRONIZE | PROCESS_QUERY_LIMITED_INFORMATION
+    if not h:
+        return False
+    alive = kernel32.WaitForSingleObject(h, 0) != 0
+    kernel32.CloseHandle(h)
+    return alive
+
+
+def peak_memory():
+    """This process's peak memory use, in bytes"""
+    if os.name != "nt":
+        import resource
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss * 1024
+    ctypes, wintypes, advapi32, kernel32 = _win()
+
+    class COUNTERS(ctypes.Structure):
+        _fields_ = [("cb", wintypes.DWORD), ("PageFaultCount", wintypes.DWORD),
+                    ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                    ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                    ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                    ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t)]
+
+    c = COUNTERS()
+    c.cb = ctypes.sizeof(c)
+    psapi = ctypes.WinDLL("psapi")
+    psapi.GetProcessMemoryInfo.argtypes = [wintypes.HANDLE, ctypes.c_void_p, wintypes.DWORD]
+    psapi.GetProcessMemoryInfo(kernel32.GetCurrentProcess(), ctypes.byref(c), c.cb)
+    return max(c.PeakWorkingSetSize, c.PeakPagefileUsage)
+
+
+def self_test():
+    """A child's output isn't held in this process, and nothing a child started outlives it (after its end or its
+    timeout). Every child here ends on its own within a minute."""
+    import tempfile
+    failed = []
+    env = dict(os.environ)
+    py = sys.executable
+
+    # 256 MiB printed as fast as it goes
+    before = peak_memory()
+    code = run_limited([py, "-c", "import sys\nfor _ in range(256): sys.stdout.write('x' * 1048576)"], env, None, 60,
+                       quiet=True)
+    grew = peak_memory() - before
+    if code != 0 or grew > 64 * 1024 ** 2:
+        failed.append(f"output: exit {code}, this process grew by {grew // 1024 ** 2} MiB")
+
+    # A grandchild that would sleep for a minute, left behind by a child that ends or times out (2 s); in a job of
+    # this process's, and (elevated) at medium integrity
+    runners = [("", lambda cmd, timeout: run_limited(cmd, env, None, timeout))]
+    if integrity_above_medium():
+        runners.append(("medium integrity, ", lambda cmd, timeout: run_medium(cmd, env, None, timeout)))
+    with tempfile.TemporaryDirectory() as folder:
+        cases = itertools.product(runners, (("ended", 0, 30), ("timed out", 60, 2)))
+        for i, ((how, runner), (what, child_sleeps, timeout)) in enumerate(cases):
+            name = how + what
+            pid_file = os.path.join(folder, f"{i}.pid")
+            script = ("import subprocess, sys, time\n"
+                      "g = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+                      f"open({pid_file!r}, 'w').write(str(g.pid))\n"
+                      f"time.sleep({child_sleeps})\n")
+            code = runner([py, "-c", script], timeout)
+            try:
+                with open(pid_file, encoding="utf-8") as f:
+                    pid = int(f.read())
+            except (OSError, ValueError):
+                failed.append(f"{name}: the child wrote no grandchild pid (exit {code})")
+                continue
+            for _ in range(50):
+                if not process_alive(pid):
+                    break
+                time.sleep(0.1)
+            else:
+                failed.append(f"{name}: grandchild {pid} still running")
+            if (code == 124) != (timeout == 2):
+                failed.append(f"{name}: exit {code}")
+    if failed:
+        print("self-test FAILED: " + "; ".join(failed))
+        return 1
+    print("self-test passed")
+    return 0
+
+
 def main():
     argv = sys.argv[1:]
+    if argv == ["--self-test"]:
+        return self_test()
     if "--" not in argv:
         print(__doc__, file=sys.stderr)
         return 2
