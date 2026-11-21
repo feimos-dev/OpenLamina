@@ -311,6 +311,7 @@ add_custom_target(VersionHeader
 		-DOUT=${GENERATED_DIR}/version.h
 		-DOC_VERSION=${OC_VERSION}
 		-P ${CMAKE_SOURCE_DIR}/scripts/cmake/genversion.cmake
+	WORKING_DIRECTORY ${CMAKE_SOURCE_DIR}
 	BYPRODUCTS ${GENERATED_DIR}/version.h
 	VERBATIM
 )
