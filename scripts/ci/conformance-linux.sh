@@ -151,6 +151,11 @@ steamvr_run=app-type-answers,device-properties,init-again,chaperone-colours,subm
 run --cases "$steamvr_run" --script tests/conformance/scripts/controllers_on.json --out "$out"/steamvr-run
 # An overlay app and a background app that submit no frames see the controllers through IVRSystem
 run --cases helper-app-controllers --script tests/conformance/scripts/helper_apps_controllers.json --expect tests/conformance/expect/helper_app_controllers.json --out "$out"/helper-app-controllers
+# The session made again under a game: for its action manifest in the middle of a frame, after a seated zero pose
+# reset with its last frame still shown, and with a tracker it already knows
+run --cases manifest-mid-frame --manifest tests/unit/data/manifest_basic.json --expect tests/conformance/expect/manifest_mid_frame.json --out "$out"/manifest-mid-frame
+run --cases seated-zero-kept-frame --ini tests/conformance/ini/own_frames.ini --expect tests/conformance/expect/seated_zero_kept_frame.json --out "$out"/seated-zero-kept-frame
+run --cases tracker-restart --script tests/conformance/scripts/xdev_tracker.json --expect tests/conformance/expect/tracker_restart.json --out "$out"/tracker-restart
 
 echo "$failed failed"
 exit $((failed > 0))

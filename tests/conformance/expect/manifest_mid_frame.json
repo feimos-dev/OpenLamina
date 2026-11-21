@@ -1,0 +1,12 @@
+{
+ "#": "A game's first action manifest loaded between WaitGetPoses and Submit, after ten frames with no controller on (run.py --cases manifest-mid-frame --manifest ../unit/data/manifest_basic.json --expect expect/manifest_mid_frame.json): the session is made again for the game's actions with its frame open (the third session: OpenLamina's own, the one on the game's device, this one); the call returns, the frame's Submit and the next frames go on, and the actions are read",
+ "manifest-mid-frame/manifest/-/-": {
+  "SetActionManifestPath": 0,
+  "Submit left": 0,
+  "Submit right": 0,
+  "GetActionSetHandle": 0,
+  "UpdateActionState errors": 0,
+  "sessions_created": 3,
+  "frame_order_errors": 0
+ }
+}

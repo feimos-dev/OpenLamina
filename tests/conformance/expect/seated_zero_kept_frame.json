@@ -1,0 +1,9 @@
+{
+ "#": "A seated game that resets its seated zero pose after ten frames and then calls WaitGetPoses five times without Submit (run.py --cases seated-zero-kept-frame --ini ini/own_frames.ini --expect expect/seated_zero_kept_frame.json): each frame it waited for is ended with its last frame again, and every projection layer is in a reference space the runtime has, none in the seated space the reset replaced",
+ "seated-zero-kept-frame/frames/-/-": {
+  "zero_pose_reset": true,
+  "projection_layers_at_least_13": true,
+  "projection_layers_in_no_reference_space": 0,
+  "frame_order_errors": 0
+ }
+}

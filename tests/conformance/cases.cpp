@@ -3904,6 +3904,144 @@ void AppTypeAnswersCase(CaseContext& c)
 	}
 }
 
+// A game's first action manifest loaded in the middle of a frame, with no controller on (expect/manifest_mid_frame.json,
+// on the stand-in without a script, with --manifest manifest_basic.json): the session is made again for the game's
+// actions while its frame is open. The call returns, the frame goes on, and the actions are read on the new session.
+void ManifestMidFrameCase(CaseContext& c)
+{
+	using namespace vr::IVRInput_010;
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	vr::EVRInitError le;
+	auto* in = (IVRInput*)c.core->GetGenericInterface("IVRInput_010", &le);
+	if (!in) {
+		c.Record("no IVRInput_010", Err(le));
+		c.core->Cleanup();
+		return;
+	}
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	// Frames before the manifest: the session moves to the game's device and gets focus, and no controller is found
+	for (int frame = 0; frame < 10; frame++)
+		GameFrame(f, tex.get());
+
+	Json::Value r;
+	vr::TrackedDevicePose_t poses[16];
+	f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+	r["SetActionManifestPath"] = (int)in->SetActionManifestPath(c.manifest.c_str());
+	r["Submit left"] = (int)f.comp->Submit(vr::Eye_Left, tex.get(), nullptr, vr::Submit_Default);
+	r["Submit right"] = (int)f.comp->Submit(vr::Eye_Right, tex.get(), nullptr, vr::Submit_Default);
+	vr::VRActionSetHandle_t set = vr::k_ulInvalidActionSetHandle;
+	r["GetActionSetHandle"] = (int)in->GetActionSetHandle("/actions/main", &set);
+	int updateErrors = 0;
+	for (int frame = 0; frame < 5; frame++) {
+		f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+		VRActiveActionSet_t active{};
+		active.ulActionSet = set;
+		updateErrors += in->UpdateActionState(&active, sizeof(active), 1) != 0;
+		f.comp->Submit(vr::Eye_Left, tex.get(), nullptr, vr::Submit_Default);
+		f.comp->Submit(vr::Eye_Right, tex.get(), nullptr, vr::Submit_Default);
+	}
+	r["UpdateActionState errors"] = updateErrors;
+	c.core->Cleanup();
+	Json::Value dump = ReadStandInDump();
+	if (!dump.isNull()) {
+		// OpenLamina's own session, the one on the game's device, and the one made again for the game's actions
+		r["sessions_created"] = dump["sessions_created"];
+		r["frame_order_errors"] = dump["frame_order_errors"];
+	}
+	c.Record("manifest", r);
+}
+
+// A seated game whose seated zero pose is reset, and which then waits for frames without submitting
+// (expect/seated_zero_kept_frame.json, with ownFrames=true): each frame it waited for is ended with its last frame
+// again, in the seated space as it is now, not in the one the reset replaced
+void SeatedZeroKeptFrameCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	f.comp->SetTrackingSpace(vr::TrackingUniverseSeated);
+	for (int frame = 0; frame < 10; frame++)
+		GameFrame(f, tex.get());
+	vr::EVRInitError le;
+	auto* chap = (vr::IVRChaperone_004::IVRChaperone*)c.core->GetGenericInterface("IVRChaperone_004", &le);
+	if (chap)
+		chap->ResetZeroPose(vr::TrackingUniverseSeated);
+	// The first wait begins a frame; each of the next four ends the one before with the game's last frame again
+	for (int frame = 0; frame < 5; frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+	}
+	c.core->Cleanup();
+
+	Json::Value r;
+	r["zero_pose_reset"] = chap != nullptr;
+	Json::Value dump = ReadStandInDump();
+	if (!dump.isNull()) {
+		int projections = 0, unknown = 0;
+		for (const Json::Value& layer : dump["layers"]) {
+			if (layer["type"].asString() != "projection")
+				continue;
+			projections++;
+			// A space the runtime doesn't have (any more) is named "other", as an action space is
+			unknown += layer["space"].asString() == "other";
+		}
+		// Nine or ten of the game's own (its first may be lost to the session's move onto its device) and four again
+		r["projection_layers_at_least_13"] = projections >= 13;
+		r["projection_layers_in_no_reference_space"] = unknown;
+		r["frame_order_errors"] = dump["frame_order_errors"];
+	}
+	c.Record("frames", r);
+}
+
+// A tracker the game knows before its first Submit (expect/tracker_restart.json, on the stand-in with
+// scripts/xdev_tracker.json: one tracker, at (0, 1, 0)): the first Submit makes the session again on the game's
+// device, and the tracker is where it was straight after, with no second activation told to the game
+void TrackerRestartCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	const vr::TrackedDeviceIndex_t index = 3; // the first after the headset and the two hands
+	auto tracker = [&] {
+		vr::TrackedDevicePose_t poses[16]{};
+		f.sys->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding, 0, poses, 16);
+		const vr::HmdMatrix34_t& m = poses[index].mDeviceToAbsoluteTracking;
+		Json::Value t;
+		t["is_a_tracker"] = f.sys->GetTrackedDeviceClass(index) == vr::TrackedDeviceClass_GenericTracker;
+		t["valid"] = poses[index].bPoseIsValid;
+		t["at"] = ThousandthsOf({ { m.m[0][3], m.m[1][3], m.m[2][3] } });
+		return t;
+	};
+	int activations = 0;
+	auto poll = [&] {
+		vr::VREvent_t ev{};
+		for (int n = 0; n < 256 && f.sys->PollNextEvent(&ev, sizeof(ev)); n++)
+			activations += ev.eventType == vr::VREvent_TrackedDeviceActivated && ev.trackedDeviceIndex == index;
+	};
+
+	Json::Value r;
+	// Listed by the first pose call, on OpenLamina's own session
+	r["before_the_first_submit"] = tracker();
+	poll();
+	GameFrame(f, tex.get());
+	r["after_the_first_submit"] = tracker();
+	for (int frame = 0; frame < 10; frame++) {
+		GameFrame(f, tex.get());
+		poll();
+	}
+	r["after_ten_frames"] = tracker();
+	r["activations"] = activations;
+	c.core->Cleanup();
+	Json::Value dump = ReadStandInDump();
+	if (!dump.isNull())
+		r["sessions_created"] = dump["sessions_created"];
+	c.Record("tracker", r);
+}
+
 } // namespace
 
 const std::map<std::string, CaseFn>& conformance::Cases()
@@ -3961,6 +4099,9 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "display-frequency", DisplayFrequencyCase },
 		{ "render-models", RenderModelsCase },
 		{ "app-type-answers", AppTypeAnswersCase },
+		{ "manifest-mid-frame", ManifestMidFrameCase },
+		{ "seated-zero-kept-frame", SeatedZeroKeptFrameCase },
+		{ "tracker-restart", TrackerRestartCase },
 	};
 	static const std::map<std::string, CaseFn> all = [] {
 		std::map<std::string, CaseFn> m = cases;
