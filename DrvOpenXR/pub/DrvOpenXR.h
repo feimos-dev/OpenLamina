@@ -1,6 +1,7 @@
 #pragma once
 #include "../OpenOVR/Drivers/Backend.h"
 
+#include <chrono>
 #include <openxr/openxr.h>
 #include <optional>
 #include <string>
@@ -35,4 +36,7 @@ XrResult CreateInstanceNewestVersion(XrInstanceCreateInfo createInfo, XrInstance
 void KeepOverlaysInstance();
 // Stops OpenLamina's own frames for good, before VR_Shutdown destroys the interfaces their layers come from
 void StopOwnFrames();
+// A program exiting without VR_Shutdown (Linux's exit handler): ends the OpenXR instance, and with it the session, if
+// the session lock is free within limit, and frees nothing else. False if the lock wasn't got: nothing was ended.
+bool EndInstanceAtExit(std::chrono::milliseconds limit);
 }; // namespace DrvOpenXR

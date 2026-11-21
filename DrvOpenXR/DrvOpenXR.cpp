@@ -814,3 +814,26 @@ void DrvOpenXR::FullShutdown()
 	currentBackend = nullptr;
 	SetCurrentSessionKind(SessionKind::Scene);
 }
+
+bool DrvOpenXR::EndInstanceAtExit(std::chrono::milliseconds limit)
+{
+	// Only with the lock: a thread inside a call (a render thread in WaitGetPoses holds it shared) may still be using the
+	// session on native Linux, where exit() leaves the other threads running. Under Proton a thread the process's end
+	// stopped may hold it for good: then nothing is ended, and the runtime sees the program's connection close instead.
+	const auto until = std::chrono::steady_clock::now() + limit;
+	for (;;) {
+		auto lock = xr_session.try_lock();
+		if (lock.IsExclusive()) {
+			// Destroying the instance destroys the session and every other handle made on it (OpenXR 1.0, 2.4); nothing
+			// is freed, so a thread that comes back later finds null handles, not freed objects
+			if (xr_instance != XR_NULL_HANDLE && XR_FAILED(xrDestroyInstance(xr_instance)))
+				OOVR_LOG("xrDestroyInstance failed at exit");
+			xr_session.reset();
+			xr_instance = XR_NULL_HANDLE;
+			return true;
+		}
+		if (std::chrono::steady_clock::now() >= until)
+			return false;
+		std::this_thread::sleep_for(std::chrono::milliseconds(5));
+	}
+}

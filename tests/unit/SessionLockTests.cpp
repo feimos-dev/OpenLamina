@@ -250,3 +250,30 @@ TEST_CASE("SessionLock: the teardown lock gives up on a holder that never lets g
 		CHECK(WaitFor([&] { return reader.got.load(); }));
 	}
 }
+
+#include "DrvOpenXR.h"
+
+TEST_CASE("Ending_the_instance_at_exit_waits_only_a_bounded_time_for_a_call_in_flight")
+{
+	// No instance here: only whether the lock is got, and how long that takes
+	REQUIRE(xr_instance == XR_NULL_HANDLE);
+
+	// Free: ended at once
+	CHECK(DrvOpenXR::EndInstanceAtExit(100ms));
+
+	// A thread inside a call holds the lock shared and never returns (a render thread stopped by the process's end)
+	std::atomic<bool> holding{ false }, release{ false };
+	std::thread caller([&] {
+		auto lock = xr_session.lock_shared();
+		holding = true;
+		WaitFor([&] { return release.load(); }, 10s);
+	});
+	REQUIRE(WaitFor([&] { return holding.load(); }));
+	const auto start = std::chrono::steady_clock::now();
+	CHECK_FALSE(DrvOpenXR::EndInstanceAtExit(100ms));
+	const auto took = std::chrono::steady_clock::now() - start;
+	CHECK(took >= 100ms);
+	CHECK(took < 2s);
+	release = true;
+	caller.join();
+}

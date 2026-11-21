@@ -18,6 +18,7 @@
 #include "Misc/xrutil.h"
 #include "logging.h"
 #include "steamvr_abi.h"
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <functional>
@@ -25,6 +26,7 @@
 #include <memory>
 #include <mutex>
 #include <set>
+#include <thread>
 
 #include "Misc/Config.h"
 #include "Misc/EnumNames.h"
@@ -303,17 +305,46 @@ void oc_abandon_at_exit()
 
 #ifndef _WIN32
 // A game exiting without VR_Shutdown: runs before the static destructors of the bundled OpenXR loader and of the
-// runtime, which the session's teardown still calls into. Registered per session, as the runtime's statics are made
-// anew each time it is loaded.
-static void ShutdownAtExit()
+// runtime, which a teardown would still call into. Registered per session, as the runtime's statics are made anew each
+// time it is loaded.
+// Bounded, and frees nothing: under Proton the game's other threads may have been stopped while holding a lock, which
+// a full shutdown would wait for (the game then never finishes exiting); on native Linux they are still running, and
+// may be inside a call. So: the OpenXR instance (and its session) ended if the locks come free within a second each,
+// then the interfaces and the backend abandoned, as at a Windows process exit (oc_abandon_at_exit).
+static void ShutdownAtExitBody()
 {
-	std::lock_guard<std::recursive_mutex> lock(state_mutex);
+	constexpr auto limit = std::chrono::seconds(1);
+	std::unique_lock<std::recursive_mutex> lock(state_mutex, std::defer_lock);
+	for (const auto until = std::chrono::steady_clock::now() + limit; !lock.try_lock();) {
+		if (std::chrono::steady_clock::now() >= until) {
+			OOVR_LOG("The program is exiting without VR_Shutdown, and another thread holds OpenLamina's state: leaving the session to the runtime");
+			// Abandoned all the same, or the static destructors would tear down into the runtime's destroyed statics.
+			// Without the lock: under Proton its holder is stopped; on native Linux a thread inside Init or an interface
+			// lookup for a second is rare.
+			oc_abandon_at_exit();
+			return;
+		}
+		std::this_thread::sleep_for(std::chrono::milliseconds(5));
+	}
 	if (!running)
 		return;
-	OOVR_LOG("The program is exiting without VR_Shutdown: shutting OpenLamina down");
-	scene_init_count = 1;
-	refused_init_count = 0;
-	VR_ShutdownInternal();
+	OOVR_LOG("The program is exiting without VR_Shutdown: ending the OpenXR session");
+
+	// What the program asked for that OpenLamina doesn't do, as VR_Shutdown logs it
+	oc_soft_log_summary();
+
+	if (!DrvOpenXR::EndInstanceAtExit(limit))
+		OOVR_LOG("Another thread is inside a call: leaving the session to the runtime");
+	oc_abandon_at_exit();
+	running = false;
+}
+
+static void ShutdownAtExit()
+{
+	// An exception leaving an exit handler would end the process with std::terminate
+	try {
+		ShutdownAtExitBody();
+	} OC_ENTRY_CATCH("the exit handler")
 }
 #endif
 
