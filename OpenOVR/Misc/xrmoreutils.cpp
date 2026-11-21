@@ -150,8 +150,11 @@ void xr_utils::PoseFromHandTracking(vr::TrackedDevicePose_t* pose, XrHandJointLo
 	pose->mDeviceToAbsoluteTracking = G2S_m34(gripPoseMatrix);
 
 	pose->bDeviceIsConnected = true;
-	pose->bPoseIsValid = true;
+	// Valid only with the palm's position tracked too, as a pose from a space is
+	pose->bPoseIsValid = (palmJoint.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0;
 	pose->eTrackingResult = pose->bPoseIsValid ? vr::TrackingResult_Running_OK : vr::TrackingResult_Running_OutOfRange;
-	pose->vVelocity = X2S_v3f(velocity.linearVelocity); // No offsetting transform - this is in world-space
-	pose->vAngularVelocity = X2S_v3f(velocity.angularVelocity); // TODO find out if this needs a transform
+	// The velocities where the runtime gives them (zero otherwise); no offsetting transform, they are in world space
+	const XrVector3f still{ 0, 0, 0 };
+	pose->vVelocity = X2S_v3f((velocity.velocityFlags & XR_SPACE_VELOCITY_LINEAR_VALID_BIT) ? velocity.linearVelocity : still);
+	pose->vAngularVelocity = X2S_v3f((velocity.velocityFlags & XR_SPACE_VELOCITY_ANGULAR_VALID_BIT) ? velocity.angularVelocity : still);
 }
