@@ -141,6 +141,12 @@ XrBackend::~XrBackend()
 	// in their destructor.
 	PrepareForSessionShutdown();
 
+	// The trackers' spaces before the instance they were made on: they'd otherwise be destroyed with the members
+	{
+		std::unique_lock trackersLock(generic_trackers_mutex);
+		generic_trackers.clear();
+	}
+
 	// Only here and not in PrepareForSessionShutdown, which also runs when the session is restarted
 	if (BaseClientCore::appType == vr::VRApplication_Scene)
 		BaseApplications::SetSceneProcess(false);
