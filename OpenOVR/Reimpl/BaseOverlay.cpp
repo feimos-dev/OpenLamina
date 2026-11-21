@@ -627,6 +627,13 @@ static bool IsFinite(const glm::vec3& v)
 	return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
 }
 
+// The backend, or null: there's none before the runtime is set up, or after it's shut down
+static XrBackend* OverlayBackend()
+{
+	BackendManager* manager = BackendManager::InstancePtr();
+	return manager ? (XrBackend*)manager->GetBackendInstance() : nullptr;
+}
+
 // The seated origin in the standing one (none if the runtime can't say)
 static XrPosef SeatedInStanding()
 {
@@ -2602,9 +2609,7 @@ void BaseOverlay::DestroyLocked(OverlayData* overlay)
 		for (auto it = other.neighbours.begin(); it != other.neighbours.end();)
 			it = it->second == ulOverlayHandle ? other.neighbours.erase(it) : std::next(it);
 	}
-	// (there's no backend before the runtime is set up, or after it's shut down)
-	BackendManager* manager = BackendManager::InstancePtr();
-	if (auto* backend = manager ? (XrBackend*)manager->GetBackendInstance() : nullptr) {
+	if (XrBackend* backend = OverlayBackend()) {
 		if (std::shared_ptr<Compositor> comp = overlay->compositor.lock())
 			backend->UnregisterOverlayCompositor(comp);
 		backend->ForgetOverlayTextures(overlay);
@@ -3973,12 +3978,13 @@ EVROverlayError BaseOverlay::ClearOverlayTexture(VROverlayHandle_t ulOverlayHand
 	overlay->raw.reset();
 	overlay->rawImage = {};
 
-	auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
-	if (std::shared_ptr<Compositor> comp = overlay->compositor.lock())
+	XrBackend* backend = OverlayBackend();
+	if (std::shared_ptr<Compositor> comp = overlay->compositor.lock(); comp && backend)
 		backend->UnregisterOverlayCompositor(comp);
 	overlay->compositor.reset();
 	// An overlay application's textures were copied through shared ones, kept for the next copy: none comes
-	backend->ForgetOverlayTextures(overlay);
+	if (backend)
+		backend->ForgetOverlayTextures(overlay);
 	return VROverlayError_None;
 }
 EVROverlayError BaseOverlay::SetOverlayRaw(VROverlayHandle_t ulOverlayHandle, void* pvBuffer, uint32_t unWidth, uint32_t unHeight, uint32_t unDepth)
@@ -4002,9 +4008,10 @@ EVROverlayError BaseOverlay::SetOverlayRaw(VROverlayHandle_t ulOverlayHandle, vo
 
 	// An image replaces a texture: shown as a texture overlay is, through its own swapchain
 	if (std::shared_ptr<Compositor> comp = overlay->compositor.lock()) {
-		auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
-		backend->UnregisterOverlayCompositor(comp);
-		backend->ForgetOverlayTextures(overlay);
+		if (XrBackend* backend = OverlayBackend()) {
+			backend->UnregisterOverlayCompositor(comp);
+			backend->ForgetOverlayTextures(overlay);
+		}
 	}
 	overlay->compositor.reset();
 	overlay->SetTexture({});

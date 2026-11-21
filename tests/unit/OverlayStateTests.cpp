@@ -3,11 +3,13 @@
 
 #include "stdafx.h"
 
+#include "Drivers/Backend.h"
 #include "Misc/Process.h"
 #include "Misc/Dashboard.h"
 #include "Misc/SharedStore.h"
 #include "Reimpl/BaseOverlay.h"
 
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -336,4 +338,13 @@ TEST_CASE("A_texture_not_copied_yet_has_the_size_it_says")
 	CHECK_FALSE(OverlayTextureSize(none));
 	Texture_t gl{ (void*)(uintptr_t)1, TextureType_OpenGL, ColorSpace_Auto };
 	CHECK_FALSE(OverlayTextureSize(gl));
+}
+
+TEST_CASE("Clearing_an_overlay_s_texture_needs_no_runtime")
+{
+	REQUIRE(BackendManager::InstancePtr() == nullptr);
+	BaseOverlay overlays;
+	const VROverlayHandle_t h = Make(overlays, "oc.test.clear");
+	CHECK(overlays.ClearOverlayTexture(h) == VROverlayError_None);
+	CHECK(overlays.ClearOverlayTexture((VROverlayHandle_t)0x1234) == VROverlayError_InvalidHandle);
 }
