@@ -321,6 +321,8 @@ struct OverlayTextureCopy::Impl {
 			shared.MipLevels = 1;
 			shared.DepthOrArraySize = 1;
 			shared.SampleDesc = { 1, 0 };
+			// A multisampled source's alignment (4 MB) is for multisampled resources only: the default suits any
+			shared.Alignment = 0;
 			shared.Layout = D3D12_TEXTURE_LAYOUT_UNKNOWN;
 			D3D12_HEAP_PROPERTIES heap{};
 			heap.Type = D3D12_HEAP_TYPE_DEFAULT;
