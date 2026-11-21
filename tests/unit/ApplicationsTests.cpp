@@ -1379,11 +1379,12 @@ TEST_CASE("Overlay_command_crosses_between_programs")
 }
 #ifndef _WIN32
 namespace {
-// A child process that sleeps until it's ended, and its start time once it's running
+// A child process that sleeps until it's ended (at most a minute), and its start time once it's running
 pid_t SleepingChild(uint64_t& start)
 {
 	const pid_t child = fork();
 	if (child == 0) {
+		alarm(60); // ends it after a minute if the test fails before ending it
 		for (;;)
 			pause();
 	}
