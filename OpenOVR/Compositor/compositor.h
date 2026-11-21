@@ -46,10 +46,11 @@ inline vr::VRTextureBounds_t Bounds(const vr::VRTextureBounds_t* bounds)
 // Mirrors an image left to right and/or top to bottom
 void FlipImage(Image& image, bool flipX, bool flipY);
 
-// SubmitWithArrayIndex's slice, for the Invoke calls made on this thread while it's in scope
+// SubmitWithArrayIndex's slice, for the Invoke calls made on this thread while it's in scope (none: a texture of one
+// slice, such as the interop's copy of the slice)
 class SubmitArraySlice {
 public:
-	explicit SubmitArraySlice(uint32_t slice);
+	explicit SubmitArraySlice(std::optional<uint32_t> slice);
 	~SubmitArraySlice();
 	static std::optional<uint32_t> Current();
 
@@ -70,6 +71,14 @@ public:
 	 * bounds flipped), as RGBA8. False, logged once, where that isn't possible (an API or format without a readback).
 	 */
 	virtual bool ReadbackToCpu(const vr::Texture_t* tex, const vr::VRTextureBounds_t* bounds, Image& out);
+	/**
+	 * Draws six cube faces of this compositor's API (front, back, left, right, top, bottom, as SetSkyboxOverride takes
+	 * them) into one lat-long image of a swapchain of its own, on the GPU, as CubeFacesToEquirect does on the CPU: up to
+	 * maxWidth wide, four faces across, half as high. True with subImage set to it; false where this compositor has no
+	 * such pass or the faces can't go through it (the caller then joins them on the CPU). A compositor used for this
+	 * is used for nothing else.
+	 */
+	virtual bool InvokeCubemap(const vr::Texture_t* faces, uint32_t maxWidth, XrSwapchainSubImage& subImage) { return false; }
 
 	/**
 	 * For a compositor that carries depth: copies a depth texture of its API into an image of a depth swapchain of the

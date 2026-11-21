@@ -2705,6 +2705,42 @@ void OwnFramesNothingShownCase(CaseContext& c)
 	c.Record("frames", r);
 }
 
+// A game that stalls in a fade to black (expect/own_frames.json, with ownFrames=true): 10 frames, an instant fade to
+// opaque black, 2 more frames, then half a second without any call and nothing else shown. The visible fade keeps
+// OpenLamina's own frames going, and each of them draws it over the game's last frame: at least 30 frames with both the
+// game's frame and an opaque black quad (the fade; nothing else shows a quad here).
+void OwnFramesFadeCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	for (int frame = 0; frame < 10; frame++)
+		GameFrame(f, tex.get());
+	f.comp->FadeToColor(0, 0, 0, 0, 1, false);
+	for (int frame = 0; frame < 2; frame++)
+		GameFrame(f, tex.get());
+	std::this_thread::sleep_for(std::chrono::milliseconds(500));
+	c.core->Cleanup();
+
+	Json::Value r;
+	Json::Value dump = ReadStandInDump();
+	if (!dump.isNull()) {
+		std::map<int64_t, std::pair<bool, bool>> frames; // frame: black quad, projection
+		for (const Json::Value& layer : dump["layers"]) {
+			auto& fr = frames[layer["frame"].asInt64()];
+			fr.first |= layer["type"].asString() == "quad" && layer["samples"]["tl"].asString() == "000000ff";
+			fr.second |= layer["type"].asString() == "projection";
+		}
+		int faded = 0;
+		for (auto& [frame, fr] : frames)
+			faded += fr.first && fr.second;
+		r["faded_frames_at_least_30"] = faded >= 30;
+		r["frame_order_errors"] = dump["frame_order_errors"];
+	}
+	c.Record("frames", r);
+}
+
 // The game stalling and coming back again and again while another thread reads input (expect/own_frames.json): 20
 // rounds of 5 frames and a 150 ms pause, each pause long enough for OpenLamina's own frames to start, so the game's
 // next frame often meets one of them. No frame call may come out of order, and nothing may crash.
@@ -3722,6 +3758,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "own-frames", OwnFramesCase },
 		{ "own-frames-race", OwnFramesRaceCase },
 		{ "own-frames-nothing-shown", OwnFramesNothingShownCase },
+		{ "own-frames-fade", OwnFramesFadeCase },
 		{ "own-frames-overlay-churn", OwnFramesOverlayChurnCase },
 		{ "laser-mouse", LaserMouseCase },
 		{ "message-overlay", MessageOverlayCase },

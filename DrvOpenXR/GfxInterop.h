@@ -24,9 +24,18 @@ public:
 	static std::unique_ptr<GfxInterop> ForVulkan(VkInstance instance, VkPhysicalDevice physicalDevice, VkDevice device, VkQueue queue, ID3D11Device* onDevice = nullptr);
 #endif
 
-	// The D3D11 texture holding this frame's copy of tex (the whole of its first layer, upright as shown, which the
-	// bounds then apply to); nullptr (logged) if it couldn't be copied
-	virtual ID3D11Texture2D* CopyIn(const vr::Texture_t* tex, const vr::VRTextureBounds_t* bounds) = 0;
+	// What CopyIn made: the D3D11 texture holding this frame's copy (nullptr, logged, if it couldn't be copied), and
+	// whether it lies with the source's rows as they are. That's upside down as shown for an OpenGL source read from
+	// samples (a renderbuffer, a multisampled texture), which a blit resolves but can't also turn over: the bounds turn
+	// it then.
+	struct Copied {
+		ID3D11Texture2D* texture = nullptr;
+		bool upsideDown = false;
+	};
+	// Copies the whole of tex's layer that's shown: SubmitWithArrayIndex's slice, else the one the submit flags name
+	// (Submit_GlArrayTexture: the eye's; Submit_VulkanTextureWithArrayData: the data's), else the first. Upright as
+	// shown (but see Copied), which the bounds then apply to.
+	virtual Copied CopyIn(const vr::Texture_t* tex, vr::EVRSubmitFlags submitFlags, int eye) = 0;
 
 	// The texture type copied through D3D11
 	virtual vr::ETextureType Type() const = 0;

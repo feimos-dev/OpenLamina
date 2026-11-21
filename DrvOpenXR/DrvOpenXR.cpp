@@ -212,8 +212,12 @@ InstancePlan PlanInstance(const std::set<std::string>& available, SessionKind ki
 	}
 #endif
 #if defined(SUPPORT_VK)
+	// XR_KHR_vulkan_enable where it's there (its extension lists are what a game's own device needs), else enable2
 	if (available.count(XR_KHR_VULKAN_ENABLE_EXTENSION_NAME)) {
 		plan.extensions.push_back(XR_KHR_VULKAN_ENABLE_EXTENSION_NAME);
+		plan.apiFlags |= XR_SUPPORTED_GRAPHICS_API_VK;
+	} else if (available.count(XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME)) {
+		plan.extensions.push_back(XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME);
 		plan.apiFlags |= XR_SUPPORTED_GRAPHICS_API_VK;
 	}
 #endif

@@ -29,6 +29,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <cstdio>
 #include <cstring>
 #include <deque>
 #include <map>
@@ -1039,7 +1040,7 @@ void RecordPlacement(Json::Value& entry, XrSpace space, const XrQuaternionf* q, 
 // rect, array_index, format, image (the swapchain's width and height) and (when sample) samples of a sub-image, with the spec's checks of it; prefix names
 // the image in the checks ("depth " for a depth sub-image)
 void RecordSubImage(RtSession* s, Json::Value& entry, const XrSwapchainSubImage& sub, bool sample,
-    std::vector<std::string>& invalid, const std::string& prefix = "")
+    std::vector<std::string>& invalid, const std::string& prefix = "", bool grid = false)
 {
 	const XrRect2Di& r = sub.imageRect;
 	entry["rect"] = Json::Value(Json::arrayValue);
@@ -1075,9 +1076,25 @@ void RecordSubImage(RtSession* s, Json::Value& entry, const XrSwapchainSubImage&
 	SwapchainImage image{ s, sc, (uint32_t)sc->lastReleased };
 	Samples samples;
 	std::string why;
-	if (ProbeSamples(image, r, sub.imageArrayIndex, samples, &why))
+	// grid: 8 x 4 more samples, at the cells' centres, rows from the top
+	std::vector<std::pair<float, float>> points;
+	if (grid) {
+		for (int row = 0; row < 4; row++)
+			for (int col = 0; col < 8; col++)
+				points.push_back({ (col + 0.5f) / 8, (row + 0.5f) / 4 });
+	}
+	std::vector<uint32_t> cells;
+	if (ProbeSamples(image, r, sub.imageArrayIndex, samples, &why, grid ? &points : nullptr, &cells)) {
 		entry["samples"] = SamplesJson(samples);
-	else
+		if (grid) {
+			entry["grid"] = Json::Value(Json::arrayValue);
+			for (uint32_t cell : cells) {
+				char hex[9];
+				std::snprintf(hex, sizeof(hex), "%08x", cell);
+				entry["grid"].append(hex);
+			}
+		}
+	} else
 		entry["samples_error"] = why; // a frame that should have pixels says why it hasn't
 }
 
@@ -1204,7 +1221,7 @@ Json::Value RecordLayer(RtSession* s, const XrCompositionLayerBaseHeader* layer,
 		    || eq->lowerVerticalAngle > eq->upperVerticalAngle)
 			Invalid(invalid, "vertical angles out of range");
 		NeedExtension("XR_KHR_composition_layer_equirect2", "equirect2", invalid);
-		RecordSubImage(s, entry, eq->subImage, sample, invalid);
+		RecordSubImage(s, entry, eq->subImage, sample, invalid, "", true);
 		break;
 	}
 	case XR_TYPE_COMPOSITION_LAYER_CUBE_KHR: {

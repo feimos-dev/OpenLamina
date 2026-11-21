@@ -1,5 +1,5 @@
 {
- "#": "Skyboxes with ownFrames=true (run.py --cases skybox-1,skybox-2,skybox-6 --script scripts/skybox.json --ini ini/own_frames.ini): set while the game stalls, shown in OpenLamina's own frames as equirect layers, upright. 1 texture: one lat-long layer; 2: one per eye; 6 cube faces: one lat-long image made from them (1024x512 from 256x256 faces), whose top-left is straight up: the middle of the top face, the pattern's mid-grey block, which comes through as it went in.",
+ "#": "Skyboxes with ownFrames=true (run.py --cases skybox-1,skybox-2,skybox-6 --script scripts/skybox.json --ini ini/own_frames.ini): set while the game stalls, shown in OpenLamina's own frames as equirect layers, upright. 1 texture: one lat-long layer; 2: one per eye; 6 cube faces: one lat-long image made from them (1024x512 from 256x256 faces), whose top-left is straight up: the middle of the top face, the pattern's mid-grey block, which comes through as it went in. Each lat-long layer's grid: 8 x 4 samples at the cells' centres, rows from the top (the stand-in's); the six faces' is the CPU join's, which the GPU pass matches.",
  "skybox-1/skybox/-/-": {
   "set": 0,
   "frames_with_skybox_at_least_10": true,
@@ -14,7 +14,41 @@
      256
     ],
     "tl": "ff0000ff",
-    "invalid": []
+    "invalid": [],
+    "grid": [
+     "ff0000ff",
+     "ff0000ff",
+     "ff0000ff",
+     "ff0000ff",
+     "00ff00ff",
+     "00ff00ff",
+     "00ff00ff",
+     "00ff00ff",
+     "ff0000ff",
+     "ff0000ff",
+     "ff0000ff",
+     "808080ff",
+     "808080ff",
+     "00ff00ff",
+     "00ff00ff",
+     "00ff00ff",
+     "0000ffff",
+     "0000ffff",
+     "0000ffff",
+     "0000ffff",
+     "ffffffff",
+     "ffffffff",
+     "ffffffff",
+     "ffffffff",
+     "0000ffff",
+     "0000ffff",
+     "0000ffff",
+     "0000ffff",
+     "ffffffff",
+     "ffffffff",
+     "ffffffff",
+     "ffffffff"
+    ]
    }
   ]
  },
@@ -32,7 +66,41 @@
      256
     ],
     "tl": "ff0000ff",
-    "invalid": []
+    "invalid": [],
+    "grid": [
+     "ff0000ff",
+     "ff0000ff",
+     "ff0000ff",
+     "ff0000ff",
+     "00ff00ff",
+     "00ff00ff",
+     "00ff00ff",
+     "00ff00ff",
+     "ff0000ff",
+     "ff0000ff",
+     "ff0000ff",
+     "808080ff",
+     "808080ff",
+     "00ff00ff",
+     "00ff00ff",
+     "00ff00ff",
+     "0000ffff",
+     "0000ffff",
+     "0000ffff",
+     "0000ffff",
+     "ffffffff",
+     "ffffffff",
+     "ffffffff",
+     "ffffffff",
+     "0000ffff",
+     "0000ffff",
+     "0000ffff",
+     "0000ffff",
+     "ffffffff",
+     "ffffffff",
+     "ffffffff",
+     "ffffffff"
+    ]
    },
    {
     "type": "equirect2",
@@ -44,7 +112,41 @@
      256
     ],
     "tl": "0000ffff",
-    "invalid": []
+    "invalid": [],
+    "grid": [
+     "0000ffff",
+     "0000ffff",
+     "0000ffff",
+     "0000ffff",
+     "ff0000ff",
+     "ff0000ff",
+     "ff0000ff",
+     "ff0000ff",
+     "0000ffff",
+     "0000ffff",
+     "0000ffff",
+     "808080ff",
+     "808080ff",
+     "ff0000ff",
+     "ff0000ff",
+     "ff0000ff",
+     "ffffffff",
+     "ffffffff",
+     "ffffffff",
+     "ffffffff",
+     "00ff00ff",
+     "00ff00ff",
+     "00ff00ff",
+     "00ff00ff",
+     "ffffffff",
+     "ffffffff",
+     "ffffffff",
+     "ffffffff",
+     "00ff00ff",
+     "00ff00ff",
+     "00ff00ff",
+     "00ff00ff"
+    ]
    }
   ]
  },
@@ -62,7 +164,41 @@
      512
     ],
     "tl": "808080ff",
-    "invalid": []
+    "invalid": [],
+    "grid": [
+     "ff0000ff",
+     "ff0000ff",
+     "0000ffff",
+     "0000ffff",
+     "ffffffff",
+     "ffffffff",
+     "00ff00ff",
+     "00ff00ff",
+     "ff0000ff",
+     "ff0000ff",
+     "00ff00ff",
+     "ff0000ff",
+     "00ff00ff",
+     "0000ffff",
+     "ff0000ff",
+     "0000ffff",
+     "00ff00ff",
+     "0000ffff",
+     "ffffffff",
+     "0000ffff",
+     "ffffffff",
+     "ffffffff",
+     "00ff00ff",
+     "ffffffff",
+     "ffffffff",
+     "ffffffff",
+     "0000ffff",
+     "0000ffff",
+     "ff0000ff",
+     "ff0000ff",
+     "00ff00ff",
+     "00ff00ff"
+    ]
    }
   ]
  }

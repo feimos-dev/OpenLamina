@@ -459,7 +459,9 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex, bool moveToNewD
 				OOVR_LOG_ONCE("The OpenVR app's Vulkan texture data has no instance, device or queue");
 				return false;
 			}
-			if (!xr_ext->xrGetVulkanGraphicsDeviceKHR_Available() && runtimeHasD3D11) {
+			// Also where the runtime has XR_KHR_vulkan_enable2 alone: the game's own device has none of the runtime's
+			// extensions (there's no list to tell it), and the interop's are what GetVulkan*ExtensionsRequired answered
+			if ((!xr_ext->xrGetVulkanGraphicsDeviceKHR_Available() || xr_ext->VulkanEnable2Only()) && runtimeHasD3D11) {
 				interop = GfxInterop::ForVulkan(vktex->m_pInstance, vktex->m_pPhysicalDevice, vktex->m_pDevice, vktex->m_pQueue);
 				if (!interop) {
 					OOVR_LOG("The OpenXR runtime has no Vulkan, and the game's Vulkan frames can't go through D3D11");
@@ -1073,23 +1075,31 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 #if defined(_WIN32) && defined(SUPPORT_DX) && defined(SUPPORT_DX11)
 	vr::Texture_t copied;
 	vr::VRTextureBounds_t copiedBounds;
+	// The copy holds the slice SubmitWithArrayIndex named, as a texture of one slice
+	std::optional<SubmitArraySlice> copiedSlice;
 	if (gfxInterop && texture->eType == gfxInterop->Type()) {
-		ID3D11Texture2D* copy = gfxInterop->CopyIn(texture, bounds);
-		if (!copy) {
+		const GfxInterop::Copied copy = gfxInterop->CopyIn(texture, submitFlags, (int)eye);
+		if (!copy.texture) {
 			layer.subImage.swapchain = XR_NULL_HANDLE;
 			return kCompositorRequestFailed;
 		}
 		// An OpenGL texture's rows run bottom-up and its copy's top-down: the bounds' v, which counted from the bottom,
-		// counts from the top of the copy
-		if (bounds && texture->eType == vr::TextureType_OpenGL) {
-			copiedBounds = { bounds->uMin, 1 - bounds->vMax, bounds->uMax, 1 - bounds->vMin };
+		// counts from the top of the copy. A copy left upside down keeps the bounds' v, and the bounds turn it over
+		// (vMin > vMax), which the compositor's pass does.
+		if (texture->eType == vr::TextureType_OpenGL) {
+			const vr::VRTextureBounds_t given = Bounds(bounds);
+			if (copy.upsideDown)
+				copiedBounds = { given.uMin, given.vMax, given.uMax, given.vMin };
+			else
+				copiedBounds = { given.uMin, 1 - given.vMax, given.uMax, 1 - given.vMin };
 			bounds = &copiedBounds;
 		}
-		copied = { copy, vr::TextureType_DirectX, texture->eColorSpace };
+		copied = { copy.texture, vr::TextureType_DirectX, texture->eColorSpace };
 		texture = &copied;
+		copiedSlice.emplace(std::nullopt);
 		// A D3D11 compositor for the interop's texture
 		if (!compositors[eye])
-			compositors[eye] = std::make_unique<DX11Compositor>(copy);
+			compositors[eye] = std::make_unique<DX11Compositor>(copy.texture);
 	}
 #endif
 
@@ -1539,7 +1549,36 @@ bool XrBackend::SkyboxShown()
 
 int XrBackend::SetEquirectSkybox(const vr::Texture_t* textures, uint32_t count)
 {
-	// Six faces are read back and turned into one lat-long image first, without any lock: it takes a while
+	XrCompositionLayerEquirect2KHR layer{ XR_TYPE_COMPOSITION_LAYER_EQUIRECT2_KHR };
+	layer.space = xr_space_from_ref_space_type(BaseSystem::currentSpace);
+	layer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+	layer.pose = { { 0, 0, 0, 1 }, { 0, 0, 0 } };
+	layer.radius = 0; // a sphere at infinity
+	constexpr float pi = 3.14159265f;
+	layer.centralHorizontalAngle = 2 * pi;
+	layer.upperVerticalAngle = pi / 2;
+	layer.lowerVerticalAngle = -pi / 2;
+
+	// Six faces are drawn into one lat-long image on the GPU where the compositor has a pass for it (D3D11). The
+	// swapchain is refilled while no own frame uses it.
+	if (count == 6 && textures[0].eType == vr::TextureType_DirectX) {
+		std::lock_guard<std::mutex> owner(frameOwner);
+		std::lock_guard<std::mutex> lock(skyboxLock);
+		if (!skybox.cube)
+			skybox.cube = BaseCompositor::CreateCompositorAPI(&textures[0]);
+		XrSwapchainSubImage drawn{};
+		if (skybox.cube && skybox.cube->InvokeCubemap(textures, 2048, drawn)) {
+			layer.subImage = drawn;
+			skybox.layers[0] = layer;
+			skybox.layerCount = 1;
+			return 0;
+		}
+		// Not shown while it's joined on the CPU (the layer may name the pass's swapchain)
+		skybox.layerCount = 0;
+		skybox.cube.reset();
+	}
+
+	// Else they're read back and turned into one lat-long image first, without any lock: it takes a while
 	Image equirect;
 	if (count == 6) {
 		if (!skyboxReader)
@@ -1558,16 +1597,6 @@ int XrBackend::SetEquirectSkybox(const vr::Texture_t* textures, uint32_t count)
 		if (equirect.Empty())
 			return 1; // VRCompositorError_RequestFailed
 	}
-
-	XrCompositionLayerEquirect2KHR layer{ XR_TYPE_COMPOSITION_LAYER_EQUIRECT2_KHR };
-	layer.space = xr_space_from_ref_space_type(BaseSystem::currentSpace);
-	layer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
-	layer.pose = { { 0, 0, 0, 1 }, { 0, 0, 0 } };
-	layer.radius = 0; // a sphere at infinity
-	constexpr float pi = 3.14159265f;
-	layer.centralHorizontalAngle = 2 * pi;
-	layer.upperVerticalAngle = pi / 2;
-	layer.lowerVerticalAngle = -pi / 2;
 
 	// The swapchains are refilled, and maybe remade, while no own frame uses them
 	std::lock_guard<std::mutex> owner(frameOwner);
@@ -2866,6 +2895,11 @@ void XrBackend::OnSessionCreated()
 		    }
 		    if (layers.empty() && haveLastProjection)
 			    layers.push_back((const XrCompositionLayerBaseHeader*)&lastProjection);
+		    // The fade over the scene, as on the game's frames (a game that stalls in a fade to black stays black)
+		    if (!layers.empty()) {
+			    if (XrCompositionLayerBaseHeader* fade = BuildFadeLayer())
+				    layers.push_back(fade);
+		    }
 		    BaseOverlay* overlay = GetUnsafeBaseOverlay();
 		    if (!overlay)
 			    return;
@@ -2880,7 +2914,8 @@ void XrBackend::OnSessionCreated()
 	    },
 	    [this] {
 		    BaseOverlay* overlay = GetUnsafeBaseOverlay();
-		    return SkyboxShown() || (overlay && overlay->_AnyVisible());
+		    return SkyboxShown() || (overlay && overlay->_AnyVisible())
+		        || FadeVisible(CompositorFades::Get().ColourAt(CompositorClockSeconds(), false));
 	    });
 }
 

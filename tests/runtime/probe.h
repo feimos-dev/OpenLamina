@@ -6,6 +6,8 @@
 
 #include <cstdint>
 #include <string>
+#include <utility>
+#include <vector>
 
 // RGBA8 values, 0xRRGGBBAA, of the rect as shown: tl is its top-left corner whatever the API's row order. They are
 // the bytes the image stores: an sRGB format's sRGB-encoded bytes, a UNORM one's linear bytes, with no conversion
@@ -29,7 +31,10 @@ PixelLayout LayoutOfDxgi(int64_t format);
 // API's staging path, RtGfx::read; a 32-bit float depth image's value in every channel). False when it can't be read
 // (no such image, another depth format or an unknown one, an empty rect, a multisampled image on D3D12, Vulkan or
 // OpenGL).
-bool ProbeSamples(SwapchainImage& image, XrRect2Di rect, uint32_t arrayIndex, Samples& out, std::string* why = nullptr);
+// extra: more points to read in the same readback, as (x, y) fractions of the rect from its top-left as shown, their
+// texels in extraOut.
+bool ProbeSamples(SwapchainImage& image, XrRect2Di rect, uint32_t arrayIndex, Samples& out, std::string* why = nullptr,
+    const std::vector<std::pair<float, float>>* extra = nullptr, std::vector<uint32_t>* extraOut = nullptr);
 
 // {"tl": "ff0000ff", "tr": ..., "bl": ..., "br": ..., "c": ...}
 Json::Value SamplesJson(const Samples& s);

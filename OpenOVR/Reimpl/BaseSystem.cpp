@@ -311,6 +311,7 @@ void BaseSystem::GetOutputDevice(uint64_t* pnDevice, ETextureType textureType, V
 		VkPhysicalDevice physDev;
 		XrBackend::VkGetPhysicalDevice(pInstance, &physDev);
 		*pnDevice = (uint64_t)physDev;
+		BaseCompositor::NotePhysicalDevice(physDev);
 #else
 		OC_UNSUPPORTED_VOID("GetOutputDevice: this build has no Vulkan support");
 #endif

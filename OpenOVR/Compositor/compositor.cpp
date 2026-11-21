@@ -132,7 +132,7 @@ bool Compositor::AcquireAndWait(uint32_t imageCount, uint32_t& index, int64_t ti
 
 static thread_local std::optional<uint32_t> currentSubmitSlice;
 
-SubmitArraySlice::SubmitArraySlice(uint32_t slice)
+SubmitArraySlice::SubmitArraySlice(std::optional<uint32_t> slice)
     : previous(currentSubmitSlice)
 {
 	currentSubmitSlice = slice;

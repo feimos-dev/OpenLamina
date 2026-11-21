@@ -363,3 +363,14 @@ TEST_CASE("The scene overlay is the part of its image the settings pick, ahead o
 	REQUIRE(BaseCompositor::SceneOverlayFrom(image, settings, out));
 	CHECK(out.inHead.m[0][0] == doctest::Approx(1.0f));
 }
+
+TEST_CASE("Extensions_among_available")
+{
+	const std::vector<std::string> available = { "VK_KHR_external_memory", "VK_KHR_external_semaphore", "VK_KHR_swapchain" };
+	CHECK(BaseCompositor::ExtensionsAmong("VK_KHR_external_memory VK_KHR_external_memory_fd VK_KHR_swapchain", available)
+	    == "VK_KHR_external_memory VK_KHR_swapchain");
+	CHECK(BaseCompositor::ExtensionsAmong("", available).empty());
+	CHECK(BaseCompositor::ExtensionsAmong("VK_KHR_external_memory_fd", available).empty());
+	// Doubled spaces don't make empty names
+	CHECK(BaseCompositor::ExtensionsAmong("VK_KHR_swapchain  VK_KHR_external_semaphore", available) == "VK_KHR_swapchain VK_KHR_external_semaphore");
+}
