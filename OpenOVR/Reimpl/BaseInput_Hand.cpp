@@ -380,7 +380,8 @@ static auto GetInterpolatedControllerState(const LegacyControllerActions& contro
 	for (const auto& action : thumbActions) {
 		info.action = action;
 		actionRes = xrGetActionStateBoolean(xr_session.get(), &info, &stateBool);
-		if (XR_SUCCEEDED(actionRes)) {
+		// An action the controller doesn't bind answers too, inactive
+		if (XR_SUCCEEDED(actionRes) && stateBool.isActive) {
 			if (stateBool.currentState) {
 				thumbTouch = true;
 			}
