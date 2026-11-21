@@ -78,7 +78,7 @@ match; `-WhatIf` only lists them. Close SteamVR, Monado and anything VR first.
 `-Controllers` loads SteamVR's other drivers beside the null headset, so switched-on Lighthouse controllers take part
 (for `app-type-answers` and `steamvr_run_cases.cpp`). Programs run one at a time (a program that brings SteamVR down
 would take the others with it). A SteamVR whose server stops answering (each child then waits on its shared namespace
-until the timeout) is ended after three timeouts in a row and started again; `results.json` counts these restarts
+until the timeout) is ended and started again after two timeouts in a row, or at once when a program times out in Init or gets init error 310 (that program then runs again); `results.json` counts these restarts
 (`runtime_restarts`). `-Resume` keeps what an earlier run into the same `-Out` finished (each job's
 `<raw>.result.json`) and runs the rest; `results.json` then has `"resumed": true`. Against a real runtime the methods
 of `unsafe_methods.txt` aren't called (their records say `"skipped": "unsafe"`), among them `ShowMessageOverlay`, which
