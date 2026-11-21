@@ -6,6 +6,7 @@
 #include "Misc/Input/Bindings/Modes.h"
 
 #include <cmath>
+#include <limits>
 
 namespace {
 const std::string kSrc = "/user/hand/right/input/trigger";
@@ -293,6 +294,23 @@ TEST_CASE("Joystick_deadzone_and_maxzone")
 	r.Step(At(kStick, d, d));
 	CHECK(r.out.analog["/move"].x == doctest::Approx(d).epsilon(0.001));
 	CHECK(r.out.analog["/move"].y == doctest::Approx(d).epsilon(0.001));
+}
+
+TEST_CASE("Joystick_maxzone_not_above_deadzone_and_no_number")
+{
+	// A hand-edited binding with the maxzone at or under the deadzone: full past the deadzone, nothing inside it
+	for (const char* max : { "20", "10" }) {
+		Runner r(Source("joystick", { { "position", "/move" } }, { { "deadzone_pct", "20" }, { "maxzone_pct", max } }, kStick));
+		r.Step(At(kStick, 0.1f, 0));
+		CHECK(r.out.analog["/move"].x == 0.0f);
+		r.Step(At(kStick, 0.5f, 0));
+		CHECK(r.out.analog["/move"].x == 1.0f);
+	}
+	// A raw value that isn't a number reads as the centre
+	Runner r(Source("joystick", { { "position", "/move" } }, { { "deadzone_pct", "10" }, { "maxzone_pct", "90" } }, kStick));
+	r.Step(At(kStick, std::numeric_limits<float>::quiet_NaN(), 0.5f));
+	CHECK(r.out.analog["/move"].x == 0.0f);
+	CHECK(r.out.analog["/move"].y == 0.0f);
 }
 
 TEST_CASE("Dpad_quadrants_with_deadzone")

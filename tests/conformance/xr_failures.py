@@ -46,6 +46,8 @@ def check(name, want, out):
         misses.append(f"frame-loop: {len(frames)} frames recorded, expected {want['frames']}")
     # Every frame-loop run: no swapchain image left acquired, and the call order never broken
     dump_path = out / "raw" / "case-frame-loop.dump.json"
+    if "frame-loop" in want.get("cases", []) and not dump_path.exists():
+        misses.append("frame-loop: the runtime wrote no dump (its instance never destroyed?)")
     if dump_path.exists():
         dump = json.loads(dump_path.read_text(encoding="utf-8"))
         if dump.get("images_left_acquired", 0):
@@ -147,7 +149,24 @@ def check(name, want, out):
     return misses
 
 
+def self_test():
+    """check: a frame-loop run whose runtime wrote no dump fails"""
+    import tempfile
+    with tempfile.TemporaryDirectory() as folder:
+        out = Path(folder)
+        (out / "raw").mkdir()
+        (out / "results.json").write_text(json.dumps({"records": []}), encoding="utf-8")
+        misses = check("self-test", {"cases": ["frame-loop"]}, out)
+    if len(misses) != 1:
+        print(f"self-test FAILED: {misses}")
+        return 1
+    print("self-test passed")
+    return 0
+
+
 def main():
+    if sys.argv[1:] == ["--self-test"]:
+        return self_test()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--runtime", required=True)
     ap.add_argument("--conformance", required=True)
@@ -165,7 +184,17 @@ def main():
                "--xr-runtime", "stand-in", "--script", str(HERE / "scripts" / f"{name}.json"),
                "--cases", ",".join(want["cases"]), "--allow-failures", "--jobs", "2", "--out", str(out),
                "--manifest", str(HERE.parent / "unit" / "data" / "manifest_basic.json")] + (["--ci"] if args.ci else [])
-        subprocess.run(cmd, capture_output=True, text=True)
+        # Nothing of an earlier run into the same --out is read as this one's
+        (out / "results.json").unlink(missing_ok=True)
+        for dump in (out / "raw").glob("*.dump.json") if (out / "raw").exists() else []:
+            dump.unlink()
+        run = subprocess.run(cmd, capture_output=True, text=True)
+        if run.returncode != 0 or not (out / "results.json").exists():
+            print(f"{name}: FAILED: run.py exited {run.returncode}")
+            for line in (run.stdout + run.stderr).splitlines()[-20:]:
+                print(f"  {line}")
+            failed += 1
+            continue
         misses = check(name, want, out)
         print(f"{name}: {'ok' if not misses else 'FAILED'}")
         for m in misses:

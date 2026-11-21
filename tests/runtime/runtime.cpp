@@ -82,6 +82,7 @@ void QueueState(RtSession* s, XrSessionState state)
 
 bool RtExtensionEnabled(const char* name)
 {
+	std::lock_guard<std::recursive_mutex> g(St().lock); // CreateInstance writes the set under it
 	return St().enabledExtensions.count(name) != 0;
 }
 
@@ -1425,7 +1426,7 @@ XrResult XRAPI_CALL GetInstanceProcAddr(XrInstance instance, const char* name, P
 			if (!preInstance)
 				return XR_ERROR_HANDLE_INVALID;
 		}
-		if (e.extension && !St().enabledExtensions.count(e.extension))
+		if (e.extension && !RtExtensionEnabled(e.extension))
 			return XR_ERROR_FUNCTION_UNSUPPORTED;
 		*function = e.fn;
 		return XR_SUCCESS;

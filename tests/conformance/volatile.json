@@ -12,7 +12,7 @@
  { "interface": "IVRRenderModels_\\d+", "method": "LoadRenderModel_Async", "field": "ret", "reason": "a model loads on a thread of its own: a call answers Loading until the load of its name has finished, which a later call in the same run may or may not find done" },
  { "interface": "IVRInput_\\d+", "method": "GetActionHandle|GetActionSetHandle|GetInputSourceHandle", "field": "out", "reason": "handles are pointers" },
  { "interface": "IVROverlay_\\d+", "method": "CreateOverlay|CreateDashboardOverlay|FindOverlay", "field": "out", "reason": "overlay handles are pointers" },
- { "interface": "IVRSystem_\\d+", "method": "GetHiddenAreaMesh", "field": "ret", "reason": "the struct's padding bytes are uninitialised (a minor finding: zero them)" },
+ { "interface": "IVRSystem_\\d+", "method": "GetHiddenAreaMesh", "field": "ret", "reason": "the struct, compared as raw bytes, holds the mesh's vertex pointer (where the runtime has a visibility mask) and padding bytes no caller can read" },
  { "interface": "IVRSystem_\\d+", "method": "PollNextEvent|PollNextEventWithPose", "field": "ret|out", "reason": "whether VREvent_ProcessConnected from another test process is pending yet is timing" },
  { "interface": "IVRSystem_\\d+", "method": "GetOutputDevice", "field": "out", "reason": "the runtime's adapter's LUID (for D3D) or Vulkan physical device handle, which Windows and the Vulkan loader assign afresh" },
  { "interface": "IVRSystem_\\d+", "method": "GetD3D9AdapterIndex|GetDXGIOutputInfo", "field": "ret|out", "reason": "the runtime's adapter's index among the machine's adapters, or -1 when it can't be told at that moment (no OpenXR instance yet, or Direct3D 9Ex not created): -1 once on CI's runner where it was 0" },

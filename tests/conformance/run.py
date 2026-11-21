@@ -34,6 +34,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE), str(HERE.parent)]
 import unelevated  # noqa: E402
+import waivers  # noqa: E402
 from list_games import pe_machine  # noqa: E402
 
 ARGSETS = ["valid", "edge", "null", "invalid"]
@@ -132,6 +133,8 @@ class Runner:
         if self.manifest:
             self.env["XR_RUNTIME_JSON"] = self.manifest
         if args.script:
+            if not Path(args.script).is_file():
+                raise SystemExit(f"--script {args.script}: no such file")
             self.env["OC_TEST_RUNTIME_SCRIPT"] = str(Path(args.script).resolve())
         self.runtime = str(Path(args.runtime).resolve())
         self.conformance = str(Path(args.conformance).resolve())
@@ -161,6 +164,10 @@ class Runner:
         if unelevated.integrity_above_medium() and self.manifest:
             if not self.args.ci:
                 return  # children run at medium integrity (unelevated.run_medium)
+            if not os.environ.get("CI"):
+                # It isn't put back: only on a CI runner, which sets CI
+                raise SystemExit("--ci makes the stand-in this machine's active OpenXR runtime and leaves it so: only on "
+                                 "a CI runner (CI set in the environment); elevated here, children run unelevated without it")
             # CI's VM is elevated: the loader ignores XR_RUNTIME_JSON, so make the runtime the active one. In both
             # registry views: a 32-bit loader reads the 32-bit one (WOW6432Node)
             for view in ("/reg:64", "/reg:32"):
@@ -192,8 +199,9 @@ class Runner:
         if unelevated.integrity_above_medium() and not self.args.ci:
             code = unelevated.run_medium(cmd, env, cwd, timeout)
         else:
-            # In a memory-limited job (unelevated.py): a runaway child fails alone
-            code = unelevated.run_limited(cmd, env, cwd, timeout, capture=True)[0]
+            # In a memory-limited job (unelevated.py): a runaway child fails alone. Its output isn't kept: its answers
+            # are in raw
+            code = unelevated.run_limited(cmd, env, cwd, timeout, quiet=True)
         with Runner.keep_lock:
             if code != 124:
                 Runner.timeouts_in_a_row, Runner.last_timeout_job = 0, None
@@ -537,31 +545,46 @@ def expect_key(r):
     return f'{who}/{r.get("method")}/{r.get("apptype", "-")}/{r.get("argset", "-")}'
 
 
+def job_of(r):
+    return (r.get("case") or r.get("interface"), r.get("apptype"), r.get("argset"))
+
+
+def usable(r):
+    return r.get("status") == "ok" and not r.get("skipped")
+
+
 def compare(results, expected_path, differences_path, arch):
     expected = {key_of(r): r for r in json.loads(Path(expected_path).read_text(encoding="utf-8"))["records"]}
     allowed = json.loads(Path(differences_path).read_text(encoding="utf-8")) if differences_path else []
-    allowed = [d for d in allowed if d.get("arch", arch) == arch]
+    # A job whose Init or interface lookup failed has one "<lookup>" record where SteamVR's has its calls: its
+    # init_error and lookup_error are compared with the first of those
+    first_of_job = {}
+    for e in expected.values():
+        if usable(e) and e.get("method") != "<lookup>":
+            first_of_job.setdefault(job_of(e), e)
     diffs = []
     for r in results:
         e = expected.get(key_of(r))
-        if not e or e.get("status") != "ok" or r.get("status") != "ok" or e.get("skipped") or r.get("skipped"):
+        fields = ("ret", "out", "init_error", "lookup_error")
+        if not e and r.get("method") == "<lookup>":
+            e, fields = first_of_job.get(job_of(r)), ("init_error", "lookup_error")
+        if not e or not usable(e) or not usable(r):
             continue
         if e.get("init_error") in STEAMVR_TRANSIENT:
             continue  # SteamVR was restarting between children: no reference for this record
-        # A record of a call through the function table ("FnTable:<version>") is the same call as the class's: an entry
-        # for the interface is for both
-        who = r.get("interface", r.get("case", ""))
-        names = {who, who[len("FnTable:"):]} if who.startswith("FnTable:") else {who}
-        for field in ("ret", "out", "init_error", "lookup_error"):
-            if r.get(field) == e.get(field):
-                continue
-            # An entry may also name the app types it's for ("apptype": a regex of their numbers)
-            if any(any(re.fullmatch(d["interface"], n) for n in names) and re.fullmatch(d["method"], r.get("method", ""))
-                   and d["field"] == field and ("apptype" not in d or re.fullmatch(d["apptype"], str(r.get("apptype", ""))))
-                   for d in allowed):
+        for field in fields:
+            if r.get(field) == e.get(field) or waivers.waived(allowed, r, field, arch):
                 continue
             diffs.append(f'{key_of(r)} {field}: got {json.dumps(r.get(field))}, SteamVR {json.dumps(e.get(field))}')
-    return diffs
+    # A call SteamVR answered that is missing from an interface's job that ran all of its calls. Not a job with a call
+    # that ended the program (that record fails the run already, under another key), nor cases': what a case records
+    # depends on what it got
+    have = {key_of(r) for r in results}
+    ran = ({job_of(r) for r in results} - {job_of(r) for r in results if r.get("method") == "<lookup>"}
+           - {job_of(r) for r in results if r.get("status") != "ok"})
+    missing = sorted(k for k, e in expected.items() if usable(e) and not e.get("case") and e.get("method") != "<lookup>"
+                     and e.get("init_error") not in STEAMVR_TRANSIENT and job_of(e) in ran and k not in have)
+    return diffs + [f"{k}: no record, SteamVR answered it" for k in missing]
 
 
 def check_expect(results, expect_path, allow_skip=None, rounds=None):
@@ -617,7 +640,40 @@ def round_summary(results, repeat):
             + (f" (not: {', '.join(str(n) for n in sorted(bad[c]))})" if c in bad else "") for c in cases]
 
 
+def self_test():
+    """compare: a job whose Init failed, and a job with a call missing, are differences"""
+    import tempfile
+
+    def rec(method, index, apptype=1, **fields):
+        return dict({"interface": "IVRTest_001", "method": method, "index": index, "apptype": apptype, "argset": "valid",
+                     "status": "ok", "init_error": 0, "lookup_error": 0, "ret": 0, "out": {}}, **fields)
+
+    reference = [rec("A", 0), rec("B", 1), rec("A", 0, apptype=2), rec("B", 1, apptype=2)]
+    rules = [{"interface": "IVR\\w+_\\d+", "method": "<lookup>", "field": "init_error", "apptype": "2"},
+               {"interface": "IVR\\w+_\\d+", "method": "<lookup>", "field": "lookup_error", "apptype": "2"}]
+    failed_init = [rec("<lookup>", -1, init_error=108, lookup_error=109),
+                   rec("<lookup>", -1, apptype=2, init_error=130, lookup_error=109)]
+    crashed = [rec("A", 0), rec("<call 1>", 1, status="crashed")]
+    cases = [([rec("A", 0), rec("B", 1)], 0), ([rec("A", 0)], 1), (failed_init, 2), (crashed, 0)]
+    failed = [f"waivers: {what}" for what in waivers.self_test()]
+    with tempfile.TemporaryDirectory() as folder:
+        expected, differences = Path(folder) / "expected.json", Path(folder) / "differences.json"
+        expected.write_text(json.dumps({"records": reference}), encoding="utf-8")
+        differences.write_text(json.dumps(rules), encoding="utf-8")
+        for results, want in cases:
+            got = compare(results, expected, differences, "x64")
+            if len(got) != want:
+                failed.append(f"{[r['method'] for r in results]}: {len(got)} differences, want {want}: {got}")
+    if failed:
+        print("self-test FAILED: " + "; ".join(failed))
+        return 1
+    print("self-test passed")
+    return 0
+
+
 def main():
+    if sys.argv[1:] == ["--self-test"]:
+        return self_test()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--runtime", required=True)
     ap.add_argument("--conformance", required=True)
@@ -677,7 +733,8 @@ def main():
         counts[r["status"]] = counts.get(r["status"], 0) + 1
     known = load_known(args.known_failures)
     known_hit = set()
-    bad = [r for r in results if r["status"] in ("ended", "crashed", "timeout")]
+    # "lost": a call that ended the program in an older run that --resume kept
+    bad = [r for r in results if r["status"] in ("ended", "crashed", "timeout", "lost")]
     lines = [f"{k}: {v}" for k, v in sorted(counts.items())] + [""]
     if args.repeat > 1:
         lines += round_summary(results, args.repeat) + [""]

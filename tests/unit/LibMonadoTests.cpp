@@ -17,6 +17,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <fstream>
+#include <random>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -51,6 +52,10 @@ struct FakeLibMonado {
 		SetEnv("FAKE_MND_BATTERY", nullptr);
 		SetEnv("FAKE_MND_SAME_NAMES", nullptr);
 		SetEnv("FAKE_MND_NO_BATTERY", nullptr);
+		// Also those a test sets for part of it, in case a failed REQUIRE skipped its own reset
+		SetEnv("FAKE_MND_NO_GET", nullptr);
+		SetEnv("FAKE_MND_NO_SET", nullptr);
+		SetEnv("FAKE_MND_NO_OFFSETS", nullptr);
 	}
 };
 } // namespace
@@ -344,7 +349,7 @@ TEST_CASE("Manifest_search_xdg_config_dirs")
 namespace {
 // The fake's log of reference space offset calls (FAKE_MND_LOG), one line each, for one test
 struct OffsetLog {
-	fs::path path = fs::temp_directory_path() / "oc_fake_mnd_offsets.log";
+	fs::path path = fs::temp_directory_path() / ("oc_fake_mnd_offsets_" + std::to_string(std::random_device {}()) + ".log");
 	OffsetLog()
 	{
 		fs::remove(path);

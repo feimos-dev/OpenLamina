@@ -80,9 +80,12 @@ uint32_t ExitedProcessId()
 	si.cb = sizeof(si);
 	PROCESS_INFORMATION pi{};
 	REQUIRE(CreateProcessW(nullptr, cmd, nullptr, nullptr, FALSE, CREATE_NO_WINDOW, nullptr, nullptr, &si, &pi));
-	WaitForSingleObject(pi.hProcess, INFINITE);
+	const DWORD wait = WaitForSingleObject(pi.hProcess, 10000);
+	if (wait != WAIT_OBJECT_0)
+		TerminateProcess(pi.hProcess, 1);
 	CloseHandle(pi.hThread);
 	CloseHandle(pi.hProcess); // the last handle: the id is the ended process's no more
+	REQUIRE(wait == WAIT_OBJECT_0);
 	return (uint32_t)pi.dwProcessId;
 #else
 	pid_t pid = fork();
@@ -1426,11 +1429,12 @@ TEST_CASE("Overlay_command_crosses_between_programs")
 }
 #ifndef _WIN32
 namespace {
-// A child process that sleeps until it's ended, and its start time once it's running
+// A child process that sleeps until it's ended (at most a minute), and its start time once it's running
 pid_t SleepingChild(uint64_t& start)
 {
 	const pid_t child = fork();
 	if (child == 0) {
+		alarm(60); // ends it after a minute if the test fails before ending it
 		for (;;)
 			pause();
 	}

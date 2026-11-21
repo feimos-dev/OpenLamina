@@ -248,7 +248,7 @@ void SkeletalInputCase(CaseContext& c)
 		c.core->Cleanup();
 		return;
 	}
-	std::string manifest = (c.call->dataDir / "manifest_skeleton.json").string();
+	std::string manifest = Utf8Path(c.call->dataDir / "manifest_skeleton.json");
 	c.Record("SetActionManifestPath", Ret(input->SetActionManifestPath(manifest.c_str())));
 	vr::VRActionSetHandle_t set = 0;
 	vr::VRActionHandle_t left = 0, right = 0, pose = 0, grab = 0;
@@ -314,7 +314,7 @@ void SkeletalInputCase(CaseContext& c)
 		c.Record("GetOriginLocalizedName " + std::to_string(sections), n);
 	}
 
-	std::string other = (c.call->dataDir / "manifest_basic.json").string();
+	std::string other = Utf8Path(c.call->dataDir / "manifest_basic.json");
 	Json::Value again = Ret(input->SetActionManifestPath(other.c_str()));
 	vr::VRActionHandle_t trigger = 0;
 	again["trigger handle"] = input->GetActionHandle("/actions/main/in/trigger", &trigger);

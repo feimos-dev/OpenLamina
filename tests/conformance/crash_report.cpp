@@ -21,13 +21,21 @@
 namespace {
 
 std::string reportPath;
-std::once_flag written;
+std::mutex writing;
+int reports = 0;
+thread_local bool reporting = false;
 
 void WriteStack(FILE* f, CONTEXT* context)
 {
 	HANDLE process = GetCurrentProcess();
-	SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
-	SymInitialize(process, nullptr, TRUE);
+	static bool symbols = false;
+	if (!symbols) {
+		symbols = true;
+		SymSetOptions(SYMOPT_LOAD_LINES | SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS);
+		SymInitialize(process, nullptr, TRUE);
+	} else {
+		SymRefreshModuleList(process); // modules loaded since the last report
+	}
 
 	void* frames[64] = {};
 	USHORT count = 0;
@@ -80,22 +88,32 @@ void WriteStack(FILE* f, CONTEXT* context)
 	}
 }
 
-void Report(const char* why, CONTEXT* context)
+// Each report replaces the one before, so the file holds the last fault: an exception something handled is followed
+// by the one that ended the program. At most 100 exceptions (a fault handled in a loop), but always an abort, terminate
+// or invalid parameter, which end it; none from inside a report.
+void Report(const char* why, CONTEXT* context, bool ends = true)
 {
-	std::call_once(written, [&] {
-		FILE* f = std::fopen(reportPath.c_str(), "w");
-		if (!f)
-			return;
-		std::fprintf(f, "%s (thread %lu)\n", why, GetCurrentThreadId());
-		WriteStack(f, context);
-		std::fclose(f);
-	});
+	if (reporting)
+		return;
+	reporting = true;
+	{
+		std::lock_guard<std::mutex> guard(writing);
+		if (ends || reports < 100) {
+			reports += !ends;
+			if (FILE* f = std::fopen(reportPath.c_str(), "w")) {
+				std::fprintf(f, "%s (thread %lu)\n", why, GetCurrentThreadId());
+				WriteStack(f, context);
+				std::fclose(f);
+			}
+		}
+	}
+	reporting = false;
 }
 
 LONG WINAPI OnException(EXCEPTION_POINTERS* info)
 {
 	// Vectored: sees first-chance exceptions too, so only the ones that end a program. A report for one that
-	// something handles is harmless: run.py only reads it when the child ended abnormally.
+	// something handles is replaced by the next, and run.py only reads it when the child ended abnormally.
 	switch (info->ExceptionRecord->ExceptionCode) {
 	case EXCEPTION_ACCESS_VIOLATION:
 	case EXCEPTION_ILLEGAL_INSTRUCTION:
@@ -111,7 +129,7 @@ LONG WINAPI OnException(EXCEPTION_POINTERS* info)
 	char why[160];
 	std::snprintf(why, sizeof(why), "exception 0x%08lx at %p", info->ExceptionRecord->ExceptionCode,
 	    info->ExceptionRecord->ExceptionAddress);
-	Report(why, info->ContextRecord);
+	Report(why, info->ContextRecord, false);
 	return EXCEPTION_CONTINUE_SEARCH;
 }
 

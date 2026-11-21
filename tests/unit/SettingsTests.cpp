@@ -16,6 +16,7 @@
 #include <filesystem>
 #include <fstream>
 #include <string>
+#include <thread>
 #include <vector>
 
 namespace fs = std::filesystem;
@@ -178,10 +179,10 @@ TEST_CASE("Settings_fall_back_to_steamvr_file")
 	settings.SetInt32("oc_test", "answer", 7, &error);
 	CHECK(settings.GetInt32("oc_test", "answer", &error) == 7);
 
-	// Read again when the file changes
+	// Read again when the file changes, once the second it isn't looked at again within has passed
 	std::ofstream(defaults) << "{ \"oc_test\": { \"onlyDefault\": \"changed\" } }";
 	fs::last_write_time(defaults, fs::last_write_time(defaults) + std::chrono::seconds(5));
-	SteamVRSettingsUseFiles(fs::path(OC_TEST_DATA_DIR) / "steamvr.vrsettings", defaults);
+	std::this_thread::sleep_for(std::chrono::milliseconds(1100));
 	CHECK(GetString(settings, "oc_test", "onlyDefault", &error) == "changed");
 }
 

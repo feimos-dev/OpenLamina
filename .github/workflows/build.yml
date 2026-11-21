@@ -68,6 +68,11 @@ jobs:
         if: matrix.tests && matrix.arch == 'x64'
         run: python scripts/openvr_inventory.py --check
 
+      # The test runner: a child's output isn't held in it, and nothing a child starts outlives the child
+      - name: Test runner
+        if: matrix.tests && matrix.arch == 'x64'
+        run: python tests/unelevated.py --self-test
+
       # Nothing may end, crash or hang; every run is checked, and the summaries kept
       - name: Conformance
         if: matrix.tests
@@ -387,7 +392,10 @@ jobs:
         run: |
           python3 tests/conformance/list_games.py --self-test
           python3 tests/conformance/regress.py --self-test
+          python3 tests/conformance/run.py --self-test
+          python3 tests/conformance/xr_failures.py --self-test
           python3 scripts/openvr_inventory.py --self-test
+          python3 tests/unelevated.py --self-test
 
       # The library, the tests and the unit tests
       - name: Build

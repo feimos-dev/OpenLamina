@@ -24,12 +24,14 @@ records that differ from the earlier files.
 import argparse
 import hashlib
 import json
-import re
 import sys
 import tempfile
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE))
+import waivers  # noqa: E402
+
 # Not answers: which call the record is, and how the run went
 BOOKKEEPING = {"case", "interface", "method", "index", "apptype", "argset", "status", "exit_code", "skipped", "crash", "callers"}
 # A baseline entry's own keys, beside the fields' hashes
@@ -47,19 +49,7 @@ def digest(value):
 
 
 def covered(rules, r, field):
-    who = r.get("interface", r.get("case", ""))
-    # A call through an interface's function table answers as the interface itself
-    if who.startswith("FnTable:"):
-        who = who[len("FnTable:"):]
-    for d in rules:
-        if d["field"] != field and not re.fullmatch(d["field"], field):
-            continue
-        if not re.fullmatch(d["interface"], who) or not re.fullmatch(d["method"], r.get("method", "")):
-            continue
-        if "apptype" in d and not re.fullmatch(d["apptype"], str(r.get("apptype", ""))):
-            continue
-        return True
-    return False
+    return waivers.waived(rules, r, field)
 
 
 def summarise(results, rules):
@@ -127,6 +117,17 @@ def compare(base, now):
     return problems, new
 
 
+def accept_refusal(results):
+    """Why a run's results can't become a baseline (None if they can): a call that didn't end ok would be pinned as
+    the expected answer, and the rounds of a --repeat run share their keys"""
+    bad = [r for r in results if r.get("status") != "ok"]
+    if bad:
+        return f"{len(bad)} records not ok (the first: {key_of(bad[0])}, {bad[0].get('status')})"
+    if any("round" in r for r in results):
+        return "a --repeat run's records (their rounds share one key)"
+    return None
+
+
 def self_test():
     """A baseline accepted from one run, then a run with a short and a long field changed: the short one is shown
     with its values, the long one with its hashes; a value kept in the baseline doesn't make an unchanged hash differ"""
@@ -164,6 +165,12 @@ def self_test():
         check("an older baseline shows the old hash",
               any(p.endswith(f"ret changed: (hash {digest(0.5)}) -> 0.75") for p in compare(old, summarise(second, []))[0]))
         check("a re-accepted overlay leaves out records whose answers are the same", same_entry(old[key_of(first[0])], base[key_of(first[0])]))
+    check("a run with every record ok can be accepted", accept_refusal(first) is None)
+    check("a run with a crash can't be accepted", accept_refusal(first + [dict(first[0], index=3, status="crashed")]) is not None)
+    check("a --repeat run can't be accepted", accept_refusal([dict(first[0], round=1)]) is not None)
+    for what in waivers.self_test():
+        check(f"waivers: {what}", False)
+    check("a volatile field isn't pinned", "ret" not in summarise(first[:1], [{"interface": "IVRSystem_\\d+", "method": "GetFloat", "field": "ret"}])[key_of(first[0])])
     print(f"{len(failures)} failed")
     return 1 if failures else 0
 
@@ -174,6 +181,7 @@ def main():
     ap.add_argument("--baseline", action="append")
     ap.add_argument("--volatile", default=str(HERE / "volatile.json"))
     ap.add_argument("--accept", action="store_true")
+    ap.add_argument("--force", action="store_true", help="with --accept: also a run with records not ok")
     ap.add_argument("--self-test", action="store_true")
     args = ap.parse_args()
     if args.self_test:
@@ -195,6 +203,10 @@ def main():
         return {k: v for k, v in base.items() if v is not None}
 
     if args.accept:
+        refusal = accept_refusal(results)
+        if refusal and not args.force:
+            print(f"not accepted: {refusal} (--force accepts it anyway)")
+            return 1
         target, earlier = args.baseline[-1], merged(args.baseline[:-1])
         records = {k: v for k, v in now.items() if not same_entry(earlier.get(k), v)}
         records.update({k: None for k in earlier if k not in now})

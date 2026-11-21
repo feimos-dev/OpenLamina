@@ -408,8 +408,13 @@ TEST_CASE("Only_the_last_frame_edit_with_a_key_is_made")
 				std::this_thread::sleep_for(std::chrono::milliseconds(1));
 		});
 	});
-	while (!inEdit)
+	for (int i = 0; i < 10000 && !inEdit; i++) // up to ten seconds
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
+	if (!inEdit) {
+		release = true;
+		holder.join();
+		REQUIRE(inEdit);
+	}
 	for (int i = 1; i <= 5; i++) {
 		store.UpdateLater(StoreDoc::Scene, "count", [i](Json::Value& doc) { doc["calls"] = doc["calls"].asInt() + 1, doc["last"] = i; });
 		// Not keyed: each made

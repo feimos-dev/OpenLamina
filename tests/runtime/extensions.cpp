@@ -176,8 +176,19 @@ XrResult XRAPI_CALL GetVisibilityMask(XrSession, XrViewConfigurationType, uint32
 			verts.push_back({ std::cos(a), std::sin(a) });
 			indices.push_back(i);
 		}
+	} else if (type == XR_VISIBILITY_MASK_TYPE_HIDDEN_TRIANGLE_MESH_KHR) {
+		// What's outside the octagon within the square from -1 to 1: each edge with the square's corner beside it
+		for (int i = 0; i < n; i++) {
+			float a = 6.2831853f * i / n, b = 6.2831853f * (i + 1) / n;
+			XrVector2f from{ std::cos(a), std::sin(a) }, to{ std::cos(b), std::sin(b) };
+			XrVector2f corner{ std::copysign(1.0f, from.x + to.x), std::copysign(1.0f, from.y + to.y) };
+			for (const XrVector2f& v : { to, from, corner }) { // counter-clockwise, as the visible triangles
+				indices.push_back((uint32_t)verts.size());
+				verts.push_back(v);
+			}
+		}
 	} else {
-		// Triangles of the octagon's area (visible) or of what's outside it within the unit square (hidden)
+		// Triangles of the octagon's area (visible)
 		verts.push_back({ 0, 0 });
 		for (int i = 0; i < n; i++) {
 			float a = 6.2831853f * i / n;
