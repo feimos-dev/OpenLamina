@@ -281,16 +281,16 @@ Json::Value ParseConfig(const char* text)
 TEST_CASE("The runtime chosen in apps-config.json")
 {
 	const std::string app = "C:/game.exe";
-	CHECK(BaseClientCore::ConfiguredRuntime(ParseConfig("{}"), app) == 1);
-	CHECK(BaseClientCore::ConfiguredRuntime(ParseConfig(R"({"C:/game.exe": {"runtime": 2}})"), app) == 2);
-	CHECK(BaseClientCore::ConfiguredRuntime(ParseConfig(R"({"***GlobalConfig": {"default_runtime": 2}})"), app) == 2);
-	CHECK(BaseClientCore::ConfiguredRuntime(ParseConfig(R"({"C:/game.exe": {"runtime": 1}, "***GlobalConfig": {"default_runtime": 2}})"), app) == 1);
+	CHECK(BaseClientCore::_ConfiguredRuntime(ParseConfig("{}"), app) == 1);
+	CHECK(BaseClientCore::_ConfiguredRuntime(ParseConfig(R"({"C:/game.exe": {"runtime": 2}})"), app) == 2);
+	CHECK(BaseClientCore::_ConfiguredRuntime(ParseConfig(R"({"***GlobalConfig": {"default_runtime": 2}})"), app) == 2);
+	CHECK(BaseClientCore::_ConfiguredRuntime(ParseConfig(R"({"C:/game.exe": {"runtime": 1}, "***GlobalConfig": {"default_runtime": 2}})"), app) == 1);
 
 	// Values of another type read as unset, and nothing throws
-	CHECK(BaseClientCore::ConfiguredRuntime(ParseConfig(R"({"C:/game.exe": 2})"), app) == 1);
-	CHECK(BaseClientCore::ConfiguredRuntime(ParseConfig(R"({"C:/game.exe": {"runtime": "2"}})"), app) == 1);
-	CHECK(BaseClientCore::ConfiguredRuntime(ParseConfig(R"({"C:/game.exe": {"runtime": 1e20}})"), app) == 1);
-	CHECK(BaseClientCore::ConfiguredRuntime(ParseConfig(R"({"C:/game.exe": [], "***GlobalConfig": []})"), app) == 1);
-	CHECK(BaseClientCore::ConfiguredRuntime(ParseConfig(R"({"C:/game.exe": {"runtime": []}, "***GlobalConfig": {"default_runtime": 2}})"), app) == 2);
-	CHECK(BaseClientCore::ConfiguredRuntime(Json::Value("text"), app) == 1);
+	CHECK(BaseClientCore::_ConfiguredRuntime(ParseConfig(R"({"C:/game.exe": 2})"), app) == 1);
+	CHECK(BaseClientCore::_ConfiguredRuntime(ParseConfig(R"({"C:/game.exe": {"runtime": "2"}})"), app) == 1);
+	CHECK(BaseClientCore::_ConfiguredRuntime(ParseConfig(R"({"C:/game.exe": {"runtime": 1e20}})"), app) == 1);
+	CHECK(BaseClientCore::_ConfiguredRuntime(ParseConfig(R"({"C:/game.exe": [], "***GlobalConfig": []})"), app) == 1);
+	CHECK(BaseClientCore::_ConfiguredRuntime(ParseConfig(R"({"C:/game.exe": {"runtime": []}, "***GlobalConfig": {"default_runtime": 2}})"), app) == 2);
+	CHECK(BaseClientCore::_ConfiguredRuntime(Json::Value("text"), app) == 1);
 }

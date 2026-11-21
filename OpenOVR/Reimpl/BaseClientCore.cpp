@@ -105,7 +105,7 @@ static Runtime RuntimeMember(const Json::Value& value, const char* name)
 	return member.isInt() ? (Runtime)member.asInt() : Runtime::Default;
 }
 
-int BaseClientCore::ConfiguredRuntime(const Json::Value& config, const std::string& appPath)
+int BaseClientCore::_ConfiguredRuntime(const Json::Value& config, const std::string& appPath)
 {
 	if (!config.isObject())
 		return Runtime::OpenComposite;
@@ -163,7 +163,7 @@ bool BaseClientCore::CheckAppEnabled()
 	// Check what runtime the app should use, as set in the config menu
 	Json::Value config;
 	ReadJson(configname, config);
-	Runtime selected = (Runtime)ConfiguredRuntime(config, apppath);
+	Runtime selected = (Runtime)_ConfiguredRuntime(config, apppath);
 
 	// The Steam client is never sent to SteamVR: sending a program there sets VR_OVERRIDE in its environment, and
 	// every game the Steam client starts inherits that and loads SteamVR's client instead of OpenLamina

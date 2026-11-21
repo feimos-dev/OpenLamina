@@ -12,7 +12,7 @@ public:
 	static bool CheckAppEnabled();
 	// The runtime apps-config.json chooses for a program (1 OpenComposite, 2 SteamVR, or another number the file
 	// holds); OpenComposite when nothing usable is set
-	static int ConfiguredRuntime(const Json::Value& config, const std::string& appPath);
+	static int _ConfiguredRuntime(const Json::Value& config, const std::string& appPath);
 	static std::string GetAlternativeRuntimePath();
 	static inline vr::EVRApplicationType appType = vr::VRApplication_Max;
 	// The folder of OpenComposite's DLL, ending with a separator
