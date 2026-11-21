@@ -586,6 +586,12 @@ BaseOverlay::~BaseOverlay()
 			delete kv.second;
 		}
 	}
+	// The views GetOverlayTexture handed out and nobody released
+#if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
+	for (void* view : handedOutViews)
+		((ID3D11ShaderResourceView*)view)->Release();
+#endif
+	handedOutViews.clear();
 }
 
 // Overlays curved less than this are drawn flat: the bend is under a millimetre per metre of width, and the
@@ -4146,9 +4152,13 @@ EVROverlayError BaseOverlay::GetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 			OOVR_SOFT_ABORTF("GetOverlayTexture: no shader resource view of the overlay's texture (format %d, HRESULT 0x%08x)", (int)desc.Format, (unsigned)hr);
 			return VROverlayError_RequestFailed;
 		}
-		handedOutViews.insert(view);
-		if (pNativeTextureHandle)
+		// Nobody can release a view nobody was given
+		if (pNativeTextureHandle) {
+			handedOutViews.insert(view);
 			*pNativeTextureHandle = view;
+		} else {
+			view->Release();
+		}
 		if (pNativeFormat)
 			*pNativeFormat = (uint32_t)desc.Format;
 		if (pAPIType)
@@ -4164,15 +4174,16 @@ EVROverlayError BaseOverlay::GetOverlayTexture(VROverlayHandle_t ulOverlayHandle
 }
 EVROverlayError BaseOverlay::ReleaseNativeOverlayHandle(VROverlayHandle_t ulOverlayHandle, void* pNativeTextureHandle)
 {
-	USEH();
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
-	// Only a handle GetOverlayTexture handed out, once
-	if (!pNativeTextureHandle || !handedOutViews.erase(pNativeTextureHandle))
-		return VROverlayError_InvalidParameter;
+	// Only a handle GetOverlayTexture handed out, once; also after its overlay was destroyed, which the view outlives
+	if (pNativeTextureHandle && handedOutViews.erase(pNativeTextureHandle)) {
 #if defined(SUPPORT_DX) && defined(SUPPORT_DX11)
-	((ID3D11ShaderResourceView*)pNativeTextureHandle)->Release();
+		((ID3D11ShaderResourceView*)pNativeTextureHandle)->Release();
 #endif
-	return VROverlayError_None;
+		return VROverlayError_None;
+	}
+	USEH();
+	return VROverlayError_InvalidParameter;
 }
 EVROverlayError BaseOverlay::GetOverlayTextureSize(VROverlayHandle_t ulOverlayHandle, uint32_t* pWidth, uint32_t* pHeight)
 {
