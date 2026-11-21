@@ -340,9 +340,17 @@ std::string BaseClientCore::GetAppPath()
 	ssize_t len = readlink("/proc/self/exe", appExe, sizeof(appExe) - 1);
 	return len > 0 ? string(appExe, (size_t)len) : string();
 #else
-	char appExe[MAX_PATH];
-	DWORD len = GetModuleFileNameA(nullptr, appExe, sizeof(appExe));
-	return string(appExe, len);
+	// UTF-8, as the runtime switcher reads and writes the keys of applist.json and apps-config.json; long paths whole
+	std::vector<wchar_t> appExe(32768);
+	DWORD len = GetModuleFileNameW(nullptr, appExe.data(), (DWORD)appExe.size());
+	if (len == 0 || len >= appExe.size())
+		return {};
+	int bytes = WideCharToMultiByte(CP_UTF8, 0, appExe.data(), (int)len, nullptr, 0, nullptr, nullptr);
+	if (bytes <= 0)
+		return {};
+	string out((size_t)bytes, '\0');
+	WideCharToMultiByte(CP_UTF8, 0, appExe.data(), (int)len, out.data(), bytes, nullptr, nullptr);
+	return out;
 #endif
 }
 
