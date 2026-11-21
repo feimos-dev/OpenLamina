@@ -90,7 +90,7 @@ public:
 
 	bool Write(uint32_t index, const std::vector<uint8_t>& texels) override
 	{
-		if (index >= images.size() || !cmd || vkWaitForFences(device, 1, &fence, VK_TRUE, kUploadWaitNs) != VK_SUCCESS)
+		if (index >= images.size() || !cmd || !fence || vkWaitForFences(device, 1, &fence, VK_TRUE, kUploadWaitNs) != VK_SUCCESS)
 			return false;
 		void* mapped = nullptr;
 		if (vkMapMemory(device, memory, 0, VK_WHOLE_SIZE, 0, &mapped) != VK_SUCCESS)
@@ -124,8 +124,15 @@ public:
 		VkSubmitInfo si = { VK_STRUCTURE_TYPE_SUBMIT_INFO };
 		si.commandBufferCount = 1;
 		si.pCommandBuffers = &cmd;
-		if (vkQueueSubmit(queue, 1, &si, fence) != VK_SUCCESS)
+		if (vkQueueSubmit(queue, 1, &si, fence) != VK_SUCCESS) {
+			// Nothing will signal it now: a signalled one in its place
+			vkDestroyFence(device, fence, nullptr);
+			VkFenceCreateInfo fi = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
+			fi.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+			if (vkCreateFence(device, &fi, nullptr, &fence) != VK_SUCCESS)
+				fence = VK_NULL_HANDLE;
 			return false;
+		}
 		return vkWaitForFences(device, 1, &fence, VK_TRUE, kUploadWaitNs) == VK_SUCCESS;
 	}
 
