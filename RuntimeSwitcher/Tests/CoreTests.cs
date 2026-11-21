@@ -234,7 +234,7 @@ namespace RuntimeSwitcher.Tests
                 $"{{\"tag_name\":\"{r.tag}\",\"prerelease\":{(r.pre ? "true" : "false")},\"draft\":{(r.draft ? "true" : "false")}," +
                 $"\"html_url\":\"https://github.com/x/y/releases/tag/{r.tag}\",\"assets\":[" +
                 (r.asset
-                    ? $"{{\"name\":\"OpenLamina-Windows-Installer.exe\",\"browser_download_url\":\"https://example/{r.tag}/OpenLamina-Windows-Installer.exe\",\"size\":10" +
+                    ? $"{{\"name\":\"OpenLamina-Windows-Installer.exe\",\"browser_download_url\":\"https://github.com/x/y/releases/download/{r.tag}/OpenLamina-Windows-Installer.exe\",\"size\":10" +
                       (r.digest ? $",\"digest\":\"sha256:{Sha.ToUpperInvariant()}\"" : ",\"digest\":null") + "}"
                     : "") +
                 "]}")) + "]";
@@ -282,6 +282,23 @@ namespace RuntimeSwitcher.Tests
             string json = Json(("v2026.11.06", true, false, true, true));
             Assert.Null(Find(json, null, false));
             Assert.NotNull(Find(json, null, true));
+        }
+
+        [Theory]
+        [InlineData("http://github.com/x/y/releases/download/v2/OpenLamina-Windows-Installer.exe")]
+        [InlineData("https://example.com/v2/OpenLamina-Windows-Installer.exe")]
+        [InlineData("https://github.com.example.com/v2/OpenLamina-Windows-Installer.exe")]
+        [InlineData("https://github.com:8443/x/y/releases/download/v2/OpenLamina-Windows-Installer.exe")]
+        [InlineData("https://user@github.com/x/y/releases/download/v2/OpenLamina-Windows-Installer.exe")]
+        [InlineData("file:///C:/Windows/notepad.exe")]
+        [InlineData("/x/y/releases/download/v2/OpenLamina-Windows-Installer.exe")]
+        public void AReleaseWhoseSetupIsNotOnGitHubIsSkipped(string url)
+        {
+            string good = Json(("v2026.11.20", false, false, true, true));
+            string json = good.Replace("https://github.com/x/y/releases/download/v2026.11.20/OpenLamina-Windows-Installer.exe", url);
+            Assert.NotEqual(good, json);
+            Assert.Null(Find(json, "2026.11.06", true));
+            Assert.Equal("2026.11.20", Find(good, "2026.11.06", true)?.Version);
         }
 
         [Theory]

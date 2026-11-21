@@ -95,7 +95,7 @@ namespace RuntimeSwitcher.Core
 
         /// <summary>
         /// The newest release newer than <paramref name="installed"/> (null: a build of no release, older than all)
-        /// that has <paramref name="assetName"/> with a SHA-256, or null. Drafts never; pre-releases only when asked.
+        /// that has <paramref name="assetName"/> with a SHA-256 and a github.com address, or null. Drafts never; pre-releases only when asked.
         /// </summary>
         public static Release FindUpdate(IEnumerable<Release> releases, string installed, bool includePrereleases,
             string assetName)
@@ -103,11 +103,20 @@ namespace RuntimeSwitcher.Core
             return releases
                 .Where(r => !r.Draft && (includePrereleases || !r.Prerelease))
                 .Where(r => ReleaseVersion.IsValid(r.Version))
-                .Where(r => r.Asset(assetName)?.Sha256 != null && r.Asset(assetName).DownloadUrl != null)
+                .Where(r => r.Asset(assetName)?.Sha256 != null && IsGitHubUrl(r.Asset(assetName).DownloadUrl))
                 .Where(r => installed == null || ReleaseVersion.Compare(r.Version, installed) > 0)
                 .OrderByDescending(r => r.Version, Comparer<string>.Create(ReleaseVersion.Compare))
                 .FirstOrDefault();
         }
+
+        /// <summary>
+        /// An https address on github.com, as GitHub gives every release's page and file. Anything else in its answer
+        /// (another scheme or host) is not downloaded or opened.
+        /// </summary>
+        public static bool IsGitHubUrl(string url) =>
+            Uri.TryCreate(url, UriKind.Absolute, out Uri uri) && uri.Scheme == Uri.UriSchemeHttps &&
+            string.Equals(uri.Host, "github.com", StringComparison.OrdinalIgnoreCase) && uri.IsDefaultPort &&
+            string.IsNullOrEmpty(uri.UserInfo);
     }
 
     /// <summary>

@@ -87,7 +87,8 @@ namespace RuntimeSwitcher
             _settings.Click += (s, e) => ShowSettings();
             _update.Click += async (s, e) => await UpdateAsync();
             _update.Visible = false;
-            _whatsNew.LinkClicked += (s, e) => Open(_pending?.HtmlUrl ?? Releases.PageUrl);
+            _whatsNew.LinkClicked += (s, e) =>
+                Open(Releases.IsGitHubUrl(_pending?.HtmlUrl) ? _pending.HtmlUrl : Releases.PageUrl);
             _includePrereleases.Checked = Install.IncludePrereleases;
             _includePrereleases.CheckedChanged += (s, e) =>
             {
