@@ -79,7 +79,16 @@ public:
 	explicit ModeBase(const SourceBinding& binding)
 	    : binding(binding)
 	{
+		// The binding doesn't change: its numbers are read once
+		for (const auto& [name, text] : binding.parameters)
+			if (std::optional<float> v = Numbers::ParseFloat(text))
+				numericParameters[name] = *v;
 	}
+
+	// The binding doesn't change, so neither do the raw inputs it reads: made once, by CreateModeBinding
+	const std::vector<std::string>& RawInputs() const final { return rawInputs; }
+	virtual std::vector<std::string> MakeRawInputs() const = 0;
+	void KeepRawInputs() { rawInputs = MakeRawInputs(); }
 
 	std::optional<bool> DigitalInput(const std::string& inputName) const override
 	{
@@ -92,11 +101,9 @@ public:
 protected:
 	float Param(const std::string& name) const
 	{
-		auto it = binding.parameters.find(name);
-		if (it != binding.parameters.end()) {
-			if (std::optional<float> v = Numbers::ParseFloat(it->second))
-				return *v;
-		}
+		auto it = numericParameters.find(name);
+		if (it != numericParameters.end())
+			return it->second;
 		return ModeParameterDefault(binding.mode, name);
 	}
 	std::string TextParam(const std::string& name, const std::string& fallback) const
@@ -146,6 +153,8 @@ protected:
 	static bool Hysteresis(bool was, float v, float on, float off) { return was ? v > off : v >= on; }
 
 	SourceBinding binding;
+	std::map<std::string, float> numericParameters;
+	std::vector<std::string> rawInputs;
 	bool forceClick = false; // a click from the force (kForceClickOn), for sources without a click
 	std::map<std::string, DigitalOut> states;
 	std::map<std::string, AnalogOut> analogs;
@@ -157,7 +166,7 @@ class ButtonMode : public ModeBase {
 public:
 	using ModeBase::ModeBase;
 
-	std::vector<std::string> RawInputs() const override
+	std::vector<std::string> MakeRawInputs() const override
 	{
 		if (TextParam("force_input", "click") == "position")
 			return { Raw("x"), Raw("y"), Raw("touch") };
@@ -227,7 +236,7 @@ class ToggleMode : public ModeBase {
 public:
 	using ModeBase::ModeBase;
 
-	std::vector<std::string> RawInputs() const override { return { Raw("click"), Raw("value"), Raw("force") }; }
+	std::vector<std::string> MakeRawInputs() const override { return { Raw("click"), Raw("value"), Raw("force") }; }
 
 	void Update(const RawInputState& in, ActionOutputs& out) override
 	{
@@ -257,7 +266,7 @@ class TriggerMode : public ModeBase {
 public:
 	using ModeBase::ModeBase;
 
-	std::vector<std::string> RawInputs() const override { return { Raw("value"), Raw("click"), Raw("touch") }; }
+	std::vector<std::string> MakeRawInputs() const override { return { Raw("value"), Raw("click"), Raw("touch") }; }
 
 	void Update(const RawInputState& in, ActionOutputs& out) override
 	{
@@ -284,7 +293,7 @@ class GrabMode : public ModeBase {
 public:
 	using ModeBase::ModeBase;
 
-	std::vector<std::string> RawInputs() const override { return { Raw("value"), Raw("force"), Raw("click") }; }
+	std::vector<std::string> MakeRawInputs() const override { return { Raw("value"), Raw("force"), Raw("click") }; }
 
 	void Update(const RawInputState& in, ActionOutputs& out) override
 	{
@@ -311,7 +320,7 @@ class ScalarConstantMode : public ModeBase {
 public:
 	using ModeBase::ModeBase;
 
-	std::vector<std::string> RawInputs() const override { return {}; }
+	std::vector<std::string> MakeRawInputs() const override { return {}; }
 
 	void Update(const RawInputState& in, ActionOutputs& out) override { Analog(out, "value", Param("value"), 0, 0); }
 };
@@ -321,7 +330,7 @@ class ForceSensorMode : public ModeBase {
 public:
 	using ModeBase::ModeBase;
 
-	std::vector<std::string> RawInputs() const override { return { Raw("force"), Raw("value") }; }
+	std::vector<std::string> MakeRawInputs() const override { return { Raw("force"), Raw("value") }; }
 
 	void Update(const RawInputState& in, ActionOutputs& out) override
 	{
@@ -359,7 +368,7 @@ class TrackpadMode : public ModeBase {
 public:
 	using ModeBase::ModeBase;
 
-	std::vector<std::string> RawInputs() const override { return { Raw("x"), Raw("y"), Raw("touch"), Raw("click"), Raw("force") }; }
+	std::vector<std::string> MakeRawInputs() const override { return { Raw("x"), Raw("y"), Raw("touch"), Raw("click"), Raw("force") }; }
 
 	void Update(const RawInputState& in, ActionOutputs& out) override
 	{
@@ -376,7 +385,7 @@ class JoystickMode : public ModeBase {
 public:
 	using ModeBase::ModeBase;
 
-	std::vector<std::string> RawInputs() const override { return { Raw("x"), Raw("y"), Raw("touch"), Raw("click"), Raw("force") }; }
+	std::vector<std::string> MakeRawInputs() const override { return { Raw("x"), Raw("y"), Raw("touch"), Raw("click"), Raw("force") }; }
 
 	void Update(const RawInputState& in, ActionOutputs& out) override
 	{
@@ -401,7 +410,7 @@ class DpadMode : public ModeBase {
 public:
 	using ModeBase::ModeBase;
 
-	std::vector<std::string> RawInputs() const override { return { Raw("x"), Raw("y"), Raw("touch"), Raw("click"), Raw("force") }; }
+	std::vector<std::string> MakeRawInputs() const override { return { Raw("x"), Raw("y"), Raw("touch"), Raw("click"), Raw("force") }; }
 
 	void Update(const RawInputState& in, ActionOutputs& out) override
 	{
@@ -429,7 +438,7 @@ class ScrollMode : public ModeBase {
 public:
 	using ModeBase::ModeBase;
 
-	std::vector<std::string> RawInputs() const override { return { Raw("x"), Raw("y"), Raw("touch") }; }
+	std::vector<std::string> MakeRawInputs() const override { return { Raw("x"), Raw("y"), Raw("touch") }; }
 
 	void Update(const RawInputState& in, ActionOutputs& out) override
 	{
@@ -489,7 +498,7 @@ class RadialMode : public ModeBase {
 public:
 	using ModeBase::ModeBase;
 
-	std::vector<std::string> RawInputs() const override { return { Raw("x"), Raw("y"), Raw("touch"), Raw("click"), Raw("force") }; }
+	std::vector<std::string> MakeRawInputs() const override { return { Raw("x"), Raw("y"), Raw("touch"), Raw("click"), Raw("force") }; }
 
 	void Update(const RawInputState& in, ActionOutputs& out) override
 	{
@@ -548,5 +557,7 @@ std::unique_ptr<ModeBinding> CreateModeBinding(const SourceBinding& binding, std
 		warnings.push_back(binding.path + ": mode '" + binding.mode + "' isn't one OpenComposite evaluates, skipped");
 		return nullptr;
 	}
-	return it->second(binding);
+	std::unique_ptr<ModeBinding> mode = it->second(binding);
+	static_cast<ModeBase&>(*mode).KeepRawInputs();
+	return mode;
 }

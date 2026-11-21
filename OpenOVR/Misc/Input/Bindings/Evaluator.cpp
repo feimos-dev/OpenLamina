@@ -141,7 +141,7 @@ void BindingEvaluator::Update(const RawInputState& in)
 				ModeBinding& mode = *s.modes[m];
 				if (!OnHand(s.modePaths[m], restrictTo) || ran.count(&mode))
 					continue;
-				std::vector<std::string> raw = mode.RawInputs();
+				const std::vector<std::string>& raw = mode.RawInputs();
 				bool blocked = std::any_of(raw.begin(), raw.end(), [&](const std::string& r) { return claimed.count(r) != 0; });
 				// None of its raw inputs active (the hand's controller is another, or the session isn't focused): the
 				// mode doesn't run, so its actions read as inactive, as they do without the evaluator
