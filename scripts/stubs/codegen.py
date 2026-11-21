@@ -104,14 +104,17 @@ std::shared_ptr<{cls}> GetCreate{getter_name}() {{
             if f.user_implemented:
                 continue
 
-            # Generate an argument string with casts as appropriate
+            # Generate an argument string with casts as appropriate. Each cast is between a version's type and the
+            # Base class's copy of it: the two must have the same size and alignment, checked at compile time.
             nargs = []
+            checks = []
             for a in f.args:
                 # A type from the version's own namespace is cast to the Base class's copy of it (OOVR_Name), except
                 # those deleted_types.h puts there, which the Base class takes as they are
                 if _in_namespace(a.type, namespace) and not is_deleted_type(ver, a.type):
                     casttype = a.type.replace(namespace + "::", "OOVR_")
                     nargs.append("(%s) %s" % (casttype, a.name))
+                    checks.append((a.type, casttype))
                 else:
                     nargs.append(a.name)
 
@@ -121,10 +124,15 @@ std::shared_ptr<{cls}> GetCreate{getter_name}() {{
             return_str = "return"
             if _in_namespace(f.return_type, namespace):
                 return_str += f" ({f.return_type})"
+                checks.append((f.return_type, f"decltype(base->{f.name}({nargs}))"))
 
             const = " const" if f.const else ""
-            fi.write(f"{f.return_type} {cname}::{f.name}({f.args_str()}){const} {{\n"
-                     "\tif (oovr_global_configuration.LogAllOpenVRCalls())\n"
+            fi.write(f"{f.return_type} {cname}::{f.name}({f.args_str()}){const} {{\n")
+            for ours, theirs in checks:
+                if (f.name, _bare_type_name(ours)) in layout_check_exceptions:
+                    continue
+                fi.write(f"\tstatic_assert(oc_same_layout<{ours}, {theirs}>(), \"{ours}: the Base class's copy differs\");\n")
+            fi.write("\tif (oovr_global_configuration.LogAllOpenVRCalls())\n"
                      f"\t\tOOVR_LOG(\"Entered function (from interface {ver.namespace()})\");\n"
                      f"\t{return_str} base->{f.name}({nargs});\n}}\n")
 
@@ -135,6 +143,21 @@ std::shared_ptr<{cls}> GetCreate{getter_name}() {{
         # (a function table taken from this object must not keep calling into it)
         inst_name = f"fntable_{ver.varname()}_{ver.version}_instance"
         fi.write(f"void {cname}::Delete() {{ if ({inst_name} == this) {inst_name} = NULL; delete this; }}\n")
+
+
+# (function, type) whose versions differ in size by design: the Base class reads the caller's size, from an argument
+# (nStatsSizeInBytes, unBindingInfoSize) or from the struct's own m_nSize, so the layout isn't checked
+layout_check_exceptions = {
+    ("GetCumulativeStats", "Compositor_CumulativeStats"),
+    ("GetFrameTiming", "Compositor_FrameTiming"),
+    ("GetFrameTimings", "Compositor_FrameTiming"),
+    ("GetActionBindingInfo", "InputBindingInfo_t"),
+}
+
+
+def _bare_type_name(type_name: str) -> str:
+    """The type's own name, without its namespace, const, pointer or reference."""
+    return type_name.replace("const ", "").rstrip("*& ").strip().split("::")[-1]
 
 
 def is_deleted_type(ver: InterfaceDef, arg_type: str) -> bool:
