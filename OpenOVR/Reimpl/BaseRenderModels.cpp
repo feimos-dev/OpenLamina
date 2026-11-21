@@ -600,9 +600,9 @@ void LoadWorker()
 	}
 }
 
-// Queues a load, starting a thread for it if fewer than kWorkers run; throws (and queues nothing) if no thread runs
+// Queues a load, starting a thread for it if fewer than kWorkers run; nothing (and nothing queued) if no thread runs
 // and none can be started
-std::shared_future<std::shared_ptr<const LoadedModel>> QueueLoad(LoadTask task)
+std::optional<std::shared_future<std::shared_ptr<const LoadedModel>>> QueueLoad(LoadTask task)
 {
 	std::shared_future<std::shared_ptr<const LoadedModel>> result = task.get_future().share();
 	LoadQueue& queue = Queue();
@@ -615,7 +615,7 @@ std::shared_future<std::shared_ptr<const LoadedModel>> QueueLoad(LoadTask task)
 		} catch (const std::exception&) {
 			if (queue.running == 0) {
 				queue.waiting.pop_back();
-				throw;
+				return std::nullopt;
 			}
 		}
 	}
@@ -664,13 +664,15 @@ EVRRenderModelError BaseRenderModels::LoadRenderModel_Async(const char* pchRende
 			std::shared_ptr<const RmModel> own;
 			if (string base = name.substr(0, name.find('/')); IsOwnControllerModel(base) && !FindSteamVRRenderModel(base))
 				own = FindModel(base);
-			std::shared_future<std::shared_ptr<const LoadedModel>> started;
+			std::optional<std::shared_future<std::shared_ptr<const LoadedModel>>> started;
 			try {
 				started = QueueLoad(LoadTask([name, own] { return LoadModel(name, own); }));
 			} catch (const std::exception& e) {
 				OC_UNSUPPORTED(VRRenderModelError_NotSupported, "LoadRenderModel_Async: can't start loading '%s': %s", pchRenderModelName, e.what());
 			}
-			loads.byName.emplace(name, std::move(started));
+			if (!started)
+				OC_UNSUPPORTED(VRRenderModelError_NotSupported, "LoadRenderModel_Async: can't start loading '%s': no thread", pchRenderModelName);
+			loads.byName.emplace(name, std::move(*started));
 			return VRRenderModelError_Loading;
 		}
 		load = it->second;
