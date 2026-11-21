@@ -35,6 +35,13 @@
 
 enum class ArgSet { Valid, Edge, Null, Invalid };
 
+// A path as OpenVR takes one: UTF-8 (path::string() is the ANSI code page on Windows)
+inline std::string Utf8Path(const std::filesystem::path& p)
+{
+	std::u8string u = p.u8string();
+	return std::string(u.begin(), u.end());
+}
+
 struct CallContext {
 #ifdef _WIN32
 	ID3D11Device* d3d11 = nullptr;
@@ -179,7 +186,7 @@ struct String {
 			else if (n == "pchAppKey" || n == "pchTemplateAppKey" || n == "pchNewAppKey")
 				s = "oc.conformance.app";
 			else if (n.find("Manifest") != std::string::npos)
-				s = (ctx.dataDir / "manifest_basic.json").string();
+				s = Utf8Path(ctx.dataDir / "manifest_basic.json");
 			else if (n == "pchActionName" || n == "pchActionSetName")
 				s = n == "pchActionName" ? "/actions/main/in/trigger" : "/actions/main";
 			else if (n == "pchInputSourcePath")

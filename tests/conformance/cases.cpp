@@ -1352,7 +1352,7 @@ void SceneSwitchCase(CaseContext& c)
 		RemoveWhenFree(dir);
 		return;
 	}
-	c.Record("AddApplicationManifest", Err(apps->AddApplicationManifest(manifestPath.string().c_str(), true)));
+	c.Record("AddApplicationManifest", Err(apps->AddApplicationManifest(Utf8Path(manifestPath).c_str(), true)));
 
 	// Each change of what's sampled, in order; the scene process told apart as none, A or B by the launches
 	Json::Value changes(Json::arrayValue);
@@ -1427,7 +1427,7 @@ void SceneSwitchCase(CaseContext& c)
 		c.Record(std::string("scene app ") + name, seen);
 	}
 
-	c.Record("RemoveApplicationManifest", Err(apps->RemoveApplicationManifest(manifestPath.string().c_str())));
+	c.Record("RemoveApplicationManifest", Err(apps->RemoveApplicationManifest(Utf8Path(manifestPath).c_str())));
 	c.core->Cleanup();
 	RemoveWhenFree(dir);
 }
@@ -1471,12 +1471,12 @@ void ApplicationsCase(CaseContext& c)
 			manifest.replace(at, from.size(), to);
 	};
 	std::string key = binaryKey;
-	replace(key, key.substr(0, key.find(':') + 2) + "\"" + JsonEscaped(binary.generic_string()) + "\"");
-	replace("\"arguments\" : \"\"", "\"arguments\" : \"\\\"" + JsonEscaped(marker.generic_string()) + "\\\" launched\"");
+	replace(key, key.substr(0, key.find(':') + 2) + "\"" + JsonEscaped(Utf8Path(binary.generic_u8string())) + "\"");
+	replace("\"arguments\" : \"\"", "\"arguments\" : \"\\\"" + JsonEscaped(Utf8Path(marker.generic_u8string())) + "\\\" launched\"");
 	fs::path manifestPath = dir / "echo.vrmanifest";
 	std::ofstream(manifestPath) << manifest;
 
-	c.Record("AddApplicationManifest", Err(apps->AddApplicationManifest(manifestPath.string().c_str(), false)));
+	c.Record("AddApplicationManifest", Err(apps->AddApplicationManifest(Utf8Path(manifestPath).c_str(), false)));
 	Json::Value installed;
 	installed["ret"] = apps->IsApplicationInstalled("oc.test.echo");
 	c.Record("IsApplicationInstalled", installed);
@@ -1511,7 +1511,7 @@ void ApplicationsCase(CaseContext& c)
 	last["after_launch"] = apps->GetApplicationPropertyUint64("oc.test.echo", vr::IVRApplications_007::VRApplicationProperty_LastLaunchTime_Uint64, &error) > 0;
 	c.Record("LastLaunchTime", last);
 
-	c.Record("RemoveApplicationManifest", Err(apps->RemoveApplicationManifest(manifestPath.string().c_str())));
+	c.Record("RemoveApplicationManifest", Err(apps->RemoveApplicationManifest(Utf8Path(manifestPath).c_str())));
 	Json::Value gone;
 	gone["ret"] = apps->IsApplicationInstalled("oc.test.echo");
 	c.Record("IsApplicationInstalled after removal", gone);
@@ -3696,7 +3696,7 @@ void RenderModelsCase(CaseContext& c)
 		rm->FreeRenderModel(hand);
 	}
 	// An OBJ file by its absolute path
-	std::string objPath = (std::filesystem::path(OC_TEST_DATA_DIR) / "steamvr" / "resources" / "rendermodels" / "test_controller" / "body.obj").string();
+	std::string objPath = Utf8Path(std::filesystem::path(OC_TEST_DATA_DIR) / "steamvr" / "resources" / "rendermodels" / "test_controller" / "body.obj");
 	RenderModel_t* byPath = nullptr;
 	r["path_ret"] = load(objPath.c_str(), &byPath);
 	if (byPath) {

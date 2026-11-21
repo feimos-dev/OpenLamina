@@ -204,7 +204,7 @@ int main(int argc, char** argv)
 		cc.caseName = args["--case"];
 		cc.args = caseArgs;
 		cc.runtimePath = args["--runtime"];
-		cc.manifest = args.count("--manifest") ? args["--manifest"] : (ctx.dataDir / "manifest_basic.json").string();
+		cc.manifest = args.count("--manifest") ? args["--manifest"] : Utf8Path(ctx.dataDir / "manifest_basic.json");
 		it->second(cc);
 		return 0;
 	}
