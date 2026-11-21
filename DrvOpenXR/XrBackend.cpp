@@ -3881,7 +3881,10 @@ void XrBackend::CreateGenericTrackers()
 		if (!sessionChanged && (it->rolePath == XR_NULL_PATH || sameAction)) {
 			generic_trackers[slot] = current[slot];
 		} else if ((generic_trackers[slot] = createTracker(*it, (uint32_t)slot))) {
-			sendEvent(VREvent_TrackedDeviceActivated, deviceIndex);
+			// Made again on a new session, the tracker never went away for the game: nothing to tell it (after a loss
+			// the devices are activated again together, by OnSessionCreated)
+			if (!sessionChanged)
+				sendEvent(VREvent_TrackedDeviceActivated, deviceIndex);
 		} else {
 			sendEvent(VREvent_TrackedDeviceDeactivated, deviceIndex);
 		}
