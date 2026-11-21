@@ -2692,6 +2692,10 @@ EVROverlayError BaseOverlay::SetOverlayName(VROverlayHandle_t ulOverlayHandle, c
 }
 EVROverlayError BaseOverlay::GetOverlayImageData(VROverlayHandle_t ulOverlayHandle, void* pvBuffer, uint32_t unBufferSize, uint32_t* punWidth, uint32_t* punHeight)
 {
+	// The overlay's compositor (its swapchain is the session's) is read back from as the frames and SetOverlayTexture
+	// use it: under the session's lock, then the layers'
+	auto sessionLock = xr_session.lock_shared();
+	std::lock_guard<std::recursive_mutex> layersGuard(layersLock);
 	USEH();
 	if (punWidth)
 		*punWidth = 0;
