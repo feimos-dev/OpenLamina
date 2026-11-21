@@ -29,22 +29,31 @@ GEN_RE = re.compile(r'^\s*GEN_INTERFACE\("(\w+)",\s*"(\d{3})"', re.M)
 ROOT = Path(__file__).resolve().parent.parent
 
 
-def git(repo, *args):
-    return subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, encoding="utf-8",
-                          errors="replace")
+def git(repo, *args, check=False):
+    r = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, encoding="utf-8",
+                       errors="replace")
+    if check and r.returncode != 0:
+        raise RuntimeError(f"git {' '.join(args)} failed in {repo}: {r.stderr.strip()}")
+    return r
 
 
 def show(repo, tag, path):
+    """The file at the tag; "" if the tag has no such file. A file the tag has but git can't give (a blob a blobless
+    clone fails to fetch) is an error, not an empty file."""
     r = git(repo, "show", f"{tag}:{path}")
-    return r.stdout if r.returncode == 0 else ""
+    if r.returncode == 0:
+        return r.stdout
+    if git(repo, "ls-tree", "--name-only", tag, "--", path, check=True).stdout.strip():
+        raise RuntimeError(f"git show {tag}:{path} failed in {repo}: {r.stderr.strip()}")
+    return ""
 
 
 def tags_in_order(repo):
-    tags = [t for t in git(repo, "tag").stdout.split() if t]
+    tags = [t for t in git(repo, "tag", check=True).stdout.split() if t]
     # Order by the date of the tagged commit
     dated = []
     for t in tags:
-        ct = git(repo, "log", "-1", "--format=%ct", t).stdout.strip()
+        ct = git(repo, "log", "-1", "--format=%ct", t, check=True).stdout.strip()
         dated.append((int(ct or 0), t))
     return [t for _, t in sorted(dated)]
 
@@ -89,7 +98,8 @@ def write(repo, out):
 
 def compare(repo, path):
     """What Valve's tags have that the listed file doesn't: a version it lacks, or one whose kind or tags changed (a
-    newer tag still shipping it). 1 if anything is new."""
+    newer tag still shipping it). 1 if anything is new, and 1 if a listed version is in none of Valve's tags (none
+    found at all, as from a clone without tags, compares nothing)."""
     inv, commit, date = inventory(repo)
     listed = {}
     for line in Path(path).read_text(encoding="utf-8").splitlines():
@@ -104,13 +114,17 @@ def compare(repo, path):
         elif listed[v] != [kind, first, last]:
             print(f"changed: {v} {' '.join(listed[v])} -> {kind} {first} {last}")
             new += 1
-    for v in sorted(set(listed) - set(inv), key=version_key):
+    gone = sorted(set(listed) - set(inv), key=version_key)
+    for v in gone:
         print(f"listed but not in Valve's tags: {v}")
-    print(f"{len(inv)} versions in Valve's tags at {commit} ({date}), {len(listed)} listed; {new} new or changed")
+    print(f"{len(inv)} versions in Valve's tags at {commit} ({date}), {len(listed)} listed; {new} new or changed, "
+          f"{len(gone)} not found")
     if new:
         print(f"Update the list: openvr_inventory.py --valve-repo <clone> --write {path}, then offer each new version "
               "or set it aside in not_implemented.txt")
-    return 1 if new else 0
+    if gone:
+        print("A listed version missing from Valve's tags: the clone is incomplete, or Valve removed a tag")
+    return 1 if new or gone else 0
 
 
 def read_listed(path):
@@ -312,6 +326,27 @@ def self_test():
             print("self-test FAILED")
             print("  got: ", got)
             print("  want:", want)
+            return 1
+        listed = repo / "listed.txt"
+        listed.write_text("\n".join(want) + "\n")
+        bad = []
+        if compare(repo, listed) != 0:
+            bad.append("the same versions compare as new")
+        listed.write_text("\n".join(want + ["IVRGone_001 app t1 t1"]) + "\n")
+        if compare(repo, listed) != 1:
+            bad.append("a listed version missing from the tags passes")
+        empty = repo / "empty"
+        empty.mkdir()
+        git(empty, "init", "-q")
+        if compare(empty, listed) != 1:
+            bad.append("a clone without tags passes")
+        try:
+            show(repo / "not-a-repo", "t1", "headers/openvr.h")
+            bad.append("a failing git gives an empty file")
+        except RuntimeError:
+            pass
+        if bad:
+            print("self-test FAILED:", "; ".join(bad))
             return 1
     # The kinds of method body
     cpp = """int BaseFoo::Gone() { OC_UNSUPPORTED(0, "no"); }
