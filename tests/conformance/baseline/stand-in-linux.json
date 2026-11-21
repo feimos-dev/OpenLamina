@@ -42370,7 +42370,7 @@
   "overlay-lifecycle/TexelAspect#/-/-": {"#v": {"expected": 2.0, "get": 0, "set": 0, "value": 2.0}, "expected": "70142f6647", "get": "b6589fc6ab", "s": "ok", "set": "b6589fc6ab", "value": "70142f6647"},
   "overlay-lifecycle/TransformAbsolute#/-/-": {"#v": {"expected": 1.25, "get": 0, "set": 0, "value": 1.25}, "expected": "8e007eaa50", "get": "b6589fc6ab", "s": "ok", "set": "b6589fc6ab", "value": "8e007eaa50"},
   "overlay-lifecycle/WidthInMeters#/-/-": {"#v": {"expected": 1.5, "get": 0, "set": 0, "value": 1.5}, "expected": "aa8f289ebe", "get": "b6589fc6ab", "s": "ok", "set": "b6589fc6ab", "value": "aa8f289ebe"},
-  "render-model-components/GetRenderModelName#/-/-": {"#v": {"count": 7}, "count": "902ba3cda1", "s": "ok"},
+  "render-model-components/GetRenderModelName#/-/-": {"#v": {"count": 31}, "count": "632667547e", "s": "ok"},
   "render-model-components/left render model components#/-/-": {"#v": {"components": 0, "model": ""}, "components": "b6589fc6ab", "model": "dd29ecf524", "s": "ok"},
   "render-model-components/right render model components#/-/-": {"#v": {"components": 0, "model": ""}, "components": "b6589fc6ab", "model": "dd29ecf524", "s": "ok"},
   "settings-defaults/SetFloat collisionBounds fade distance: events#/-/-": {"s": "ok"},
