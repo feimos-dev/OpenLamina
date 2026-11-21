@@ -187,11 +187,19 @@ class Runner:
         env.update(env_extra or {})
         cwd = None
         if unelevated.integrity_above_medium() and not self.args.ci:
-            return unelevated.run_medium(cmd, env, cwd, timeout)
-        # In a memory-limited job (unelevated.py): a runaway child fails alone
-        return unelevated.run_limited(cmd, env, cwd, timeout, capture=True)[0]
+            code = unelevated.run_medium(cmd, env, cwd, timeout)
+        else:
+            # In a memory-limited job (unelevated.py): a runaway child fails alone
+            code = unelevated.run_limited(cmd, env, cwd, timeout, capture=True)[0]
+        with Runner.keep_lock:
+            Runner.timeouts_in_a_row = Runner.timeouts_in_a_row + 1 if code == 124 else 0
+        return code
 
     keep_lock = threading.Lock()
+    # --keep-running: timeouts in a row (a SteamVR whose server hangs answers no child), and the restarts that made
+    timeouts_in_a_row = 0
+    restarts = 0
+    HUNG_AFTER = 3
 
     def keep_running(self):
         """--keep-running: SteamVR quits all of its programs when the scene application it counts as its first exits
@@ -205,6 +213,17 @@ class Runner:
             return server.lower() in out.stdout.lower()
 
         with Runner.keep_lock:
+            if running() and Runner.timeouts_in_a_row >= Runner.HUNG_AFTER:
+                # Running but answering nobody: its processes ended, so it's started again below
+                print(f"run.py: {Runner.timeouts_in_a_row} timeouts in a row: restarting SteamVR", flush=True)
+                for name in ("vrserver.exe", "vrmonitor.exe", "vrcompositor.exe", "vrdashboard.exe", "vrwebhelper.exe"):
+                    subprocess.run(["taskkill", "/f", "/im", name], capture_output=True)
+                for _ in range(30):
+                    if not running():
+                        break
+                    time.sleep(1)
+                Runner.timeouts_in_a_row = 0
+                Runner.restarts += 1
             if running():
                 return
             subprocess.run(["explorer.exe", exe])
@@ -230,7 +249,36 @@ class Runner:
 
     def run_interface(self, version, apptype, argset):
         raw = self.out / "raw" / f"{version}-{apptype}-{argset}.jsonl"
+        done = Path(str(raw) + ".result.json")
+        if self.args.resume:
+            kept = self.resumed(raw, done, {"interface": version, "apptype": apptype, "argset": argset})
+            if kept is not None:
+                return kept
         raw.unlink(missing_ok=True)
+        done.unlink(missing_ok=True)
+        results = self.interface_records(version, apptype, argset, raw)
+        done.write_text(json.dumps(results), encoding="utf-8")
+        return results
+
+    @staticmethod
+    def resumed(raw, done, what):
+        """--resume: a job's records from an earlier run into the same --out. Its saved result if it has one; else, for a
+        run from before results were saved, its answers file if it has any answers, each gap in their indices taken as
+        a call that ended the program (status "lost": whether it crashed, ended or timed out wasn't saved). None when the job is to run again."""
+        if done.exists():
+            return json.loads(done.read_text(encoding="utf-8"))
+        records = read_jsonl(raw)
+        if not records:
+            return None
+        for r in records:
+            r["status"] = "ok"
+        have = {r.get("index") for r in records}
+        for i in range(max([i for i in have if isinstance(i, int)] + [0])):
+            if i not in have:
+                records.append(dict(what, index=i, method=f"<call {i}>", status="lost", resumed=True))
+        return records
+
+    def interface_records(self, version, apptype, argset, raw):
         start, results, attempts = 0, [], 0
         while attempts < 500:
             attempts += 1
@@ -269,7 +317,16 @@ class Runner:
         # With --repeat, each round has its own files, and its records say which round they're from
         stem = f"case-{name}" if round_ is None else f"case-{name}-{round_}"
         raw = self.out / "raw" / f"{stem}.jsonl"
+        done = Path(str(raw) + ".result.json")
+        if self.args.resume and done.exists():
+            return json.loads(done.read_text(encoding="utf-8"))
         raw.unlink(missing_ok=True)
+        done.unlink(missing_ok=True)
+        records = self.case_records(name, round_, stem, raw)
+        done.write_text(json.dumps(records), encoding="utf-8")
+        return records
+
+    def case_records(self, name, round_, stem, raw):
         extra = ["--case", name]
         if self.args.manifest:
             extra += ["--manifest", str(Path(self.args.manifest).resolve())]
@@ -530,7 +587,10 @@ def main():
     ap.add_argument("--ci", action="store_true")
     ap.add_argument("--allow-failures", action="store_true")
     ap.add_argument("--real-runtime", action="store_true")
-    ap.add_argument("--keep-running", metavar="EXE", help="with --real-runtime: start this (SteamVR's vrstartup.exe) before any child when its server isn't running")
+    ap.add_argument("--keep-running", metavar="EXE", help="with --real-runtime: start this (SteamVR's vrstartup.exe) before any child when its "
+                    "server isn't running, and again when it hangs (three timeouts in a row)")
+    ap.add_argument("--resume", action="store_true", help="keep the jobs an earlier run into the same --out finished (their "
+                    "<raw>.result.json, or for an older run their answers), and run only the others")
     ap.add_argument("--repeat", type=int, default=1, help=f"run each case this many times (at most {MAX_REPEAT})")
     ap.add_argument("--case-arg", action="append", metavar="NAME=VALUE", help="passed to every case (repeatable)")
     ap.add_argument("--apptypes", help="the interfaces only under these app types (numbers, comma-separated), with valid arguments")
@@ -551,7 +611,12 @@ def main():
     finally:
         runner.cleanup()
     out = Path(args.out)
-    (out / "results.json").write_text(json.dumps({"runtime": args.runtime, "records": results}, indent=1),
+    meta = {"runtime": args.runtime}
+    if args.keep_running:
+        meta["runtime_restarts"] = Runner.restarts  # a hung SteamVR started again (--keep-running)
+    if args.resume:
+        meta["resumed"] = True  # some records are from an earlier run into the same --out
+    (out / "results.json").write_text(json.dumps(dict(meta, records=results), indent=1),
                                       encoding="utf-8")
     counts = {}
     for r in results:

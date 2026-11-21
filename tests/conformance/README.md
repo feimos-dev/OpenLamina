@@ -75,6 +75,15 @@ driver (no headset needed) and writes `expected/steamvr-<version>.json`. It back
 SteamVR's settings, room setup and app config first, puts every one back afterwards and fails unless their SHA-256s
 match; `-WhatIf` only lists them. Close SteamVR, Monado and anything VR first.
 
+`-Controllers` loads SteamVR's other drivers beside the null headset, so switched-on Lighthouse controllers take part
+(for `app-type-answers` and `steamvr_run_cases.cpp`). Programs run one at a time (a program that brings SteamVR down
+would take the others with it). A SteamVR whose server stops answering (each child then waits on its shared namespace
+until the timeout) is ended after three timeouts in a row and started again; `results.json` counts these restarts
+(`runtime_restarts`). `-Resume` keeps what an earlier run into the same `-Out` finished (each job's
+`<raw>.result.json`) and runs the rest; `results.json` then has `"resumed": true`. Against a real runtime the methods
+of `unsafe_methods.txt` aren't called (their records say `"skipped": "unsafe"`), among them `ShowMessageOverlay`, which
+waits for a click in the headset: so no recording has SteamVR's answer to it.
+
 `differences.json` lists the differences that are expected between SteamVR's null HMD and OpenLamina (display
 geometry, timing and poses, device properties, handle numbers, the PC's own apps and settings, and the app types
 OpenLamina doesn't support yet), each with its reason. Every other difference is a bug to fix or to explain there.

@@ -28,7 +28,9 @@ param(
     [int]$Jobs = 1,
     # The null headset with SteamVR's other drivers too (Lighthouse: real controllers switched on), for the cases whose
     # answers need controllers
-    [switch]$Controllers
+    [switch]$Controllers,
+    # Keep what an earlier run into the same -Out finished, and run only the rest (run.py --resume)
+    [switch]$Resume
 )
 $ErrorActionPreference = 'Stop'
 $here = $PSScriptRoot
@@ -111,7 +113,7 @@ try {
     $vrclient = Join-Path $steamvr 'bin\vrclient_x64.dll'
     & python -I (Join-Path $here 'run.py') --runtime $vrclient --conformance $Conformance --xr-runtime none `
         --real-runtime --keep-running (Join-Path $steamvr 'bin\win64\vrstartup.exe') --allow-failures --jobs $Jobs `
-        --out $Out @($Probe ? @('--cases', 'init-matrix') : @())
+        --out $Out @($Probe ? @('--cases', 'init-matrix') : @()) @($Resume ? @('--resume') : @())
     if ($LASTEXITCODE -ne 0) { throw "run.py failed ($LASTEXITCODE)" }
 }
 catch {
