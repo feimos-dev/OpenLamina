@@ -659,6 +659,7 @@ DeviceIdentity XrHMD::Identity()
 	// The OpenXR system's name picks the row; read once per instance (it doesn't change while the instance lives)
 	static std::mutex nameMutex;
 	static XrInstance nameInstance = XR_NULL_HANDLE;
+	static uint64_t nameGeneration = 0;
 	static std::string systemName, runtimeName;
 	static uint32_t vendorId = 0;
 	{
@@ -668,7 +669,7 @@ DeviceIdentity XrHMD::Identity()
 			runtimeName.clear();
 			vendorId = 0;
 			nameInstance = XR_NULL_HANDLE;
-		} else if (xr_instance != nameInstance || systemName.empty()) {
+		} else if (xr_instance != nameInstance || xr_instance_generation != nameGeneration || systemName.empty()) {
 			XrSystemProperties properties = { XR_TYPE_SYSTEM_PROPERTIES };
 			const bool got = XR_SUCCEEDED(xrGetSystemProperties(xr_instance, xr_system, &properties));
 			systemName = got ? properties.systemName : "";
@@ -676,6 +677,7 @@ DeviceIdentity XrHMD::Identity()
 			XrInstanceProperties instance = { XR_TYPE_INSTANCE_PROPERTIES };
 			runtimeName = XR_SUCCEEDED(xrGetInstanceProperties(xr_instance, &instance)) ? instance.runtimeName : "";
 			nameInstance = xr_instance;
+			nameGeneration = xr_instance_generation;
 		}
 	}
 	RuntimeDevice device;

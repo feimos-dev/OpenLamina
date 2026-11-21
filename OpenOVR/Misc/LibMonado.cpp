@@ -95,20 +95,19 @@ LibMonado& LibMonado::Get()
 	static LibMonado* none = new LibMonado(std::string());
 	static LibMonado* current = nullptr;
 	static XrInstance currentInstance = XR_NULL_HANDLE;
-	static std::string currentRuntime;
+	static uint64_t currentGeneration = 0;
 
 	std::lock_guard<std::mutex> guard(mutex);
 	if (xr_instance == XR_NULL_HANDLE)
 		return *none;
-	// Properties are read every frame: the runtime is asked only when the instance changes
-	if (current && xr_instance == currentInstance)
+	// Properties are read every frame: the runtime is asked only when the instance changes. An instance made again
+	// (after the runtime's service went away, and libmonado's connection with it) may have the old one's handle.
+	const uint64_t generation = xr_instance_generation;
+	if (current && xr_instance == currentInstance && generation == currentGeneration)
 		return *current;
-	std::string runtime = RuntimeNameOfInstance();
-	if (!current || xr_instance != currentInstance || runtime != currentRuntime) {
-		current = new LibMonado(runtime);
-		currentInstance = xr_instance;
-		currentRuntime = runtime;
-	}
+	current = new LibMonado(RuntimeNameOfInstance());
+	currentInstance = xr_instance;
+	currentGeneration = generation;
 	return *current;
 }
 

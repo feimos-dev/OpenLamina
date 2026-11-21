@@ -5,6 +5,7 @@
 
 #include "Misc/ChaperoneData.h"
 #include "Misc/LibMonado.h"
+#include "Misc/xrutil.h"
 #include "Reimpl/BaseChaperoneSetup.h"
 #include "XrController.h"
 
@@ -141,6 +142,20 @@ TEST_CASE("Battery_of_same_named_devices_goes_by_serial")
 	CHECK(third->charge == 0.75f);
 	CHECK(third->charging);
 	CHECK(byName->charge == 0.5f);
+}
+
+TEST_CASE("Libmonado_is_asked_for_again_for_an_instance_made_again_at_the_same_handle")
+{
+	// A handle no runtime gave: the runtime's name can't be asked, so each is a LibMonado without a library
+	const XrInstance before = xr_instance;
+	xr_instance = (XrInstance)(uintptr_t)0x10;
+	LibMonado* first = &LibMonado::Get();
+	CHECK(&LibMonado::Get() == first);
+	xr_instance_generation++;
+	LibMonado* second = &LibMonado::Get();
+	CHECK(second != first);
+	CHECK(&LibMonado::Get() == second);
+	xr_instance = before;
 }
 
 TEST_CASE("Battery_unsupported_is_no_battery")

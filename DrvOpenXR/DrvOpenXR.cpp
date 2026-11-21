@@ -560,6 +560,7 @@ IBackend* DrvOpenXR::CreateOpenXRBackend(const char* startupInfo, vr::EVRInitErr
 	const std::vector<const char*>& extensions = plan.extensions;
 	const XrGraphicsApiSupportedFlags apiFlags = plan.apiFlags;
 	xr_instance = TakeProbedInstance(plan, &xr_instance_version);
+	xr_instance_generation++;
 	if (!xr_instance) {
 		if (XrResult res = MakeInstance(plan, &xr_instance, &xr_instance_version); XR_FAILED(res)) {
 			OOVR_LOGF("WARNING: Instance creation failed: XrResult %d", res);
@@ -713,6 +714,7 @@ XrResult DrvOpenXR::RemakeInstance()
 			xr_instance = XR_NULL_HANDLE;
 			return res;
 		}
+		xr_instance_generation++;
 		// The old function table isn't freed: a thread outside the session lock may still be reading it
 		xr_ext = new XrExt(currentPlan.apiFlags, currentPlan.extensions);
 		madeAgain = true;

@@ -220,6 +220,9 @@ XrQuaternionf yRotation(XrQuaternionf& q, XrQuaternionf& r);
 void rotate_vector_by_quaternion(const XrVector3f& v, const XrQuaternionf& q, XrVector3f& vprime);
 
 extern XrInstance xr_instance;
+// Counts the instances made. A new instance may get the handle of the one before it, so what is kept per instance is
+// kept by this as well.
+extern std::atomic<uint64_t> xr_instance_generation;
 extern SessionWrapper& xr_session;
 extern XrSystemId xr_system;
 XrViewConfigurationView& xr_main_view(XruEye view_id);

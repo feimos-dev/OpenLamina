@@ -11,6 +11,7 @@
 #include "xr_ext.h"
 
 XrInstance xr_instance = XR_NULL_HANDLE;
+std::atomic<uint64_t> xr_instance_generation{ 0 };
 XrVersion xr_instance_version = 0;
 // Never destroyed: the backend's static destructor takes its lock when a game exits without VR_Shutdown
 SessionWrapper& xr_session = *new SessionWrapper();
@@ -259,17 +260,23 @@ XrTime XrSessionGlobals::GetBestTime()
 
 XrTime xr_time_now()
 {
-	if (!xr_instance)
+	// Under the session lock, which the instance is destroyed and made again under. Never waited for (a thread of
+	// OpenLamina's own may ask, which a restart joins): no time while another thread has it exclusively.
+	SessionLock sessionLock(xr_session, SessionLock::TryShared{});
+	if (!sessionLock.IsHeld() || !xr_instance)
 		return 0;
 	// Looked up again for each instance; nullptr where the instance hasn't the extension enabled
 	static std::mutex lock;
 	static XrInstance lookedUpFor = XR_NULL_HANDLE;
+	static uint64_t lookedUpGeneration = 0;
 	static PFN_xrVoidFunction convert = nullptr;
 	PFN_xrVoidFunction fn = nullptr;
 	{
 		std::lock_guard<std::mutex> g(lock);
-		if (lookedUpFor != xr_instance) {
+		const uint64_t generation = xr_instance_generation;
+		if (lookedUpFor != xr_instance || lookedUpGeneration != generation) {
 			lookedUpFor = xr_instance;
+			lookedUpGeneration = generation;
 			convert = nullptr;
 #ifdef _WIN32
 			if (XR_FAILED(xrGetInstanceProcAddr(xr_instance, "xrConvertWin32PerformanceCounterToTimeKHR", &convert)))
