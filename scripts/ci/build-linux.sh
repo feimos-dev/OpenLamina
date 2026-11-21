@@ -43,6 +43,12 @@ fi
 # shellcheck disable=SC2086 # split on purpose
 set -- "$@" ${OC_CMAKE_ARGS:-}
 
+# Only a folder that is empty or a build folder (it has a CMakeCache.txt) is deleted: never the checkout or another
+# folder named by mistake
+if [ -d "$out" ] && [ -n "$(ls -A "$out")" ] && [ ! -f "$out/CMakeCache.txt" ]; then
+	echo "$out isn't a build folder (it has files but no CMakeCache.txt): name an empty or new folder." >&2
+	exit 1
+fi
 rm -rf "$out"
 cmake "$@"
 # -k: report every compile error, not only the first.
