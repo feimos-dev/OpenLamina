@@ -48,6 +48,8 @@ def main():
     table = Path(sys.argv[2]) if len(sys.argv) > 2 else ROOT / "tests" / "version_order.json"
     py = embedded_python(install_sh)
     rows = json.loads(table.read_text(encoding="utf-8"))["rows"]
+    if not rows:
+        sys.exit(f"check_version_order.py: {table} has no rows, so nothing would be checked")
     bad = []
     for a, b, sign in rows:
         if offered(py, a, b) != (sign > 0):
