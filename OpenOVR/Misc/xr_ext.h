@@ -185,7 +185,7 @@ public:
 		return pfnXrRequestDisplayRefreshRateFB(session, displayRefreshRate);
 	}
 
-	bool handTrackingExtensionAvailable() { return pfnXrCreateHandTrackerExt != nullptr; }
+	bool handTrackingExtensionAvailable() { return pfnXrCreateHandTrackerExt && pfnXrDestroyHandTrackerExt && pfnXrLocateHandJointsExt; }
 	XrResult xrCreateHandTrackerEXT(XrSession session, const XrHandTrackerCreateInfoEXT* createInfo, XrHandTrackerEXT* handTracker)
 	{
 		if (!pfnXrCreateHandTrackerExt)

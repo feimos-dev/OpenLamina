@@ -54,7 +54,7 @@ public:
 	/**
 	 * The current state of the OpenXR session, or XR_SESSION_STATE_UNKNOWN if there is no session.
 	 */
-	XrSessionState sessionState = XR_SESSION_STATE_UNKNOWN;
+	std::atomic<XrSessionState> sessionState{ XR_SESSION_STATE_UNKNOWN };
 
 	XrSessionState GetSessionState();
 
@@ -162,6 +162,31 @@ public:
 	 */
 	static StateOutcome OutcomeOfState(XrSessionState state, bool sawStopping, bool exitExpected);
 
+	/**
+	 * Whether the event pump looks for the controllers itself, with the info set: on a session whose frames have
+	 * started (SYNCHRONIZED on), for a game that has loaded no actions and asked for no legacy input, while neither
+	 * hand has a controller. Not while OpenLamina ends the session (exitExpected), nor while it makes the session
+	 * again for the game's actions (restartingForInputs).
+	 */
+	static bool ControllerQueryDue(XrSessionState state, bool exitExpected, bool restartingForInputs, bool actionsLoaded,
+	    bool legacyInputAsked, bool handFound);
+	// MaybeRestartForInputs is making the session again, on the thread that holds the session lock
+	std::atomic<bool> restartingForInputs{ false };
+
+	/**
+	 * Whether a frame xrEndFrame refused may have been refused for one of its layers, and so is worth ending again
+	 * with fewer: not for a session or instance that is lost or not running, a call out of order, or a frame-wide
+	 * value (the display time, the blend mode)
+	 */
+	static bool EndFrameRefusalMayBeALayer(XrResult refusal);
+
+	/**
+	 * How much of a game's Compositor_FrameTiming GetFrameTiming may write for the m_nSize the game gave: that many
+	 * bytes, or this build's struct for a size bigger than the newest OpenVR struct (padded to 8 bytes), which no game's
+	 * struct is
+	 */
+	static size_t FrameTimingSize(uint32_t givenSize);
+
 	/** The wait between tries to find the system again after a loss */
 	static constexpr std::chrono::milliseconds kRecoveryInterval{ 1000 };
 	/** Whether a try is due at now: the first at once, then one each kRecoveryInterval (lastTry is {} before the first) */
@@ -178,8 +203,9 @@ public:
 	/** The session is lost, not running, or stopping, exiting or about to be lost: nothing can be shown in it any more */
 	bool IsSessionEnded() const
 	{
-		return sessionLost || !sessionActive || sessionState == XR_SESSION_STATE_STOPPING || sessionState == XR_SESSION_STATE_EXITING
-		    || sessionState == XR_SESSION_STATE_LOSS_PENDING;
+		const XrSessionState state = sessionState;
+		return sessionLost || !sessionActive || state == XR_SESSION_STATE_STOPPING || state == XR_SESSION_STATE_EXITING
+		    || state == XR_SESSION_STATE_LOSS_PENDING;
 	}
 
 	/** Called before OpenComposite asks the runtime to end the session itself, so its EXITING isn't a loss */
@@ -258,7 +284,8 @@ public:
 
 	/**
 	 * Stops OpenLamina's own frames (and joins their thread) until the next session is created, or for good when
-	 * OpenLamina shuts down (before the interfaces their layers come from are destroyed)
+	 * OpenLamina shuts down (before the interfaces their layers come from are destroyed). Takes the session lock
+	 * exclusively, so that no call is using the loop: for good, a blocking call running its frames is told to leave first.
 	 */
 	void StopOwnFrames(bool forGood = false);
 
@@ -286,7 +313,8 @@ public:
 
 	/** The tracker action is attached: the trackers by role again */
 	void OnTrackerActionAttached() { CreateGenericTrackers(); }
-	/** A new session is being set up: the trackers' spaces are made again in it */
+	/** The session ended, or a new one is being set up: the trackers' spaces went with the old one, and are made again
+	 * in the new. The caller holds the session lock exclusively. */
 	void ForgetTrackerSpaces();
 
 private:
@@ -335,7 +363,10 @@ private:
 	std::atomic<int> deviceRebuilds{ 0 };
 	// Makes the temporary graphics device the backend was made with, if there's none: false if it can't be made
 	static bool MakeTemporaryGraphics();
+	// Made under compositorsLock (two calls of the game's, each under the shared session lock, may find them missing at
+	// once) and let go of under the exclusive session lock; used by the thread that submits
 	std::unique_ptr<Compositor> compositors[XruEyeCount];
+	std::mutex compositorsLock;
 	// The D3D11 mirror texture of each eye (an ID3D11Texture2D of OpenLamina's own on the game's device), which the
 	// game's frames are copied into once it has asked for one (mirrorWanted); under mirrorLock
 	void* mirrorTexture[XruEyeCount]{};
@@ -357,13 +388,23 @@ private:
 		std::unique_ptr<Compositor> cube; // six faces, as one lat-long image drawn on the GPU (InvokeCubemap)
 		XrCompositionLayerEquirect2KHR layers[2]{};
 		int layerCount = 0;
+		// The reference space the layers are in: its handle is asked for at each use (AddSkyboxLayers)
+		XrReferenceSpaceType space = XR_REFERENCE_SPACE_TYPE_STAGE;
 	};
 	std::mutex skyboxLock;
 	Skybox skybox;
-	std::unique_ptr<Compositor> skyboxReader; // reads cube faces back
+	// The skybox's layers added to a frame's, in their reference space as it is now: the seated space's handle is
+	// replaced when the seated zero pose moves. The caller holds the session lock and frameOwner.
+	void AddSkyboxLayers(std::vector<const XrCompositionLayerBaseHeader*>& layers);
+	std::unique_ptr<Compositor> skyboxReader; // reads cube faces back, under skyboxReaderLock
+	std::mutex skyboxReaderLock;
 	// The game's last projection layer, for OpenLamina's own frames; under frameOwner
 	XrCompositionLayerProjection lastProjection{ XR_TYPE_COMPOSITION_LAYER_PROJECTION };
 	XrCompositionLayerProjectionView lastProjectionViews[2]{};
+	// The reference space its views were located in: its handle is asked for at each use (LastProjectionLayer)
+	XrReferenceSpaceType lastProjectionSpace = XR_REFERENCE_SPACE_TYPE_STAGE;
+	// The last projection layer, in its reference space as it is now. The caller holds the session lock and frameOwner.
+	const XrCompositionLayerBaseHeader* LastProjectionLayer();
 	std::atomic<bool> haveLastProjection{ false };
 	// SubmitFrames shows the game's last frame again if this frame has none of its own (a frame the game didn't submit
 	// to, ended for it)
@@ -500,7 +541,7 @@ private:
 	std::unique_ptr<Compositor> depthCompositors[XruEyeCount];
 
 	// Have we started rendering a frame yet? If not, calling xrEndFrame would result in an error
-	bool renderingFrame = false;
+	std::atomic<bool> renderingFrame{ false };
 
 	// Who runs the frame: held from xrWaitFrame to xrEndFrame by OpenLamina's own frames, and around each frame call
 	// of the game's (its xrWaitFrame and xrBeginFrame, its xrEndFrame), whose frame is open in between (frameBegun), so
@@ -510,23 +551,24 @@ private:
 	// A frame was begun (by the game, or SetSkyboxOverride) and not yet ended; under frameOwner
 	std::atomic<bool> frameBegun{ false };
 	// OpenLamina's frames while the game runs none; created with each session, stopped before it ends
+	// Replaced only under the session lock held exclusively (SetOwnFrames); its users hold the shared one.
 	std::unique_ptr<OwnFrameLoop> ownFrames;
-	bool ownFramesStopped = false; // for good: OpenLamina is shutting down
+	// Held while the pointer is replaced, and by StopOwnFrames to ask the loop to stop before it has the session lock
+	std::mutex ownFramesPointerLock;
+	// The loop there is from now on (none for nullptr); the one before is stopped and joined
+	void SetOwnFrames(std::unique_ptr<OwnFrameLoop> loop);
+	std::atomic<bool> ownFramesStopped{ false }; // for good: OpenLamina is shutting down
 
 	// A frame xrWaitFrame gave whose xrBeginFrame failed: the next frame begins it again instead of waiting, as a
 	// second xrWaitFrame blocks until xrBeginFrame is called. Repeated failures lose the session.
-	bool frameAwaitingBegin = false;
+	std::atomic<bool> frameAwaitingBegin{ false };
 	// Consecutive frames whose xrWaitFrame or xrBeginFrame failed
 	std::atomic<int> frameCallFailures{ 0 };
 	// Drops the frame, waits about a frame and, if the session is lost or five frames failed in a row, loses the session
 	void OnFrameCallFailed(XrResult res);
 
-	// Were we supposed to start rendering a frame, but couldn't since we were on the
-	// early (pre switch to application graphics instance) OpenXR session?
-	bool deferredRenderingStart = false;
-
 	// Keep track of if eye textures have been submitted and if we need to create a projection layer for them
-	bool submittedEyeTextures = false;
+	std::atomic<bool> submittedEyeTextures{ false };
 
 	// Whether the runtime shows the frame in flight (xrWaitFrame's shouldRender); under frameOwner
 	bool frameShouldRender = true;
@@ -590,13 +632,15 @@ private:
 	// A wrapper around a graphics binding type, subclassing BindingBase
 	// It is templated to allow storing any of the possible graphics bindings and getting a void* to it,
 	// as necessary for xrCreateSession (in DrvOpenXR::SetupSession)
+	// keep: what holds the binding's device alive (a D3D device's reference), let go of with the binding
 	template <typename T>
 	class BindingWrapper : public BindingBase {
 		const T data;
+		const std::shared_ptr<void> keep;
 
 	public:
-		BindingWrapper(T data)
-		    : data(data) {}
+		BindingWrapper(T data, std::shared_ptr<void> keep = nullptr)
+		    : data(data), keep(std::move(keep)) {}
 		~BindingWrapper() override
 		{
 #if defined(SUPPORT_GL) && !defined(_WIN32)
@@ -607,8 +651,10 @@ private:
 		const void* asVoid() override { return &data; }
 	};
 
-	// The current graphics binding, used for restarting the session
-	inline static std::unique_ptr<BindingBase> graphicsBinding = nullptr;
+	// The current graphics binding, used for restarting the session: later sessions (for the game's inputs, after a
+	// loss) are made on its device too, which a D3D binding therefore holds a reference to. A Vulkan device or an
+	// OpenGL context can't be held: the game keeps those alive while it uses OpenVR.
+	std::unique_ptr<BindingBase> graphicsBinding;
 	// OpenGL or Vulkan frames copied through D3D11, whose device graphicsBinding has (GfxInterop.h)
 	std::unique_ptr<class GfxInterop> gfxInterop;
 	static std::unique_ptr<class TemporaryGraphics> temporaryGraphics;

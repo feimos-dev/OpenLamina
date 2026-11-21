@@ -4,6 +4,7 @@
 
 #include "generated/interfaces/vrtypes.h"
 #include <array>
+#include <atomic>
 #include <mutex>
 #include <optional>
 #include <openxr/openxr.h>
@@ -73,8 +74,8 @@ public:
 	// XR_EXT_user_presence's system property: the system tells when the headset is put on or taken off
 	bool supportsUserPresence = false;
 
-	// Set by XrBackend
-	XrTime nextPredictedFrameTime = 1;
+	// Set by XrBackend, by the thread that runs the frame; read by any thread that asks for a pose
+	std::atomic<XrTime> nextPredictedFrameTime{ 1 };
 
 	/**
 	 * The latest time we've observed from the runtime. This will be set before a frame is submitted, so for
@@ -86,7 +87,7 @@ public:
 	 *
 	 * Zero or negative values for XrTime will result in XR_ERROR_TIME_INVALID so initialise to 1.
 	 */
-	XrTime latestTime = 1;
+	std::atomic<XrTime> latestTime{ 1 };
 
 	/**
 	 * Returns nextPredictedFrameTime if available, otherwise returns latestTime.
@@ -94,12 +95,13 @@ public:
 	XrTime GetBestTime();
 
 	/**
-	 * Returns a XruCachedViews containing the cached result of a xrLocateViews call with the specified space.
+	 * Returns a XruCachedViews containing the cached result of a xrLocateViews call with the specified space: asked of
+	 * the runtime once per frame (the game's, or one of OpenLamina's own). A call that failed isn't kept.
 	 */
 	XruCachedViews GetCachedViews(XrSpace space);
 
 	/**
-	 * Discard all cached xrLocateViews results. This invalidates the references returned by GetCachedViews.
+	 * Discard all cached xrLocateViews results: the next GetCachedViews asks the runtime again.
 	 */
 	void ClearCachedViews();
 
@@ -137,18 +139,21 @@ public:
 	XrSession& get();
 
 	/*
-	 * Provides a RAII-style lock on accesses to the XrSession. Prevents any other thread from obtaining get() or lock_shared().
+	 * The exclusive lock, for as long as the SessionLock lives: for making, ending or replacing the session. No other
+	 * thread holds lock() or lock_shared() meanwhile.
 	 */
-	SessionLock lock();
+	[[nodiscard]] SessionLock lock();
 
 	/*
-	 * Provides a RAII-style lock on modification to the XrSession. Prevents any other thread from obtaining lock().
+	 * The shared lock, for as long as the SessionLock lives: for using the session. No other thread holds lock()
+	 * meanwhile, so the session isn't ended or replaced under it.
 	 */
 	[[nodiscard]] SessionLock lock_shared();
 
 	/*
 	 * The exclusive lock for tearing down, waiting at most limit: when a game exits without VR_Shutdown, Windows has
-	 * already ended its other threads, and one may have died holding the lock. Without it, carries on unlocked.
+	 * already ended its other threads, and one may have died holding the lock. Without it, carries on unlocked, the
+	 * thread counted as holding it so that requests nested in the teardown don't wait either.
 	 * A thread that holds the lock already (shared or exclusive) gets nothing more: no upgrade, unlike lock().
 	 */
 	[[nodiscard]] SessionLock lock_for_teardown(std::chrono::milliseconds limit);
@@ -196,8 +201,11 @@ public:
 	SessionLock(SessionWrapper& p, TryExclusive);
 	~SessionLock();
 	operator XrSession&();
-	// Whether this thread holds the lock, through this SessionLock or an outer one
+	// Whether this thread holds the lock, shared or exclusive, through this SessionLock or an outer one
 	bool IsHeld() const { return thread_lock != Held::Unlocked; }
+	// Whether this thread holds it exclusively: what a try for the exclusive lock is asked after, since under a shared
+	// hold of the thread's own the try takes nothing and IsHeld is true all the same
+	bool IsExclusive() const { return thread_lock == Held::Exclusive; }
 };
 
 // The runtime's time now, through XR_KHR_win32_convert_performance_counter_time (Windows) or
@@ -211,10 +219,10 @@ XrSpace xr_space_from_ref_space_type(XrReferenceSpaceType spaceType);
 // bindings all or none
 XrResult xr_suggest_bindings_logged(const XrInteractionProfileSuggestedBinding& suggested);
 
-XrQuaternionf yRotation(XrQuaternionf& q, XrQuaternionf& r);
-void rotate_vector_by_quaternion(const XrVector3f& v, const XrQuaternionf& q, XrVector3f& vprime);
-
 extern XrInstance xr_instance;
+// Counts the instances made. A new instance may get the handle of the one before it, so what is kept per instance is
+// kept by this as well.
+extern std::atomic<uint64_t> xr_instance_generation;
 extern SessionWrapper& xr_session;
 extern XrSystemId xr_system;
 XrViewConfigurationView& xr_main_view(XruEye view_id);

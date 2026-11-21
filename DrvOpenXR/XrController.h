@@ -21,7 +21,8 @@ public:
 	TrackedDeviceType GetHand() override;
 
 	void GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDevicePose_t* pose, ETrackingStateType trackingState, int64_t xrTime = 0) override;
-	void GetPoseFromHandTracking(BaseInput* input, vr::TrackedDevicePose_t* pose, int64_t xrTime = 0);
+	// False, with the pose left as it was, if the hand isn't tracked either
+	bool GetPoseFromHandTracking(vr::ETrackingUniverseOrigin origin, BaseInput* input, vr::TrackedDevicePose_t* pose, int64_t xrTime = 0);
 
 	vr::ETrackedDeviceClass GetTrackedDeviceClass() override;
 
@@ -64,6 +65,6 @@ public:
 private:
 	XrControllerType type;
 	const InteractionProfile& profile;
-	bool isHandTrackingValid = false;
+	std::atomic<bool> isHandTrackingValid{ false };
 	std::atomic<bool> isPoseFromHandTracking{ false };
 };

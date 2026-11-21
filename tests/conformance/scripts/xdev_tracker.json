@@ -1,0 +1,4 @@
+{
+  "#": "One tracker of the runtime's own (XR_MNDX_xdev_space: TEST-0001, at (0, 1, 0)) and no controller (tracker-restart)",
+  "extensions": ["XR_KHR_D3D11_enable", "XR_MNDX_xdev_space"]
+}

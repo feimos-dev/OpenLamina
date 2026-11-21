@@ -95,20 +95,19 @@ LibMonado& LibMonado::Get()
 	static LibMonado* none = new LibMonado(std::string());
 	static LibMonado* current = nullptr;
 	static XrInstance currentInstance = XR_NULL_HANDLE;
-	static std::string currentRuntime;
+	static uint64_t currentGeneration = 0;
 
 	std::lock_guard<std::mutex> guard(mutex);
 	if (xr_instance == XR_NULL_HANDLE)
 		return *none;
-	// Properties are read every frame: the runtime is asked only when the instance changes
-	if (current && xr_instance == currentInstance)
+	// Properties are read every frame: the runtime is asked only when the instance changes. An instance made again
+	// (after the runtime's service went away, and libmonado's connection with it) may have the old one's handle.
+	const uint64_t generation = xr_instance_generation;
+	if (current && xr_instance == currentInstance && generation == currentGeneration)
 		return *current;
-	std::string runtime = RuntimeNameOfInstance();
-	if (!current || xr_instance != currentInstance || runtime != currentRuntime) {
-		current = new LibMonado(runtime);
-		currentInstance = xr_instance;
-		currentRuntime = runtime;
-	}
+	current = new LibMonado(RuntimeNameOfInstance());
+	currentInstance = xr_instance;
+	currentGeneration = generation;
 	return *current;
 }
 
@@ -290,12 +289,15 @@ std::optional<uint32_t> LibMonado::DeviceIndex(const std::string& deviceName, co
 	uint32_t count = 0;
 	if (api->getDeviceCount(root, &count) != 0)
 		return std::nullopt;
-	for (uint32_t i = 0; i < count; i++) {
-		const char* name = nullptr;
+	// By serial first: devices of one model share a name
+	for (uint32_t i = 0; i < count && !serial.empty(); i++) {
 		const char* devSerial = nullptr;
-		if (api->getDeviceInfoString(root, i, kMndPropertyNameString, &name) == 0 && name && !deviceName.empty() && deviceName == name)
+		if (api->getDeviceInfoString(root, i, kMndPropertySerialString, &devSerial) == 0 && devSerial && serial == devSerial)
 			return i;
-		if (api->getDeviceInfoString(root, i, kMndPropertySerialString, &devSerial) == 0 && devSerial && !serial.empty() && serial == devSerial)
+	}
+	for (uint32_t i = 0; i < count && !deviceName.empty(); i++) {
+		const char* name = nullptr;
+		if (api->getDeviceInfoString(root, i, kMndPropertyNameString, &name) == 0 && name && deviceName == name)
 			return i;
 	}
 	return std::nullopt;
@@ -370,15 +372,12 @@ std::optional<LibMonado::Battery> LibMonado::BatteryForRole(const char* role)
 {
 	if (!Available() || !api->getBatteryStatus || !role)
 		return std::nullopt;
-	{
-		std::lock_guard guard(lock);
-		auto it = batteryCache.find(role);
-		if (it != batteryCache.end() && std::chrono::steady_clock::now() - it->second.first < std::chrono::seconds(1))
-			return it->second.second;
-	}
+	std::lock_guard guard(lock);
+	auto it = batteryCache.find(role);
+	if (it != batteryCache.end() && std::chrono::steady_clock::now() - it->second.first < std::chrono::seconds(1))
+		return it->second.second;
 	// The role's own device (libmonado's roles are device indices): two controllers may share a name
 	std::optional<Battery> battery;
-	std::lock_guard guard(lock);
 	int32_t index = -1;
 	if (api->getDeviceFromRole && api->getDeviceFromRole(root, role, &index) == 0 && index >= 0)
 		battery = BatteryAt((uint32_t)index);

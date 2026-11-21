@@ -26,23 +26,6 @@
 #include <mutex>
 #include <vector>
 
-// The session globals are briefly null while another thread restarts the session: wait up to 2 s for them. False if
-// there's still no session (it was lost, or a restart failed), so the caller answers without one.
-static bool WaitForSessionGlobals()
-{
-	// A lost session doesn't come back: no waiting for it
-	auto IsLost = []() {
-		BackendManager* manager = BackendManager::InstancePtr();
-		auto* backend = manager ? (XrBackend*)manager->GetBackendInstance() : nullptr;
-		return backend && backend->IsSessionLost();
-	};
-	for (int i = 0; !xr_gbl && !IsLost() && i < 100; i++) {
-		using namespace std::chrono_literals;
-		std::this_thread::sleep_for(20ms);
-	}
-	return xr_gbl != nullptr;
-}
-
 static std::atomic<float> answeredRenderScale{ 0.0f };
 
 float XrHMD::AnsweredRenderScale()
@@ -208,8 +191,10 @@ vr::HmdMatrix34_t XrHMD::GetEyeToHeadTransform(vr::EVREye eEye)
 	static XrTime time = ~0; // Don't set to zero by default, otherwise we'll return an identity matrix before the first frame
 	static XrView views[XruEyeCount] = { { XR_TYPE_VIEW }, { XR_TYPE_VIEW } };
 
-	if (!WaitForSessionGlobals())
-		return G2S_m34(glm::identity<glm::mat4>()); // no session: the eyes at the head
+	// No session (it was lost, or couldn't be made): the eyes at the head. A restart on another thread has ended by
+	// the time the lock is held, so there's nothing to wait for.
+	if (!xr_gbl)
+		return G2S_m34(glm::identity<glm::mat4>());
 
 	// This won't exactly work for HMDs designed for spiders, but it's how SteamVR handles invalid eye numbers.
 	if (eEye < 0 || (int)eEye >= 2)
@@ -294,13 +279,14 @@ bool XrHMD::GetTimeSinceLastVsync(float* pfSecondsSinceLastVsync, uint64_t* pulF
 
 	// The runtime's last predicted display time is on the display's vsync grid; the period is the runtime's
 	BackendManager* manager = BackendManager::InstancePtr();
-	auto* backend = manager ? (XrBackend*)manager->GetBackendInstance() : nullptr;
+	auto* backend = manager ? dynamic_cast<XrBackend*>(manager->GetBackendInstance()) : nullptr;
 	float periodMs = backend ? backend->DisplayPeriodMs() : 0.0f;
 	return VsyncPhase(xr_time_now(), xr_gbl->nextPredictedFrameTime, (XrDuration)(periodMs * 1e6f), pfSecondsSinceLastVsync, pulFrameCounter);
 }
 
 vr::HiddenAreaMesh_t XrHMD::GetHiddenAreaMesh(vr::EVREye eEye, vr::EHiddenAreaMeshType type)
 {
+	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	if (!xr_ext->xrGetVisibilityMaskKHR_Available()) {
 		// This is what the docs say we should return if the mask is unavailable
 		return HiddenAreaMesh(nullptr, 0);
@@ -434,7 +420,7 @@ float XrHMD::GetIPD()
 	if (!haveSession)
 		return kDefaultIpd + IpdOffset();
 
-	static float ipd = kDefaultIpd;
+	static std::atomic<float> ipd{ kDefaultIpd };
 
 	// Without both views the last IPD stays
 	if (std::optional<float> views = ViewsIpd())
@@ -612,7 +598,7 @@ static float DisplayFrequency()
 			return rate;
 	}
 	BackendManager* manager = BackendManager::InstancePtr();
-	auto* backend = manager ? (XrBackend*)manager->GetBackendInstance() : nullptr;
+	auto* backend = manager ? dynamic_cast<XrBackend*>(manager->GetBackendInstance()) : nullptr;
 	float periodMs = backend ? backend->DisplayPeriodMs() : 0.0f;
 	if (periodMs > 0.0f)
 		return 1000.0f / periodMs;
@@ -673,6 +659,7 @@ DeviceIdentity XrHMD::Identity()
 	// The OpenXR system's name picks the row; read once per instance (it doesn't change while the instance lives)
 	static std::mutex nameMutex;
 	static XrInstance nameInstance = XR_NULL_HANDLE;
+	static uint64_t nameGeneration = 0;
 	static std::string systemName, runtimeName;
 	static uint32_t vendorId = 0;
 	{
@@ -682,7 +669,7 @@ DeviceIdentity XrHMD::Identity()
 			runtimeName.clear();
 			vendorId = 0;
 			nameInstance = XR_NULL_HANDLE;
-		} else if (xr_instance != nameInstance || systemName.empty()) {
+		} else if (xr_instance != nameInstance || xr_instance_generation != nameGeneration || systemName.empty()) {
 			XrSystemProperties properties = { XR_TYPE_SYSTEM_PROPERTIES };
 			const bool got = XR_SUCCEEDED(xrGetSystemProperties(xr_instance, xr_system, &properties));
 			systemName = got ? properties.systemName : "";
@@ -690,6 +677,7 @@ DeviceIdentity XrHMD::Identity()
 			XrInstanceProperties instance = { XR_TYPE_INSTANCE_PROPERTIES };
 			runtimeName = XR_SUCCEEDED(xrGetInstanceProperties(xr_instance, &instance)) ? instance.runtimeName : "";
 			nameInstance = xr_instance;
+			nameGeneration = xr_instance_generation;
 		}
 	}
 	RuntimeDevice device;

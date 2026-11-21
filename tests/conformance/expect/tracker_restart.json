@@ -1,0 +1,10 @@
+{
+ "#": "A tracker the game knows before its first Submit, on the stand-in with scripts/xdev_tracker.json (run.py --cases tracker-restart --script scripts/xdev_tracker.json --expect expect/tracker_restart.json): the first Submit makes the session again on the game's device (the second session); the tracker has its pose straight after, and the game is told of its activation once",
+ "tracker-restart/tracker/-/-": {
+  "before_the_first_submit": {"at": [0.0, 1.0, 0.0], "is_a_tracker": true, "valid": true},
+  "after_the_first_submit": {"at": [0.0, 1.0, 0.0], "is_a_tracker": true, "valid": true},
+  "after_ten_frames": {"at": [0.0, 1.0, 0.0], "is_a_tracker": true, "valid": true},
+  "activations": 1,
+  "sessions_created": 2
+ }
+}

@@ -1,0 +1,12 @@
+{
+ "#": "A Vive tracker by its role known before the game loads its action manifest, on the stand-in with scripts/vive_trackers.json (run.py --cases role-tracker-restart --script scripts/vive_trackers.json --manifest ../unit/data/manifest_trackers.json --expect expect/role_tracker_restart.json): the session is made again for the manifest's actions (the fourth session: OpenLamina's own, the game's device, the old input's actions, the manifest's); the waist's tracker stays the same device with a pose, no tracker is told to the game as deactivated, and the waist's isn't told as activated a second time",
+ "role-tracker-restart/tracker/-/-": {
+  "waist_known_before_the_manifest": true,
+  "SetActionManifestPath": 0,
+  "waist_is_the_same_device": true,
+  "waist_pose_valid": true,
+  "tracker_deactivations": 0,
+  "waist_activations_after_known": 0,
+  "sessions_created": 4
+ }
+}

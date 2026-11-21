@@ -24,6 +24,63 @@ TEST_CASE("A lost session is made again, and only the user quitting quits")
 	CHECK(XrBackend::OutcomeOfState(XR_SESSION_STATE_IDLE, true, false) == Outcome::Ignored);
 }
 
+TEST_CASE("The event pump looks for the controllers only on a running session nothing else has input on")
+{
+	// From the session's first frames on, with no actions, no legacy input and no hand found
+	CHECK(XrBackend::ControllerQueryDue(XR_SESSION_STATE_SYNCHRONIZED, false, false, false, false, false));
+	CHECK(XrBackend::ControllerQueryDue(XR_SESSION_STATE_VISIBLE, false, false, false, false, false));
+	CHECK(XrBackend::ControllerQueryDue(XR_SESSION_STATE_FOCUSED, false, false, false, false, false));
+	CHECK_FALSE(XrBackend::ControllerQueryDue(XR_SESSION_STATE_UNKNOWN, false, false, false, false, false));
+	CHECK_FALSE(XrBackend::ControllerQueryDue(XR_SESSION_STATE_IDLE, false, false, false, false, false));
+	CHECK_FALSE(XrBackend::ControllerQueryDue(XR_SESSION_STATE_READY, false, false, false, false, false));
+	CHECK_FALSE(XrBackend::ControllerQueryDue(XR_SESSION_STATE_STOPPING, false, false, false, false, false));
+	// Not while the session is being ended
+	CHECK_FALSE(XrBackend::ControllerQueryDue(XR_SESSION_STATE_FOCUSED, true, false, false, false, false));
+	// Not on a session being made for the game's actions, even one that is focused as soon as it begins
+	CHECK_FALSE(XrBackend::ControllerQueryDue(XR_SESSION_STATE_FOCUSED, false, true, false, false, false));
+	CHECK_FALSE(XrBackend::ControllerQueryDue(XR_SESSION_STATE_SYNCHRONIZED, false, true, false, false, false));
+	// Not once the game has its own input, or a hand has its controller
+	CHECK_FALSE(XrBackend::ControllerQueryDue(XR_SESSION_STATE_FOCUSED, false, false, true, false, false));
+	CHECK_FALSE(XrBackend::ControllerQueryDue(XR_SESSION_STATE_FOCUSED, false, false, false, true, false));
+	CHECK_FALSE(XrBackend::ControllerQueryDue(XR_SESSION_STATE_FOCUSED, false, false, false, false, true));
+}
+
+TEST_CASE("A refused frame is ended again with fewer layers only when a layer may be why")
+{
+	CHECK(XrBackend::EndFrameRefusalMayBeALayer(XR_ERROR_LAYER_INVALID));
+	CHECK(XrBackend::EndFrameRefusalMayBeALayer(XR_ERROR_LAYER_LIMIT_EXCEEDED));
+	CHECK(XrBackend::EndFrameRefusalMayBeALayer(XR_ERROR_SWAPCHAIN_RECT_INVALID));
+	CHECK(XrBackend::EndFrameRefusalMayBeALayer(XR_ERROR_POSE_INVALID));
+	CHECK(XrBackend::EndFrameRefusalMayBeALayer(XR_ERROR_VALIDATION_FAILURE));
+	CHECK(XrBackend::EndFrameRefusalMayBeALayer(XR_ERROR_RUNTIME_FAILURE));
+	CHECK(XrBackend::EndFrameRefusalMayBeALayer(XR_ERROR_HANDLE_INVALID));
+	// Nothing fewer layers would change
+	CHECK_FALSE(XrBackend::EndFrameRefusalMayBeALayer(XR_ERROR_SESSION_LOST));
+	CHECK_FALSE(XrBackend::EndFrameRefusalMayBeALayer(XR_ERROR_INSTANCE_LOST));
+	CHECK_FALSE(XrBackend::EndFrameRefusalMayBeALayer(XR_ERROR_SESSION_NOT_RUNNING));
+	CHECK_FALSE(XrBackend::EndFrameRefusalMayBeALayer(XR_ERROR_CALL_ORDER_INVALID));
+	CHECK_FALSE(XrBackend::EndFrameRefusalMayBeALayer(XR_ERROR_TIME_INVALID));
+	CHECK_FALSE(XrBackend::EndFrameRefusalMayBeALayer(XR_ERROR_ENVIRONMENT_BLEND_MODE_UNSUPPORTED));
+	// Not a refusal at all
+	CHECK_FALSE(XrBackend::EndFrameRefusalMayBeALayer(XR_SUCCESS));
+	CHECK_FALSE(XrBackend::EndFrameRefusalMayBeALayer(XR_SESSION_LOSS_PENDING));
+}
+
+TEST_CASE("No more of a frame timing is written than the game's struct has, whatever size it claims")
+{
+	const size_t newest = (sizeof(vr::Compositor_FrameTiming) + 7) & ~(size_t)7;
+	// A struct of an older SDK, or a size too small for anything: as given
+	CHECK(XrBackend::FrameTimingSize(0) == 0);
+	CHECK(XrBackend::FrameTimingSize(4) == 4);
+	CHECK(XrBackend::FrameTimingSize(100) == 100);
+	CHECK(XrBackend::FrameTimingSize((uint32_t)sizeof(vr::Compositor_FrameTiming)) == sizeof(vr::Compositor_FrameTiming));
+	CHECK(XrBackend::FrameTimingSize((uint32_t)newest) == newest);
+	// A size no OpenVR struct has: never more than the struct this build writes
+	CHECK(XrBackend::FrameTimingSize((uint32_t)newest + 1) == sizeof(OOVR_Compositor_FrameTiming));
+	CHECK(XrBackend::FrameTimingSize(0xFFFFFFFFu) == sizeof(OOVR_Compositor_FrameTiming));
+	CHECK(sizeof(OOVR_Compositor_FrameTiming) <= newest);
+}
+
 TEST_CASE("The system is asked for at once after a loss, then about once a second")
 {
 	using clock = std::chrono::steady_clock;

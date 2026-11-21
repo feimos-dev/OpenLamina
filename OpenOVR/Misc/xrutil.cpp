@@ -11,11 +11,11 @@
 #include "xr_ext.h"
 
 XrInstance xr_instance = XR_NULL_HANDLE;
+std::atomic<uint64_t> xr_instance_generation{ 0 };
 XrVersion xr_instance_version = 0;
 // Never destroyed: the backend's static destructor takes its lock when a game exits without VR_Shutdown
 SessionWrapper& xr_session = *new SessionWrapper();
 XrSystemId xr_system = XR_NULL_SYSTEM_ID;
-XrViewConfigurationView xr_main_views[XruEyeCount] = {};
 XrSessionGlobals* xr_gbl = nullptr;
 std::optional<XrPosef> xr_seated_zero;
 
@@ -79,8 +79,19 @@ XrExt::XrExt(XrGraphicsApiSupportedFlags apis, const std::vector<const char*>& e
 	const bool vulkanEnable2 = enabledExtensions.count(XR_KHR_VULKAN_ENABLE2_EXTENSION_NAME) != 0;
 #endif
 
-#define XR_BIND(name, function) OOVR_FAILED_XR_ABORT(xrGetInstanceProcAddr(xr_instance, #name, (PFN_xrVoidFunction*)&this->function))
-#define XR_BIND_OPT(name, function) xrGetInstanceProcAddr(xr_instance, #name, (PFN_xrVoidFunction*)&this->function)
+// A function the runtime doesn't give stays null, and its wrapper answers XR_ERROR_FUNCTION_UNSUPPORTED, which every
+// caller takes: some loaders list an extension without forwarding its functions. XR_BIND says so in the log.
+#define XR_BIND_OPT(name, function)                                                                      \
+	do {                                                                                                 \
+		if (XR_FAILED(xrGetInstanceProcAddr(xr_instance, #name, (PFN_xrVoidFunction*)&this->function))) \
+			this->function = nullptr;                                                                    \
+	} while (0)
+#define XR_BIND(name, function)                                                                \
+	do {                                                                                       \
+		XR_BIND_OPT(name, function);                                                           \
+		if (!this->function)                                                                   \
+			OOVR_LOG("The OpenXR runtime lists the extension of " #name " without the function"); \
+	} while (0)
 
 	if (hasVisMask)
 		XR_BIND_OPT(xrGetVisibilityMaskKHR, pfnXrGetVisibilityMaskKHR);
@@ -247,8 +258,8 @@ std::vector<XrReferenceSpaceType> XrSessionGlobals::StandingSpaceTypes(bool loca
 
 XrTime XrSessionGlobals::GetBestTime()
 {
-	if (nextPredictedFrameTime > 1)
-		return nextPredictedFrameTime;
+	if (const XrTime frame = nextPredictedFrameTime; frame > 1)
+		return frame;
 	// No frames (a headless session): the time now, where the runtime can say it
 	if (XrTime now = xr_time_now(); now > 0)
 		return now;
@@ -257,17 +268,23 @@ XrTime XrSessionGlobals::GetBestTime()
 
 XrTime xr_time_now()
 {
-	if (!xr_instance)
+	// Under the session lock, which the instance is destroyed and made again under. Never waited for (a thread of
+	// OpenLamina's own may ask, which a restart joins): no time while another thread has it exclusively.
+	SessionLock sessionLock(xr_session, SessionLock::TryShared{});
+	if (!sessionLock.IsHeld() || !xr_instance)
 		return 0;
 	// Looked up again for each instance; nullptr where the instance hasn't the extension enabled
 	static std::mutex lock;
 	static XrInstance lookedUpFor = XR_NULL_HANDLE;
+	static uint64_t lookedUpGeneration = 0;
 	static PFN_xrVoidFunction convert = nullptr;
 	PFN_xrVoidFunction fn = nullptr;
 	{
 		std::lock_guard<std::mutex> g(lock);
-		if (lookedUpFor != xr_instance) {
+		const uint64_t generation = xr_instance_generation;
+		if (lookedUpFor != xr_instance || lookedUpGeneration != generation) {
 			lookedUpFor = xr_instance;
+			lookedUpGeneration = generation;
 			convert = nullptr;
 #ifdef _WIN32
 			if (XR_FAILED(xrGetInstanceProcAddr(xr_instance, "xrConvertWin32PerformanceCounterToTimeKHR", &convert)))
@@ -313,12 +330,16 @@ XruCachedViews XrSessionGlobals::GetCachedViews(XrSpace space)
 	XrViewState viewState = { XR_TYPE_VIEW_STATE };
 	uint32_t viewCount = 0;
 	XrView views[XruEyeCount] = { { XR_TYPE_VIEW }, { XR_TYPE_VIEW } };
-	OOVR_FAILED_XR_SOFT_ABORT(xrLocateViews(xr_session.get(), &locateInfo, &viewState, XruEyeCount, &viewCount, views));
+	const XrResult located = xrLocateViews(xr_session.get(), &locateInfo, &viewState, XruEyeCount, &viewCount, views);
+	OOVR_FAILED_XR_SOFT_ABORT(located);
 
-	XruCachedViews& cws = cachedViews[space];
+	XruCachedViews cws;
 	cws.viewState = viewState;
 	cws.viewCount = viewCount;
 	std::copy(views, views + XruEyeCount, cws.views.begin());
+	// Only an answer is kept: a locate that failed (before the session runs, say) is asked again at the next call
+	if (XR_SUCCEEDED(located) && viewCount == XruEyeCount)
+		cachedViews[space] = cws;
 	return cws;
 }
 
@@ -399,53 +420,6 @@ XrSpace xr_space_from_ref_space_type(XrReferenceSpaceType spaceType)
 	}
 }
 
-XrQuaternionf yRotation(XrQuaternionf& q)
-{
-	float theta = atan2(q.y, q.w);
-	return { 0.f, sinf(theta), 0.f, cosf(theta) };
-}
-
-XrQuaternionf yRotation(XrQuaternionf& q, XrQuaternionf& r)
-{
-	float theta = atan2(q.y, q.w);
-	theta += atan2(r.y, r.w);
-	return { 0.f, sinf(theta), 0.f, cosf(theta) };
-}
-
-float v3_dot(const XrVector3f& a, const XrVector3f& b)
-{
-	return a.x * b.x + a.y * b.y + a.z * b.z;
-}
-
-XrVector3f v3_cross(const XrVector3f& a, const XrVector3f& b)
-{
-	return XrVector3f{ a.y * b.z - a.z * b.y, a.z * b.x - a.x * b.z, a.x * b.y - a.y * b.x };
-}
-
-XrVector3f operator*(float a, const XrVector3f& b)
-{
-	return { b.x * a, b.y * a, b.z * a };
-}
-
-XrVector3f operator+(const XrVector3f& a, const XrVector3f& b)
-{
-	return { b.x + a.x, b.y + a.y, b.z + a.z };
-}
-
-void rotate_vector_by_quaternion(const XrVector3f& v, const XrQuaternionf& q, XrVector3f& vprime)
-{
-	// Extract the vector part of the quaternion
-	XrVector3f u{ q.x, q.y, q.z };
-
-	// Extract the scalar part of the quaternion
-	float s = q.w;
-
-	// Do the math
-	vprime = 2.0f * v3_dot(u, v) * u
-	    + (s * s - v3_dot(u, u)) * v
-	    + 2.0f * s * v3_cross(u, v);
-}
-
 XrSession& SessionWrapper::get()
 {
 	return session;
@@ -505,12 +479,18 @@ SessionLock::SessionLock(SessionWrapper& p, bool exclusive)
 SessionLock::SessionLock(SessionWrapper& p, std::chrono::milliseconds limit)
     : parent(p)
 {
-	if (thread_lock != Held::Unlocked)
+	if (thread_lock != Held::Unlocked) {
+		if (thread_lock == Held::Shared)
+			OOVR_LOG("Tearing the session down on a thread that holds the session lock shared: other threads aren't waited for");
 		return; // this thread holds it already
+	}
 	auto deadline = std::chrono::steady_clock::now() + limit;
 	while (!p.mutex.try_lock()) {
 		if (std::chrono::steady_clock::now() >= deadline) {
 			OOVR_LOG("The session lock wasn't free in time: tearing the session down without it");
+			// Counted as held, with nothing to release: the requests nested in the teardown would wait for ever too
+			thread_lock = Held::Exclusive;
+			owner = true;
 			return;
 		}
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));

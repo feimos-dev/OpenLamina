@@ -82,6 +82,9 @@ bool xr_utils::PoseFromSpace(vr::TrackedDevicePose_t* pose, XrSpace space, vr::E
 		return false;
 	}
 	auto baseSpace = xr_space_from_tracking_origin(origin);
+	// A space the runtime wouldn't make (see XrSessionGlobals) has no pose in it: the runtime isn't asked with no handle
+	if (space == XR_NULL_HANDLE || baseSpace == XR_NULL_HANDLE)
+		return false;
 
 	XrSpaceVelocity velocity{ XR_TYPE_SPACE_VELOCITY };
 	XrSpaceLocation info{ XR_TYPE_SPACE_LOCATION, &velocity, 0, {} };
@@ -121,7 +124,7 @@ bool xr_utils::PoseFromSpace(vr::TrackedDevicePose_t* pose, XrSpace space, vr::E
 	return true;
 }
 
-void xr_utils::PoseFromHandTracking(vr::TrackedDevicePose_t* pose, XrHandJointLocationsEXT locations, XrHandJointVelocitiesEXT velocities, bool isRight)
+bool xr_utils::PoseFromHandTracking(vr::TrackedDevicePose_t* pose, XrHandJointLocationsEXT locations, XrHandJointVelocitiesEXT velocities, bool isRight)
 {
 	const int boneToUse = XR_HAND_JOINT_PALM_EXT;
 
@@ -132,7 +135,7 @@ void xr_utils::PoseFromHandTracking(vr::TrackedDevicePose_t* pose, XrHandJointLo
 	bool orientationTracked = (palmJoint.locationFlags & XR_SPACE_LOCATION_ORIENTATION_VALID_BIT) != 0;
 
 	if (!locations.isActive || !orientationTracked) {
-		return;
+		return false;
 	}
 
 	glm::mat4 gripPoseMatrix = X2G_om34_pose(palmJoint.pose);
@@ -150,8 +153,12 @@ void xr_utils::PoseFromHandTracking(vr::TrackedDevicePose_t* pose, XrHandJointLo
 	pose->mDeviceToAbsoluteTracking = G2S_m34(gripPoseMatrix);
 
 	pose->bDeviceIsConnected = true;
-	pose->bPoseIsValid = true;
+	// Valid only with the palm's position tracked too, as a pose from a space is
+	pose->bPoseIsValid = (palmJoint.locationFlags & XR_SPACE_LOCATION_POSITION_VALID_BIT) != 0;
 	pose->eTrackingResult = pose->bPoseIsValid ? vr::TrackingResult_Running_OK : vr::TrackingResult_Running_OutOfRange;
-	pose->vVelocity = X2S_v3f(velocity.linearVelocity); // No offsetting transform - this is in world-space
-	pose->vAngularVelocity = X2S_v3f(velocity.angularVelocity); // TODO find out if this needs a transform
+	// The velocities where the runtime gives them (zero otherwise); no offsetting transform, they are in world space
+	const XrVector3f still{ 0, 0, 0 };
+	pose->vVelocity = X2S_v3f((velocity.velocityFlags & XR_SPACE_VELOCITY_LINEAR_VALID_BIT) ? velocity.linearVelocity : still);
+	pose->vAngularVelocity = X2S_v3f((velocity.velocityFlags & XR_SPACE_VELOCITY_ANGULAR_VALID_BIT) ? velocity.angularVelocity : still);
+	return true;
 }

@@ -20,13 +20,18 @@ OwnFrameLoop::OwnFrameLoop(Mode mode, LayerSource source, milliseconds idleAfter
 		thread = std::thread([this] { Thread(); });
 }
 
-OwnFrameLoop::~OwnFrameLoop()
+void OwnFrameLoop::RequestStop()
 {
 	{
 		std::lock_guard<std::mutex> lock(stateLock);
 		stopping = true;
 	}
 	wake.notify_all();
+}
+
+OwnFrameLoop::~OwnFrameLoop()
+{
+	RequestStop();
 	if (thread.joinable())
 		thread.join();
 }
