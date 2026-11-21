@@ -29,7 +29,7 @@ int64_t XrTrackedDevice::PoseTime(ETrackingStateType trackingState, int64_t xrTi
 		return xrTime;
 	// The latest tracking data is located at the time now; a frame's poses (and predictions from it) at its display time
 	const bool latest = trackingState == ETrackingStateType::TrackingStateType_Now;
-	return xr_utils::PoseTimeForState(latest, 0, latest ? xr_time_now() : 0, xr_gbl ? xr_gbl->nextPredictedFrameTime : 0);
+	return xr_utils::PoseTimeForState(latest, 0, latest ? xr_time_now() : 0, xr_gbl ? xr_gbl->nextPredictedFrameTime.load() : 0);
 }
 
 // Properties

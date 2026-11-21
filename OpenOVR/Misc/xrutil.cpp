@@ -249,8 +249,8 @@ std::vector<XrReferenceSpaceType> XrSessionGlobals::StandingSpaceTypes(bool loca
 
 XrTime XrSessionGlobals::GetBestTime()
 {
-	if (nextPredictedFrameTime > 1)
-		return nextPredictedFrameTime;
+	if (const XrTime frame = nextPredictedFrameTime; frame > 1)
+		return frame;
 	// No frames (a headless session): the time now, where the runtime can say it
 	if (XrTime now = xr_time_now(); now > 0)
 		return now;

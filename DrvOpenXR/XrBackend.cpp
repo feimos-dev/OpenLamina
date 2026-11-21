@@ -2427,9 +2427,9 @@ void XrBackend::PumpEvents()
 			if (changed->time > 0 && xr_gbl)
 				xr_gbl->latestTime = changed->time;
 
-			OOVR_LOGF("Switch to OpenXR state %d", sessionState);
+			OOVR_LOGF("Switch to OpenXR state %d", (int)changed->state);
 
-			switch (sessionState) {
+			switch (changed->state) {
 			case XR_SESSION_STATE_READY: {
 				OOVR_LOG("Hit ready state, begin session...");
 				// Start the session running - this means we're supposed to start submitting frames

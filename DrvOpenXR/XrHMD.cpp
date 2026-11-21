@@ -420,7 +420,7 @@ float XrHMD::GetIPD()
 	if (!haveSession)
 		return kDefaultIpd + IpdOffset();
 
-	static float ipd = kDefaultIpd;
+	static std::atomic<float> ipd{ kDefaultIpd };
 
 	// Without both views the last IPD stays
 	if (std::optional<float> views = ViewsIpd())

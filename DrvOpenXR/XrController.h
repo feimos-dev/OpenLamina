@@ -64,6 +64,6 @@ public:
 private:
 	XrControllerType type;
 	const InteractionProfile& profile;
-	bool isHandTrackingValid = false;
+	std::atomic<bool> isHandTrackingValid{ false };
 	std::atomic<bool> isPoseFromHandTracking{ false };
 };

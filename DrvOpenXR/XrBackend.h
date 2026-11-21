@@ -54,7 +54,7 @@ public:
 	/**
 	 * The current state of the OpenXR session, or XR_SESSION_STATE_UNKNOWN if there is no session.
 	 */
-	XrSessionState sessionState = XR_SESSION_STATE_UNKNOWN;
+	std::atomic<XrSessionState> sessionState{ XR_SESSION_STATE_UNKNOWN };
 
 	XrSessionState GetSessionState();
 
@@ -526,7 +526,7 @@ private:
 	std::unique_ptr<Compositor> depthCompositors[XruEyeCount];
 
 	// Have we started rendering a frame yet? If not, calling xrEndFrame would result in an error
-	bool renderingFrame = false;
+	std::atomic<bool> renderingFrame{ false };
 
 	// Who runs the frame: held from xrWaitFrame to xrEndFrame by OpenLamina's own frames, and around each frame call
 	// of the game's (its xrWaitFrame and xrBeginFrame, its xrEndFrame), whose frame is open in between (frameBegun), so
@@ -546,7 +546,7 @@ private:
 
 	// A frame xrWaitFrame gave whose xrBeginFrame failed: the next frame begins it again instead of waiting, as a
 	// second xrWaitFrame blocks until xrBeginFrame is called. Repeated failures lose the session.
-	bool frameAwaitingBegin = false;
+	std::atomic<bool> frameAwaitingBegin{ false };
 	// Consecutive frames whose xrWaitFrame or xrBeginFrame failed
 	std::atomic<int> frameCallFailures{ 0 };
 	// Drops the frame, waits about a frame and, if the session is lost or five frames failed in a row, loses the session
@@ -557,7 +557,7 @@ private:
 	bool deferredRenderingStart = false;
 
 	// Keep track of if eye textures have been submitted and if we need to create a projection layer for them
-	bool submittedEyeTextures = false;
+	std::atomic<bool> submittedEyeTextures{ false };
 
 	// Whether the runtime shows the frame in flight (xrWaitFrame's shouldRender); under frameOwner
 	bool frameShouldRender = true;

@@ -4,6 +4,7 @@
 
 #include "generated/interfaces/vrtypes.h"
 #include <array>
+#include <atomic>
 #include <mutex>
 #include <optional>
 #include <openxr/openxr.h>
@@ -73,8 +74,8 @@ public:
 	// XR_EXT_user_presence's system property: the system tells when the headset is put on or taken off
 	bool supportsUserPresence = false;
 
-	// Set by XrBackend
-	XrTime nextPredictedFrameTime = 1;
+	// Set by XrBackend, by the thread that runs the frame; read by any thread that asks for a pose
+	std::atomic<XrTime> nextPredictedFrameTime{ 1 };
 
 	/**
 	 * The latest time we've observed from the runtime. This will be set before a frame is submitted, so for
@@ -86,7 +87,7 @@ public:
 	 *
 	 * Zero or negative values for XrTime will result in XR_ERROR_TIME_INVALID so initialise to 1.
 	 */
-	XrTime latestTime = 1;
+	std::atomic<XrTime> latestTime{ 1 };
 
 	/**
 	 * Returns nextPredictedFrameTime if available, otherwise returns latestTime.
