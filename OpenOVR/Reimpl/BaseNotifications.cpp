@@ -132,17 +132,3 @@ std::optional<BaseNotifications::Showing> BaseNotifications::Current()
 		return std::nullopt;
 	return Showing{ shown, it->second.text };
 }
-
-uint32_t BaseNotifications::GetErrorString(int error, char* pchBuffer, uint32_t unBufferSize)
-{
-	const char* name = error == 0 ? "k_ENotificationError_OK"
-	    : error == 1             ? "k_ENotificationError_Fail"
-	    : error == 2             ? "k_eNotificationError_InvalidParam"
-	                             : "Unknown NotificationError_t";
-	uint32_t needed = (uint32_t)strlen(name) + 1;
-	if (pchBuffer && unBufferSize) {
-		strncpy(pchBuffer, name, unBufferSize - 1);
-		pchBuffer[unBufferSize - 1] = '\0';
-	}
-	return needed;
-}

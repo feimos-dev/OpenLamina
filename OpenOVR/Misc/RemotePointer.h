@@ -39,6 +39,11 @@ struct RemotePointerEvent {
 StoreEvent MakeRemotePointerEvent(const RemotePointerEvent& e);
 RemotePointerEvent UnpackRemotePointer(const uint64_t (&data)[4]);
 
+// The Overlays document as read from the store, with what other programs wrote in another shape left out: an entry
+// that isn't an object, and each field above of another type than its own. Read through jsoncpp's converting
+// accessors, which throw on a wrong type, every field left is safe to read (a missing one reads as null).
+Json::Value CheckedOverlaysDoc(const Json::Value& doc);
+
 // An overlay's "mask" list from the Overlays document: its primitives, in units of the overlay's width and height
 std::vector<OOVR_VROverlayIntersectionMaskPrimitive_t> MaskFromJson(const Json::Value& mask);
 

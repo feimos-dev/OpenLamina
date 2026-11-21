@@ -15,8 +15,8 @@ HeadsetView 9 0 0 0 100
 IOBuffer 6 0 0 0 100
 Input 99 2 3 0 97
 Mailbox 5 0 0 0 100
-Notifications 7 0 0 0 100
-Overlay 136 0 16 0 100
+Notifications 6 0 0 0 100
+Overlay 137 0 16 0 100
 OverlayView 4 2 0 0 50
 Paths 2 0 0 0 100
 RenderModels 24 0 3 0 100

@@ -189,6 +189,60 @@ TEST_CASE("Tab_click_selects_program")
 	CHECK(!d.OnClick(u, v));
 }
 
+TEST_CASE("A_tab_with_no_room_is_neither_drawn_nor_clicked")
+{
+	Dashboard d(Dashboard::Button::MenuLong);
+	d.isAlive = [](uint32_t, uint64_t) { return true; };
+	Json::Value doc(Json::objectValue);
+	for (uint32_t pid = 300; pid < 310; pid++)
+		doc[std::to_string(pid)] = OverlaysWithDashboard(pid, 77)[std::to_string(pid)];
+	Canvas canvas(Dashboard::kWidth, Dashboard::kHeight);
+	d.Draw(canvas, Json::Value(Json::objectValue), doc);
+	// The first tab past the frame's right margin (20 pixels) is the first not drawn
+	size_t fit = 0;
+	while (fit < 10 && Dashboard::TabRect(fit).x + Dashboard::TabRect(fit).w <= Dashboard::kWidth - 20)
+		fit++;
+	REQUIRE(fit < 10);
+	// The first tab that doesn't fit, where it is on the canvas
+	const Dashboard::Rect r = Dashboard::TabRect(fit);
+	REQUIRE(r.x + 1 < Dashboard::kWidth);
+	const float x = (float)r.x + 1, y = (float)r.y + r.h / 2.0f;
+	std::optional<std::string> clicked = d.OnClick(x / Dashboard::kWidth, y / Dashboard::kHeight);
+	CHECK_FALSE((clicked && *clicked == "tab:" + std::to_string(300 + fit) + ":77"));
+}
+
+TEST_CASE("Dashboard_tabs_of_a_document_of_another_shape")
+{
+	Dashboard d(Dashboard::Button::MenuLong);
+	d.isAlive = [](uint32_t, uint64_t) { return true; };
+	Json::Value doc = OverlaysWithDashboard(222, 77);
+	doc["222"]["overlays"][1]["thumbnail"] = "yes";
+	doc["222"]["app"] = 3;
+	doc["223"] = "an entry";
+	doc["224"]["overlays"] = 1;
+	std::vector<Dashboard::Tab> tabs;
+	REQUIRE_NOTHROW(tabs = d.Tabs(doc));
+	// The thumbnail whose flag can't be read is taken for a main overlay
+	CHECK(tabs.size() == 2);
+	Canvas canvas(Dashboard::kWidth, Dashboard::kHeight);
+	REQUIRE_NOTHROW(d.Draw(canvas, Json::Value(Json::objectValue), doc));
+}
+
+TEST_CASE("A_tab_label_is_kept_short_and_its_characters_whole")
+{
+	Dashboard d(Dashboard::Button::MenuLong);
+	d.isAlive = [](uint32_t, uint64_t) { return true; };
+	Json::Value doc = OverlaysWithDashboard(222, 77);
+	// A long name is cut; a character beyond 16 bits leaves the rest of its label as it is
+	doc["222"]["overlays"][0]["name"] = std::string(100000, 'x');
+	doc["222"]["overlays"][1]["thumbnail"] = false;
+	doc["222"]["overlays"][1]["name"] = "\xC3\xA9t\xC3\xA9 \xF0\x9F\x98\x80";
+	std::vector<Dashboard::Tab> tabs = d.Tabs(doc);
+	REQUIRE(tabs.size() == 2);
+	CHECK(tabs[0].label.size() == 256);
+	CHECK(tabs[1].label.substr(0, 4) == L"\xE9t\xE9 ");
+}
+
 TEST_CASE("Quit_click_returns_quit")
 {
 	Dashboard d(Dashboard::Button::MenuLong);

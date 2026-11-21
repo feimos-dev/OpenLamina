@@ -3,11 +3,13 @@
 
 #include "stdafx.h"
 
+#include "Drivers/Backend.h"
 #include "Misc/Process.h"
 #include "Misc/Dashboard.h"
 #include "Misc/SharedStore.h"
 #include "Reimpl/BaseOverlay.h"
 
+#include <limits>
 #include <string>
 #include <vector>
 
@@ -72,6 +74,26 @@ TEST_CASE("Overlay_getters_refuse_null_pointers")
 	CHECK(overlays.SetOverlayTransformAbsolute(h, TrackingUniverseStanding, nullptr) == VROverlayError_InvalidParameter);
 	CHECK(overlays.GetOverlayTransformAbsolute(h, nullptr, nullptr) == VROverlayError_InvalidParameter);
 	CHECK(overlays.SetOverlayTransformTrackedDeviceRelative(h, 0, nullptr) == VROverlayError_InvalidParameter);
+}
+
+TEST_CASE("A_flag_number_without_a_bit_is_refused")
+{
+	BaseOverlay overlays;
+	const VROverlayHandle_t h = Make(overlays, "oc.test.flagrange");
+	bool on = true;
+	CHECK(overlays.SetOverlayFlag(h, (OOVR_VROverlayFlags)67, true) == VROverlayError_InvalidParameter);
+	CHECK(overlays.SetOverlayFlag(h, (OOVR_VROverlayFlags)-1, true) == VROverlayError_InvalidParameter);
+	CHECK(overlays.GetOverlayFlag(h, (OOVR_VROverlayFlags)67, &on) == VROverlayError_InvalidParameter);
+	// A handle that's no overlay is answered as such first
+	CHECK(overlays.SetOverlayFlag((VROverlayHandle_t)0x1234, (OOVR_VROverlayFlags)67, true) == VROverlayError_InvalidHandle);
+	CHECK(overlays.GetOverlayFlag((VROverlayHandle_t)0x1234, (OOVR_VROverlayFlags)67, &on) == VROverlayError_InvalidHandle);
+	// Bit 3 (67 taken modulo 64) is untouched
+	uint32_t all = 0xffffffff;
+	CHECK(overlays.GetOverlayFlags(h, &all) == VROverlayError_None);
+	CHECK(all == 0);
+	CHECK(overlays.SetOverlayFlag(h, (OOVR_VROverlayFlags)63, true) == VROverlayError_None);
+	CHECK(overlays.GetOverlayFlag(h, (OOVR_VROverlayFlags)63, &on) == VROverlayError_None);
+	CHECK(on);
 }
 
 TEST_CASE("An_absolute_transform_never_set_still_answers_an_origin")
@@ -139,6 +161,39 @@ TEST_CASE("Any_overlay_event_is_polled_with_its_overlay_handle")
 	CHECK(e.eventType == VREvent_OverlayShown);
 	CHECK_FALSE(overlays.PollNextAnyOverlayEvent(&e, sizeof(e), &from));
 	(void)first;
+}
+
+TEST_CASE("An_overlay_of_no_area_is_not_hit")
+{
+	BaseOverlay overlays;
+	const VROverlayHandle_t h = Make(overlays, "oc.test.area");
+	HmdMatrix34_t ahead{ { { 1, 0, 0, 0 }, { 0, 1, 0, 0 }, { 0, 0, 1, -1 } } };
+	REQUIRE(overlays.SetOverlayTransformAbsolute(h, TrackingUniverseStanding, &ahead) == VROverlayError_None);
+	// Curved, without a runtime to say whether it can be: placed flat
+	CHECK(overlays.SetOverlayCurvature(h, 0.5f) == VROverlayError_None);
+	OOVR_VROverlayIntersectionParams_t params{};
+	params.vSource = { 0, 0, 0 };
+	params.vDirection = { 0, 0, -1 };
+	params.eOrigin = TrackingUniverseStanding;
+	OOVR_VROverlayIntersectionResults_t results{};
+	CHECK(overlays.ComputeOverlayIntersection(h, &params, &results));
+	CHECK(results.fDistance == doctest::Approx(1.0f));
+	for (float width : { 0.0f, -1.0f, std::numeric_limits<float>::quiet_NaN() }) {
+		CHECK(overlays.SetOverlayWidthInMeters(h, width) == VROverlayError_None);
+		CHECK_FALSE(overlays.ComputeOverlayIntersection(h, &params, &results));
+	}
+}
+
+TEST_CASE("Polling_an_overlay_event_into_null_answers_none")
+{
+	BaseOverlay overlays;
+	const VROverlayHandle_t h = Make(overlays, "oc.test.pollnull");
+	REQUIRE(overlays.ShowOverlay(h) == VROverlayError_None);
+	CHECK_FALSE(overlays.PollNextOverlayEvent(h, nullptr, sizeof(VREvent_t)));
+	// The event is still there
+	VREvent_t e{};
+	REQUIRE(overlays.PollNextOverlayEvent(h, &e, sizeof(e)));
+	CHECK(e.eventType == VREvent_OverlayShown);
 }
 
 TEST_CASE("An_intersection_mask_has_at_most_32_primitives_of_known_types")
@@ -307,4 +362,22 @@ TEST_CASE("A_texture_not_copied_yet_has_the_size_it_says")
 	CHECK_FALSE(OverlayTextureSize(none));
 	Texture_t gl{ (void*)(uintptr_t)1, TextureType_OpenGL, ColorSpace_Auto };
 	CHECK_FALSE(OverlayTextureSize(gl));
+}
+
+TEST_CASE("Clearing_an_overlay_s_texture_needs_no_runtime")
+{
+	REQUIRE(BackendManager::InstancePtr() == nullptr);
+	BaseOverlay overlays;
+	const VROverlayHandle_t h = Make(overlays, "oc.test.clear");
+	CHECK(overlays.ClearOverlayTexture(h) == VROverlayError_None);
+	CHECK(overlays.ClearOverlayTexture((VROverlayHandle_t)0x1234) == VROverlayError_InvalidHandle);
+}
+
+TEST_CASE("A_texture_without_a_handle_is_refused")
+{
+	BaseOverlay overlays;
+	const VROverlayHandle_t h = Make(overlays, "oc.test.nohandle");
+	Texture_t none{ nullptr, TextureType_DirectX, ColorSpace_Auto };
+	CHECK(overlays.SetOverlayTexture(h, &none) == VROverlayError_InvalidTexture);
+	CHECK(overlays.SetOverlayTexture(h, nullptr) == VROverlayError_InvalidTexture);
 }

@@ -560,7 +560,9 @@ struct OverlayTextureShare::Impl {
 			return nullptr;
 		}
 
-		while (glGetError() != GL_NO_ERROR) {
+		// Errors from before this call, which would be taken for its own; a bounded number (a lost context may keep
+		// answering one)
+		for (int i = 0; i < 16 && glGetError() != GL_NO_ERROR; i++) {
 		}
 		GLint previous = 0, width = 0, height = 0, internalFormat = 0;
 		glGetIntegerv(GL_TEXTURE_BINDING_2D, &previous);

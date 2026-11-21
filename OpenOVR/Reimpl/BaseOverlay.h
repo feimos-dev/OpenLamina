@@ -3,6 +3,7 @@
 #include "../Misc/Keyboard/VRKeyboard.h" // TODO don't import from OCOVR, and remove the "../"
 #include "../Misc/OverlayMaths.h"
 #include "../Misc/ProgramEvents.h"
+#include <atomic>
 #include <map>
 #include <memory>
 #include <mutex>
@@ -209,6 +210,9 @@ private:
 	std::string keyboardCache;
 
 	std::recursive_mutex layersLock;
+	// Calls in ShowMessageOverlay, which the destructor waits for (it closes the box): they use the overlays' state
+	// until they return
+	std::atomic<int> messageBoxCalls{ 0 };
 
 	// The D3D11 shader resource views GetOverlayTexture handed out and ReleaseNativeOverlayHandle hasn't released.
 	// Under layersLock.
@@ -252,6 +256,9 @@ private:
 	// handle isn't such a one, or its program has ended or no longer has the overlay. Values this program set and that
 	// program hasn't published yet are as they were set. The dashboard's panel (system.systemui) is such an entry.
 	bool RemoteOverlayEntry(vr::VROverlayHandle_t handle, Json::Value& entry);
+	// SetOverlayFlag's and GetOverlayFlag's answer for a flag number without a bit: InvalidHandle for a handle that's
+	// no overlay (this program's or another's), else InvalidParameter
+	vr::EVROverlayError FlagOutOfRange(vr::VROverlayHandle_t handle);
 	// What's pending for such a handle (SendRemoteCommand), put over its entry; what the entry shows is pending no more
 	void ApplyPending(vr::VROverlayHandle_t handle, Json::Value& entry);
 	// Where such an entry's overlay is, in origin; false if it isn't placed

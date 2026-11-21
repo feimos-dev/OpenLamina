@@ -48,6 +48,27 @@ const KeyboardLayout::Key* KeyFor(const KeyboardLayout& layout, wchar_t ch)
 
 } // namespace
 
+TEST_CASE("A_keyboard_layout_s_last_line_needs_no_newline")
+{
+	// The last line adds no key, so the parser can't grow memory whatever it does with it
+	const std::string text = "key a A 0 0\nbank bc BC\nwidth 10";
+	KeyboardLayout layout(std::vector<char>(text.begin(), text.end()));
+	CHECK(layout.Valid());
+	CHECK(layout.GetKeymap().size() == 3);
+}
+
+TEST_CASE("A_keyboard_layout_with_an_unknown_escape_or_width_is_no_layout")
+{
+	const std::string escape = "width 10\nkey \\x X 0 0\n";
+	CHECK_FALSE(KeyboardLayout(std::vector<char>(escape.begin(), escape.end())).Valid());
+	for (const char* w : { "wide", "nan", "inf", "1e30", "-15", "0", "2.5" }) {
+		const std::string text = std::string("width ") + w + "\nkey a A 0 0\n";
+		CHECK_MESSAGE(!KeyboardLayout(std::vector<char>(text.begin(), text.end())).Valid(), w);
+	}
+	const std::string fine = "width 15\nkey a A 0 0\n";
+	CHECK(KeyboardLayout(std::vector<char>(fine.begin(), fine.end())).GetWidth() == 15);
+}
+
 TEST_CASE("Typing_builds_text_and_events")
 {
 	REQUIRE(Us());
@@ -170,6 +191,15 @@ TEST_CASE("Wide_and_UTF8_strings_convert_both_ways")
 	CHECK(VRKeyboard::Utf8ToWide("a\xC2\xA3") == L"a\xA3");
 	CHECK(VRKeyboard::Utf8ToWide(VRKeyboard::WideToUtf8(L"x€y")) == L"x€y");
 	CHECK(VRKeyboard::WideToUtf8(L"").empty());
+}
+
+TEST_CASE("Text_that_is_not_UTF8_characters_is_left_out")
+{
+	// An overlong '/', an encoded surrogate, a value beyond U+10FFFF; then a 4-byte character, which stays
+	CHECK(VRKeyboard::Utf8ToWide("a\xC0\xAF" "b") == L"ab");
+	CHECK(VRKeyboard::Utf8ToWide("a\xED\xA0\x80" "b") == L"ab");
+	CHECK(VRKeyboard::Utf8ToWide("a\xF4\x90\x80\x80" "b") == L"ab");
+	CHECK(VRKeyboard::WideToUtf8(VRKeyboard::Utf8ToWide("a\xF0\x9F\x98\x80" "b")) == "a\xF0\x9F\x98\x80" "b");
 }
 
 TEST_CASE("Caret_inserts_and_deletes_where_it_is")

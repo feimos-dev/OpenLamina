@@ -69,6 +69,10 @@ std::u32string FromUtf8(const std::string& in)
 			c = (c << 6) | (next & 0x3f);
 		}
 		i += ok ? extra + 1 : 1;
+		// Not a character: an overlong form, a surrogate, or beyond U+10FFFF (left out, as WideToUtf8 leaves them out)
+		static constexpr char32_t kLeast[] = { 0, 0x80, 0x800, 0x10000 };
+		if (ok && (c < kLeast[extra] || (c >= 0xd800 && c <= 0xdfff) || c > 0x10ffff))
+			ok = false;
 		if (ok)
 			out += c;
 	}

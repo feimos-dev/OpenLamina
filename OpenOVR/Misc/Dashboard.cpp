@@ -2,30 +2,23 @@
 
 #include "Dashboard.h"
 
+#include "Keyboard/VRKeyboard.h"
+#include "RemotePointer.h"
 #include "SharedStore.h"
 
 #include "Reimpl/BaseApplications.h"
 
-#include <codecvt>
 #include <cstdlib>
-#include <locale>
 
 namespace {
 
 constexpr int kMargin = 20;
 constexpr int kTabWidth = 220, kTabHeight = 60, kTabGap = 12;
 
+// As the keyboard converts: a character beyond 16 bits doesn't spoil the rest of the label
 std::wstring Wide(const std::string& utf8)
 {
-	try {
-		std::wstring_convert<std::codecvt_utf8<wchar_t>> converter;
-		return converter.from_bytes(utf8);
-	} catch (const std::range_error&) {
-		std::wstring out;
-		for (char c : utf8)
-			out += (unsigned char)c < 0x80 ? (wchar_t)c : L'?';
-		return out;
-	}
+	return VRKeyboard::Utf8ToWide(utf8);
 }
 
 } // namespace
@@ -87,8 +80,9 @@ void Dashboard::SetOpen(bool isOpen)
 	open = isOpen;
 }
 
-std::vector<Dashboard::Tab> Dashboard::Tabs(const Json::Value& overlaysDoc) const
+std::vector<Dashboard::Tab> Dashboard::Tabs(const Json::Value& stored) const
 {
+	const Json::Value overlaysDoc = CheckedOverlaysDoc(stored);
 	std::vector<Tab> tabs;
 	if (!overlaysDoc.isObject())
 		return tabs;
@@ -107,6 +101,9 @@ std::vector<Dashboard::Tab> Dashboard::Tabs(const Json::Value& overlaysDoc) cons
 			std::string label = o["name"].asString();
 			if (label.empty())
 				label = entry["app"].asString();
+			// More than a tab can show, which Draw shortens a character at a time (a cut character is left out)
+			if (label.size() > 256)
+				label.resize(256);
 			tabs.push_back(Tab{ (uint32_t)pid, o["handle"].asUInt64(), Wide(label) });
 		}
 	}
@@ -182,6 +179,9 @@ std::optional<std::string> Dashboard::OnClick(float u, float v)
 	if (QuitRect().Contains(x, y))
 		return std::string("quit");
 	for (size_t i = 0; i < drawnTabs.size(); i++) {
+		// As Draw stops: a tab with no room isn't drawn
+		if (TabRect(i).x + TabRect(i).w > kWidth - kMargin)
+			break;
 		if (TabRect(i).Contains(x, y))
 			return "tab:" + std::to_string(drawnTabs[i].pid) + ":" + std::to_string(drawnTabs[i].handle);
 	}

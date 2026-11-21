@@ -46,9 +46,6 @@ public:
 
 	static constexpr double kShownSeconds = 5.0;
 
-	/** IVRNotifications_001 (SDK 0.9.x): its error names (OK, Fail, InvalidParam), as SteamVR spelt them */
-	uint32_t GetErrorString(int error, VR_OUT_STRING() char* pchBuffer, uint32_t unBufferSize);
-
 private:
 	struct Live {
 		bool systemWithUserValue;

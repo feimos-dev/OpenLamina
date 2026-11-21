@@ -23,7 +23,8 @@ public:
 	OverlayTextureCopy(const OverlayTextureCopy&) = delete;
 	OverlayTextureCopy& operator=(const OverlayTextureCopy&) = delete;
 
-	// On the program's thread: tex's first layer (bounds as for GfxInterop::CopyIn) in a texture of the device, valid
+	// On the program's thread: tex's first layer, whole, in a texture of the device (bounds isn't read: the caller
+	// selects the bounds' area of the copy as the layer's image rectangle), valid
 	// until the next copy of the same texture; nullptr, with why, if it can't be copied. owner is whose texture it is
 	// (an overlay), for Forget. The textures it shares for copying are kept for the next copy of the same texture, at
 	// most 16 of each kind: the one used longest ago then makes room.
