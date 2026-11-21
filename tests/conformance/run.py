@@ -576,10 +576,12 @@ def compare(results, expected_path, differences_path, arch):
             if r.get(field) == e.get(field) or waivers.waived(allowed, r, field, arch):
                 continue
             diffs.append(f'{key_of(r)} {field}: got {json.dumps(r.get(field))}, SteamVR {json.dumps(e.get(field))}')
-    # A call SteamVR answered that is missing from an interface's job that ran its calls (a call that ended the program
-    # has a record that says so). Not cases': what a case records depends on what it got
+    # A call SteamVR answered that is missing from an interface's job that ran all of its calls. Not a job with a call
+    # that ended the program (that record fails the run already, under another key), nor cases': what a case records
+    # depends on what it got
     have = {key_of(r) for r in results}
-    ran = {job_of(r) for r in results} - {job_of(r) for r in results if r.get("method") == "<lookup>"}
+    ran = ({job_of(r) for r in results} - {job_of(r) for r in results if r.get("method") == "<lookup>"}
+           - {job_of(r) for r in results if r.get("status") != "ok"})
     missing = sorted(k for k, e in expected.items() if usable(e) and not e.get("case") and e.get("method") != "<lookup>"
                      and e.get("init_error") not in STEAMVR_TRANSIENT and job_of(e) in ran and k not in have)
     return diffs + [f"{k}: no record, SteamVR answered it" for k in missing]
@@ -651,7 +653,8 @@ def self_test():
                {"interface": "IVR\\w+_\\d+", "method": "<lookup>", "field": "lookup_error", "apptype": "2"}]
     failed_init = [rec("<lookup>", -1, init_error=108, lookup_error=109),
                    rec("<lookup>", -1, apptype=2, init_error=130, lookup_error=109)]
-    cases = [([rec("A", 0), rec("B", 1)], 0), ([rec("A", 0)], 1), (failed_init, 2)]
+    crashed = [rec("A", 0), rec("<call 1>", 1, status="crashed")]
+    cases = [([rec("A", 0), rec("B", 1)], 0), ([rec("A", 0)], 1), (failed_init, 2), (crashed, 0)]
     failed = [f"waivers: {what}" for what in waivers.self_test()]
     with tempfile.TemporaryDirectory() as folder:
         expected, differences = Path(folder) / "expected.json", Path(folder) / "differences.json"
