@@ -278,3 +278,10 @@ TEST_CASE("A_property_asked_as_another_type_is_not_there")
 	CHECK(index.GetProperty<std::string>(vr::Prop_ModelNumber_String, HAND_RIGHT) == "Knuckles Right");
 	CHECK(index.GetProperty<uint64_t>(vr::Prop_SupportedButtons_Uint64, HAND_LEFT) == 0x700000007ull);
 }
+
+TEST_CASE("No_profiles_before_the_instance")
+{
+	REQUIRE(xr_ext == nullptr);
+	CHECK(InteractionProfile::GetProfileList().empty());
+	CHECK(InteractionProfile::GetProfileByPath("/interaction_profiles/khr/simple_controller") == nullptr);
+}

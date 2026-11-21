@@ -6,6 +6,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <mutex>
 #include <set>
 #include <utility>
 
@@ -188,19 +189,34 @@ InteractionProfile::ProfileList InteractionProfile::CreateProfiles(XrExt& ext)
 	return profiles;
 }
 
+// The profile list and the path map are made on the first call that has the extensions, from any thread
+static std::mutex& ProfileListLock()
+{
+	static std::mutex lock;
+	return lock;
+}
+
 const InteractionProfile::ProfileList& InteractionProfile::GetProfileList()
 {
 	static ProfileList profiles;
-	if (profiles.empty())
+	static const ProfileList none;
+	std::lock_guard<std::mutex> guard(ProfileListLock());
+	if (profiles.empty()) {
+		// Before the instance: nothing yet, and nothing kept
+		if (!xr_ext)
+			return none;
 		profiles = CreateProfiles(*xr_ext);
+	}
 	return profiles;
 }
 
 InteractionProfile* InteractionProfile::GetProfileByPath(const string& name)
 {
 	static std::map<std::string, InteractionProfile*> byPath;
+	const ProfileList& profiles = GetProfileList();
+	std::lock_guard<std::mutex> guard(ProfileListLock());
 	if (byPath.empty()) {
-		for (const std::unique_ptr<InteractionProfile>& profile : GetProfileList()) {
+		for (const std::unique_ptr<InteractionProfile>& profile : profiles) {
 			byPath[profile->GetPath()] = profile.get();
 		}
 	}
