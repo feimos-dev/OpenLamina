@@ -109,7 +109,7 @@ static void convertJointRange(HandSkeletonBone start, HandSkeletonBone end, VRBo
 	}
 }
 
-static std::map<HandSkeletonBone, XrHandJointEXT> auxBoneMap = {
+static const std::map<HandSkeletonBone, XrHandJointEXT> auxBoneMap = {
 	{ eBone_Aux_Thumb, XR_HAND_JOINT_THUMB_DISTAL_EXT },
 	{ eBone_Aux_IndexFinger, XR_HAND_JOINT_INDEX_DISTAL_EXT },
 	{ eBone_Aux_MiddleFinger, XR_HAND_JOINT_MIDDLE_DISTAL_EXT },
@@ -269,7 +269,7 @@ static bool AuxJointPass(const std::vector<XrHandJointLocationEXT>& joints, bool
 {
 	XrHandJointLocationEXT currentJoint;
 	for (int i = eBone_Aux_Thumb; i <= eBone_Aux_PinkyFinger; i++) {
-		currentJoint = joints[auxBoneMap[(HandSkeletonBone)i]];
+		currentJoint = joints[auxBoneMap.at((HandSkeletonBone)i)];
 
 		if (!JointValid(currentJoint) || !JointValid(joints[XR_HAND_JOINT_WRIST_EXT]))
 			return false;
