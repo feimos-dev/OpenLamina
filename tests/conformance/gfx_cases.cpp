@@ -864,9 +864,8 @@ void VkInteropOdd(CaseContext& c)
 // frames go through the interop, where the copies are waited for on the GPU (shared fences), and show as the basic
 // case's. "semaphores_asked": the list has VK_KHR_external_semaphore_win32 (the GPU-side wait's). Then "painted":
 // 960 x 960 textures cleared, each frame, to another colour on the game's queue while it's still busy (clearing a
-// 4096 x 4096 image 20 times), and submitted at once: the last frame's colour (red) shows (without the wait, an eye
-// sometimes shows the frame before's). --case-arg
-// plain=1 makes the device without them (the copies are then waited for on the CPU); --case-arg time=<frames> shows
+// 4096 x 4096 image 20 times), and submitted at once: the last frame's colour (red) shows. Which wait was used is in
+// the log. --case-arg plain=1 makes the device without them (the copies are then waited for on the CPU); --case-arg time=<frames> shows
 // that many more frames and records the Submit calls' time per frame, in ms, as "submit_ms"; --case-arg busy=<n> has
 // the game's queue still clearing a 4096 x 4096 image n times when it submits.
 void VkInteropGpuWait(CaseContext& c)
