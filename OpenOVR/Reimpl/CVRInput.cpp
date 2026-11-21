@@ -47,7 +47,7 @@ static bool ToActiveSets003(const vr::IVRInput_003::VRActiveActionSet_t* pSets, 
 	// A count no game's array has (a corrupt call) is an argument error, not an exception into the game
 	try {
 		out.assign(unSetCount, OOVR_VRActiveActionSet_t{});
-	} catch (const std::bad_alloc&) {
+	} catch (const std::exception&) { // bad_alloc, or length_error past max_size (on 32-bit)
 		return false;
 	}
 	for (uint32_t i = 0; i < unSetCount; i++) {
