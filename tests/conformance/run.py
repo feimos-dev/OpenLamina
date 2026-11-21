@@ -62,7 +62,7 @@ STEAMVR_FIXTURE = {"OC_TEST_STEAMVR_DIR": str(HERE.parent / "unit" / "data" / "s
 CASE_ENV = {"render-models": STEAMVR_FIXTURE, "state-and-resources": STEAMVR_FIXTURE}
 # SteamVR's answers while vrserver was starting or stopping between children (Retry, AnotherAppLaunching,
 # ShuttingDown): a recording keeps them, a comparison skips them
-STEAMVR_TRANSIENT = {115, 117, 119}
+STEAMVR_TRANSIENT = {115, 117, 119, 310}  # restarting, or its shared namespace gone (310)
 
 
 def load_versions():
@@ -199,7 +199,7 @@ class Runner:
     # --keep-running: timeouts in a row (a SteamVR whose server hangs answers no child), and the restarts that made
     timeouts_in_a_row = 0
     restarts = 0
-    HUNG_AFTER = 3
+    HUNG_AFTER = 2
 
     def keep_running(self):
         """--keep-running: SteamVR quits all of its programs when the scene application it counts as its first exits
@@ -231,6 +231,12 @@ class Runner:
                 if running():
                     break
                 time.sleep(1)
+            # Its shared namespace up before the next child, which would otherwise start a SteamVR of its own (whose
+            # namespace goes with that child). Looked for in the pipe list: opening the pipe would count as a client.
+            for _ in range(60):
+                if any(p.lower() == "steamvr_namespace" for p in os.listdir("\\\\.\\pipe\\")):
+                    break
+                time.sleep(1)
             time.sleep(8)
 
     @staticmethod
@@ -254,9 +260,18 @@ class Runner:
             kept = self.resumed(raw, done, {"interface": version, "apptype": apptype, "argset": argset})
             if kept is not None:
                 return kept
-        raw.unlink(missing_ok=True)
-        done.unlink(missing_ok=True)
-        results = self.interface_records(version, apptype, argset, raw)
+        for attempt in range(2):
+            raw.unlink(missing_ok=True)
+            done.unlink(missing_ok=True)
+            results = self.interface_records(version, apptype, argset, raw)
+            # SteamVR's shared namespace gone: Init answered 310, or the program timed out before its first answer
+            # (waiting in Init for the namespace). SteamVR is started again, and the job run again once.
+            hung_in_init = any(r.get("index") == -1 and r.get("status") == "timeout" for r in results)
+            if not (self.args.keep_running and (hung_in_init or any(r.get("init_error") == 310 for r in results))):
+                break
+            print(f"run.py: {raw.name}: {'timed out in Init' if hung_in_init else 'init error 310'}: restarting SteamVR", flush=True)
+            with Runner.keep_lock:
+                Runner.timeouts_in_a_row = Runner.HUNG_AFTER
         done.write_text(json.dumps(results), encoding="utf-8")
         return results
 
@@ -588,7 +603,7 @@ def main():
     ap.add_argument("--allow-failures", action="store_true")
     ap.add_argument("--real-runtime", action="store_true")
     ap.add_argument("--keep-running", metavar="EXE", help="with --real-runtime: start this (SteamVR's vrstartup.exe) before any child when its "
-                    "server isn't running, and again when it hangs (three timeouts in a row)")
+                    "server isn't running, and again when it hangs (two timeouts in a row, a timeout in Init, or an Init answering 310)")
     ap.add_argument("--resume", action="store_true", help="keep the jobs an earlier run into the same --out finished (their "
                     "<raw>.result.json, or for an older run their answers), and run only the others")
     ap.add_argument("--repeat", type=int, default=1, help=f"run each case this many times (at most {MAX_REPEAT})")

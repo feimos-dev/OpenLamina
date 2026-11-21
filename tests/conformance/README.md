@@ -88,7 +88,7 @@ waits for a click in the headset: so no recording has SteamVR's answer to it.
 geometry, timing and poses, device properties, handle numbers, the PC's own apps and settings, and the app types
 OpenLamina doesn't support yet), each with its reason. Every other difference is a bug to fix or to explain there.
 An entry matches `interface` and `method` (regexes) and `field`, and, if it has one, `apptype` (a regex of the app type
-numbers). Records SteamVR answered while restarting between children (init errors 115, 117, 119) aren't compared.
+numbers). Records SteamVR answered while restarting between children (init errors 115, 117, 119) or without its shared namespace (310) aren't compared.
 
 An entry with `"arch": "x86"` applies only when `--runtime` is a 32-bit DLL: the reference was recorded by 64-bit
 SteamVR, and answers that hold a pointer are compared as raw bytes, so they are shorter in a 32-bit run.
