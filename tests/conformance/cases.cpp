@@ -1242,6 +1242,196 @@ std::string JsonEscaped(const std::string& s)
 	return out;
 }
 
+// A scene application for scene-switch to launch: submits frames for at most --case-arg seconds=<n> (default 20),
+// until it's told to quit; records what it saw
+void SceneSwitchAppCase(CaseContext& c)
+{
+	Json::Value r;
+	r["init"] = (int)c.core->Init(vr::VRApplication_Scene, nullptr);
+	vr::EVRInitError le = vr::VRInitError_None;
+	auto* comp = r["init"].asInt() == 0 ? (vr::IVRCompositor_029::IVRCompositor*)c.core->GetGenericInterface("IVRCompositor_029", &le) : nullptr;
+	auto* sys = r["init"].asInt() == 0 ? (vr::IVRSystem_022::IVRSystem*)c.core->GetGenericInterface("IVRSystem_022", &le) : nullptr;
+	if (comp && sys) {
+		callers::Texture tex(ArgSet::Valid, *c.call);
+		const auto start = std::chrono::steady_clock::now();
+		const auto until = start + std::chrono::seconds(c.IntArg("seconds", 20));
+		int frames = 0;
+		bool quit = false;
+		while (!quit && std::chrono::steady_clock::now() < until) {
+			vr::TrackedDevicePose_t poses[16];
+			comp->WaitGetPoses(poses, 16, nullptr, 0);
+			comp->Submit(vr::Eye_Left, tex.get(), nullptr, vr::Submit_Default);
+			comp->Submit(vr::Eye_Right, tex.get(), nullptr, vr::Submit_Default);
+			frames++;
+			vr::VREvent_t ev{};
+			while (sys->PollNextEvent(&ev, sizeof(ev)))
+				quit = quit || ev.eventType == vr::VREvent_Quit;
+			std::this_thread::sleep_for(std::chrono::milliseconds(5));
+		}
+		r["frames"] = frames > 0;
+		r["quit_event"] = quit;
+		r["ms"] = (Json::Int64)std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now() - start).count();
+	}
+	c.Record("scene app", r);
+	c.core->Cleanup();
+}
+
+// Removes the case's folder, waiting (at most 30 s) for a launched copy still running to end and free its file
+void RemoveWhenFree(const std::filesystem::path& dir)
+{
+	for (int i = 0; i < 30; i++) {
+		std::error_code ec;
+		std::filesystem::remove_all(dir, ec);
+		if (!ec && !std::filesystem::exists(dir, ec))
+			return;
+		std::this_thread::sleep_for(std::chrono::seconds(1));
+	}
+}
+
+// A switch between two scene applications, watched by a utility application: GetSceneApplicationState (and the
+// starting app and scene process) sampled every 20 ms while it launches scene app A
+// (scene-switch-app, through a manifest of its own), then B while A runs, then B ends by itself. Records each change
+// in order, without times, and what A and B saw.
+void SceneSwitchCase(CaseContext& c)
+{
+	namespace fs = std::filesystem;
+	Json::Value init;
+	init["init"] = (int)c.core->Init(vr::VRApplication_Utility, nullptr);
+	c.Record("observer", init);
+	vr::EVRInitError le = vr::VRInitError_None;
+	auto* apps = init["init"].asInt() == 0 ? (vr::IVRApplications_007::IVRApplications*)c.core->GetGenericInterface("IVRApplications_007", &le) : nullptr;
+	if (!apps || c.runtimePath.empty()) {
+		c.core->Cleanup();
+		return;
+	}
+
+	auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+	fs::path dir = fs::temp_directory_path() / ("oc_scene_switch_" + std::to_string(stamp));
+	fs::create_directories(dir);
+#ifdef _WIN32
+	const fs::path binary = OwnFolder() / "oc_conformance.exe";
+	const char* binaryKey = "binary_path_windows";
+	const char* suffix = ".exe";
+#else
+	const fs::path binary = OwnFolder() / "oc_conformance";
+	const char* binaryKey = "binary_path_linux";
+	const char* suffix = "";
+#endif
+	Json::Value manifest;
+	manifest["source"] = "oc_tests";
+	const char* keys[2] = { "oc.test.scene.a", "oc.test.scene.b" };
+	for (int i = 0; i < 2; i++) {
+		const std::string name = i == 0 ? "a" : "b";
+		// A copy of this program for each: a runtime may know a running program by its binary (OpenLamina does), and
+		// this one and the two apps would all be the same
+		const fs::path copy = dir / ("scene_" + name + suffix);
+		std::error_code copyError;
+		fs::copy_file(binary, copy, fs::copy_options::overwrite_existing, copyError);
+		if (copyError) {
+			c.Record("copy failed");
+			c.core->Cleanup();
+			RemoveWhenFree(dir);
+			return;
+		}
+		std::string args = "--runtime \"" + c.runtimePath + "\" --case scene-switch-app --out \"" + (dir / (name + ".jsonl")).string()
+		    + "\" --case-arg seconds=" + (i == 0 ? "20" : "6");
+		if (c.call->againstRealRuntime)
+			args += " --real-runtime";
+		Json::Value app;
+		app["app_key"] = keys[i];
+		app["launch_type"] = "binary";
+		app[binaryKey] = copy.string();
+		app["arguments"] = args;
+		app["strings"]["en_us"]["name"] = "Scene " + name;
+		manifest["applications"].append(app);
+	}
+	const fs::path manifestPath = dir / "scene_switch.vrmanifest";
+	if (!(std::ofstream(manifestPath) << manifest.toStyledString())) {
+		c.Record("manifest not written");
+		c.core->Cleanup();
+		RemoveWhenFree(dir);
+		return;
+	}
+	c.Record("AddApplicationManifest", Err(apps->AddApplicationManifest(manifestPath.string().c_str(), true)));
+
+	// Each change of what's sampled, in order; the scene process told apart as none, A or B by the launches
+	Json::Value changes(Json::arrayValue);
+	std::string last;
+	uint32_t pidA = 0;
+	auto sample = [&](const char* phase) {
+		Json::Value s;
+		s["state"] = (int)apps->GetSceneApplicationState();
+		char key[128] = {};
+		apps->GetStartingApplication(key, sizeof(key));
+		s["starting"] = key;
+		uint32_t pid = apps->GetCurrentSceneProcessId();
+		s["scene"] = pid == 0 ? "none" : (pidA == 0 || pid == pidA) ? "a" : "b";
+		if (pidA == 0 && pid != 0)
+			pidA = pid;
+		std::string text = s.toStyledString();
+		if (text != last) {
+			s["phase"] = phase;
+			changes.append(s);
+			last = text;
+		}
+		return s;
+	};
+	auto waitFor = [&](const char* phase, int seconds, auto done) {
+		const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(seconds);
+		while (std::chrono::steady_clock::now() < until) {
+			if (done(sample(phase)))
+				return true;
+			std::this_thread::sleep_for(std::chrono::milliseconds(20));
+		}
+		return false;
+	};
+	const int running = (int)vr::IVRApplications_007::EVRSceneApplicationState_Running;
+	const int none = (int)vr::IVRApplications_007::EVRSceneApplicationState_None;
+
+	Json::Value result;
+	waitFor("before", 1, [](const Json::Value&) { return false; });
+	result["launch_a"] = (int)apps->LaunchApplication(keys[0]);
+	result["a_running"] = waitFor("a", 30, [&](const Json::Value& s) { return s["state"].asInt() == running && s["scene"] == "a"; });
+	result["launch_b"] = (int)apps->LaunchApplication(keys[1]);
+	result["b_running"] = waitFor("b", 40, [&](const Json::Value& s) { return s["state"].asInt() == running && s["scene"] == "b"; });
+	result["b_ended"] = waitFor("end", 30, [&](const Json::Value& s) { return s["state"].asInt() == none && s["scene"] == "none"; });
+	// The states each step went through (the exact order and any short None between them is the runtime's timing)
+	auto seen = [&](int state, const char* scene, const char* starting) {
+		for (const Json::Value& s : changes)
+			if (s["state"].asInt() == state && s["scene"] == scene && s["starting"] == starting)
+				return true;
+		return false;
+	};
+	const int startingState = (int)vr::IVRApplications_007::EVRSceneApplicationState_Starting;
+	const int quitting = (int)vr::IVRApplications_007::EVRSceneApplicationState_Quitting;
+	result["a_starting"] = seen(startingState, "none", keys[0]);
+	result["a_quitting_for_b"] = seen(quitting, "a", keys[1]);
+	result["b_starting"] = seen(startingState, "none", keys[1]);
+	result["changes"] = changes;
+	c.Record("switch", result);
+
+	// What the two scene apps saw (each wrote its own records)
+	for (const char* name : { "a", "b" }) {
+		std::ifstream in(dir / (std::string(name) + ".jsonl"));
+		std::string line;
+		Json::Value seen;
+		while (std::getline(in, line)) {
+			Json::Value v;
+			std::istringstream text(line);
+			if (Json::parseFromStream(Json::CharReaderBuilder(), text, &v, nullptr) && v["method"] == "scene app") {
+				seen = v;
+				seen.removeMember("case");
+				seen.removeMember("ms");
+			}
+		}
+		c.Record(std::string("scene app ") + name, seen);
+	}
+
+	c.Record("RemoveApplicationManifest", Err(apps->RemoveApplicationManifest(manifestPath.string().c_str())));
+	c.core->Cleanup();
+	RemoveWhenFree(dir);
+}
+
 // The application registry (expect/applications.json): a manifest added, its application installed, launched
 // (oc_echo_app writes a marker file) and named. A Utility app, so it runs without an OpenXR runtime too.
 void ApplicationsCase(CaseContext& c)
@@ -3736,6 +3926,8 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "new-interfaces", NewInterfaces },
 		{ "device-identity", DeviceIdentityCase },
 		{ "applications", ApplicationsCase },
+		{ "scene-switch", SceneSwitchCase },
+		{ "scene-switch-app", SceneSwitchAppCase },
 		{ "chaperone", ChaperoneCase },
 		{ "chaperone-read", ChaperoneReadCase },
 		{ "chaperone-offsets", ChaperoneOffsetsCase },

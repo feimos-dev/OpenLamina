@@ -34,9 +34,12 @@ param(
     # answers need controllers; SteamVR doesn't turn them off on exit or when idle meanwhile
     [switch]$Controllers,
     # Keep what an earlier run into the same -Out finished, and run only the rest (run.py --resume)
-    [switch]$Resume
+    [switch]$Resume,
+    # Only these cases (comma-separated), no interfaces: the results stay in -Out, and the expected file isn't written
+    [string]$Cases = ''
 )
 $ErrorActionPreference = 'Stop'
+if ($Probe -and $Cases) { throw '-Probe and -Cases each choose the cases: give one of them' }
 $here = $PSScriptRoot
 
 # 1. SteamVR and Steam's config folder
@@ -160,7 +163,7 @@ try {
     $vrclient = Join-Path $steamvr 'bin\vrclient_x64.dll'
     & python -I (Join-Path $here 'run.py') --runtime $vrclient --conformance $Conformance --xr-runtime none `
         --real-runtime --keep-running (Join-Path $steamvr 'bin\win64\vrstartup.exe') --allow-failures --jobs $Jobs `
-        --out $Out @($Probe ? @('--cases', 'init-matrix') : @()) @($Resume ? @('--resume') : @())
+        --out $Out @($Probe ? @('--cases', 'init-matrix') : @()) @($Resume ? @('--resume') : @()) @($Cases ? @('--cases', $Cases) : @())
     if ($LASTEXITCODE -ne 0) { throw "run.py failed ($LASTEXITCODE)" }
 }
 catch {
@@ -221,7 +224,8 @@ finally {
 if ($failed) { throw 'The recording failed; files were put back.' }
 
 # 7. The expected answers
-if ($Probe) {
+if ($Probe -or $Cases) {
+    if ($Cases) { Write-Host "Results of $Cases in $(Join-Path $Out 'results.json'); the expected file is unchanged."; return }
     Get-Content -LiteralPath (Join-Path $Out 'raw\case-init-matrix.jsonl') | Write-Host
     return
 }
