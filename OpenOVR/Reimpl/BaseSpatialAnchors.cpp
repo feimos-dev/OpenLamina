@@ -38,9 +38,14 @@ static bool Finite(const vr::HmdMatrix34_t& m)
 static vr::HmdMatrix34_t Convert(const vr::HmdMatrix34_t& pose, vr::ETrackingUniverseOrigin from, vr::ETrackingUniverseOrigin to)
 {
 	bool fromSeated = from == vr::TrackingUniverseSeated, toSeated = to == vr::TrackingUniverseSeated;
-	BaseSystem* system = GetUnsafeBaseSystem();
-	if (fromSeated == toSeated || !system)
+	if (fromSeated == toSeated)
 		return pose;
+	// Held for the call: another thread's Shutdown may drop the program's own reference meanwhile
+	std::shared_ptr<BaseSystem> system = GetBaseSystem();
+	if (!system) {
+		OOVR_LOG_ONCE("A spatial anchor moved between seated and standing without IVRSystem: kept as it is");
+		return pose;
+	}
 	glm::mat4 seatedToStanding = S2G_m34(system->GetSeatedZeroPoseToStandingAbsoluteTrackingPose());
 	glm::mat4 m = S2G_m34(pose);
 	return G2S_m34(fromSeated ? seatedToStanding * m : glm::inverse(seatedToStanding) * m);
