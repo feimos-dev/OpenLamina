@@ -36,6 +36,7 @@ public:
 	// For a space that went with its session: nothing is left to destroy. Under the session lock, held exclusively
 	// (GetPose reads the space under the shared one), or for a tracker no other thread can reach any more.
 	void ForgetSpace() { genericTrackerSpace = XR_NULL_HANDLE; }
+	bool HasSpace() const { return genericTrackerSpace != XR_NULL_HANDLE; }
 	std::string Serial() const { return xdevProperties.serial; }
 	const std::string& ControllerType() const { return controllerType; }
 

@@ -3875,16 +3875,24 @@ void XrBackend::CreateGenericTrackers()
 		const TrackedDeviceIndex_t deviceIndex = (TrackedDeviceIndex_t)slot + RESERVED_DEVICE_INDICES;
 		auto it = std::find_if(wanted.begin(), wanted.end(), [&](const Wanted& w) { return !w.placed && current[slot]->Serial() == w.properties.serial && current[slot]->ControllerType() == w.controllerType; });
 		if (it == wanted.end()) {
+			// A role's tracker can't be asked for while the tracker action isn't on the session (from a session restart
+			// to the attach of the game's actions): it keeps its place, with no space, and is made again at the attach
+			if (htcx && trackerAction == XR_NULL_HANDLE && !current[slot]->ControllerType().empty()) {
+				generic_trackers[slot] = current[slot];
+				continue;
+			}
 			sendEvent(VREvent_TrackedDeviceDeactivated, deviceIndex);
 			continue;
 		}
 		it->placed = true;
-		if (!sessionChanged && (it->rolePath == XR_NULL_PATH || sameAction)) {
+		// One whose space went with its session is made again whatever else is unchanged
+		const bool hadSpace = current[slot]->HasSpace();
+		if (hadSpace && !sessionChanged && (it->rolePath == XR_NULL_PATH || sameAction)) {
 			generic_trackers[slot] = current[slot];
 		} else if ((generic_trackers[slot] = createTracker(*it, (uint32_t)slot))) {
-			// Made again on a new session, the tracker never went away for the game: nothing to tell it (after a loss
-			// the devices are activated again together, by OnSessionCreated)
-			if (!sessionChanged)
+			// Made again after a session restart, the tracker never went away for the game: nothing to tell it (after a
+			// loss the devices are activated again together, by OnSessionCreated)
+			if (hadSpace && !sessionChanged)
 				sendEvent(VREvent_TrackedDeviceActivated, deviceIndex);
 		} else {
 			sendEvent(VREvent_TrackedDeviceDeactivated, deviceIndex);
