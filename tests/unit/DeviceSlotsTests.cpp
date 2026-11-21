@@ -190,6 +190,53 @@ TEST_CASE("Looking straight up has no heading")
 	CHECK(yaw.w == 1.0f);
 }
 
+TEST_CASE("A tracked hand's pose is valid only with its position, and has the velocities the runtime gave")
+{
+	std::vector<XrHandJointLocationEXT> joints(XR_HAND_JOINT_COUNT_EXT);
+	std::vector<XrHandJointVelocityEXT> speeds(XR_HAND_JOINT_COUNT_EXT);
+	XrHandJointLocationsEXT locations = { XR_TYPE_HAND_JOINT_LOCATIONS_EXT };
+	locations.isActive = XR_TRUE;
+	locations.jointCount = (uint32_t)joints.size();
+	locations.jointLocations = joints.data();
+	XrHandJointVelocitiesEXT velocities = { XR_TYPE_HAND_JOINT_VELOCITIES_EXT };
+	velocities.jointCount = (uint32_t)speeds.size();
+	velocities.jointVelocities = speeds.data();
+
+	XrHandJointLocationEXT& palm = joints[XR_HAND_JOINT_PALM_EXT];
+	palm.pose = { { 0, 0, 0, 1 }, { 1, 2, 3 } };
+	XrHandJointVelocityEXT& speed = speeds[XR_HAND_JOINT_PALM_EXT];
+	speed.linearVelocity = { 4, 5, 6 };
+	speed.angularVelocity = { 7, 8, 9 };
+
+	// Orientation alone: a pose, not a valid one, and no velocity the runtime didn't mark
+	palm.locationFlags = XR_SPACE_LOCATION_ORIENTATION_VALID_BIT;
+	vr::TrackedDevicePose_t pose = {};
+	xr_utils::PoseFromHandTracking(&pose, locations, velocities, false);
+	CHECK(pose.bDeviceIsConnected);
+	CHECK_FALSE(pose.bPoseIsValid);
+	CHECK(pose.eTrackingResult == vr::TrackingResult_Running_OutOfRange);
+	CHECK(pose.vVelocity.v[0] == 0.0f);
+	CHECK(pose.vAngularVelocity.v[2] == 0.0f);
+
+	// With its position and velocities
+	palm.locationFlags = XR_SPACE_LOCATION_ORIENTATION_VALID_BIT | XR_SPACE_LOCATION_POSITION_VALID_BIT;
+	speed.velocityFlags = XR_SPACE_VELOCITY_LINEAR_VALID_BIT | XR_SPACE_VELOCITY_ANGULAR_VALID_BIT;
+	pose = {};
+	xr_utils::PoseFromHandTracking(&pose, locations, velocities, false);
+	CHECK(pose.bPoseIsValid);
+	CHECK(pose.eTrackingResult == vr::TrackingResult_Running_OK);
+	CHECK(pose.vVelocity.v[0] == 4.0f);
+	CHECK(pose.vVelocity.v[2] == 6.0f);
+	CHECK(pose.vAngularVelocity.v[1] == 8.0f);
+
+	// No orientation: the pose is left as it was
+	palm.locationFlags = XR_SPACE_LOCATION_POSITION_VALID_BIT;
+	pose = {};
+	xr_utils::PoseFromHandTracking(&pose, locations, velocities, false);
+	CHECK_FALSE(pose.bDeviceIsConnected);
+	CHECK_FALSE(pose.bPoseIsValid);
+}
+
 TEST_CASE("Poses are located as far ahead as asked")
 {
 	const XrTime now = 1000000000, frame = 1016000000;

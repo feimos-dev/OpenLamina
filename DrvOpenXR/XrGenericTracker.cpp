@@ -25,17 +25,12 @@ void XrGenericTracker::GetPose(vr::ETrackingUniverseOrigin origin, vr::TrackedDe
 	pose->bPoseIsValid = false;
 	pose->eTrackingResult = vr::TrackingResult_Running_OutOfRange;
 
-	if (!genericTrackerSpace) {
-
-		// Same workaround as XrController, unsure if needed for trackers. Better safe than sorry.
-		pose->bPoseIsValid = true;
-		pose->eTrackingResult = vr::TrackingResult_Running_OK;
-		pose->mDeviceToAbsoluteTracking = G2S_m34(glm::identity<glm::mat4>());
-
+	// Held while reading: a session restart waits for it, and forgets the space under it
+	auto sessionLock = xr_session.lock_shared();
+	// No space (its session ended, and the tracker isn't made again on the next one yet): connected, with no pose
+	if (!genericTrackerSpace)
 		return;
-	}
 
-	auto sessionLock = xr_session.lock_shared(); // held while reading: a session restart waits for it
 	xr_utils::PoseFromSpace(pose, genericTrackerSpace, origin, glm::identity<glm::mat4>(), PoseTime(trackingState, xrTime));
 }
 

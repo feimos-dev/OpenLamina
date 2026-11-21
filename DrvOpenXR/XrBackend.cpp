@@ -611,11 +611,10 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex, bool moveToNewD
 			XrGraphicsBindingD3D11KHR d3dInfo{};
 			d3dInfo.type = XR_TYPE_GRAPHICS_BINDING_D3D11_KHR;
 			d3dInfo.device = dev;
-			graphicsBinding = std::make_unique<BindingWrapper<XrGraphicsBindingD3D11KHR>>(d3dInfo);
-			XrResult made = RebuildSession(RebuildReason::AppGraphics);
-
-			dev->Release();
-			if (XR_FAILED(made))
+			// The binding takes over the device's reference
+			std::shared_ptr<void> keep(dev, [](void* device) { ((ID3D11Device*)device)->Release(); });
+			graphicsBinding = std::make_unique<BindingWrapper<XrGraphicsBindingD3D11KHR>>(d3dInfo, std::move(keep));
+			if (XR_FAILED(RebuildSession(RebuildReason::AppGraphics)))
 				return giveUp("the OpenXR runtime refused a session on the game's D3D11 device");
 			break;
 		}
@@ -637,11 +636,11 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex, bool moveToNewD
 			d3dInfo.type = XR_TYPE_GRAPHICS_BINDING_D3D12_KHR;
 			d3dInfo.device = device.Get();
 			d3dInfo.queue = d3dTexData->m_pCommandQueue;
-			graphicsBinding = std::make_unique<BindingWrapper<XrGraphicsBindingD3D12KHR>>(d3dInfo);
+			// The binding holds the device and the queue
+			auto keep = std::make_shared<std::pair<ComPtr<ID3D12Device>, ComPtr<ID3D12CommandQueue>>>(device, d3dTexData->m_pCommandQueue);
+			graphicsBinding = std::make_unique<BindingWrapper<XrGraphicsBindingD3D12KHR>>(d3dInfo, std::move(keep));
 			if (XR_FAILED(RebuildSession(RebuildReason::AppGraphics)))
 				return giveUp("the OpenXR runtime refused a session on the game's D3D12 device");
-
-			// The ComPtr releases the device: no explicit Release here
 			break;
 		}
 #endif
@@ -811,6 +810,9 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex, bool moveToNewD
 	if (gfxInterop && tex->eType == gfxInterop->Type())
 		return true;
 
+	// Under the session lock (a restart lets go of the compositors under the exclusive one), one caller at a time
+	auto sessionLock = xr_session.lock_shared();
+	std::lock_guard<std::mutex> making(compositorsLock);
 	bool ready = true;
 	for (std::unique_ptr<Compositor>& compositor : compositors) {
 		// Skip a compositor if it's already set up
@@ -1012,11 +1014,10 @@ void XrBackend::WaitForTrackingData()
 	if (viewState.viewStateFlags & XR_VIEW_STATE_POSITION_VALID_BIT)
 		xr_utils::WidenEyes(projectionViews[0].pose, projectionViews[1].pose, XrHMD::IpdOffset());
 
-	// If we're not on the game's graphics API yet, don't actually mark us as having started the frame.
-	// Instead, set a different flag so we'll call this method again when it's available.
-	if (!usingApplicationGraphicsAPI) {
-		deferredRenderingStart = true;
-	} else {
+	// Before the game's first texture the session is OpenLamina's own: the frame begun on it isn't marked as one the
+	// game renders. The first Submit makes the session again on the game's device and begins a frame there
+	// (StoreEyeTexture); a frame left open on this one is ended by the next WaitGetPoses or by EndOpenAppFrame.
+	if (usingApplicationGraphicsAPI) {
 		renderingFrame = true;
 		submittedEyeTextures = false;
 		for (bool& submitted : eyeSubmitted)
@@ -1061,10 +1062,10 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 		return appOnOtherAdapter ? kCompositorTextureIsOnWrongDevice : kCompositorInvalidTexture;
 	}
 
-	// A game that submits without having waited for poses (or whose frame ended before this eye) gets a frame here, with
-	// the poses of now
+	// A game that submits without having waited for poses (or whose frame ended before this eye, or was begun on
+	// OpenLamina's own session before this texture moved the session to the game's device) gets a frame here, with the
+	// poses of now
 	if (sessionActive && !renderingFrame) {
-		deferredRenderingStart = false;
 		WaitForTrackingData();
 		submitCall = std::chrono::steady_clock::now(); // the wait for the frame isn't time in Submit
 	}
@@ -1104,6 +1105,7 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 		texture = &copied;
 		copiedSlice.emplace(std::nullopt);
 		// A D3D11 compositor for the interop's texture
+		std::lock_guard<std::mutex> making(compositorsLock);
 		if (!compositors[eye])
 			compositors[eye] = std::make_unique<DX11Compositor>(copy.texture);
 	}
@@ -1174,8 +1176,6 @@ IBackend::openvr_enum_t XrBackend::StoreEyeTexture(
 	eyeSubmitted[eye] = true;
 	sceneCleared = false;
 
-	// WaitGetPoses called before the first texture was submitted began its frame on the early session, not this one:
-	// the frame above was begun on this session instead
 	return result;
 }
 
@@ -1340,6 +1340,7 @@ void XrBackend::SubmitFrames(bool showSkybox)
 				lastProjectionViews[i].next = nullptr;
 			}
 			lastProjection.views = lastProjectionViews;
+			lastProjectionSpace = frameSpace;
 			haveLastProjection = true;
 		}
 	}
@@ -1347,7 +1348,7 @@ void XrBackend::SubmitFrames(bool showSkybox)
 	// A frame ended for the game without its eye textures: its last frame again, which the runtime reprojects
 	bool repeated = false;
 	if (!app_layer && repeatLastFrame && haveLastProjection && !sceneCleared && !renderingSuspended) {
-		app_layer = (XrCompositionLayerBaseHeader*)&lastProjection;
+		app_layer = (XrCompositionLayerBaseHeader*)LastProjectionLayer();
 		repeated = true;
 	}
 
@@ -1356,9 +1357,7 @@ void XrBackend::SubmitFrames(bool showSkybox)
 	const ScenePlan plan = PlanScene(app_layer != nullptr, SkyboxShown(), CompositorFades::Get().GridAlphaAt(CompositorClockSeconds()));
 	frameLayers.clear();
 	if (plan.skybox) {
-		std::lock_guard<std::mutex> lock(skyboxLock);
-		for (int i = 0; i < skybox.layerCount; i++)
-			frameLayers.push_back((const XrCompositionLayerBaseHeader*)&skybox.layers[i]);
+		AddSkyboxLayers(frameLayers);
 	} else if (plan.scene) {
 		frameLayers.push_back(app_layer);
 	}
@@ -1395,9 +1394,9 @@ void XrBackend::SubmitFrames(bool showSkybox)
 
 	const auto endCall = std::chrono::steady_clock::now();
 	XrResult endResult = xrEndFrame(xr_session.get(), &info);
-	if (XR_FAILED(endResult) && sceneShown && layer_count > 1) {
-		// A layer of the overlays' was refused. The game's frame isn't dropped for it: ended without each of those
-		// layers in turn, then with the game's layer alone.
+	if (sceneShown && layer_count > 1 && EndFrameRefusalMayBeALayer(endResult)) {
+		// A layer of the overlays' may have been refused. The game's frame isn't dropped for it: ended without each of
+		// those layers in turn, then with the game's layer alone.
 		const XrResult refusal = endResult;
 		std::vector<const XrCompositionLayerBaseHeader*> kept;
 		int without = -1;
@@ -1556,7 +1555,8 @@ bool XrBackend::SkyboxShown()
 int XrBackend::SetEquirectSkybox(const vr::Texture_t* textures, uint32_t count)
 {
 	XrCompositionLayerEquirect2KHR layer{ XR_TYPE_COMPOSITION_LAYER_EQUIRECT2_KHR };
-	layer.space = xr_space_from_ref_space_type(BaseSystem::currentSpace);
+	const XrReferenceSpaceType spaceType = BaseSystem::currentSpace;
+	layer.space = xr_space_from_ref_space_type(spaceType);
 	layer.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
 	layer.pose = { { 0, 0, 0, 1 }, { 0, 0, 0 } };
 	layer.radius = 0; // a sphere at infinity
@@ -1570,6 +1570,7 @@ int XrBackend::SetEquirectSkybox(const vr::Texture_t* textures, uint32_t count)
 	if (count == 6 && textures[0].eType == vr::TextureType_DirectX) {
 		std::lock_guard<std::mutex> owner(frameOwner);
 		std::lock_guard<std::mutex> lock(skyboxLock);
+		skybox.space = spaceType;
 		if (!skybox.cube)
 			skybox.cube = BaseCompositor::CreateCompositorAPI(&textures[0]);
 		XrSwapchainSubImage drawn{};
@@ -1587,6 +1588,7 @@ int XrBackend::SetEquirectSkybox(const vr::Texture_t* textures, uint32_t count)
 	// Else they're read back and turned into one lat-long image first, without any lock: it takes a while
 	Image equirect;
 	if (count == 6) {
+		std::lock_guard<std::mutex> reading(skyboxReaderLock);
 		if (!skyboxReader)
 			skyboxReader = BaseCompositor::CreateCompositorAPI(&textures[0]);
 		if (!skyboxReader)
@@ -1607,6 +1609,7 @@ int XrBackend::SetEquirectSkybox(const vr::Texture_t* textures, uint32_t count)
 	// The swapchains are refilled, and maybe remade, while no own frame uses them
 	std::lock_guard<std::mutex> owner(frameOwner);
 	std::lock_guard<std::mutex> lock(skyboxLock);
+	skybox.space = spaceType;
 	skybox.layerCount = 0;
 	if (count == 6) {
 		if (!skybox.faces)
@@ -1636,6 +1639,21 @@ int XrBackend::SetEquirectSkybox(const vr::Texture_t* textures, uint32_t count)
 	return 0;
 }
 
+void XrBackend::AddSkyboxLayers(std::vector<const XrCompositionLayerBaseHeader*>& layers)
+{
+	std::lock_guard<std::mutex> lock(skyboxLock);
+	for (int i = 0; i < skybox.layerCount; i++) {
+		skybox.layers[i].space = xr_space_from_ref_space_type(skybox.space);
+		layers.push_back((const XrCompositionLayerBaseHeader*)&skybox.layers[i]);
+	}
+}
+
+const XrCompositionLayerBaseHeader* XrBackend::LastProjectionLayer()
+{
+	lastProjection.space = xr_space_from_ref_space_type(lastProjectionSpace);
+	return (const XrCompositionLayerBaseHeader*)&lastProjection;
+}
+
 bool XrBackend::EquirectSkyboxAvailable() const
 {
 	return ownFrames && xr_ext && xr_ext->Equirect2KHR_Available();
@@ -1645,6 +1663,10 @@ IBackend::openvr_enum_t XrBackend::SetSkyboxOverride(const vr::Texture_t* pTextu
 {
 	if (!SkyboxTexturesValid(pTextures, unTextureCount))
 		return 102; // VRCompositorError_InvalidTexture
+
+	// Held to the end: a session restart on another thread replaces xr_gbl, the compositors and the own frames.
+	// CheckOrInitCompositors' own restart takes it exclusively under this hold, as under Submit's.
+	auto lock = xr_session.lock_shared();
 
 	// Six faces are a cube map, which only equirect layers can show: one face as a flat picture would be wrong
 	if (unTextureCount == 6 && !EquirectSkyboxAvailable()) {
@@ -1660,9 +1682,6 @@ IBackend::openvr_enum_t XrBackend::SetSkyboxOverride(const vr::Texture_t* pTextu
 		shownSkybox.Set(pTextures, unTextureCount);
 	}
 
-	// Taken after CheckOrInitCompositors, which may restart the session, and held to the end: a session restart on
-	// another thread replaces xr_gbl
-	auto lock = xr_session.lock_shared();
 	if (!sessionActive || !usingApplicationGraphicsAPI) {
 		// The session hasn't started running yet (it has just been restarted on the game's device, say): shown once
 		// the game's frames begin
@@ -1907,6 +1926,12 @@ float XrBackend::SecondsToFrame(uint32_t frameId)
  *
  * Returns true if successful
  */
+size_t XrBackend::FrameTimingSize(uint32_t givenSize)
+{
+	constexpr size_t newestSize = (sizeof(vr::Compositor_FrameTiming) + 7) & ~(size_t)7;
+	return givenSize > newestSize ? sizeof(OOVR_Compositor_FrameTiming) : (size_t)givenSize;
+}
+
 bool XrBackend::GetFrameTiming(OOVR_Compositor_FrameTiming* pTiming, uint32_t unFramesAgo)
 {
 	if (!pTiming)
@@ -1915,12 +1940,10 @@ bool XrBackend::GetFrameTiming(OOVR_Compositor_FrameTiming* pTiming, uint32_t un
 	// The struct grew over OpenVR versions, so write no more than the app's m_nSize says it has. A bad m_nSize crashed F1 23
 	// here: one bigger than the newest struct is taken as ours, which every game since IVRCompositor_018 has room for.
 	// The newest struct is padded to 8 bytes on Windows, which is also what Proton passes to a Linux build.
-	constexpr size_t newestSize = (sizeof(vr::Compositor_FrameTiming) + 7) & ~(size_t)7;
-	size_t size = pTiming->m_nSize;
-	if (size > newestSize) {
+	const size_t size = FrameTimingSize(pTiming->m_nSize);
+	if (size != pTiming->m_nSize) {
 		OOVR_LOG_ONCEF("GetFrameTiming: m_nSize %u is bigger than the newest OpenVR struct, using %u", pTiming->m_nSize,
-		    (uint32_t)sizeof(OOVR_Compositor_FrameTiming));
-		size = sizeof(OOVR_Compositor_FrameTiming);
+		    (uint32_t)size);
 	}
 
 	// Zero everything except the size field
@@ -2174,6 +2197,29 @@ XrBackend::StateOutcome XrBackend::OutcomeOfState(XrSessionState state, bool saw
 	return StateOutcome::Ignored;
 }
 
+bool XrBackend::ControllerQueryDue(XrSessionState state, bool exitExpected, bool restartingForInputs, bool actionsLoaded,
+    bool legacyInputAsked, bool handFound)
+{
+	if (exitExpected || restartingForInputs || actionsLoaded || legacyInputAsked || handFound)
+		return false;
+	return state == XR_SESSION_STATE_SYNCHRONIZED || state == XR_SESSION_STATE_VISIBLE || state == XR_SESSION_STATE_FOCUSED;
+}
+
+bool XrBackend::EndFrameRefusalMayBeALayer(XrResult refusal)
+{
+	switch (refusal) {
+	case XR_ERROR_SESSION_LOST:
+	case XR_ERROR_INSTANCE_LOST:
+	case XR_ERROR_SESSION_NOT_RUNNING:
+	case XR_ERROR_CALL_ORDER_INVALID:
+	case XR_ERROR_TIME_INVALID:
+	case XR_ERROR_ENVIRONMENT_BLEND_MODE_UNSUPPORTED:
+		return false;
+	default:
+		return XR_FAILED(refusal);
+	}
+}
+
 bool XrBackend::RecoveryDue(std::chrono::steady_clock::time_point lastTry, std::chrono::steady_clock::time_point now)
 {
 	return lastTry == std::chrono::steady_clock::time_point{} || now - lastTry >= kRecoveryInterval;
@@ -2397,9 +2443,9 @@ void XrBackend::PumpEvents()
 			if (changed->time > 0 && xr_gbl)
 				xr_gbl->latestTime = changed->time;
 
-			OOVR_LOGF("Switch to OpenXR state %d", sessionState);
+			OOVR_LOGF("Switch to OpenXR state %d", (int)changed->state);
 
-			switch (sessionState) {
+			switch (changed->state) {
 			case XR_SESSION_STATE_READY: {
 				OOVR_LOG("Hit ready state, begin session...");
 				// Start the session running - this means we're supposed to start submitting frames
@@ -2407,8 +2453,12 @@ void XrBackend::PumpEvents()
 				beginInfo.primaryViewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
 				// Not while a frame of either side's is in flight (see frameOwner)
 				std::lock_guard<std::mutex> owner(frameOwner);
-				if (XrResult begin = xrBeginSession(xr_session.get(), &beginInfo); XR_FAILED(begin)) {
-					// READY doesn't come again: without a running session the game is told to quit
+				const XrResult begin = xrBeginSession(xr_session.get(), &beginInfo);
+				// A READY for a session that is running already: it goes on as it is
+				if (begin == XR_ERROR_SESSION_RUNNING && sessionActive)
+					break;
+				if (XR_FAILED(begin)) {
+					// READY doesn't come again: without a running session it's lost, until one can be made
 					OOVR_LOGF("xrBeginSession failed: %d", (int)begin);
 					OnSessionLost();
 					break;
@@ -2516,10 +2566,13 @@ void XrBackend::PumpEvents()
 	// their first frames, and runtimes can take seconds to give focus. The profile is read straight after, in case
 	// the runtime gives it without an event. Not before the game's device is known (InputsMayAttach): another session
 	// restart for it would follow.
-	const bool framesStarted = sessionState == XR_SESSION_STATE_SYNCHRONIZED || sessionState == XR_SESSION_STATE_VISIBLE
-	    || sessionState == XR_SESSION_STATE_FOCUSED;
-	if (input && !exitExpected && !input->AreActionsLoaded() && !input->LegacyInputAsked() && framesStarted
-	    && !Hand(XrController::XCT_LEFT) && !Hand(XrController::XCT_RIGHT) && InputsMayAttach()) {
+	// Nor while the session is made again for the game's actions, whose restart pumps on its own thread (when it ends
+	// a frame the game has open, and on the new session, which if headless is FOCUSED as soon as it has begun): the
+	// info set on the new session would keep the game's actions off it.
+	if (input
+	    && ControllerQueryDue(sessionState, exitExpected, restartingForInputs, input->AreActionsLoaded(), input->LegacyInputAsked(),
+	        Hand(XrController::XCT_LEFT) || Hand(XrController::XCT_RIGHT))
+	    && InputsMayAttach()) {
 		// Under the session lock (shared, if it's free): not while another thread makes and binds the game's actions
 		SessionLock sessionLock(xr_session, SessionLock::TryShared{});
 		if (sessionLock.IsHeld() && !input->AreActionsLoaded()) {
@@ -2702,7 +2755,8 @@ void XrBackend::RecoverLostSession(std::mutex* passLock)
 			return xr_session.try_lock();
 		return xr_session.lock();
 	}();
-	if (!lock.IsHeld())
+	// Exclusively, or not at all: a pass run inside a blocking call of the program's holds the lock shared
+	if (!lock.IsExclusive())
 		return; // the next pass tries again
 	lastRecoveryTry = now.time_since_epoch().count();
 	std::unique_lock<std::mutex> pass;
@@ -2811,9 +2865,15 @@ static bool OwnFramesInCallsOnly(const void* binding, const void* gameGlContext,
 
 void XrBackend::ForgetTrackerSpaces()
 {
-	// The trackers' spaces went with the old session, even if the new one has the same handle
+	// The trackers' spaces went with the old session, even if the new one has the same handle: none is located or
+	// destroyed any more, and the next poll makes the trackers again on the session there is then
 	std::unique_lock lock(generic_trackers_mutex);
 	generic_trackers_session = XR_NULL_HANDLE;
+	generic_trackers_generation = UINT64_MAX;
+	for (const std::shared_ptr<XrGenericTracker>& tracker : generic_trackers) {
+		if (tracker)
+			tracker->ForgetSpace();
+	}
 }
 
 void XrBackend::OnSessionCreated()
@@ -2856,6 +2916,15 @@ void XrBackend::OnSessionCreated()
 		return;
 	}
 
+	// The trackers the game knows get their spaces on this session now, not at the next poll
+	bool trackersKnown = false;
+	{
+		std::shared_lock trackersLock(generic_trackers_mutex);
+		trackersKnown = !generic_trackers.empty();
+	}
+	if (trackersKnown)
+		CreateGenericTrackers();
+
 	// A helper program's session has its own loop, whatever ownFrames says: an overlay session's frames are all
 	// OpenLamina's, and a headless one's events come from nowhere else
 	if (IsHelperSession()) {
@@ -2889,18 +2958,14 @@ void XrBackend::OnSessionCreated()
 		ownFramesGlContext = glContext;
 		ownFramesInCalls = true;
 	}
-	ownFrames = std::make_unique<OwnFrameLoop>(
+	SetOwnFrames(std::make_unique<OwnFrameLoop>(
 	    mode,
 	    [this](XrTime, std::vector<const XrCompositionLayerBaseHeader*>& layers) {
 		    // RunOwnFrame holds frameOwner, under which the skybox and the game's last frame are replaced: the skybox in
 		    // the game's place, else its last frame again (which the runtime reprojects); then the overlays
-		    {
-			    std::lock_guard<std::mutex> lock(skyboxLock);
-			    for (int i = 0; i < skybox.layerCount; i++)
-				    layers.push_back((const XrCompositionLayerBaseHeader*)&skybox.layers[i]);
-		    }
+		    AddSkyboxLayers(layers);
 		    if (layers.empty() && haveLastProjection)
-			    layers.push_back((const XrCompositionLayerBaseHeader*)&lastProjection);
+			    layers.push_back(LastProjectionLayer());
 		    // The fade over the scene, as on the game's frames (a game that stalls in a fade to black stays black)
 		    if (!layers.empty()) {
 			    if (XrCompositionLayerBaseHeader* fade = BuildFadeLayer())
@@ -2922,7 +2987,7 @@ void XrBackend::OnSessionCreated()
 		    BaseOverlay* overlay = GetUnsafeBaseOverlay();
 		    return SkyboxShown() || (overlay && overlay->_AnyVisible())
 		        || FadeVisible(CompositorFades::Get().ColourAt(CompositorClockSeconds(), false));
-	    });
+	    }));
 }
 
 void XrBackend::StartHelperLoop()
@@ -2931,7 +2996,7 @@ void XrBackend::StartHelperLoop()
 	if (ownFramesStopped)
 		return;
 	const bool overlaySession = CurrentSessionKind() == SessionKind::Overlay;
-	ownFrames = std::make_unique<OwnFrameLoop>(
+	SetOwnFrames(std::make_unique<OwnFrameLoop>(
 	    OwnFrameLoop::Mode::EveryFrame,
 	    [this](XrTime, std::vector<const XrCompositionLayerBaseHeader*>& layers) {
 		    // The overlays alone: an overlay session has no projection layer. RunOwnFrame holds the overlays' lock until
@@ -2985,7 +3050,7 @@ void XrBackend::StartHelperLoop()
 			    WithStoreDocuments([&] { overlay->_UpdateBounds(); });
 		    }
 		    return RunOwnFrame(source, wanted);
-	    });
+	    }));
 }
 
 // A background app on a scene session (Linux, where Proton's helper uses one) runs no frames, so the session would
@@ -2996,7 +3061,7 @@ void XrBackend::StartBackgroundFrames()
 	StopOwnFrames();
 	if (ownFramesStopped)
 		return;
-	ownFrames = std::make_unique<OwnFrameLoop>(
+	SetOwnFrames(std::make_unique<OwnFrameLoop>(
 	    OwnFrameLoop::Mode::UntilAppFrame, [](XrTime, std::vector<const XrCompositionLayerBaseHeader*>&) {},
 	    std::chrono::milliseconds(0),
 	    [this](const OwnFrameLoop::LayerSource& source, const std::function<bool()>& wanted) -> XrDuration {
@@ -3005,7 +3070,7 @@ void XrBackend::StartBackgroundFrames()
 			    return 0;
 		    PumpEvents();
 		    return RunOwnFrame(source, wanted);
-	    });
+	    }));
 }
 
 bool XrBackend::EnsureOverlaySession()
@@ -3136,8 +3201,7 @@ bool XrBackend::OwnFramesFillSwapchains() const
 // Here rather than in OwnFrameLoop.cpp, which then needs nothing of the backend's
 OwnFrameLoop::OwnFrameLoop(Mode mode, LayerSource source, std::chrono::milliseconds idleAfter)
     : OwnFrameLoop(mode, std::move(source), idleAfter, [](const LayerSource& source, const std::function<bool()>& wanted) -> XrDuration {
-	    BackendManager* manager = BackendManager::InstancePtr();
-	    auto* backend = manager ? (XrBackend*)manager->GetBackendInstance() : nullptr;
+	    XrBackend* backend = CurrentBackend();
 	    return backend ? backend->RunOwnFrame(source, wanted) : 0;
     })
 {
@@ -3153,6 +3217,13 @@ bool XrBackend::RunOwnFramesWhile(const std::function<bool()>& keepGoing)
 
 void XrBackend::EndOpenAppFrame()
 {
+	// A frame the game waited for before its first texture (on OpenLamina's own session) is begun without being marked
+	// as one it renders: ended here all the same, or no own frame could start while it stays open
+	{
+		std::lock_guard<std::mutex> owner(frameOwner);
+		if (frameBegun && sessionActive)
+			renderingFrame = true;
+	}
 	// As if the game had submitted: with its last frame again
 	repeatLastFrame = true;
 	SubmitFrames(false);
@@ -3190,16 +3261,36 @@ void XrBackend::SetRenderingSuspended(bool suspended)
 		haveLastProjection = false;
 }
 
+void XrBackend::SetOwnFrames(std::unique_ptr<OwnFrameLoop> loop)
+{
+	std::unique_ptr<OwnFrameLoop> old;
+	{
+		std::lock_guard<std::mutex> pointer(ownFramesPointerLock);
+		old = std::move(ownFrames);
+		ownFrames = std::move(loop);
+	}
+	// Joins its thread, which doesn't wait for the session lock that the caller holds
+	old.reset();
+}
+
 void XrBackend::StopOwnFrames(bool forGood)
 {
-	if (forGood)
+	if (forGood) {
 		ownFramesStopped = true;
+		// A blocking call running the loop's frames on its own thread (RunWhile) holds the session lock throughout:
+		// it's told to leave before that lock is waited for
+		std::lock_guard<std::mutex> pointer(ownFramesPointerLock);
+		if (ownFrames)
+			ownFrames->RequestStop();
+	}
 	// The helper loop rebuilding its own session from its thread: it goes on (under the session lock, which a stop for
 	// good waits for)
 	if (recoveringInHelperLoop && !forGood)
 		return;
-	// Joins its thread, which doesn't wait for the session lock that a session restart here holds
-	ownFrames.reset();
+	// The loop's users hold the session lock while they use it: it goes under the exclusive one, which a session
+	// restart holds already
+	auto lock = xr_session.lock();
+	SetOwnFrames(nullptr);
 	// Goes with the interfaces, before them
 	if (forGood)
 		keptOverlay.reset();
@@ -3297,6 +3388,8 @@ XrDuration XrBackend::RunOwnFrame(const OwnFrameLoop::LayerSource& source, const
 		if (state.predictedDisplayPeriod > 0)
 			displayPeriodMs = (float)state.predictedDisplayPeriod / 1e6f;
 		xr_gbl->nextPredictedFrameTime = state.predictedDisplayTime;
+		// The views are located again for this frame's time (a program with no frames of its own has only these)
+		xr_gbl->ClearCachedViews();
 		frameAwaitingBegin = true;
 	}
 
@@ -3391,6 +3484,8 @@ void XrBackend::OnOverlayTexture(const vr::Texture_t* texture)
 	// A headless session has no graphics, and an overlay session stays on OpenLamina's own device: neither is moved
 	if (IsHelperSession())
 		return;
+	// As under Submit: the restart inside takes the lock exclusively under this hold
+	auto lock = xr_session.lock_shared();
 	if (!usingApplicationGraphicsAPI)
 		CheckOrInitCompositors(texture);
 }
@@ -3871,10 +3966,13 @@ void XrBackend::MaybeRestartForInputs()
 	if (infoSet == XR_NULL_HANDLE && (!input || !input->AreActionsLoaded()))
 		return;
 
-	auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
+	XrBackend* backend = CurrentBackend();
 	// A lost session isn't restarted: the one made again has the game's actions bound
 	if (!backend || backend->IsSessionLost())
 		return;
+	// The new session's event pump runs on this thread, under inputRestartMutex: it leaves the controllers alone
+	backend->restartingForInputs = true;
+	ScopeGuard restarted([backend] { backend->restartingForInputs = false; });
 	if (XR_FAILED(backend->RebuildSession(RebuildReason::Inputs))) {
 		// No session to put the actions on: lost until one can be made
 		backend->OnSessionLost();

@@ -2,11 +2,13 @@
 
 #include "stdafx.h"
 
+#include "Misc/xr_ext.h"
 #include "XrBackend.h"
 #include "XrHMD.h"
 #include "Reimpl/BaseSystem.h"
 #include "logging.h"
 
+#include <chrono>
 #include <cmath>
 #include <string>
 #include <vector>
@@ -16,6 +18,20 @@ TEST_CASE("The IPD before the runtime has views is a human one")
 	// Without a session there are no views to measure
 	XrHMD hmd;
 	CHECK(hmd.GetIPD() == doctest::Approx(0.064f));
+}
+
+TEST_CASE("The eyes are at the head, answered at once, while there is no session")
+{
+	REQUIRE(xr_gbl == nullptr);
+	XrHMD hmd;
+	const auto start = std::chrono::steady_clock::now();
+	const vr::HmdMatrix34_t eye = hmd.GetEyeToHeadTransform(vr::Eye_Right);
+	const auto taken = std::chrono::steady_clock::now() - start;
+	for (int r = 0; r < 3; r++)
+		for (int c = 0; c < 4; c++)
+			CHECK(eye.m[r][c] == (r == c ? 1.0f : 0.0f));
+	// No wait for a session that can't be made while the caller holds the session lock
+	CHECK(taken < std::chrono::seconds(1));
 }
 
 #include "Drivers/Backend.h"
@@ -449,6 +465,41 @@ TEST_CASE("The OpenXR instance asks for the newest version the loader and runtim
 	CHECK(DrvOpenXR::CreateInstanceNewestVersion(info, &instance, &version, FailingCreateInstance) == XR_ERROR_RUNTIME_FAILURE);
 	CHECK(asked.size() == 1);
 	CHECK(version == 0);
+}
+
+TEST_CASE("The startup info's action manifest path is read only from a JSON object with a string in it")
+{
+	using Path = std::optional<std::string>;
+	CHECK(DrvOpenXR::ManifestPathFromStartupInfo("{\"action_manifest_path\": \"C:/game/actions.json\"}") == Path("C:/game/actions.json"));
+	CHECK_FALSE(DrvOpenXR::ManifestPathFromStartupInfo("{\"other\": 1}").has_value());
+	CHECK_FALSE(DrvOpenXR::ManifestPathFromStartupInfo(nullptr).has_value());
+	CHECK_FALSE(DrvOpenXR::ManifestPathFromStartupInfo("").has_value());
+	CHECK_FALSE(DrvOpenXR::ManifestPathFromStartupInfo("not json").has_value());
+	// JSON of another shape than the one expected is no path, and nothing is thrown at the game
+	CHECK_NOTHROW(DrvOpenXR::ManifestPathFromStartupInfo("[]"));
+	CHECK_FALSE(DrvOpenXR::ManifestPathFromStartupInfo("[]").has_value());
+	CHECK_FALSE(DrvOpenXR::ManifestPathFromStartupInfo("5").has_value());
+	CHECK_FALSE(DrvOpenXR::ManifestPathFromStartupInfo("\"action_manifest_path\"").has_value());
+	CHECK_FALSE(DrvOpenXR::ManifestPathFromStartupInfo("null").has_value());
+	CHECK_FALSE(DrvOpenXR::ManifestPathFromStartupInfo("{\"action_manifest_path\": [1, 2]}").has_value());
+	CHECK_FALSE(DrvOpenXR::ManifestPathFromStartupInfo("{\"action_manifest_path\": {\"a\": 1}}").has_value());
+	CHECK_FALSE(DrvOpenXR::ManifestPathFromStartupInfo("{\"action_manifest_path\": 7}").has_value());
+	// Nested deeper than the parser goes
+	const std::string deep(2000, '[');
+	CHECK_NOTHROW(DrvOpenXR::ManifestPathFromStartupInfo(deep.c_str()));
+	CHECK_FALSE(DrvOpenXR::ManifestPathFromStartupInfo(deep.c_str()).has_value());
+}
+
+TEST_CASE("An extension whose functions the runtime doesn't give is left unavailable")
+{
+	// Without an instance every function lookup fails, as for an extension a loader lists and doesn't forward
+	XrExt ext(XR_SUPPORTED_GRAPHICS_API_D3D11 | XR_SUPPORTED_GRAPHICS_API_D3D12 | XR_SUPPORTED_GRAPHICS_API_VK | XR_SUPPORTED_GRAPHICS_API_GL,
+	    { XR_EXT_HAND_TRACKING_EXTENSION_NAME, XR_KHR_VISIBILITY_MASK_EXTENSION_NAME });
+	CHECK_FALSE(ext.handTrackingExtensionAvailable());
+	CHECK_FALSE(ext.xrGetVisibilityMaskKHR_Available());
+	XrHandTrackerEXT tracker = XR_NULL_HANDLE;
+	CHECK(ext.xrCreateHandTrackerEXT(XR_NULL_HANDLE, nullptr, &tracker) == XR_ERROR_FUNCTION_UNSUPPORTED);
+	CHECK(ext.xrDestroyHandTrackerEXT(tracker) == XR_ERROR_FUNCTION_UNSUPPORTED);
 }
 
 TEST_CASE("The preferred refresh rate asks for the display's nearest one")

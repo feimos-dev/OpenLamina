@@ -5,6 +5,7 @@
 
 #include "Misc/ChaperoneData.h"
 #include "Misc/LibMonado.h"
+#include "Misc/xrutil.h"
 #include "Reimpl/BaseChaperoneSetup.h"
 #include "XrController.h"
 
@@ -121,6 +122,40 @@ TEST_CASE("Battery_by_role_is_the_roles_device")
 	CHECK(left->charge == 0.25f);
 	CHECK(right->charge == 0.75f);
 	CHECK(right->charging);
+}
+
+TEST_CASE("Battery_of_same_named_devices_goes_by_serial")
+{
+	// Two trackers of one model have one name: each one's battery is the device's with its serial
+	FakeLibMonado fake("1", "1,0,0.5;1,0,0.25;1,1,0.75");
+	SetEnv("FAKE_MND_SAME_NAMES", "1");
+	LibMonado mnd("Monado(XRT) by Collabora et al");
+	REQUIRE(mnd.Available());
+	std::optional<LibMonado::Battery> second = mnd.BatteryFor("Fake Controller", "SN1"), third = mnd.BatteryFor("Fake Controller", "SN2");
+	// A serial libmonado doesn't list: the first device of that name
+	std::optional<LibMonado::Battery> byName = mnd.BatteryFor("Fake Controller", "SN9");
+	SetEnv("FAKE_MND_SAME_NAMES", nullptr);
+	REQUIRE(second.has_value());
+	REQUIRE(third.has_value());
+	REQUIRE(byName.has_value());
+	CHECK(second->charge == 0.25f);
+	CHECK(third->charge == 0.75f);
+	CHECK(third->charging);
+	CHECK(byName->charge == 0.5f);
+}
+
+TEST_CASE("Libmonado_is_asked_for_again_for_an_instance_made_again_at_the_same_handle")
+{
+	// A handle no runtime gave: the runtime's name can't be asked, so each is a LibMonado without a library
+	const XrInstance before = xr_instance;
+	xr_instance = (XrInstance)(uintptr_t)0x10;
+	LibMonado* first = &LibMonado::Get();
+	CHECK(&LibMonado::Get() == first);
+	xr_instance_generation++;
+	LibMonado* second = &LibMonado::Get();
+	CHECK(second != first);
+	CHECK(&LibMonado::Get() == second);
+	xr_instance = before;
 }
 
 TEST_CASE("Battery_unsupported_is_no_battery")

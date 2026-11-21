@@ -2,6 +2,7 @@
 #include "../OpenOVR/custom_types.h" // TODO move this into the OpenVR tree
 #include "../OpenOVR/Misc/Image.h"
 #include "generated/interfaces/vrtypes.h"
+#include <atomic>
 #include <cmath>
 #include <memory>
 
@@ -311,7 +312,7 @@ private:
 	~BackendManager();
 
 	static std::unique_ptr<BackendManager> instance;
-	static bool resetting;
+	static std::atomic<bool> resetting;
 
 	// For now, just use a single backend
 	// and add multiple in later

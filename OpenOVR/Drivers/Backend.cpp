@@ -31,7 +31,7 @@ BackendManager* BackendManager::InstancePtr()
 	return instance.get();
 }
 
-bool BackendManager::resetting = false;
+std::atomic<bool> BackendManager::resetting{ false };
 
 void BackendManager::Abandon()
 {

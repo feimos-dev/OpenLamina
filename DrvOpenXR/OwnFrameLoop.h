@@ -52,7 +52,11 @@ public:
 	// Own frames run so far (for logs and tests)
 	uint64_t FramesRun() const { return framesRun; }
 
-	// Stops and joins its thread
+	// Ends the loop without destroying it: its thread runs no more frames and RunWhile returns, so that a caller of
+	// RunWhile can let go of what the loop's destroyer waits for
+	void RequestStop();
+
+	// Stops and joins its thread. No RunWhile may be in progress.
 	~OwnFrameLoop();
 
 private:

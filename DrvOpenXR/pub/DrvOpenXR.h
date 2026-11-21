@@ -2,6 +2,8 @@
 #include "../OpenOVR/Drivers/Backend.h"
 
 #include <openxr/openxr.h>
+#include <optional>
+#include <string>
 
 // Since we're not importing stdafx, add another nasty little hack
 #ifndef _WIN32
@@ -14,6 +16,9 @@ namespace DrvOpenXR {
 // headless session where the runtime has them (helperApps), and is otherwise refused (130 InvalidApplicationType, 121
 // NoServerForBackgroundApp), also when the runtime fails to start; on Linux a Background app gets a scene session.
 IBackend* CreateOpenXRBackend(const char* startupInfo, vr::EVRInitError* error, vr::EVRApplicationType appType = vr::VRApplication_Scene);
+// The action manifest's path from VR_Init's startup info (JSON, from the game): nothing for text that isn't a JSON
+// object with a string "action_manifest_path"
+std::optional<std::string> ManifestPathFromStartupInfo(const char* startupInfo);
 void GetXRAppName(char (&appName)[128]);
 // Whether the OpenXR runtime has a headset (VR_IsHmdPresent). The instance that found one is kept, and the scene
 // application's session that follows is started on it rather than on a second instance.
