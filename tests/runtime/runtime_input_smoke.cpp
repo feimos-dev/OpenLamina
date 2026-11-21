@@ -246,7 +246,8 @@ int main(int argc, char** argv)
 
 	xrDestroyInstance(instance);
 #ifdef _WIN32
-	device->Release();
+	if (device)
+		device->Release();
 #else
 	if (binding.device)
 		((PFN_vkDestroyDevice)gipa(binding.instance, "vkDestroyDevice"))(binding.device, nullptr);

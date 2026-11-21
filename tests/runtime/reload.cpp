@@ -64,8 +64,16 @@ bool Round(const char* path, int round, int appType, bool shutdown = true)
 		auto* compositor = (Compositor*)core->GetGenericInterface("IVRCompositor_027", &error);
 		if (compositor && error == 0) {
 			compositor->SetTrackingSpace(1); // standing
-			for (int frame = 0; frame < 3; frame++)
-				compositor->WaitGetPoses(nullptr, 0, nullptr, 0);
+			if (compositor->GetTrackingSpace() != 1) {
+				printf("round %d: tracking space %d after setting standing\n", round, compositor->GetTrackingSpace());
+				ok = false;
+			}
+			for (int frame = 0; frame < 3; frame++) {
+				// Its answer (EVRCompositorError) is the runtime's timing; shown, not checked
+				int answer = compositor->WaitGetPoses(nullptr, 0, nullptr, 0);
+				if (answer != 0)
+					printf("round %d: WaitGetPoses frame %d answered %d\n", round, frame, answer);
+			}
 		} else {
 			printf("round %d: no IVRCompositor_027 (%d)\n", round, error);
 			ok = false;
