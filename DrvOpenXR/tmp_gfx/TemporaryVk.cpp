@@ -164,7 +164,7 @@ TemporaryVk::TemporaryVk()
 	};
 	addIfAvailable(VK_KHR_EXTERNAL_MEMORY_EXTENSION_NAME);
 #ifdef _WIN32
-	// Don't import vulkan_win32 just for this constant, so hardcode the string
+	// For textures shared with Direct3D 11 by Win32 handle
 	addIfAvailable(VK_KHR_EXTERNAL_MEMORY_WIN32_EXTENSION_NAME);
 #else
 	// An overlay application's textures are shared with this device by file descriptor (OverlayTextureShare)
