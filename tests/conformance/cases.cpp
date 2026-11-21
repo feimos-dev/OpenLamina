@@ -4069,11 +4069,14 @@ void RoleTrackerRestartCase(CaseContext& c)
 		}
 		return -1;
 	};
-	int deactivations = 0;
+	int deactivations = 0, activations = 0;
+	int known = -1; // the waist's device, once the game has seen it
 	auto poll = [&] {
 		vr::VREvent_t ev{};
-		for (int n = 0; n < 256 && f.sys->PollNextEvent(&ev, sizeof(ev)); n++)
+		for (int n = 0; n < 256 && f.sys->PollNextEvent(&ev, sizeof(ev)); n++) {
 			deactivations += ev.eventType == vr::VREvent_TrackedDeviceDeactivated && f.sys->GetTrackedDeviceClass(ev.trackedDeviceIndex) != vr::TrackedDeviceClass_Controller;
+			activations += ev.eventType == vr::VREvent_TrackedDeviceActivated && known > 0 && (int)ev.trackedDeviceIndex == known;
+		}
 	};
 	// Frames with the old input read: its actions, and the trackers' with them, are on the session
 	for (int frame = 0; frame < 15; frame++) {
@@ -4084,6 +4087,7 @@ void RoleTrackerRestartCase(CaseContext& c)
 	}
 	Json::Value r;
 	const int before = waist();
+	known = before;
 	r["waist_known_before_the_manifest"] = before > 0;
 	r["SetActionManifestPath"] = (int)in->SetActionManifestPath(c.manifest.c_str());
 	vr::VRActionSetHandle_t set = vr::k_ulInvalidActionSetHandle;
@@ -4103,6 +4107,7 @@ void RoleTrackerRestartCase(CaseContext& c)
 	f.sys->GetDeviceToAbsoluteTrackingPose(vr::TrackingUniverseStanding, 0, poses, 16);
 	r["waist_pose_valid"] = before > 0 && before < 16 && poses[before].bPoseIsValid;
 	r["tracker_deactivations"] = deactivations;
+	r["waist_activations_after_known"] = activations;
 	c.core->Cleanup();
 	Json::Value dump = ReadStandInDump();
 	if (!dump.isNull())
