@@ -404,13 +404,23 @@ static std::shared_ptr<const Image> SteamVRTexture(TextureID_t id)
 	return image;
 }
 
+// A colour channel (0 to 1) as a byte: a value outside is the nearest end, one that is not a number 0
+static uint8_t ChannelByte(float v)
+{
+	if (!(v > 0))
+		return 0;
+	if (v >= 1)
+		return 255;
+	return (uint8_t)(v * 255);
+}
+
 static std::shared_ptr<const Image> OwnTexture()
 {
 	vr::HmdColor_t colour = oovr_global_configuration.HandColour();
 	auto image = std::make_shared<Image>();
 	image->width = 1;
 	image->height = 1;
-	image->rgba = { (uint8_t)(colour.r * 255), (uint8_t)(colour.g * 255), (uint8_t)(colour.b * 255), (uint8_t)(colour.a * 255) };
+	image->rgba = { ChannelByte(colour.r), ChannelByte(colour.g), ChannelByte(colour.b), ChannelByte(colour.a) };
 	return image;
 }
 
