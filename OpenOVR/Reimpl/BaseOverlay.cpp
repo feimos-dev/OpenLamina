@@ -1177,6 +1177,9 @@ void BaseOverlay::_UpdateDashboard()
 	DashboardState& d = *dash;
 	const uint32_t self = oc_current_pid();
 	SharedStore& store = SharedStore::Get();
+	// The panel's swapchain and its place read the session, under the layers' lock: the session's lock first (held
+	// already on the own frames' threads)
+	auto session = xr_session.lock_shared();
 	// The scene app runs the dashboard (with dashboardButton); other programs' dashboard overlays follow it. A program
 	// with neither reads nothing.
 	const bool sceneDashboard = SceneDashboard();
@@ -2017,9 +2020,11 @@ bool BaseOverlay::_AnyVisible()
 	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	if (keyboard || pointing->message || dash->shown || pointing->notificationShown || bounds->previewing)
 		return true;
+	// Whether it's placed, not where: in the standing space, which needs nothing of the session (whose lock this thread
+	// mustn't wait for, and not under the layers' lock)
 	overlay_maths::Placement shownInDashboard;
 	for (const auto& kv : overlays) {
-		if (kv.second && kv.second->dashboard && DashboardPlacement(*kv.second, FrameOrigin(), shownInDashboard))
+		if (kv.second && kv.second->dashboard && DashboardPlacement(*kv.second, vr::TrackingUniverseStanding, shownInDashboard))
 			return true;
 	}
 	for (const auto& kv : overlays) {
@@ -3303,15 +3308,14 @@ EVROverlayError BaseOverlay::GetTransformForOverlayCoordinates(VROverlayHandle_t
 		*pmatTransform = G2S_m34(X2G_om34_pose(at));
 		return VROverlayError_None;
 	}
+	// Placing it reads the session and the other overlays: the session's lock first, then the layers'
+	auto session = xr_session.lock_shared();
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	USEH();
 	if (!pmatTransform)
 		return VROverlayError_InvalidParameter;
-	bool inDashboard = false;
-	{
-		// A dashboard overlay is where the dashboard shows it
-		std::lock_guard<std::recursive_mutex> lock(layersLock);
-		inDashboard = overlay->dashboard && DashboardPlacement(*overlay, eTrackingOrigin, placement);
-	}
+	// A dashboard overlay is where the dashboard shows it
+	const bool inDashboard = overlay->dashboard && DashboardPlacement(*overlay, eTrackingOrigin, placement);
 	if (!inDashboard && !overlay->ComputePlacement(eTrackingOrigin, validOverlays, placement)) {
 		O2S_om34(overlay->overlayTransform, *pmatTransform);
 		OC_UNSUPPORTED(VROverlayError_None, "GetTransformForOverlayCoordinates: overlay '%s' can't be placed, answered with its own transform", overlay->key.c_str());
@@ -3435,6 +3439,9 @@ bool BaseOverlay::ComputeOverlayIntersection(VROverlayHandle_t ulOverlayHandle, 
 		// The mask is in units of the overlay's width and height, from its lower left
 		return on && overlay_maths::InMask(MaskFromJson(remote["mask"]), hit.u, hit.v);
 	}
+	// Placing it reads the session and the other overlays: the session's lock first, then the layers'
+	auto session = xr_session.lock_shared();
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	USEHB();
 
 	if (!pParams || !pResults)
