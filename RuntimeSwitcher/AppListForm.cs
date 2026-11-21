@@ -5,6 +5,7 @@ using System;
 using System.Collections.Generic;
 using System.ComponentModel;
 using System.Data;
+using System.Diagnostics;
 using System.Drawing;
 using System.IO;
 using System.Linq;
@@ -27,6 +28,9 @@ namespace RuntimeSwitcher
         private readonly string _configPath;
         private readonly Dictionary<string, JObject> _config;
         private readonly JObject _globalConfig;
+
+        // Set while the constructor fills the window, whose initial choices would otherwise each write the file.
+        private bool _loading = true;
 
         private const string LblOpenComposite = "OpenLamina";
         private const string LblSteamVr = "SteamVR";
@@ -105,11 +109,45 @@ namespace RuntimeSwitcher
             defaultRuntime.Items.AddRange(new object[] {LblOpenComposite, LblSteamVr});
             defaultRuntime.SelectedIndex =
                 _globalConfig[KeyDefaultRuntime].ToObject<VRApp.Runtime>() == VRApp.Runtime.SteamVR ? 1 : 0;
+            _loading = false;
         }
 
+        /// <summary>
+        /// Writes the file through a temporary file next to it, so a starting game never reads half of it. A file that
+        /// can't be written is reported; the window keeps the choice.
+        /// </summary>
         private void Save()
         {
-            File.WriteAllText(_configPath, JsonConvert.SerializeObject(_config, Formatting.Indented));
+            if (_loading)
+                return;
+            string temp;
+            using (Process self = Process.GetCurrentProcess())
+                temp = $"{_configPath}.{self.Id}.tmp";
+            try
+            {
+                File.WriteAllText(temp, JsonConvert.SerializeObject(_config, Formatting.Indented));
+                if (File.Exists(_configPath))
+                    File.Replace(temp, _configPath, null);
+                else
+                    File.Move(temp, _configPath);
+            }
+            catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+            {
+                MessageBox.Show(this, $"{_configPath} can't be written: {e.Message}", "OpenLamina",
+                    MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+            finally
+            {
+                try
+                {
+                    if (File.Exists(temp))
+                        File.Delete(temp);
+                }
+                catch (Exception e) when (e is IOException || e is UnauthorizedAccessException)
+                {
+                    // Left next to the file; the next save uses the same name.
+                }
+            }
         }
 
         private void UpdateViewFor(VRApp app)
