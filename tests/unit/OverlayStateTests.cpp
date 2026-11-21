@@ -141,6 +141,18 @@ TEST_CASE("Any_overlay_event_is_polled_with_its_overlay_handle")
 	(void)first;
 }
 
+TEST_CASE("Polling_an_overlay_event_into_null_answers_none")
+{
+	BaseOverlay overlays;
+	const VROverlayHandle_t h = Make(overlays, "oc.test.pollnull");
+	REQUIRE(overlays.ShowOverlay(h) == VROverlayError_None);
+	CHECK_FALSE(overlays.PollNextOverlayEvent(h, nullptr, sizeof(VREvent_t)));
+	// The event is still there
+	VREvent_t e{};
+	REQUIRE(overlays.PollNextOverlayEvent(h, &e, sizeof(e)));
+	CHECK(e.eventType == VREvent_OverlayShown);
+}
+
 TEST_CASE("An_intersection_mask_has_at_most_32_primitives_of_known_types")
 {
 	BaseOverlay overlays;

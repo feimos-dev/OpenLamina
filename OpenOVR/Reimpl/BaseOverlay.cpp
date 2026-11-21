@@ -3298,12 +3298,15 @@ EVROverlayError BaseOverlay::GetTransformForOverlayCoordinates(VROverlayHandle_t
 }
 bool BaseOverlay::PollNextOverlayEvent(VROverlayHandle_t ulOverlayHandle, VREvent_t* pEvent, uint32_t eventSize)
 {
+	if (!pEvent)
+		return false;
+
+	// The lasers and the keyboard queue events on the game's thread, and another program's pointer through the store
+	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	USEHB();
 
 	memset(pEvent, 0, eventSize);
 
-	// The lasers and the keyboard queue events on the game's thread, and another program's pointer through the store
-	std::lock_guard<std::recursive_mutex> lock(layersLock);
 	TakeRemoteEvents();
 	if (overlay->eventQueue.empty())
 		return false;
