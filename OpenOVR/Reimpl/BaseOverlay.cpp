@@ -3451,6 +3451,18 @@ bool BaseOverlay::HandleControllerOverlayInteractionAsMouse(VROverlayHandle_t ul
 }
 EVROverlayError BaseOverlay::SetOverlayFlagMask(VROverlayHandle_t ulOverlayHandle, uint32_t flagMask, bool bEnabled)
 {
+	// Another program's overlay: each flag is sent as SetOverlayFlag sends it
+	Json::Value remote;
+	if (!LiveOverlay(ulOverlayHandle) && RemoteOverlayEntry(ulOverlayHandle, remote)) {
+		for (uint32_t bit = 0; bit < 32; bit++) {
+			if (!(flagMask & (1u << bit)))
+				continue;
+			const EVROverlayError err = SetOverlayFlag(ulOverlayHandle, (VROverlayFlags)bit, bEnabled);
+			if (err != VROverlayError_None)
+				return err;
+		}
+		return VROverlayError_None;
+	}
 	USEH_LOCKED();
 	if (bEnabled)
 		overlay->flags |= flagMask;
@@ -3461,7 +3473,14 @@ EVROverlayError BaseOverlay::SetOverlayFlagMask(VROverlayHandle_t ulOverlayHandl
 
 EVROverlayError BaseOverlay::GetOverlayFlagMask(VROverlayHandle_t ulOverlayHandle, uint32_t flagMask, bool* pbEnabled)
 {
-	USEH();
+	Json::Value remote;
+	if (RemoteOverlayEntry(ulOverlayHandle, remote)) {
+		if (!pbEnabled)
+			return VROverlayError_InvalidParameter;
+		*pbEnabled = flagMask != 0 && (remote["flags"].asUInt64() & flagMask) == flagMask;
+		return VROverlayError_None;
+	}
+	USEH_LOCKED();
 	if (!pbEnabled)
 		return VROverlayError_InvalidParameter;
 	*pbEnabled = flagMask != 0 && (overlay->flags & flagMask) == flagMask;
