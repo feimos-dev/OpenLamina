@@ -35,7 +35,7 @@ using Microsoft::WRL::ComPtr;
 namespace {
 
 // More textures than a game submits in turn (its swapchain's, a few per eye): the copies are dropped and made again
-constexpr size_t kMaxCopies = 16;
+constexpr size_t kMaxCopies = 32;
 
 uint64_t PackLuid(const LUID& luid)
 {
@@ -129,7 +129,7 @@ constexpr GLenum kAccessWriteDiscard = 0x0002; // WGL_ACCESS_WRITE_DISCARD_NV
 constexpr GLenum kTexture2DArray = 0x8C1A, kTextureBinding2DArray = 0x8C1D, kTextureDepth = 0x8071;
 constexpr GLenum kTexture2DMultisample = 0x9100, kTextureBinding2DMultisample = 0x9104;
 constexpr GLenum kRenderbuffer = 0x8D41, kRenderbufferBinding = 0x8CA7, kRenderbufferWidth = 0x8D42, kRenderbufferHeight = 0x8D43,
-                 kRenderbufferInternalFormat = 0x8D44;
+                 kRenderbufferInternalFormat = 0x8D44, kRenderbufferSamples = 0x8CAB;
 
 // The DXGI format of a GL internal format: the one of the same texels, else one the blit converts into; UNKNOWN for
 // formats no table knows (and compressed or integer ones)
@@ -188,7 +188,9 @@ public:
 	struct Source {
 		Kind kind = Kind::Texture;
 		GLint layer = 0;
-		GLint width = 0, height = 0, format = 0, layers = 1;
+		GLint width = 0, height = 0, format = 0, layers = 1, samples = 0;
+		// A blit from it resolves samples, so it can't turn the rows over or change the format
+		bool Resolves() const { return kind == Kind::Multisampled || (kind == Kind::Renderbuffer && samples > 0); }
 	};
 
 	struct Copy {
@@ -273,6 +275,7 @@ public:
 			getRenderbufferParameteriv(kRenderbuffer, kRenderbufferWidth, &source.width);
 			getRenderbufferParameteriv(kRenderbuffer, kRenderbufferHeight, &source.height);
 			getRenderbufferParameteriv(kRenderbuffer, kRenderbufferInternalFormat, &source.format);
+			getRenderbufferParameteriv(kRenderbuffer, kRenderbufferSamples, &source.samples);
 			bindRenderbuffer(kRenderbuffer, (GLuint)previous);
 			return;
 		}
@@ -364,10 +367,8 @@ public:
 			OOVR_LOG_ONCEF("Graphics interop: an OpenGL image of internal format 0x%x (%dx%d) can't be copied", source.format, source.width, source.height);
 			return nullptr;
 		}
-		// A blit that resolves samples needs the same format on both sides
-		const bool resolves = source.kind == Kind::Renderbuffer || source.kind == Kind::Multisampled;
-		if (resolves && !SameTexelsIn(GfxApiKind::OpenGL, source.format, GfxApiKind::D3D11)) {
-			OOVR_LOG_ONCEF("Graphics interop: a multisampled OpenGL image or renderbuffer of internal format 0x%x has no D3D11 format of its own: frame left out", source.format);
+		if (source.Resolves() && !SameTexelsIn(GfxApiKind::OpenGL, source.format, GfxApiKind::D3D11)) {
+			OOVR_LOG_ONCEF("Graphics interop: a multisampled OpenGL image of internal format 0x%x has no D3D11 format of its own: frame left out", source.format);
 			return nullptr;
 		}
 		Copy copy;
@@ -433,7 +434,7 @@ public:
 		framebufferTexture2D(kDrawFramebuffer, kColorAttachment0, GL_TEXTURE_2D, copy->name, 0);
 		// GL's rows run bottom-up, D3D's top-down: turned over as it's copied. A blit that resolves samples can't also
 		// turn them over: copied as they are, and the bounds turn them.
-		const bool resolves = source.kind == Kind::Renderbuffer || source.kind == Kind::Multisampled;
+		const bool resolves = source.Resolves();
 		if (resolves)
 			blitFramebuffer(0, 0, copy->width, copy->height, 0, 0, copy->width, copy->height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
 		else
@@ -893,7 +894,7 @@ public:
 		submit.pCommandBuffers = &slot.commands;
 		// On the GPU: the copy waits for D3D11 to be done with the copies so far (it may still read last frame's), and
 		// D3D11 waits for the copy. Signal goes to the GPU with the Flush, which the Vulkan wait needs.
-		const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_TRANSFER_BIT;
+		const VkPipelineStageFlags waitStage = VK_PIPELINE_STAGE_ALL_COMMANDS_BIT;
 		uint64_t readyValue = 0, copiedValue = 0;
 		VkD3D12FenceSubmitInfoKHR values{ VK_STRUCTURE_TYPE_D3D12_FENCE_SUBMIT_INFO_KHR };
 		bool waitOnGpu = gpuWait;
