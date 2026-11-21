@@ -693,9 +693,9 @@ void Mirror(CaseContext& c)
 }
 
 // The D3D11 mirror texture of frames with bounds that run backwards (expect/compositor.json): 256 x 256 per eye, the
-// mirror asked for once, then 3 frames with each bounds and the left eye's mirror read at its top-left. As the eye shows it: the pattern's
-// top-left (red) for full bounds, its bottom-left (blue) turned upside down, its top-right (green) turned left to right,
-// its bottom-right (white) turned both ways.
+// mirror asked for once, then 3 frames with each bounds and the left eye's mirror read at its top-left. As the eye
+// shows it: the pattern's top-left (red) for full bounds, its bottom-left (blue) turned upside down, its top-right
+// (green) turned left to right, its bottom-right (white) turned both ways.
 void MirrorFlipped(CaseContext& c)
 {
 	Scene s(c);
@@ -747,8 +747,8 @@ void MirrorFlipped(CaseContext& c)
 // slice 1 of two-slice array textures (SubmitWithArrayIndex: the other eye's pattern), one two-slice array of eye 0's
 // pattern submitted with Submit_GlArrayTexture and no index (the left eye slice 0, the right slice 1: eye 1's pattern),
 // a 4x multisampled texture, a renderbuffer (Submit_GlRenderBuffer), a 4x multisampled one, and a renderbuffer with
-// flipped bounds (upside down). Every one shown the right way up, as a plain texture is, with another texture bound
-// in the context, as a game's mostly has.
+// flipped bounds (upside down). Every one shown the right way up, as a plain texture is, while another texture is
+// bound in the context, as in most games.
 void GlInteropOdd(CaseContext& c)
 {
 	Scene s(c);
@@ -864,8 +864,8 @@ void VkInteropOdd(CaseContext& c)
 // frames go through the interop, where the copies are waited for on the GPU (shared fences), and show as the basic
 // case's. "semaphores_asked": the list has VK_KHR_external_semaphore_win32 (the GPU-side wait's). Then "painted":
 // 960 x 960 textures cleared, each frame, to another colour on the game's queue while it's still busy (clearing a
-// 4096 x 4096 image 20 times), and submitted at once: the last frame's colour (red) shows. A GPU that runs the two
-// APIs' work in the order it was submitted shows it without the wait too. --case-arg
+// 4096 x 4096 image 20 times), and submitted at once: the last frame's colour (red) shows (without the wait, an eye
+// sometimes shows the frame before's). --case-arg
 // plain=1 makes the device without them (the copies are then waited for on the CPU); --case-arg time=<frames> shows
 // that many more frames and records the Submit calls' time per frame, in ms, as "submit_ms"; --case-arg busy=<n> has
 // the game's queue still clearing a 4096 x 4096 image n times when it submits.

@@ -1019,23 +1019,23 @@
   ],
   "dump:views[1].invalid": [],
   "dump:views[1].samples.tl": {
-   "near": "0000ffff",
+   "near": "ff0000ff",
    "within": 2
   },
   "dump:views[1].samples.tr": {
-   "near": "0000ffff",
+   "near": "ff0000ff",
    "within": 2
   },
   "dump:views[1].samples.bl": {
-   "near": "0000ffff",
+   "near": "ff0000ff",
    "within": 2
   },
   "dump:views[1].samples.br": {
-   "near": "0000ffff",
+   "near": "ff0000ff",
    "within": 2
   },
   "dump:views[1].samples.c": {
-   "near": "0000ffff",
+   "near": "ff0000ff",
    "within": 2
   }
  }
