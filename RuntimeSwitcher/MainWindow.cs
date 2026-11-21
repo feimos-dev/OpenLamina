@@ -344,6 +344,11 @@ namespace RuntimeSwitcher
                 using (await Updater.DownloadAsync(release.Asset(Install.SetupAssetName), setup,
                            new Progress<int>(p => _progress.Value = p)))
                 {
+                    // A game started during the download: Setup would ask it to close.
+                    if (Install.InUse())
+                        throw new IOException("A game started using OpenLamina during the download. Close it, then " +
+                                              "update again.");
+
                     // /SILENT: only a progress window. /CLOSEAPPLICATIONS: this window, if still open. /OPENSWITCHER:
                     // the window again afterwards. The switch stays as it is, since the folder doesn't change.
                     Program.ReleaseWindowMutex();
