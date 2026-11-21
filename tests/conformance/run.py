@@ -132,6 +132,8 @@ class Runner:
         if self.manifest:
             self.env["XR_RUNTIME_JSON"] = self.manifest
         if args.script:
+            if not Path(args.script).is_file():
+                raise SystemExit(f"--script {args.script}: no such file")
             self.env["OC_TEST_RUNTIME_SCRIPT"] = str(Path(args.script).resolve())
         self.runtime = str(Path(args.runtime).resolve())
         self.conformance = str(Path(args.conformance).resolve())

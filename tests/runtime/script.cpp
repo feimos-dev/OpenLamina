@@ -2,6 +2,7 @@
 
 #include <openxr/openxr_reflection.h>
 
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 
@@ -27,8 +28,12 @@ static Script LoadScript()
 	Json::CharReaderBuilder rb;
 	rb["allowComments"] = true;
 	std::string errs;
-	if (!Json::parseFromStream(rb, in, &root, &errs))
+	if (!in || !Json::parseFromStream(rb, in, &root, &errs)) {
+		// The default script instead: said, so a test that expected the script's failures can tell why it got none
+		std::fprintf(stderr, "stand-in runtime: script %s not read (%s): the default script instead\n", path,
+		    in ? errs.c_str() : "can't open it");
 		return s;
+	}
 
 	if (root.isMember("system_name"))
 		s.systemName = root["system_name"].asString();
