@@ -340,6 +340,15 @@ void BaseSettings::Set(const char* pchSection, const char* pchSettingsKey, const
 		SetError(peError, VRSettingsError_WriteFailed);
 		return;
 	}
+	// The same value already stored: the document isn't written again (each write is synced to disk)
+	{
+		const Json::Value stored = Store().Read(StoreDoc::Settings);
+		if (stored.isObject() && stored[section].isObject() && stored[section].isMember(key) && stored[section][key] == value) {
+			SetError(peError, VRSettingsError_None);
+			NoticeSettingChanged(section);
+			return;
+		}
+	}
 	bool written = Store().Update(StoreDoc::Settings, [&](Json::Value& data) {
 		if (!data.isObject())
 			data = Json::Value(Json::objectValue);

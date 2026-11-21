@@ -460,3 +460,25 @@ TEST_CASE("Settings_long_keys_are_not_stored")
 	CHECK(error == VRSettingsError_None);
 	CHECK(settings.GetInt32("oc_test", limitName.c_str(), &error) == 1);
 }
+
+TEST_CASE("Settings_same_value_is_not_written_again")
+{
+	TempDir dir;
+	SteamVRFiles files(false);
+	SharedStore store(dir.path);
+	BaseSettings settings(store);
+	BaseSettings::EVRSettingsError error = VRSettingsError_IPCFailed;
+
+	settings.SetInt32("oc_test", "count", 3, &error);
+	CHECK(error == VRSettingsError_None);
+	const uint64_t written = store.Generation(StoreDoc::Settings);
+	error = VRSettingsError_IPCFailed;
+	settings.SetInt32("oc_test", "count", 3, &error);
+	CHECK(error == VRSettingsError_None);
+	CHECK(store.Generation(StoreDoc::Settings) == written);
+
+	settings.SetInt32("oc_test", "count", 4, &error);
+	CHECK(error == VRSettingsError_None);
+	CHECK(store.Generation(StoreDoc::Settings) != written);
+	CHECK(settings.GetInt32("oc_test", "count", &error) == 4);
+}
