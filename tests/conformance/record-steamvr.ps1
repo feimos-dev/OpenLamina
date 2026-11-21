@@ -14,7 +14,8 @@
        the paths file.
     5. Runs run.py against SteamVR's vrclient_x64.dll (--real-runtime: unsafe_methods.txt isn't called).
     6. Always, at the end: stops SteamVR's processes, puts every backed-up file back (and removes any of them that
-       didn't exist before) and the active OpenXR runtime (writing it needs an elevated prompt), and fails unless every
+       didn't exist before), then, with nothing of SteamVR's running (Desktop+ and vrstartup, which start it again,
+       stopped first), the active OpenXR runtime (writing it needs an elevated prompt), and fails unless every
        SHA-256 matches its backup and the runtime is the one before.
 .EXAMPLE
     tests\conformance\record-steamvr.ps1 -Conformance build-tests\tests\oc_conformance.exe -Out out\steamvr
@@ -163,11 +164,26 @@ catch {
     Write-Warning $_
 }
 finally {
-    # 6. SteamVR stopped, every file back as it was
-    Get-Process -Name vrserver, vrmonitor, vrcompositor, vrdashboard, vrwebhelper, vrstartup, vrprismhost -ErrorAction SilentlyContinue |
-        Stop-Process -Force -ErrorAction SilentlyContinue
-    Start-Sleep -Seconds 3
+    # 6. SteamVR stopped, every file back as it was. What starts SteamVR again (Desktop+, which SteamVR starts itself,
+    # and vrstartup) goes first: SteamVR started after the paths file is back would take the first runtime listed
+    # there, and make that the active OpenXR runtime.
+    function Stop-SteamVR {
+        $starters = 'DesktopPlus', 'DesktopPlusUI', 'vrstartup'
+        $steamvrProcesses = 'vrserver', 'vrmonitor', 'vrcompositor', 'vrdashboard', 'vrwebhelper', 'vrprismhost'
+        for ($round = 0; $round -lt 3; $round++) {
+            foreach ($names in @($starters), @($steamvrProcesses)) {
+                Get-Process -Name $names -ErrorAction SilentlyContinue | Stop-Process -Force -ErrorAction SilentlyContinue
+            }
+            for ($i = 0; $i -lt 30 -and (Get-Process -Name ($starters + $steamvrProcesses) -ErrorAction SilentlyContinue); $i++) {
+                Start-Sleep -Seconds 1
+            }
+            Start-Sleep -Seconds 3
+            if (-not (Get-Process -Name ($starters + $steamvrProcesses) -ErrorAction SilentlyContinue)) { return $true }
+        }
+        return $false
+    }
     $mismatch = @()
+    if (-not (Stop-SteamVR)) { $mismatch += 'SteamVR or Desktop+ still running after three tries to stop them' }
     foreach ($m in $manifest) {
         if ($m.Exists) {
             Copy-Item -LiteralPath $m.Copy -Destination $m.Path -Force
@@ -181,6 +197,9 @@ finally {
         Get-ChildItem -LiteralPath $appconfigDir -File | Where-Object { $appconfigBefore -notcontains $_.FullName } |
             ForEach-Object { Write-Host "Removing $($_.FullName), made during the run"; Remove-Item -LiteralPath $_.FullName -Force }
     }
+    # The active OpenXR runtime last, once nothing of SteamVR's runs (something that started it again meanwhile is
+    # stopped first)
+    if (-not (Stop-SteamVR)) { $mismatch += 'SteamVR or Desktop+ started again after the files were put back, and still runs' }
     $runtimeNow = Get-ActiveRuntime
     if (($runtimeNow ? $runtimeNow.Value : $null) -ne ($activeRuntime ? $activeRuntime.Value : $null)) {
         $was = $activeRuntime ? $activeRuntime.Value : '(none)'
