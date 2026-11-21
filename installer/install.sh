@@ -411,7 +411,10 @@ manager_hints() {
 # the copy is deleted. Prints where, or nothing when there were none.
 keep_own_files() {
 	[ -d "$copy/bin" ] || return 0
-	rm -f "$copy/bin/linux64/vrclient.so" "$copy/bin/vrclient.so" "$copy/bin/version.txt"
+	rm -f "$copy/bin/linux64/vrclient.so" "$copy/bin/vrclient.so" "$copy/bin/version.txt" \
+		"$copy/bin/linux64/vrclient.so.install-tmp" "$copy/bin/vrclient.so.install-tmp" "$copy/bin/version.txt.install-tmp"
+	# The controller models are replaced whole by every install, so nothing in them is the owner's
+	rm -rf "$copy/bin/rendermodels" "$copy/bin/rendermodels.install-tmp" "$copy/bin/rendermodels.old"
 	find "$copy/bin" -depth -type d -empty -delete
 	[ -d "$copy/bin" ] || return 0
 	aside=$copy-kept-$(date +%Y-%m-%d-%H%M%S)

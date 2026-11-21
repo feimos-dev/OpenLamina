@@ -128,5 +128,14 @@ if [ ! -f "$1/bin/openlamina.ini" ] || [ ! -f "$1/bin/opencomposite.ini" ]; then
 	fail "--uninstall didn't keep the files put in bin/."
 fi
 [ ! -e "$1/bin/linux64/vrclient.so" ] || fail "--uninstall kept its own library with the owner's files."
+[ ! -e "$1/bin/rendermodels" ] || fail "--uninstall kept its own controller models with the owner's files."
+
+# Without files of the owner's, nothing is kept
+sh "$installer" --no-switch >/dev/null
+sh "$copy/install.sh" --uninstall >"$work/log"
+[ ! -e "$copy" ] || fail "the second --uninstall left $copy."
+if grep -q "Kept the files" "$work/log"; then
+	fail "--uninstall without files of the owner's kept some: $(cat "$work/log")"
+fi
 
 echo "install.sh: install, status, reinstall, --steamvr, --openlamina and --uninstall work."
