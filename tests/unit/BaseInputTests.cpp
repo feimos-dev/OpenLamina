@@ -170,3 +170,18 @@ TEST_CASE("Input_is_held_while_the_grid_is_fully_faded_in")
 	BaseInput::SetHeldByDashboard(false);
 	CHECK_FALSE(BaseInput::InputHeld());
 }
+
+TEST_CASE("Registry_finds_a_long_name_by_its_full_spelling")
+{
+	BaseInput::Registry<BaseInput::ActionSet> sets(XR_MAX_ACTION_SET_NAME_SIZE);
+	const std::string longName = "/actions/" + std::string(70, 'a');
+	const std::string shortName = sets.ShortenOrLookupName(longName);
+	CHECK(shortName.size() < XR_MAX_ACTION_SET_NAME_SIZE);
+	BaseInput::ActionSet* set = sets.Initialise(shortName, std::make_unique<BaseInput::ActionSet>());
+	// As a binding file names it, and as the manifest parser kept it
+	CHECK(sets.LookupItem(longName) == set);
+	CHECK(sets.LookupItem(shortName) == set);
+	// A handle asked for before or after, by either spelling, is the item's
+	CHECK(sets.LookupItem(sets.LookupHandle(longName)) == set);
+	CHECK(sets.LookupItem("/actions/other") == nullptr);
+}

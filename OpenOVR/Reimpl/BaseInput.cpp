@@ -233,7 +233,14 @@ BaseInput::Registry<T>::Registry(uint32_t _maxNameSize)
 template <typename T>
 T* BaseInput::Registry<T>::LookupItem(const std::string& name) const
 {
-	auto iter = itemsByName.find(lowerStr(name));
+	std::string lowerName = lowerStr(name);
+	{
+		std::lock_guard<std::mutex> guard(nameLock);
+		auto shortened = longNames.find(lowerName);
+		if (shortened != longNames.end())
+			lowerName = shortened->second;
+	}
+	auto iter = itemsByName.find(lowerName);
 	if (iter == itemsByName.end())
 		return nullptr;
 	return iter->second;

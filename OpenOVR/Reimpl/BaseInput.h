@@ -854,6 +854,7 @@ public:
 		Registry(uint32_t _maxNameSize);
 		~Registry() = default;
 
+		// By the name as the manifest or a binding file gives it, or as shortened
 		T* LookupItem(const std::string& name) const;
 		T* LookupItem(RegHandle handle) const;
 		RegHandle LookupHandle(const std::string& name);
