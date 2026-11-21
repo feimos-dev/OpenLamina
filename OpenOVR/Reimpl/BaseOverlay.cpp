@@ -761,18 +761,23 @@ bool BaseOverlay::OverlayData::ComputePlacement(vr::ETrackingUniverseOrigin trac
 		return false;
 	const XrPosef pose{ G2X_quat(orientation), G2X_v3f(position) };
 
+	// A layer of no area (or of a size that isn't a number) shows nothing: not drawn
+	auto drawable = [](const overlay_maths::Placement& p) {
+		return std::isfinite(p.width) && std::isfinite(p.height) && p.width > 0 && p.height > 0;
+	};
 	if (transformType == VROverlayTransform_Projection && !overlayRelative) {
 		out = overlay_maths::ProjectionQuad(pose, projection.fLeft, projection.fRight, projection.fTop, projection.fBottom);
-		return true;
+		return drawable(out);
 	}
 
 	// As tall as the texture's aspect ratio makes it. Not worked out when the texture is set: the app may change the
 	// width without changing the texture.
-	const float width = widthMeters * xscale;
-	const float height = widthMeters / AspectRatio() * yscale;
-	const bool curved = curvature >= minOverlayCurvature && xr_ext->CylinderKHR_Available()
-	    && std::isfinite(width) && std::isfinite(height) && width > 0 && height > 0;
-	out = overlay_maths::Placement{ pose, width, height, curved ? curvature : 0.0f };
+	out = overlay_maths::Placement{ pose, widthMeters * xscale, widthMeters / AspectRatio() * yscale, 0.0f };
+	if (!drawable(out))
+		return false;
+	XrExt* ext = xr_ext;
+	if (curvature >= minOverlayCurvature && ext && ext->CylinderKHR_Available())
+		out.curvature = curvature;
 	return true;
 }
 
@@ -2979,7 +2984,8 @@ EVROverlayError BaseOverlay::SetOverlayCurvature(VROverlayHandle_t ulOverlayHand
 
 	// _BuildLayers draws it as a cylinder where it can
 	overlay->curvature = fCurvature;
-	if (fCurvature >= minOverlayCurvature && !xr_ext->CylinderKHR_Available())
+	XrExt* ext = xr_ext;
+	if (fCurvature >= minOverlayCurvature && ext && !ext->CylinderKHR_Available())
 		OOVR_LOG_ONCE("WARNING: Tried to set overlay curvature, but XR_KHR_composition_layer_cylinder is not available");
 
 	return VROverlayError_None;

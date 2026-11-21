@@ -160,6 +160,27 @@ TEST_CASE("Any_overlay_event_is_polled_with_its_overlay_handle")
 	(void)first;
 }
 
+TEST_CASE("An_overlay_of_no_area_is_not_hit")
+{
+	BaseOverlay overlays;
+	const VROverlayHandle_t h = Make(overlays, "oc.test.area");
+	HmdMatrix34_t ahead{ { { 1, 0, 0, 0 }, { 0, 1, 0, 0 }, { 0, 0, 1, -1 } } };
+	REQUIRE(overlays.SetOverlayTransformAbsolute(h, TrackingUniverseStanding, &ahead) == VROverlayError_None);
+	// Curved, without a runtime to say whether it can be: placed flat
+	CHECK(overlays.SetOverlayCurvature(h, 0.5f) == VROverlayError_None);
+	OOVR_VROverlayIntersectionParams_t params{};
+	params.vSource = { 0, 0, 0 };
+	params.vDirection = { 0, 0, -1 };
+	params.eOrigin = TrackingUniverseStanding;
+	OOVR_VROverlayIntersectionResults_t results{};
+	CHECK(overlays.ComputeOverlayIntersection(h, &params, &results));
+	CHECK(results.fDistance == doctest::Approx(1.0f));
+	for (float width : { 0.0f, -1.0f, std::numeric_limits<float>::quiet_NaN() }) {
+		CHECK(overlays.SetOverlayWidthInMeters(h, width) == VROverlayError_None);
+		CHECK_FALSE(overlays.ComputeOverlayIntersection(h, &params, &results));
+	}
+}
+
 TEST_CASE("Polling_an_overlay_event_into_null_answers_none")
 {
 	BaseOverlay overlays;
