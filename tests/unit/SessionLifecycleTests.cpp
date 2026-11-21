@@ -66,6 +66,21 @@ TEST_CASE("A refused frame is ended again with fewer layers only when a layer ma
 	CHECK_FALSE(XrBackend::EndFrameRefusalMayBeALayer(XR_SESSION_LOSS_PENDING));
 }
 
+TEST_CASE("No more of a frame timing is written than the game's struct has, whatever size it claims")
+{
+	const size_t newest = (sizeof(vr::Compositor_FrameTiming) + 7) & ~(size_t)7;
+	// A struct of an older SDK, or a size too small for anything: as given
+	CHECK(XrBackend::FrameTimingSize(0) == 0);
+	CHECK(XrBackend::FrameTimingSize(4) == 4);
+	CHECK(XrBackend::FrameTimingSize(100) == 100);
+	CHECK(XrBackend::FrameTimingSize((uint32_t)sizeof(vr::Compositor_FrameTiming)) == sizeof(vr::Compositor_FrameTiming));
+	CHECK(XrBackend::FrameTimingSize((uint32_t)newest) == newest);
+	// A size no OpenVR struct has: never more than the struct this build writes
+	CHECK(XrBackend::FrameTimingSize((uint32_t)newest + 1) == sizeof(OOVR_Compositor_FrameTiming));
+	CHECK(XrBackend::FrameTimingSize(0xFFFFFFFFu) == sizeof(OOVR_Compositor_FrameTiming));
+	CHECK(sizeof(OOVR_Compositor_FrameTiming) <= newest);
+}
+
 TEST_CASE("The system is asked for at once after a loss, then about once a second")
 {
 	using clock = std::chrono::steady_clock;

@@ -180,6 +180,13 @@ public:
 	 */
 	static bool EndFrameRefusalMayBeALayer(XrResult refusal);
 
+	/**
+	 * How much of a game's Compositor_FrameTiming GetFrameTiming may write for the m_nSize the game gave: that many
+	 * bytes, or this build's struct for a size bigger than the newest OpenVR struct (padded to 8 bytes), which no game's
+	 * struct is
+	 */
+	static size_t FrameTimingSize(uint32_t givenSize);
+
 	/** The wait between tries to find the system again after a loss */
 	static constexpr std::chrono::milliseconds kRecoveryInterval{ 1000 };
 	/** Whether a try is due at now: the first at once, then one each kRecoveryInterval (lastTry is {} before the first) */
