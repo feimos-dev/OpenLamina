@@ -374,6 +374,7 @@ jobs:
           python3 tests/conformance/list_games.py --self-test
           python3 tests/conformance/regress.py --self-test
           python3 tests/conformance/run.py --self-test
+          python3 tests/conformance/xr_failures.py --self-test
           python3 scripts/openvr_inventory.py --self-test
           python3 tests/unelevated.py --self-test
 
