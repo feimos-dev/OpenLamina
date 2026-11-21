@@ -2,6 +2,12 @@
 
 #include "ExtHandInteractionProfile.h"
 
+#include "../LibMonado.h"
+
+#include <algorithm>
+#include <cctype>
+#include <mutex>
+
 ExtHandInteractionProfile::ExtHandInteractionProfile(std::unique_ptr<InteractionProfile> emulatedProfile, bool bindable)
     : emulated(std::move(emulatedProfile)), bindable(bindable)
 {
@@ -33,6 +39,58 @@ ExtHandInteractionProfile::ExtHandInteractionProfile(std::unique_ptr<Interaction
 	CopyControllerFrom(*emulated);
 	leftComponentTransforms.erase("tip");
 	rightComponentTransforms.erase("tip");
+}
+
+bool ExtHandInteractionProfile::ControllerInHands(const std::optional<std::string>& left, const std::optional<std::string>& right)
+{
+	auto isController = [](const std::optional<std::string>& name) {
+		if (!name || name->empty())
+			return false;
+		std::string lower = *name;
+		std::transform(lower.begin(), lower.end(), lower.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+		return lower.find("hand") == std::string::npos;
+	};
+	return isController(left) || isController(right);
+}
+
+namespace {
+// Once per session: every suggestion and the raw inputs of a session must agree
+std::mutex decisionLock;
+bool decisionMade = false;
+bool decided = true;
+} // namespace
+
+void ExtHandInteractionProfile::ForgetDecision()
+{
+	std::lock_guard<std::mutex> guard(decisionLock);
+	decisionMade = false;
+}
+
+bool ExtHandInteractionProfile::CanHaveBindings() const
+{
+	if (!bindable)
+		return false;
+	std::lock_guard<std::mutex> guard(decisionLock);
+	if (decisionMade)
+		return decided;
+	if (xr_session.get() == XR_NULL_HANDLE)
+		return true;
+	decisionMade = true;
+	LibMonado& monado = LibMonado::Get();
+	if (!monado.Available()) {
+		decided = true;
+		return decided;
+	}
+	auto nameOf = [&](const char* role) -> std::optional<std::string> {
+		std::optional<LibMonado::DeviceInfo> info = monado.DeviceInfoForRole(role);
+		if (!info)
+			return std::nullopt;
+		return info->name;
+	};
+	decided = !ControllerInHands(nameOf("left"), nameOf("right"));
+	if (!decided)
+		OOVR_LOG("A controller is in the hands: the hand interaction profile isn't offered in this session");
+	return decided;
 }
 
 const std::string& ExtHandInteractionProfile::GetPath() const

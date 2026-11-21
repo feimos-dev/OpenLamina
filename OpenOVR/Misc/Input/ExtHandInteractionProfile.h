@@ -20,7 +20,12 @@ public:
 	std::optional<const char*> GetRightHandRenderModelName() const override;
 	std::optional<const char*> GetOpenVRName() const override;
 	std::optional<vr::EVRSkeletalTrackingLevel> GetOpenVRTrackinglevel() const override;
-	bool CanHaveBindings() const override { return bindable; }
+	/** False while libmonado lists a controller in a hand role; decided once per session */
+	bool CanHaveBindings() const override;
+	/** A new session decides again */
+	static void ForgetDecision();
+
+	static bool ControllerInHands(const std::optional<std::string>& left, const std::optional<std::string>& right);
 
 protected:
 	const LegacyBindings* GetLegacyBindings(const std::string& handPath) const override;

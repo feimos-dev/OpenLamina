@@ -5,6 +5,7 @@
 
 #include "../DrvOpenXR/DeviceIdentity.h"
 #include "Misc/Input/Bindings/Conversion.h"
+#include "Misc/Input/ExtHandInteractionProfile.h"
 #include "Misc/Input/HolographicInteractionProfile.h"
 #include "Misc/Input/IndexControllerInteractionProfile.h"
 #include "Misc/Input/KhrSimpleInteractionProfile.h"
@@ -255,4 +256,14 @@ TEST_CASE("Pico_g3_profile_has_its_own_few_inputs")
 	CHECK_FALSE(g3.IsInputPathValid("/user/hand/right/input/a/click"));
 	CHECK_FALSE(g3.IsInputPathValid("/user/hand/right/input/squeeze/value"));
 	CHECK_FALSE(g3.IsInputPathValid("/user/hand/right/output/haptic"));
+}
+
+TEST_CASE("Hand_interaction_isnt_offered_with_a_controller_in_hand")
+{
+	CHECK(ExtHandInteractionProfile::ControllerInHands(std::string("Valve Knuckles Right"), std::nullopt));
+	CHECK(ExtHandInteractionProfile::ControllerInHands(std::nullopt, std::string("Oculus Touch Left")));
+	CHECK_FALSE(ExtHandInteractionProfile::ControllerInHands(std::nullopt, std::nullopt));
+	CHECK_FALSE(ExtHandInteractionProfile::ControllerInHands(std::string(), std::nullopt)); // a device without a name
+	CHECK_FALSE(ExtHandInteractionProfile::ControllerInHands(std::string("Pimax Hand Tracking Left"), std::string("Hand-Tracking Right")));
+	CHECK(ExtHandInteractionProfile::ControllerInHands(std::string("Hand Tracking Left"), std::string("Valve Knuckles Right")));
 }
