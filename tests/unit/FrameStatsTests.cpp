@@ -3,7 +3,9 @@
 
 #include "Misc/FrameStats.h"
 
+#include <algorithm>
 #include <thread>
+#include <vector>
 
 using namespace std::chrono_literals;
 
@@ -118,6 +120,23 @@ TEST_CASE("FrameStats: a frame's submit and present times are filled in when it 
 	REQUIRE(s.Timings(out.data(), 2) == 2);
 	CHECK(out[1].m_nFrameIndex == 8);
 	CHECK(out[1].m_flSubmitFrameMs == 0.0f);
+}
+
+TEST_CASE("FrameStats: an m_nSize bigger than the newest struct is taken as ours")
+{
+	FrameStats s;
+	const auto now = FrameStats::Clock::now();
+	s.OnAppFrame(Timing(1), 0, now, 11.1);
+	s.OnAppFrame(Timing(2), 0, now, 11.1);
+	// Two entries and guard bytes after them
+	constexpr size_t used = 2 * sizeof(OOVR_Compositor_FrameTiming);
+	std::vector<uint8_t> buffer(used + 4096, 0xEE);
+	auto* out = reinterpret_cast<OOVR_Compositor_FrameTiming*>(buffer.data());
+	out->m_nSize = 4096;
+	REQUIRE(s.Timings(out, 2) == 2);
+	CHECK(out[0].m_nSize == sizeof(OOVR_Compositor_FrameTiming));
+	CHECK(out[0].m_nFrameIndex + out[1].m_nFrameIndex == 3);
+	CHECK(std::all_of(buffer.begin() + used, buffer.end(), [](uint8_t b) { return b == 0xEE; }));
 }
 
 TEST_CASE("FrameStats: seconds remaining are never negative")

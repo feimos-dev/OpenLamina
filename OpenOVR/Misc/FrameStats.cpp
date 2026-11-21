@@ -99,6 +99,14 @@ uint32_t FrameStats::Timings(OOVR_Compositor_FrameTiming* out, uint32_t count) c
 	size_t element = out->m_nSize;
 	if (element < offsetof(OOVR_Compositor_FrameTiming, m_flSystemTimeInSeconds))
 		return 0;
+	// As GetFrameTiming: an m_nSize bigger than the newest struct (padded to 8 bytes) is taken as ours, as the game's
+	// array can't be of elements bigger than that
+	constexpr size_t newestSize = (sizeof(vr::Compositor_FrameTiming) + 7) & ~(size_t)7;
+	if (element > newestSize) {
+		OOVR_LOG_ONCEF("GetFrameTimings: m_nSize %u is bigger than the newest OpenVR struct, using %u", out->m_nSize,
+		    (uint32_t)sizeof(OOVR_Compositor_FrameTiming));
+		element = sizeof(OOVR_Compositor_FrameTiming);
+	}
 	std::lock_guard<std::mutex> g(lock);
 	uint32_t n = (uint32_t)std::min<size_t>(count, history.size());
 	auto* bytes = reinterpret_cast<uint8_t*>(out);
