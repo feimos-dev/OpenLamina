@@ -304,6 +304,15 @@ jobs:
           # Without mirrorWindow no window is shown; the mirror texture is given all the same
           python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases mirror --script tests/conformance/scripts/gfx_all_apis.json --expect tests/conformance/expect/mirror_window_off.json --out conformance/mirror-window-off
           if ($LASTEXITCODE) { $failed++ }
+          # Controllers found from the game's first frames
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases controllers-early --script tests/conformance/scripts/controllers_early.json --expect tests/conformance/expect/controllers_early.json --out conformance/controllers-early
+          if ($LASTEXITCODE) { $failed++ }
+          # A game that calls WaitGetPoses without Submit: its frames are ended for it inside the call
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases wait-without-submit --ini tests/conformance/ini/own_frames.ini --expect tests/conformance/expect/wait_without_submit.json --out conformance/wait-without-submit
+          if ($LASTEXITCODE) { $failed++ }
+          # The cases whose answers wait on a SteamVR recording, with both controllers on (every record ok)
+          python tests/conformance/run.py --runtime build/bin/$env:OC_DLL --conformance build/tests/oc_conformance.exe --xr-runtime stand-in --ci --cases app-type-answers,device-properties,init-again,chaperone-colours,submit-refusals,skeletal-input,legacy-controller,render-model-components,overlay-defaults,settings-defaults,application-list,io-buffer --script tests/conformance/scripts/controllers_on.json --out conformance/steamvr-run
+          if ($LASTEXITCODE) { $failed++ }
           exit $failed
 
       - uses: actions/upload-artifact@v7
