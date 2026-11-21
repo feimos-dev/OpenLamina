@@ -6,6 +6,7 @@
 #include "logging.h"
 
 #include <atomic>
+#include <fstream>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -163,4 +164,39 @@ TEST_CASE("Strcpy_arr_cuts_at_a_character_boundary")
 	CHECK(std::string(small) == "ab\xC3\xA9\xC3\xA9");
 	strcpy_arr(small, "abcdef\xE2\x82\xAC"); // "abcdef€": the € starts at byte 6 and doesn't fit
 	CHECK(std::string(small) == "abcdef");
+}
+
+TEST_CASE("Log_lines_from_several_threads_are_written_whole")
+{
+	constexpr int kThreads = 4;
+	constexpr int kLines = 200;
+	std::vector<std::thread> threads;
+	for (int t = 0; t < kThreads; t++) {
+		threads.emplace_back([t] {
+			for (int i = 0; i < kLines; i++)
+				OOVR_LOGF("whole-line-marker %d %d end", t, i);
+		});
+	}
+	for (std::thread& th : threads)
+		th.join();
+	OOVR_LOG("whole-line-marker done");
+
+	std::string folder = oovr_log_folder();
+	std::string path = "openlamina.oc_unit_tests.log";
+	if (!folder.empty())
+		path = folder + "/" + path;
+	std::ifstream in(path);
+	REQUIRE(in.is_open());
+	int whole = 0;
+	std::string line;
+	while (std::getline(in, line)) {
+		if (line.find("whole-line-marker") == std::string::npos || line.find("done") != std::string::npos)
+			continue;
+		// "[time] function:line\t- whole-line-marker t i end", with nothing of another line inside it
+		const bool ok = line.front() == '[' && line.find("]") != std::string::npos && line.find("\t- whole-line-marker ") != std::string::npos
+		    && line.size() > 4 && line.compare(line.size() - 4, 4, " end") == 0 && line.find('[', 1) == std::string::npos;
+		CHECK_MESSAGE(ok, line);
+		whole += ok;
+	}
+	CHECK(whole == kThreads * kLines);
 }

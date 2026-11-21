@@ -75,9 +75,8 @@ std::string oovr_log_folder();
 #define OOVR_LOG_ONCEF(msg, ...)                                                                   \
 	do {                                                                                           \
 		/* We don't need the function suffix, but it makes it easier to recognise in a debugger */ \
-		static bool oovr_hit_log_once_##__FUNCTION__ = false;                                      \
-		if (!oovr_hit_log_once_##__FUNCTION__) {                                                   \
-			oovr_hit_log_once_##__FUNCTION__ = true;                                               \
+		static std::atomic<bool> oovr_hit_log_once_##__FUNCTION__{ false };                        \
+		if (!oovr_hit_log_once_##__FUNCTION__.exchange(true)) {                                    \
 			OOVR_LOGF("[once] " msg, __VA_ARGS__);                                                 \
 		}                                                                                          \
 	} while (false)
