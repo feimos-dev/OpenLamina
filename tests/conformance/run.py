@@ -737,7 +737,8 @@ def main():
         counts[r["status"]] = counts.get(r["status"], 0) + 1
     known = load_known(args.known_failures)
     known_hit = set()
-    bad = [r for r in results if r["status"] in ("ended", "crashed", "timeout")]
+    # "lost": a call that ended the program in an older run that --resume kept
+    bad = [r for r in results if r["status"] in ("ended", "crashed", "timeout", "lost")]
     lines =[f"{k}: {v}" for k, v in sorted(counts.items())] + [""]
     if args.repeat > 1:
         lines += round_summary(results, args.repeat) + [""]
