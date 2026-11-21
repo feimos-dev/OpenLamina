@@ -92,6 +92,24 @@ TEST_CASE("OwnFrameLoop: RunWhile runs the frames on the calling thread")
 	CHECK(loop.FramesRun() == 5);
 }
 
+TEST_CASE("OwnFrameLoop: a stop request ends RunWhile while the loop is still there")
+{
+	FakeFrames fake;
+	OwnFrameLoop loop(OwnFrameLoop::Mode::InCallsOnly, nullptr, 10ms, fake.Runner());
+	std::atomic<int> calls{ 0 };
+	std::atomic<bool> returned{ false };
+	// At most 500 frames of about 11 ms, if the request did nothing
+	std::thread caller([&] {
+		loop.RunWhile([&] { return ++calls < 500; });
+		returned = true;
+	});
+	CHECK(WaitFor([&] { return fake.frames > 0; }));
+	loop.RequestStop();
+	CHECK(WaitFor([&] { return returned.load(); }));
+	caller.join();
+	CHECK(calls < 500);
+}
+
 TEST_CASE("OwnFrameLoop: WhenAppIdle runs no frames while there is nothing to show")
 {
 	FakeFrames fake;

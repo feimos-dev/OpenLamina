@@ -2922,7 +2922,7 @@ void XrBackend::OnSessionCreated()
 		ownFramesGlContext = glContext;
 		ownFramesInCalls = true;
 	}
-	ownFrames = std::make_unique<OwnFrameLoop>(
+	SetOwnFrames(std::make_unique<OwnFrameLoop>(
 	    mode,
 	    [this](XrTime, std::vector<const XrCompositionLayerBaseHeader*>& layers) {
 		    // RunOwnFrame holds frameOwner, under which the skybox and the game's last frame are replaced: the skybox in
@@ -2951,7 +2951,7 @@ void XrBackend::OnSessionCreated()
 		    BaseOverlay* overlay = GetUnsafeBaseOverlay();
 		    return SkyboxShown() || (overlay && overlay->_AnyVisible())
 		        || FadeVisible(CompositorFades::Get().ColourAt(CompositorClockSeconds(), false));
-	    });
+	    }));
 }
 
 void XrBackend::StartHelperLoop()
@@ -2960,7 +2960,7 @@ void XrBackend::StartHelperLoop()
 	if (ownFramesStopped)
 		return;
 	const bool overlaySession = CurrentSessionKind() == SessionKind::Overlay;
-	ownFrames = std::make_unique<OwnFrameLoop>(
+	SetOwnFrames(std::make_unique<OwnFrameLoop>(
 	    OwnFrameLoop::Mode::EveryFrame,
 	    [this](XrTime, std::vector<const XrCompositionLayerBaseHeader*>& layers) {
 		    // The overlays alone: an overlay session has no projection layer. RunOwnFrame holds the overlays' lock until
@@ -3014,7 +3014,7 @@ void XrBackend::StartHelperLoop()
 			    WithStoreDocuments([&] { overlay->_UpdateBounds(); });
 		    }
 		    return RunOwnFrame(source, wanted);
-	    });
+	    }));
 }
 
 // A background app on a scene session (Linux, where Proton's helper uses one) runs no frames, so the session would
@@ -3025,7 +3025,7 @@ void XrBackend::StartBackgroundFrames()
 	StopOwnFrames();
 	if (ownFramesStopped)
 		return;
-	ownFrames = std::make_unique<OwnFrameLoop>(
+	SetOwnFrames(std::make_unique<OwnFrameLoop>(
 	    OwnFrameLoop::Mode::UntilAppFrame, [](XrTime, std::vector<const XrCompositionLayerBaseHeader*>&) {},
 	    std::chrono::milliseconds(0),
 	    [this](const OwnFrameLoop::LayerSource& source, const std::function<bool()>& wanted) -> XrDuration {
@@ -3034,7 +3034,7 @@ void XrBackend::StartBackgroundFrames()
 			    return 0;
 		    PumpEvents();
 		    return RunOwnFrame(source, wanted);
-	    });
+	    }));
 }
 
 bool XrBackend::EnsureOverlaySession()
@@ -3226,16 +3226,36 @@ void XrBackend::SetRenderingSuspended(bool suspended)
 		haveLastProjection = false;
 }
 
+void XrBackend::SetOwnFrames(std::unique_ptr<OwnFrameLoop> loop)
+{
+	std::unique_ptr<OwnFrameLoop> old;
+	{
+		std::lock_guard<std::mutex> pointer(ownFramesPointerLock);
+		old = std::move(ownFrames);
+		ownFrames = std::move(loop);
+	}
+	// Joins its thread, which doesn't wait for the session lock that the caller holds
+	old.reset();
+}
+
 void XrBackend::StopOwnFrames(bool forGood)
 {
-	if (forGood)
+	if (forGood) {
 		ownFramesStopped = true;
+		// A blocking call running the loop's frames on its own thread (RunWhile) holds the session lock throughout:
+		// it's told to leave before that lock is waited for
+		std::lock_guard<std::mutex> pointer(ownFramesPointerLock);
+		if (ownFrames)
+			ownFrames->RequestStop();
+	}
 	// The helper loop rebuilding its own session from its thread: it goes on (under the session lock, which a stop for
 	// good waits for)
 	if (recoveringInHelperLoop && !forGood)
 		return;
-	// Joins its thread, which doesn't wait for the session lock that a session restart here holds
-	ownFrames.reset();
+	// The loop's users hold the session lock while they use it: it goes under the exclusive one, which a session
+	// restart holds already
+	auto lock = xr_session.lock();
+	SetOwnFrames(nullptr);
 	// Goes with the interfaces, before them
 	if (forGood)
 		keptOverlay.reset();

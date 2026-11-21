@@ -269,7 +269,8 @@ public:
 
 	/**
 	 * Stops OpenLamina's own frames (and joins their thread) until the next session is created, or for good when
-	 * OpenLamina shuts down (before the interfaces their layers come from are destroyed)
+	 * OpenLamina shuts down (before the interfaces their layers come from are destroyed). Takes the session lock
+	 * exclusively, so that no call is using the loop: for good, a blocking call running its frames is told to leave first.
 	 */
 	void StopOwnFrames(bool forGood = false);
 
@@ -531,8 +532,13 @@ private:
 	// A frame was begun (by the game, or SetSkyboxOverride) and not yet ended; under frameOwner
 	std::atomic<bool> frameBegun{ false };
 	// OpenLamina's frames while the game runs none; created with each session, stopped before it ends
+	// Replaced only under the session lock held exclusively (SetOwnFrames); its users hold the shared one.
 	std::unique_ptr<OwnFrameLoop> ownFrames;
-	bool ownFramesStopped = false; // for good: OpenLamina is shutting down
+	// Held while the pointer is replaced, and by StopOwnFrames to ask the loop to stop before it has the session lock
+	std::mutex ownFramesPointerLock;
+	// The loop there is from now on (none for nullptr); the one before is stopped and joined
+	void SetOwnFrames(std::unique_ptr<OwnFrameLoop> loop);
+	std::atomic<bool> ownFramesStopped{ false }; // for good: OpenLamina is shutting down
 
 	// A frame xrWaitFrame gave whose xrBeginFrame failed: the next frame begins it again instead of waiting, as a
 	// second xrWaitFrame blocks until xrBeginFrame is called. Repeated failures lose the session.
