@@ -150,8 +150,8 @@ bool ParseDoc(const std::string& text, Json::Value& root)
 
 // Moves from over to, replacing it. On Windows that fails (access denied, or a sharing violation) while another handle
 // has the file open: a reader in some program, an antivirus or an indexer. None holds it long: tried again for
-// kRetryFor.
-bool Replace(const fs::path& from, const fs::path& to)
+// kRetryFor, unless retry is false (a writer that mustn't wait tries again later instead).
+bool Replace(const fs::path& from, const fs::path& to, bool retry = true)
 {
 #ifdef _WIN32
 	auto deadline = std::chrono::steady_clock::now() + kRetryFor;
@@ -159,11 +159,12 @@ bool Replace(const fs::path& from, const fs::path& to)
 		if (MoveFileExW(from.c_str(), to.c_str(), MOVEFILE_REPLACE_EXISTING))
 			return true;
 		DWORD err = GetLastError();
-		if ((err != ERROR_ACCESS_DENIED && err != ERROR_SHARING_VIOLATION) || std::chrono::steady_clock::now() >= deadline)
+		if ((err != ERROR_ACCESS_DENIED && err != ERROR_SHARING_VIOLATION) || !retry || std::chrono::steady_clock::now() >= deadline)
 			return false;
 		std::this_thread::sleep_for(std::chrono::milliseconds(5));
 	}
 #else
+	(void)retry;
 	return rename(from.c_str(), to.c_str()) == 0;
 #endif
 }
@@ -715,7 +716,9 @@ bool SharedStore::WriteUpdate(StoreDoc doc, const std::function<void(Json::Value
 	fs::path path = DocPath(doc);
 	Json::Value data(Json::objectValue);
 	std::string text, backup;
-	switch (ReadShared(path, text, 200)) {
+	// A writer that mustn't wait (Wait::Never, in the game's frame) reads and replaces once, and tries again later
+	const bool retry = wait != Wait::Never;
+	switch (ReadShared(path, text, retry ? 200 : 1)) {
 	case ReadResult::Failed:
 		return false; // there but unreadable: writing now would lose what's in it
 	case ReadResult::Missing:
@@ -787,7 +790,7 @@ bool SharedStore::WriteUpdate(StoreDoc doc, const std::function<void(Json::Value
 		good += ".bak";
 		WriteFile(good, backup, false);
 	}
-	if (!WriteFile(tmp, out, Kept(doc)) || !Replace(tmp, path)) {
+	if (!WriteFile(tmp, out, Kept(doc)) || !Replace(tmp, path, retry)) {
 		std::error_code ec;
 		fs::remove(tmp, ec);
 		return false;
