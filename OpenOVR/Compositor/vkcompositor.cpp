@@ -138,11 +138,13 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 	const vr::VRVulkanTextureData_t* tex = (vr::VRVulkanTextureData_t*)texture->handle;
 
 	// XR_ERROR_VALIDATION_FAILURE: Submit answers InvalidTexture
-	if (!tex || !tex->m_pDevice || !tex->m_pQueue) {
+	if (!tex || !tex->m_pDevice || !tex->m_pQueue || !tex->m_nImage) {
 		OOVR_LOG_ONCE("Cannot use NULL Vulkan image data (VRVulkanTextureData_t)");
 		lastResult = XR_ERROR_VALIDATION_FAILURE;
 		return;
 	}
+	// A sample count left 0 is a single-sampled image
+	const uint32_t sampleCount = std::max(1u, tex->m_nSampleCount);
 
 	// The command buffers are of the first texture's device and queue family
 	if (tex->m_pDevice != appDevice) {
@@ -177,7 +179,7 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 	// A texture that fits in the swapchain is copied to its origin, and the area shown: a smaller one (dynamic
 	// resolution) keeps the swapchain, and a bigger one makes one that holds both sizes, so a size that comes and goes
 	// doesn't make a new swapchain each time
-	const bool sameKind = chain != XR_NULL_HANDLE && tex->m_nSampleCount == createSourceSamples && (int64_t)tex->m_nFormat == createInfoFormat
+	const bool sameKind = chain != XR_NULL_HANDLE && sampleCount == createSourceSamples && (int64_t)tex->m_nFormat == createInfoFormat
 	    && texture->eColorSpace == createColourSpace;
 	bool usable = sameKind && tex->m_nWidth <= createInfo.width && tex->m_nHeight <= createInfo.height;
 
@@ -202,8 +204,8 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 		createInfo.height = height;
 		createInfo.mipCount = 1;
 		// A runtime that has no multisampled swapchains of that count gets a single-sampled one, the image resolved into it
-		createSourceSamples = tex->m_nSampleCount;
-		createInfo.sampleCount = xr_main_view(XruEyeLeft).maxSwapchainSampleCount < tex->m_nSampleCount ? 1 : tex->m_nSampleCount;
+		createSourceSamples = sampleCount;
+		createInfo.sampleCount = xr_main_view(XruEyeLeft).maxSwapchainSampleCount < sampleCount ? 1 : sampleCount;
 		createInfo.arraySize = 1;
 
 		// The runtime's format for it: its own, or one it's blitted into (vkCmdBlitImage converts)

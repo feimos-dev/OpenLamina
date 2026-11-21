@@ -1,5 +1,13 @@
 {
- "#": "Vulkan textures out of the ordinary (run.py --cases gfx-vk-odd,gfx-vk-dynamic-resolution,gfx-vk-msaa-formats --script scripts/gfx_vk_odd.json --expect expect/gfx_vk_odd.json), under a runtime with single-sampled swapchains only, of RGBA8 sRGB alone. gfx-vk-odd: 4x MSAA RGBA8 sRGB of 600 x 600 (resolved), the same of 640 x 640 with flipped bounds (resolved, then flipped: shown upside down), and 512 x 512 textures on a second queue of the family (skipped where the family has one queue). Multisampled patterns have the quadrants alone, so their centre (c) is the bottom-right quadrant's colour. gfx-vk-dynamic-resolution: textures of 800, 640, 720 and 960 a side; the swapchain (image) is made again only when the texture grows past it. Needs a Vulkan driver (skipped on CI). gfx-vk-msaa-formats: 4x MSAA BGRA8 sRGB, resolved and then converted into RGBA8 sRGB.",
+ "#": "Vulkan textures out of the ordinary (run.py --cases gfx-vk-odd,gfx-vk-dynamic-resolution,gfx-vk-msaa-formats --script scripts/gfx_vk_odd.json --expect expect/gfx_vk_odd.json), under a runtime with single-sampled swapchains only, of RGBA8 sRGB alone. gfx-vk-odd: 4x MSAA RGBA8 sRGB of 600 x 600 (resolved), the same of 640 x 640 with flipped bounds (resolved, then flipped: shown upside down), and 512 x 512 textures on a second queue of the family (skipped where the family has one queue); fields left 0: a texture without its image (InvalidTexture), then frames with a sample count of 0 (taken as single-sampled). Multisampled patterns have the quadrants alone, so their centre (c) is the bottom-right quadrant's colour. gfx-vk-dynamic-resolution: textures of 800, 640, 720 and 960 a side; the swapchain (image) is made again only when the texture grows past it. Needs a Vulkan driver (skipped on CI). gfx-vk-msaa-formats: 4x MSAA BGRA8 sRGB, resolved and then converted into RGBA8 sRGB.",
+ "gfx-vk-odd/fields left 0/-/-": {
+  "no_image": 102,
+  "left": 0,
+  "right": 0,
+  "dump:invalid": [],
+  "dump:views[0].invalid": [],
+  "dump:views[1].invalid": []
+ },
  "gfx-vk-odd/msaa/-/-": {
   "left": 0,
   "right": 0,
