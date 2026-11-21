@@ -95,6 +95,32 @@ enum Runtime {
 	SteamVR = 2,
 };
 
+// An integer member of an object, or Default if the value isn't an object or the member isn't an integer: the file
+// is written by other programs, and a value of another type reads as unset
+static Runtime RuntimeMember(const Json::Value& value, const char* name)
+{
+	if (!value.isObject())
+		return Runtime::Default;
+	const Json::Value& member = value[name];
+	return member.isInt() ? (Runtime)member.asInt() : Runtime::Default;
+}
+
+int BaseClientCore::ConfiguredRuntime(const Json::Value& config, const std::string& appPath)
+{
+	if (!config.isObject())
+		return Runtime::OpenComposite;
+
+	// If a runtime has been set for this program in the GUI, use that; if not, the default runtime if one is set
+	Runtime selected = RuntimeMember(config[appPath], "runtime");
+	if (selected == Runtime::Default)
+		selected = RuntimeMember(config["***GlobalConfig"], "default_runtime");
+
+	// Finally, default to using OpenComposite
+	if (selected == Runtime::Default)
+		selected = Runtime::OpenComposite;
+	return selected;
+}
+
 bool BaseClientCore::CheckAppEnabled()
 {
 #ifndef _WIN32
@@ -137,26 +163,7 @@ bool BaseClientCore::CheckAppEnabled()
 	// Check what runtime the app should use, as set in the config menu
 	Json::Value config;
 	ReadJson(configname, config);
-	Json::Value appconf = config[apppath];
-	Json::Value global = config["***GlobalConfig"];
-
-	// Keep track of what the selected runtime is
-	Runtime selected = Runtime::Default;
-
-	// If a runtime has been set for this program in the GUI, use that
-	if (appconf.isMember("runtime")) {
-		selected = (Runtime)appconf["runtime"].asInt();
-	}
-
-	// If not, then check if a default runtime has been specified
-	if (selected == Runtime::Default && global.isMember("default_runtime")) {
-		selected = (Runtime)global["default_runtime"].asInt();
-	}
-
-	// Finally, default to using OpenComposite
-	if (selected == Runtime::Default) {
-		selected = Runtime::OpenComposite;
-	}
+	Runtime selected = (Runtime)ConfiguredRuntime(config, apppath);
 
 	// The Steam client is never sent to SteamVR: sending a program there sets VR_OVERRIDE in its environment, and
 	// every game the Steam client starts inherits that and loads SteamVR's client instead of OpenLamina
@@ -274,6 +281,8 @@ string BaseClientCore::GetAlternativeRuntimePath()
 	}
 
 	for (unsigned int i = 0; i < runtimes.size(); i++) {
+		if (!runtimes[i].isString())
+			continue;
 		string path = runtimes[i].asString();
 		TrimPath(path);
 

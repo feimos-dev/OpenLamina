@@ -244,7 +244,53 @@ TEST_CASE("SteamVR is found from the config folder")
 		CHECK(BaseClientCore::GetAlternativeRuntimePath().empty());
 	}
 
+	SUBCASE("A runtime entry that isn't a string")
+	{
+		fs::create_directories(base / "xdg" / "openvr");
+		std::ofstream(base / "xdg" / "openvr" / "openvrpaths.vrpath") << "{\"runtime\": [[1], {}, \"/games/SteamVR\"]}";
+		EnvGuard xdg("XDG_CONFIG_HOME", (base / "xdg").string().c_str());
+		CHECK(BaseClientCore::GetAlternativeRuntimePath() == "/games/SteamVR");
+	}
+
 	fs::remove_all(base);
 }
 
 #endif
+
+#include "stdafx.h"
+
+#include "Reimpl/BaseClientCore.h"
+#include "json/json.h"
+
+#include <cstring>
+#include <memory>
+#include <string>
+
+namespace {
+Json::Value ParseConfig(const char* text)
+{
+	Json::Value value;
+	Json::CharReaderBuilder builder;
+	std::string errors;
+	std::unique_ptr<Json::CharReader> reader(builder.newCharReader());
+	reader->parse(text, text + strlen(text), &value, &errors);
+	return value;
+}
+} // namespace
+
+TEST_CASE("The runtime chosen in apps-config.json")
+{
+	const std::string app = "C:/game.exe";
+	CHECK(BaseClientCore::ConfiguredRuntime(ParseConfig("{}"), app) == 1);
+	CHECK(BaseClientCore::ConfiguredRuntime(ParseConfig(R"({"C:/game.exe": {"runtime": 2}})"), app) == 2);
+	CHECK(BaseClientCore::ConfiguredRuntime(ParseConfig(R"({"***GlobalConfig": {"default_runtime": 2}})"), app) == 2);
+	CHECK(BaseClientCore::ConfiguredRuntime(ParseConfig(R"({"C:/game.exe": {"runtime": 1}, "***GlobalConfig": {"default_runtime": 2}})"), app) == 1);
+
+	// Values of another type read as unset, and nothing throws
+	CHECK(BaseClientCore::ConfiguredRuntime(ParseConfig(R"({"C:/game.exe": 2})"), app) == 1);
+	CHECK(BaseClientCore::ConfiguredRuntime(ParseConfig(R"({"C:/game.exe": {"runtime": "2"}})"), app) == 1);
+	CHECK(BaseClientCore::ConfiguredRuntime(ParseConfig(R"({"C:/game.exe": {"runtime": 1e20}})"), app) == 1);
+	CHECK(BaseClientCore::ConfiguredRuntime(ParseConfig(R"({"C:/game.exe": [], "***GlobalConfig": []})"), app) == 1);
+	CHECK(BaseClientCore::ConfiguredRuntime(ParseConfig(R"({"C:/game.exe": {"runtime": []}, "***GlobalConfig": {"default_runtime": 2}})"), app) == 2);
+	CHECK(BaseClientCore::ConfiguredRuntime(Json::Value("text"), app) == 1);
+}
