@@ -26,23 +26,6 @@
 #include <mutex>
 #include <vector>
 
-// The session globals are briefly null while another thread restarts the session: wait up to 2 s for them. False if
-// there's still no session (it was lost, or a restart failed), so the caller answers without one.
-static bool WaitForSessionGlobals()
-{
-	// A lost session doesn't come back: no waiting for it
-	auto IsLost = []() {
-		BackendManager* manager = BackendManager::InstancePtr();
-		auto* backend = manager ? (XrBackend*)manager->GetBackendInstance() : nullptr;
-		return backend && backend->IsSessionLost();
-	};
-	for (int i = 0; !xr_gbl && !IsLost() && i < 100; i++) {
-		using namespace std::chrono_literals;
-		std::this_thread::sleep_for(20ms);
-	}
-	return xr_gbl != nullptr;
-}
-
 static std::atomic<float> answeredRenderScale{ 0.0f };
 
 float XrHMD::AnsweredRenderScale()
@@ -208,8 +191,10 @@ vr::HmdMatrix34_t XrHMD::GetEyeToHeadTransform(vr::EVREye eEye)
 	static XrTime time = ~0; // Don't set to zero by default, otherwise we'll return an identity matrix before the first frame
 	static XrView views[XruEyeCount] = { { XR_TYPE_VIEW }, { XR_TYPE_VIEW } };
 
-	if (!WaitForSessionGlobals())
-		return G2S_m34(glm::identity<glm::mat4>()); // no session: the eyes at the head
+	// No session (it was lost, or couldn't be made): the eyes at the head. A restart on another thread has ended by
+	// the time the lock is held, so there's nothing to wait for.
+	if (!xr_gbl)
+		return G2S_m34(glm::identity<glm::mat4>());
 
 	// This won't exactly work for HMDs designed for spiders, but it's how SteamVR handles invalid eye numbers.
 	if (eEye < 0 || (int)eEye >= 2)

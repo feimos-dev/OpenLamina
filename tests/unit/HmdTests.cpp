@@ -7,6 +7,7 @@
 #include "Reimpl/BaseSystem.h"
 #include "logging.h"
 
+#include <chrono>
 #include <cmath>
 #include <string>
 #include <vector>
@@ -16,6 +17,20 @@ TEST_CASE("The IPD before the runtime has views is a human one")
 	// Without a session there are no views to measure
 	XrHMD hmd;
 	CHECK(hmd.GetIPD() == doctest::Approx(0.064f));
+}
+
+TEST_CASE("The eyes are at the head, answered at once, while there is no session")
+{
+	REQUIRE(xr_gbl == nullptr);
+	XrHMD hmd;
+	const auto start = std::chrono::steady_clock::now();
+	const vr::HmdMatrix34_t eye = hmd.GetEyeToHeadTransform(vr::Eye_Right);
+	const auto taken = std::chrono::steady_clock::now() - start;
+	for (int r = 0; r < 3; r++)
+		for (int c = 0; c < 4; c++)
+			CHECK(eye.m[r][c] == (r == c ? 1.0f : 0.0f));
+	// No wait for a session that can't be made while the caller holds the session lock
+	CHECK(taken < std::chrono::seconds(1));
 }
 
 #include "Drivers/Backend.h"
