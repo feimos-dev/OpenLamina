@@ -177,10 +177,7 @@ public:
 	 * the hands yet (runtimeSettled). The runtime gives profiles only to a focused session; games ask while loading.
 	 */
 	static bool EarlyHandsDue(bool sceneApp, bool helperSession, bool firstFrameSeen, bool sessionLost, bool runtimeSettled);
-	/**
-	 * Whether a hand shown early is up to the runtime now: once the session has been focused a while (the game's input
-	 * synced), a profile still missing means no controller. Before that a missing profile is only not known yet.
-	 */
+	/** Whether the runtime has had time to answer for a hand shown early: a missing profile then means no controller */
 	static bool EarlyHandSettled(XrSessionState state, int64_t focusedForMs);
 	static constexpr int64_t kEarlyHandGraceMs = 2000;
 	// MaybeRestartForInputs is making the session again, on the thread that holds the session lock
@@ -487,8 +484,7 @@ private:
 	std::atomic<int> handMisses[2] = { 0, 0 };
 	// Whether each hand's controller is the hand itself, shown because hand tracking tracks it
 	std::atomic<bool> handFromTracking[2] = { false, false };
-	/** The controllers libmonado lists in the left and right roles, with the profiles their names suggest, while
-	 * EarlyHandsDue and a hand has none: looked for at most twice a second, from the game's device reads */
+	/** The controllers libmonado lists in the hands, with the profiles their names suggest, while EarlyHandsDue */
 	void MakeEarlyHands();
 	// Not while the constructor numbers the devices it has
 	std::atomic<bool> earlyHandsAllowed{ false };
