@@ -57,7 +57,8 @@ public:
 	static std::optional<std::filesystem::path> ActiveRuntimeManifest();
 	/** XR_RUNTIME_JSON as a path (read wide on Windows), whatever the process's elevation; nothing if it isn't set */
 	static std::optional<std::filesystem::path> RuntimeManifestFromEnvironment();
-	/** The manifest's MND_libmonado_path, resolved against its folder */
+	/** The manifest's MND_libmonado_path, resolved against its folder; without the key, libmonado beside the Monado
+	 * runtime library it names */
 	static std::optional<std::filesystem::path> LibraryFromManifest(const std::filesystem::path& manifest);
 
 	struct Api;

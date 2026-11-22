@@ -5,6 +5,7 @@
 
 #include "Misc/ChaperoneData.h"
 #include "Misc/LibMonado.h"
+#include "Misc/PathUtf8.h"
 #include "Misc/xrutil.h"
 #include "Reimpl/BaseChaperoneSetup.h"
 #include "XrController.h"
@@ -219,6 +220,51 @@ TEST_CASE("Libmonado_path_from_manifest")
 	CHECK_FALSE(LibMonado::LibraryFromManifest(manifest).has_value());
 	std::error_code ec;
 	fs::remove_all(dir, ec);
+}
+
+TEST_CASE("Libmonado_beside_the_runtime_without_a_path")
+{
+	// A manifest naming only the runtime's library
+	auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+	fs::path dir = fs::weakly_canonical(fs::temp_directory_path()) / ("oc_mnd_beside_" + std::to_string(stamp));
+	fs::create_directories(dir / "lib");
+	fs::create_directories(dir / "manifests");
+#ifdef _WIN32
+	const char *runtimeName = "openxr_monado.dll", *libmonadoName = "monado.dll";
+#else
+	const char *runtimeName = "libopenxr_monado.so", *libmonadoName = "libmonado.so";
+#endif
+	fs::path manifest = dir / "manifests" / "active_runtime.json";
+	auto write = [&](const std::string& libraryPath, const char* libmonadoPath = nullptr) {
+		Json::Value root;
+		root["file_format_version"] = "1.0.0";
+		root["runtime"]["library_path"] = libraryPath;
+		if (libmonadoPath)
+			root["runtime"]["MND_libmonado_path"] = libmonadoPath;
+		std::ofstream(manifest) << root.toStyledString();
+	};
+	write(PathToUtf8(dir / "lib" / runtimeName));
+	const bool absentBefore = !LibMonado::LibraryFromManifest(manifest).has_value();
+	std::ofstream(dir / "lib" / libmonadoName) << "";
+	std::optional<fs::path> absolute = LibMonado::LibraryFromManifest(manifest);
+	write(std::string("../lib/") + runtimeName);
+	std::optional<fs::path> relative = LibMonado::LibraryFromManifest(manifest);
+	write(runtimeName);
+	const bool bareName = LibMonado::LibraryFromManifest(manifest).has_value();
+	write(PathToUtf8(dir / "lib" / "other_runtime.so"));
+	const bool otherRuntime = LibMonado::LibraryFromManifest(manifest).has_value();
+	write(PathToUtf8(dir / "lib" / runtimeName), "");
+	const bool emptyKey = LibMonado::LibraryFromManifest(manifest).has_value();
+	std::error_code ec;
+	fs::remove_all(dir, ec);
+	CHECK(absentBefore);
+	REQUIRE(absolute.has_value());
+	CHECK(*absolute == dir / "lib" / libmonadoName);
+	REQUIRE(relative.has_value());
+	CHECK(*relative == dir / "lib" / libmonadoName);
+	CHECK_FALSE(bareName);
+	CHECK_FALSE(otherRuntime);
+	CHECK_FALSE(emptyKey);
 }
 
 #ifndef _WIN32
