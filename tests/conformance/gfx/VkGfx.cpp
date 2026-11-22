@@ -7,6 +7,7 @@
 #include "GfxApi.h"
 
 #include <cstdlib>
+#include <cstring>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -121,8 +122,30 @@ public:
 		uint32_t loaderVersion = VK_API_VERSION_1_0;
 		if (version && version(&loaderVersion) == VK_SUCCESS && loaderVersion >= VK_API_VERSION_1_1)
 			app.apiVersion = VK_API_VERSION_1_1;
+		// The instance extensions an OpenXR runtime asks games for (through GetVulkanInstanceExtensionsRequired), where
+		// the loader has them: a runtime may look up their functions through this instance
+		std::vector<const char*> instanceExtensions;
+		auto enumerateInstanceExtensions = (PFN_vkEnumerateInstanceExtensionProperties)gipa(VK_NULL_HANDLE, "vkEnumerateInstanceExtensionProperties");
+		uint32_t instanceExtensionCount = 0;
+		if (enumerateInstanceExtensions && enumerateInstanceExtensions(nullptr, &instanceExtensionCount, nullptr) == VK_SUCCESS) {
+			std::vector<VkExtensionProperties> available(instanceExtensionCount);
+			if (enumerateInstanceExtensions(nullptr, &instanceExtensionCount, available.data()) == VK_SUCCESS) {
+				available.resize(instanceExtensionCount);
+				for (const char* wanted : { VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME, VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME,
+				         VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME, VK_KHR_EXTERNAL_FENCE_CAPABILITIES_EXTENSION_NAME }) {
+					for (const VkExtensionProperties& e : available) {
+						if (std::strcmp(e.extensionName, wanted) == 0) {
+							instanceExtensions.push_back(wanted);
+							break;
+						}
+					}
+				}
+			}
+		}
 		VkInstanceCreateInfo ici{ VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
 		ici.pApplicationInfo = &app;
+		ici.enabledExtensionCount = (uint32_t)instanceExtensions.size();
+		ici.ppEnabledExtensionNames = instanceExtensions.data();
 		VkResult r = ((PFN_vkCreateInstance)gipa(VK_NULL_HANDLE, "vkCreateInstance"))(&ici, nullptr, &instance);
 		if (r != VK_SUCCESS) {
 			instance = VK_NULL_HANDLE;
@@ -156,14 +179,22 @@ public:
 		dci.pQueueCreateInfos = &qci;
 		// The extensions wanted that the GPU has: external memory is core in 1.1, its handles an extension: Windows ones
 		// for D3D11, file descriptors for sharing images with OpenLamina's own device (unless
-		// OC_CONFORMANCE_NO_EXTERNAL_MEMORY is set); and those the case asks for
-		std::vector<std::string> wanted;
+		// OC_CONFORMANCE_NO_EXTERNAL_MEMORY is set); the rest of what runtimes ask games for
+		// (GetVulkanDeviceExtensionsRequired); and those the case asks for
+		std::vector<std::string> wanted = { "VK_KHR_dedicated_allocation", "VK_KHR_get_memory_requirements2", "VK_KHR_image_format_list" };
 #ifdef _WIN32
-		if (app.apiVersion >= VK_API_VERSION_1_1)
+		if (app.apiVersion >= VK_API_VERSION_1_1) {
 			wanted.push_back("VK_KHR_external_memory_win32");
+			wanted.push_back("VK_KHR_external_semaphore_win32");
+			wanted.push_back("VK_KHR_external_fence_win32");
+		}
 #else
 		if (app.apiVersion >= VK_API_VERSION_1_1 && !std::getenv("OC_CONFORMANCE_NO_EXTERNAL_MEMORY"))
 			wanted.push_back("VK_KHR_external_memory_fd");
+		if (app.apiVersion >= VK_API_VERSION_1_1) {
+			wanted.push_back("VK_KHR_external_semaphore_fd");
+			wanted.push_back("VK_KHR_external_fence_fd");
+		}
 #endif
 		if (deviceExtensions) {
 			for (const std::string& e : deviceExtensions(instance, physical))
