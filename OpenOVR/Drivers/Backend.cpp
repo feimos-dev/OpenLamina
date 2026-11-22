@@ -319,6 +319,22 @@ static void UnknownProperty(const char* type, vr::TrackedDeviceIndex_t device, v
 
 bool ITrackedDevice::GetBoolTrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::ETrackedPropertyError* pErrorL)
 {
+	// As SteamVR's server answers for every device
+	switch (prop) {
+	case vr::Prop_ForceSystemLayerUseAppPoses_Bool:
+	case vr::Prop_Hmd_AllowsClientToControlTextureIndex:
+		if (pErrorL)
+			*pErrorL = vr::TrackedProp_Success;
+		return true;
+	case vr::Prop_HasCameraComponent_Bool:
+	case vr::Prop_HasDriverDirectModeComponent_Bool:
+	case vr::Prop_HasVirtualDisplayComponent_Bool:
+		if (pErrorL)
+			*pErrorL = vr::TrackedProp_Success;
+		return false;
+	default:
+		break;
+	}
 	if (!oovr_global_configuration.AdmitUnknownProps())
 		UnknownProperty("bool", DeviceIndex(), prop);
 	if (pErrorL)
@@ -338,6 +354,12 @@ float ITrackedDevice::GetFloatTrackedDeviceProperty(vr::ETrackedDeviceProperty p
 
 int32_t ITrackedDevice::GetInt32TrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::ETrackedPropertyError* pErrorL)
 {
+	// As SteamVR's server answers for every device
+	if (prop == vr::Prop_ControllerHandSelectionPriority_Int32) {
+		if (pErrorL)
+			*pErrorL = vr::TrackedProp_Success;
+		return 0;
+	}
 	if (!oovr_global_configuration.AdmitUnknownProps())
 		UnknownProperty("int32", DeviceIndex(), prop);
 

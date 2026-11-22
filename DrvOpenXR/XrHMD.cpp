@@ -527,6 +527,10 @@ bool XrHMD::GetBoolTrackedDeviceProperty(vr::ETrackedDeviceProperty prop, vr::ET
 		return true;
 	case vr::Prop_HasVirtualDisplayComponent_Bool:
 		return false;
+	// As SteamVR answers for every headset
+	case vr::Prop_Hmd_AllowSupersampleFiltering_Bool:
+	case vr::Prop_Hmd_SupportsAppThrottling_Bool:
+		return true;
 	default:
 		break;
 	}
@@ -649,6 +653,39 @@ uint32_t XrHMD::GetStringTrackedDeviceProperty(vr::ETrackedDeviceProperty prop,
 {
 	if (pErrorL)
 		*pErrorL = vr::TrackedProp_Success;
+
+	// The status icons of SteamVR's null headset
+	const char* icon = nullptr;
+	switch (prop) {
+	case vr::Prop_NamedIconPathDeviceOff_String:
+		icon = "{system}/icons/headset_status_off.png";
+		break;
+	case vr::Prop_NamedIconPathDeviceSearching_String:
+		icon = "{system}/icons/headset_status_searching.gif";
+		break;
+	case vr::Prop_NamedIconPathDeviceSearchingAlert_String:
+		icon = "{system}/icons/headset_status_searching_alert.gif";
+		break;
+	case vr::Prop_NamedIconPathDeviceReady_String:
+		icon = "{system}/icons/headset_status_ready.png";
+		break;
+	case vr::Prop_NamedIconPathDeviceReadyAlert_String:
+		icon = "{system}/icons/headset_status_ready_alert.png";
+		break;
+	case vr::Prop_NamedIconPathDeviceNotReady_String:
+		icon = "{system}/icons/headset_status_error.png";
+		break;
+	case vr::Prop_NamedIconPathDeviceStandby_String:
+		icon = "{system}/icons/headset_status_standby.png";
+		break;
+	case vr::Prop_NamedIconPathDeviceAlertLow_String:
+		icon = "";
+		break;
+	default:
+		break;
+	}
+	if (icon)
+		return AnswerString(icon, value, bufferSize, pErrorL);
 
 	// From the HMD's row (Identity): the runtime's system, not the controllers' interaction profile
 	return XrTrackedDevice::GetStringTrackedDeviceProperty(prop, value, bufferSize, pErrorL);
