@@ -87,6 +87,28 @@ times out in Init or gets init error 310 (that program then runs again); `result
 of `unsafe_methods.txt` aren't called (their records say `"skipped": "unsafe"`), among them `ShowMessageOverlay`, which
 waits for a click in the headset: so no recording has SteamVR's answer to it.
 
+On Linux, `record-steamvr.sh --conformance <oc_conformance> --out <dir>` does the same, against SteamVR's
+`bin/linux64/vrclient.so`, and writes `expected/steamvr-linux-<version>.json`. It starts SteamVR through Steam
+(`steam://run/250820`, `run.py --keep-running`), backs up `~/.config/openvr/openvrpaths.vrpath`, the active OpenXR
+runtime (`~/.config/openxr/1/active_runtime.json`, a link kept as a link) and Steam's `config/` files, and puts them back
+the same way. `--controllers` is `-Controllers`; `--devices` keeps the drivers as they are, for a real headset;
+`--cases` runs only those cases and writes no reference. SteamVR's null headset has no compositor on Linux, so a
+scene application's Init fails there: the cases that need one record that.
+
+### Every device property
+
+The `property-sweep` case reads every property of the newest header (`gen_properties.py` makes the table at build
+time) on every connected device, through the getter of its type, and records each answer, or its error code where
+there is none. Recorded on SteamVR with real devices and on OpenLamina with the same hardware, `compare_properties.py
+<steamvr results.json> <openlamina results.json> [--markdown]` lists, per device (matched by class, hand and order),
+what SteamVR answers and OpenLamina doesn't, what both answer differently, and what only OpenLamina answers:
+
+```
+tests/conformance/record-steamvr.sh --conformance build/tests/oc_conformance --out out/steamvr --devices --cases property-sweep
+python3 tests/conformance/run.py --runtime build/bin/linux64/vrclient.so --conformance build/tests/oc_conformance --xr-runtime monado:<manifest> --real-runtime --shipped-defaults --cases property-sweep --cases-only --out out/openlamina
+python3 tests/conformance/compare_properties.py out/steamvr/results.json out/openlamina/results.json
+```
+
 `differences.json` lists the differences that are expected between SteamVR's null HMD and OpenLamina (display
 geometry, timing and poses, device properties, handle numbers, the PC's own apps and settings, and the app types
 OpenLamina doesn't support yet), each with its reason. Every other difference is a bug to fix or to explain there.

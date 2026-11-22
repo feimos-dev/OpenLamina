@@ -4,6 +4,7 @@
 
 #include "conformance.h"
 #include "gfx/GfxApi.h"
+#include "properties.h"
 
 #include "IVRApplications_007.h"
 #include "IVRChaperoneSetup_006.h"
@@ -16,7 +17,9 @@
 #include "IVRSettings_003.h"
 #include "IVRSystem_022.h"
 
+#include <algorithm>
 #include <chrono>
+#include <map>
 #include <memory>
 #include <cmath>
 #include <cstring>
@@ -637,12 +640,147 @@ void HelperAppControllersCase(CaseContext& c)
 	}
 }
 
+// The value of one property of one device through the getter its type has, as JSON; nothing (and the error) where the
+// getter fails
+Json::Value PropertyValue(vr::IVRSystem_022::IVRSystem* sys, vr::TrackedDeviceIndex_t i, const PropertyRow& row, vr::ETrackedPropertyError* pe)
+{
+	const auto prop = (vr::ETrackedDeviceProperty)row.value;
+	*pe = vr::TrackedProp_Success;
+	if (row.array) {
+		uint32_t size = sys->GetArrayTrackedDeviceProperty(i, prop, row.tag, nullptr, 0, pe);
+		if (*pe != vr::TrackedProp_Success && *pe != vr::TrackedProp_BufferTooSmall)
+			return Json::Value();
+		std::vector<uint8_t> buf(size);
+		uint32_t got = sys->GetArrayTrackedDeviceProperty(i, prop, row.tag, buf.data(), size, pe);
+		if (*pe != vr::TrackedProp_Success)
+			return Json::Value();
+		Json::Value v(Json::arrayValue);
+		got = std::min<uint32_t>(got, size);
+		for (uint32_t off = 0; off + 4 <= got; off += 4) {
+			if (row.tag == vr::k_unInt32PropertyTag) {
+				int32_t x;
+				memcpy(&x, buf.data() + off, 4);
+				v.append(x);
+			} else {
+				float x;
+				memcpy(&x, buf.data() + off, 4);
+				v.append(Milli(x));
+			}
+		}
+		return v;
+	}
+	switch (row.tag) {
+	case vr::k_unStringPropertyTag: {
+		uint32_t size = sys->GetStringTrackedDeviceProperty(i, prop, nullptr, 0, pe);
+		if (*pe != vr::TrackedProp_Success && *pe != vr::TrackedProp_BufferTooSmall)
+			return Json::Value();
+		std::string value(std::max<uint32_t>(size, 1), '\0');
+		sys->GetStringTrackedDeviceProperty(i, prop, value.data(), (uint32_t)value.size(), pe);
+		if (*pe != vr::TrackedProp_Success)
+			return Json::Value();
+		return std::string(value.c_str());
+	}
+	case vr::k_unBoolPropertyTag: {
+		bool v = sys->GetBoolTrackedDeviceProperty(i, prop, pe);
+		return *pe == vr::TrackedProp_Success ? Json::Value(v) : Json::Value();
+	}
+	case vr::k_unFloatPropertyTag: {
+		float v = sys->GetFloatTrackedDeviceProperty(i, prop, pe);
+		return *pe == vr::TrackedProp_Success ? Json::Value(Milli(v)) : Json::Value();
+	}
+	case vr::k_unInt32PropertyTag: {
+		int32_t v = sys->GetInt32TrackedDeviceProperty(i, prop, pe);
+		return *pe == vr::TrackedProp_Success ? Json::Value(v) : Json::Value();
+	}
+	case vr::k_unUint64PropertyTag: {
+		uint64_t v = sys->GetUint64TrackedDeviceProperty(i, prop, pe);
+		// As text: JSON numbers lose bits past 2^53
+		return *pe == vr::TrackedProp_Success ? Json::Value(std::to_string(v)) : Json::Value();
+	}
+	case vr::k_unHmdMatrix34PropertyTag: {
+		vr::HmdMatrix34_t m = sys->GetMatrix34TrackedDeviceProperty(i, prop, pe);
+		if (*pe != vr::TrackedProp_Success)
+			return Json::Value();
+		Json::Value v(Json::arrayValue);
+		for (auto& r : m.m)
+			for (float x : r)
+				v.append(Milli(x));
+		return v;
+	}
+	default:
+		*pe = vr::TrackedProp_WrongDataType;
+		return Json::Value();
+	}
+}
+
+// Every property the newest header names, on every connected device, through the getter of its type: SteamVR's
+// answers with real devices are what OpenLamina's are compared with (compare_properties.py). A device is named by its
+// class and hand, numbered in index order within those: "HMD", "Controller left", "TrackingReference 2". A property
+// answered has its value; one not answered its error code alone ("<name> error").
+void PropertySweepCase(CaseContext& c)
+{
+	// A scene app, with frames so the controllers are seen; else a utility app, which needs no compositor (SteamVR's
+	// null headset on Linux has none)
+	bool scene = true;
+	vr::EVRInitError e = c.core->Init(vr::VRApplication_Scene, nullptr);
+	if (e != vr::VRInitError_None) {
+		Json::Value r = Ret(e);
+		scene = false;
+		e = c.core->Init(vr::VRApplication_Utility, nullptr);
+		r["utility"] = Ret(e);
+		c.Record("Init", r);
+		if (e != vr::VRInitError_None)
+			return;
+	}
+	auto* sys = Get<vr::IVRSystem_022::IVRSystem>(c, "IVRSystem_022");
+	if (sys) {
+		if (scene) {
+			Frames(c, 30);
+		} else {
+			// The devices and their hands, without frames
+			for (int k = 0; k < 50; k++) {
+				vr::VREvent_t ev;
+				while (sys->PollNextEvent(&ev, sizeof(ev))) {
+				}
+				std::this_thread::sleep_for(std::chrono::milliseconds(100));
+			}
+		}
+		static const char* const classes[] = { "Invalid", "HMD", "Controller", "GenericTracker", "TrackingReference", "DisplayRedirect" };
+		std::map<std::string, int> seen;
+		for (vr::TrackedDeviceIndex_t i = 0; i < vr::k_unMaxTrackedDeviceCount; i++) {
+			if (!sys->IsTrackedDeviceConnected(i))
+				continue;
+			const int cls = (int)sys->GetTrackedDeviceClass(i);
+			const vr::ETrackedControllerRole role = sys->GetControllerRoleForTrackedDeviceIndex(i);
+			std::string name = cls >= 0 && cls < (int)(sizeof(classes) / sizeof(classes[0])) ? classes[cls] : "Class" + std::to_string(cls);
+			if (role == vr::TrackedControllerRole_LeftHand)
+				name += " left";
+			else if (role == vr::TrackedControllerRole_RightHand)
+				name += " right";
+			const int n = ++seen[name];
+			Json::Value d;
+			d["index"] = (int)i;
+			for (const PropertyRow& row : AllProperties()) {
+				vr::ETrackedPropertyError pe;
+				Json::Value v = PropertyValue(sys, i, row, &pe);
+				if (pe == vr::TrackedProp_Success)
+					d[row.name] = v;
+				else
+					d[std::string(row.name) + " error"] = (int)pe;
+			}
+			c.Record("device " + name + (n > 1 || name == "TrackingReference" || name == "GenericTracker" ? " " + std::to_string(n) : ""), d);
+		}
+	}
+	c.core->Cleanup();
+}
+
 } // namespace
 
 const std::map<std::string, CaseFn>& conformance::SteamVRRunCases()
 {
 	static const std::map<std::string, CaseFn> cases = {
 		{ "device-properties", DevicePropertiesCase },
+		{ "property-sweep", PropertySweepCase },
 		{ "init-again", InitAgainCase },
 		{ "chaperone-colours", ChaperoneColoursCase },
 		{ "submit-refusals", SubmitRefusalsCase },

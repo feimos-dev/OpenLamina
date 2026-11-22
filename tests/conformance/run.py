@@ -108,12 +108,13 @@ class Runner:
         # binding files), so a run here answers as on CI's runner, which has none
         # Each child gets its own store (OC_STORE_DIR, see child), so one child's settings and events never reach another
         self.env = {"OC_NO_MESSAGE_BOX": "1", "OC_LOG_DIR": str(self.out / "logs"), "OC_TEST_NO_STEAMVR": "1"}
-        if os.name != "nt":
-            # An empty config folder, so the user's own openlamina.ini (~/.config/openlamina) isn't read
-            self.env["XDG_CONFIG_HOME"] = str(self.out / "xdg-config")
         # A store left by an earlier run into the same --out would carry its state into this one
         shutil.rmtree(self.out / "store", ignore_errors=True)
         self.monado = args.xr_runtime.startswith("monado:")
+        if os.name != "nt" and not (args.real_runtime and not self.monado):
+            # An empty config folder, so the user's own openlamina.ini (~/.config/openlamina) isn't read. Not for
+            # SteamVR, whose client finds its paths file there (~/.config/openvr)
+            self.env["XDG_CONFIG_HOME"] = str(self.out / "xdg-config")
         if self.monado:
             self.manifest = str(Path(args.xr_runtime[len("monado:"):]).resolve())
         elif args.xr_runtime == "stand-in":
@@ -225,10 +226,13 @@ class Runner:
         """--keep-running: SteamVR quits all of its programs when the scene application it counts as its first exits
         without shutting down, and a SteamVR started by a test program loses its shared namespace once that program's
         first clients are gone (a later Init waits forever). So before each child, start SteamVR on its own if its
-        server isn't running, unelevated through explorer.exe, and give it time to settle."""
+        server isn't running, unelevated through explorer.exe (on Linux through Steam, steam://run/250820), and give it
+        time to settle."""
         exe, server = self.args.keep_running, "vrserver.exe"
 
         def running():
+            if os.name != "nt":
+                return subprocess.run(["pgrep", "-x", "vrserver"], capture_output=True).returncode == 0
             out = subprocess.run(["tasklist", "/fi", f"imagename eq {server}", "/nh"], capture_output=True, text=True)
             return server.lower() in out.stdout.lower()
 
@@ -237,7 +241,13 @@ class Runner:
                 # Running but answering nobody: its processes ended, so it's started again below
                 print(f"run.py: {Runner.timeouts_in_a_row} timeouts in a row: restarting SteamVR", flush=True)
                 for name in ("vrserver.exe", "vrmonitor.exe", "vrcompositor.exe", "vrdashboard.exe", "vrwebhelper.exe"):
-                    subprocess.run(["taskkill", "/f", "/im", name], capture_output=True)
+                    if os.name == "nt":
+                        subprocess.run(["taskkill", "/f", "/im", name], capture_output=True)
+                    else:
+                        subprocess.run(["pkill", "-KILL", "-x", name[:-len(".exe")]], capture_output=True)
+                if os.name != "nt":
+                    # Steam doesn't start SteamVR again while its launch of it runs
+                    subprocess.run(["pkill", "-f", "AppId=250820"], capture_output=True)
                 for _ in range(30):
                     if not running():
                         break
@@ -246,11 +256,18 @@ class Runner:
                 Runner.restarts += 1
             if running():
                 return
-            subprocess.run(["explorer.exe", exe])
+            if os.name == "nt":
+                subprocess.run(["explorer.exe", exe])
+            else:
+                subprocess.Popen(["steam", exe] if exe.startswith("steam://") else [exe], stdout=subprocess.DEVNULL,
+                                 stderr=subprocess.DEVNULL, start_new_session=True)
             for _ in range(90):
                 if running():
                     break
                 time.sleep(1)
+            if os.name != "nt":
+                time.sleep(10)  # no pipe to wait for on Linux: time to settle
+                return
             # Its shared namespace up before the next child, which would otherwise start a SteamVR of its own (whose
             # namespace goes with that child). Looked for in the pipe list: opening the pipe would count as a client.
             for _ in range(60):
@@ -697,7 +714,7 @@ def main():
     ap.add_argument("--ci", action="store_true")
     ap.add_argument("--allow-failures", action="store_true")
     ap.add_argument("--real-runtime", action="store_true")
-    ap.add_argument("--keep-running", metavar="EXE", help="with --real-runtime: start this (SteamVR's vrstartup.exe) before any child when its "
+    ap.add_argument("--keep-running", metavar="EXE", help="with --real-runtime: start this (SteamVR's vrstartup.exe; on Linux steam://run/250820) before any child when its "
                     "server isn't running, and again when it hangs (two timeouts in a row, a timeout in Init, or an Init answering 310)")
     ap.add_argument("--resume", action="store_true", help="keep the jobs an earlier run into the same --out finished (their "
                     "<raw>.result.json, or for an older run their answers), and run only the others")
