@@ -25,6 +25,48 @@
 
 #if defined(SUPPORT_GL) && !defined(_WIN32)
 #include <GL/glx.h>
+
+// The current context's version and profile, at least 3.2: NVIDIA's driver gives a context exactly the version asked
+// for, so the session's context is asked for the game's version and profile
+namespace {
+struct GlContextVersion {
+	int major = 3, minor = 2;
+	bool compatibility = false;
+};
+} // namespace
+
+static GlContextVersion CurrentGlContextVersion()
+{
+	GlContextVersion v;
+	int major = 0, minor = 0;
+	const char* version = (const char*)glGetString(GL_VERSION);
+	if (!version || sscanf(version, "%d.%d", &major, &minor) != 2 || major < 3 || (major == 3 && minor < 2))
+		return v;
+	GLint profile = 0;
+	glGetIntegerv(GL_CONTEXT_PROFILE_MASK, &profile);
+	v.major = major;
+	v.minor = minor;
+	// A context made without attributes has no profile bit: a compatibility one
+	v.compatibility = (profile & GL_CONTEXT_CORE_PROFILE_BIT) == 0;
+	return v;
+}
+
+// Xlib's default handler would end the game when the driver refuses the version asked for
+static int IgnoreXError(Display*, XErrorEvent*)
+{
+	return 0;
+}
+
+static GLXContext CreateGlxContext(PFNGLXCREATECONTEXTATTRIBSARBPROC create, Display* display, GLXFBConfig config,
+    GLXContext share, const int* attribs)
+{
+	XSync(display, False);
+	XErrorHandler previous = XSetErrorHandler(IgnoreXError);
+	GLXContext context = create(display, config, share, True, attribs);
+	XSync(display, False);
+	XSetErrorHandler(previous);
+	return context;
+}
 #endif
 
 #include <openxr/openxr_platform.h>
@@ -763,15 +805,30 @@ bool XrBackend::CheckOrInitCompositors(const vr::Texture_t* tex, bool moveToNewD
 			binding.visualid = visual->visualid;
 			XFree(visual);
 			binding.glxDrawable = glXGetCurrentDrawable();
+			const GlContextVersion version = CurrentGlContextVersion();
+			const int profileBit = version.compatibility ? GLX_CONTEXT_COMPATIBILITY_PROFILE_BIT_ARB : GLX_CONTEXT_CORE_PROFILE_BIT_ARB;
 			// clang-format off
 			const int contextAttribs[] = {
+				GLX_CONTEXT_MAJOR_VERSION_ARB, version.major,
+				GLX_CONTEXT_MINOR_VERSION_ARB, version.minor,
+				GLX_CONTEXT_PROFILE_MASK_ARB, profileBit,
+				None,
+			};
+			const int fallbackAttribs[] = {
 				GLX_CONTEXT_MAJOR_VERSION_ARB, 3,
 				GLX_CONTEXT_MINOR_VERSION_ARB, 2,
 				None,
 			};
 			// clang-format on
-			gameGlContext = glXGetCurrentContext(); // the game's, which own frames need current: the session's is shared with it
-			binding.glxContext = pfn_glXCreateContextAttribsARB(binding.xDisplay, binding.glxFBConfig, glXGetCurrentContext(), true, contextAttribs);
+			const GLXContext gameContext = glXGetCurrentContext();
+			gameGlContext = gameContext; // the game's, which own frames need current: the session's is shared with it
+			binding.glxContext = CreateGlxContext(pfn_glXCreateContextAttribsARB, binding.xDisplay, binding.glxFBConfig, gameContext, contextAttribs);
+			if (binding.glxContext) {
+				OOVR_LOGF("The session's OpenGL context: %d.%d %s", version.major, version.minor, version.compatibility ? "compatibility" : "core");
+			} else if (version.major != 3 || version.minor != 2 || version.compatibility) {
+				OOVR_LOGF("No OpenGL %d.%d %s context sharing the game's: asking for 3.2 core", version.major, version.minor, version.compatibility ? "compatibility" : "core");
+				binding.glxContext = CreateGlxContext(pfn_glXCreateContextAttribsARB, binding.xDisplay, binding.glxFBConfig, gameContext, fallbackAttribs);
+			}
 			if (!binding.glxContext)
 				return giveUp("glXCreateContextAttribsARB failed");
 
