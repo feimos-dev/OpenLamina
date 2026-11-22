@@ -22,6 +22,14 @@ add_custom_command(
 		${CMAKE_CURRENT_SOURCE_DIR}/conformance/custom_interfaces.txt ${CMAKE_CURRENT_SOURCE_DIR}/conformance/not_implemented.txt ${GENERATED_DIR}/interfaces/vrtypes.h
 	COMMENT "Generating the conformance callers..."
 )
+# Every tracked device property of the newest header, for the property-sweep case (conformance/gen_properties.py)
+add_custom_command(
+	OUTPUT ${GENERATED_DIR}/conformance/properties.gen.cpp
+	COMMAND ${Python_EXECUTABLE} ${CMAKE_CURRENT_SOURCE_DIR}/conformance/gen_properties.py
+		${CMAKE_SOURCE_DIR}/OpenVRHeaders/openvr-2.15.6.h ${GENERATED_DIR}/conformance/properties.gen.cpp
+	DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/conformance/gen_properties.py ${CMAKE_SOURCE_DIR}/OpenVRHeaders/openvr-2.15.6.h
+	COMMENT "Generating the tracked device property table..."
+)
 add_library(oc_callers STATIC
 	conformance/callers_support.h
 	conformance/callers_support.cpp
@@ -57,6 +65,8 @@ add_executable(oc_conformance
 	conformance/helper_cases.cpp
 	conformance/coverage_cases.cpp
 	conformance/steamvr_run_cases.cpp
+	conformance/properties.h
+	${GENERATED_DIR}/conformance/properties.gen.cpp
 	conformance/gfx/GfxApi.h
 	conformance/crash_report.cpp
 )
