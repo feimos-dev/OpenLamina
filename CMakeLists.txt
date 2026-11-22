@@ -150,6 +150,11 @@ if (NOT OpenXR_FOUND OR NOT jsoncpp_FOUND)
 	elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 		target_compile_options(jsoncpp PUBLIC $<$<COMPILE_LANGUAGE:CXX>:-Wno-deprecated-volatile>)
 	endif()
+	# Third-party code: newer compilers' warnings in it (GCC 16's -Wuninitialized in json_value.cpp) don't fail the
+	# build
+	if (NOT MSVC)
+		target_compile_options(jsoncpp PRIVATE -Wno-error)
+	endif()
 
 	set(jsoncppLib jsoncpp)
 
