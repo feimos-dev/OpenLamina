@@ -8,6 +8,7 @@
 #include "OverlayTextureCopy.h"
 #include "OverlayTextureShare.h"
 #include "XrGenericTracker.h"
+#include "../OpenOVR/Misc/Input/ExtHandInteractionProfile.h"
 #include "../OpenOVR/Misc/Input/ViveTrackerRoles.h"
 #include "generated/interfaces/vrtypes.h"
 
@@ -2593,6 +2594,10 @@ const InteractionProfile* XrBackend::HandWithoutController(int hand)
 	const InteractionProfile* profile = InteractionProfile::GetProfileByPath("/interaction_profiles/ext/hand_interaction_ext");
 	BaseInput* input = GetUnsafeBaseInput();
 	if (!profile || !input || !input->handTrackers[hand] || !xr_gbl || xr_gbl->floorSpace == XR_NULL_HANDLE)
+		return nullptr;
+	// A controller's hand tracking (Index finger tracking) is that controller, which the runtime reports a moment
+	// later: not a hand of its own meanwhile
+	if (ExtHandInteractionProfile::ControllerInHandsNow())
 		return nullptr;
 
 	XrHandJointsLocateInfoEXT locateInfo = { XR_TYPE_HAND_JOINTS_LOCATE_INFO_EXT };

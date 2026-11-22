@@ -26,6 +26,9 @@ public:
 	static void ForgetDecision();
 
 	static bool ControllerInHands(const std::optional<std::string>& left, const std::optional<std::string>& right);
+	/** Whether libmonado lists a controller (not a hand tracker) in the left or right role now; false without
+	 * libmonado */
+	static bool ControllerInHandsNow();
 
 protected:
 	LegacyBindings MakeLegacyBindings(const std::string& handPath) const override;
