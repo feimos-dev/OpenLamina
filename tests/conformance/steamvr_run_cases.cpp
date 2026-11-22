@@ -20,8 +20,11 @@
 #include <memory>
 #include <cmath>
 #include <cstring>
+#include <functional>
+#include <sstream>
 #include <string>
 #include <thread>
+#include <vector>
 
 using namespace conformance;
 
@@ -60,19 +63,51 @@ bool InitScene(CaseContext& c)
 	return true;
 }
 
+#ifndef _WIN32
+// The names in a runtime's space-separated list
+std::vector<std::string> ExtensionNames(const std::function<uint32_t(char*, uint32_t)>& ask)
+{
+	std::vector<std::string> names;
+	uint32_t size = ask(nullptr, 0);
+	if (size == 0)
+		return names;
+	std::string text(size, '\0');
+	ask(text.data(), size);
+	std::istringstream words(text.c_str());
+	for (std::string name; words >> name;)
+		names.push_back(name);
+	return names;
+}
+#endif
+
 // A few frames of a game's: poses, then both eyes submitted (the platform's own API: D3D11 on Windows, Vulkan
 // elsewhere), and the events, so the session has started and the controllers are seen
 void Frames(CaseContext& c, int n)
 {
 	static std::unique_ptr<GfxApi> gfx;
 	static GfxTexture eyes[2];
+	auto* comp = (vr::IVRCompositor_029::IVRCompositor*)c.core->GetGenericInterface("IVRCompositor_029", nullptr);
 	if (!gfx) {
 		std::string why;
 #ifdef _WIN32
 		gfx = GfxApi::Create(GfxKind::D3D11, &why);
 		const int64_t format = 29; // DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
 #else
-		gfx = GfxApi::Create(GfxKind::Vulkan, &why);
+		// The extensions the runtime asks for, as a game enables them
+		if (comp) {
+			gfx = MakeVkGfxWith(
+			    &why,
+			    [comp](void*, void* physical) {
+				    return ExtensionNames([comp, physical](char* value, uint32_t size) {
+					    return comp->GetVulkanDeviceExtensionsRequired((VkPhysicalDevice_T*)physical, value, size);
+				    });
+			    },
+			    [comp]() {
+				    return ExtensionNames([comp](char* value, uint32_t size) { return comp->GetVulkanInstanceExtensionsRequired(value, size); });
+			    });
+		} else {
+			gfx = GfxApi::Create(GfxKind::Vulkan, &why);
+		}
 		const int64_t format = 43; // VK_FORMAT_R8G8B8A8_SRGB
 #endif
 		if (gfx) {
@@ -81,7 +116,6 @@ void Frames(CaseContext& c, int n)
 			gfx->Flush();
 		}
 	}
-	auto* comp = (vr::IVRCompositor_029::IVRCompositor*)c.core->GetGenericInterface("IVRCompositor_029", nullptr);
 	auto* sys = (vr::IVRSystem_022::IVRSystem*)c.core->GetGenericInterface("IVRSystem_022", nullptr);
 	for (int i = 0; i < n; i++) {
 		if (comp) {

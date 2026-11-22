@@ -7,6 +7,7 @@
 #include "GfxApi.h"
 
 #include <cstdlib>
+#include <cstring>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -92,7 +93,8 @@ public:
 			I<PFN_vkDestroyInstance>("vkDestroyInstance")(instance, nullptr);
 	}
 
-	// The case's device extensions (MakeVkGfxWith), and the ones enabled
+	// The case's instance and device extensions (MakeVkGfxWith), and the device ones enabled
+	std::function<std::vector<std::string>()> instanceExtensionsWanted;
 	std::function<std::vector<std::string>(void*, void*)> deviceExtensions;
 	std::vector<std::string> enabledDeviceExtensions;
 
@@ -121,8 +123,36 @@ public:
 		uint32_t loaderVersion = VK_API_VERSION_1_0;
 		if (version && version(&loaderVersion) == VK_SUCCESS && loaderVersion >= VK_API_VERSION_1_1)
 			app.apiVersion = VK_API_VERSION_1_1;
+		// The instance extensions runtimes ask games for (GetVulkanInstanceExtensionsRequired), where the loader has them
+		std::vector<std::string> wantedInstance = { "VK_KHR_get_physical_device_properties2", "VK_KHR_external_memory_capabilities",
+			"VK_KHR_external_semaphore_capabilities", "VK_KHR_external_fence_capabilities" };
+		if (instanceExtensionsWanted) {
+			for (const std::string& e : instanceExtensionsWanted())
+				wantedInstance.push_back(e);
+		}
+		auto enumerateInstanceExtensions = (PFN_vkEnumerateInstanceExtensionProperties)gipa(VK_NULL_HANDLE, "vkEnumerateInstanceExtensionProperties");
+		uint32_t instanceExtensionCount = 0;
+		std::vector<VkExtensionProperties> availableInstance;
+		if (enumerateInstanceExtensions && enumerateInstanceExtensions(nullptr, &instanceExtensionCount, nullptr) == VK_SUCCESS) {
+			availableInstance.resize(instanceExtensionCount);
+			if (enumerateInstanceExtensions(nullptr, &instanceExtensionCount, availableInstance.data()) != VK_SUCCESS)
+				instanceExtensionCount = 0;
+			availableInstance.resize(instanceExtensionCount);
+		}
+		std::vector<std::string> instanceNames;
+		for (const std::string& w : wantedInstance) {
+			for (const VkExtensionProperties& e : availableInstance) {
+				if (w == e.extensionName && std::find(instanceNames.begin(), instanceNames.end(), w) == instanceNames.end())
+					instanceNames.push_back(w);
+			}
+		}
+		std::vector<const char*> instanceExtensions;
+		for (const std::string& n : instanceNames)
+			instanceExtensions.push_back(n.c_str());
 		VkInstanceCreateInfo ici{ VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
 		ici.pApplicationInfo = &app;
+		ici.enabledExtensionCount = (uint32_t)instanceExtensions.size();
+		ici.ppEnabledExtensionNames = instanceExtensions.data();
 		VkResult r = ((PFN_vkCreateInstance)gipa(VK_NULL_HANDLE, "vkCreateInstance"))(&ici, nullptr, &instance);
 		if (r != VK_SUCCESS) {
 			instance = VK_NULL_HANDLE;
@@ -156,14 +186,22 @@ public:
 		dci.pQueueCreateInfos = &qci;
 		// The extensions wanted that the GPU has: external memory is core in 1.1, its handles an extension: Windows ones
 		// for D3D11, file descriptors for sharing images with OpenLamina's own device (unless
-		// OC_CONFORMANCE_NO_EXTERNAL_MEMORY is set); and those the case asks for
-		std::vector<std::string> wanted;
+		// OC_CONFORMANCE_NO_EXTERNAL_MEMORY is set); the rest of what runtimes ask games for
+		// (GetVulkanDeviceExtensionsRequired); and those the case asks for
+		std::vector<std::string> wanted = { "VK_KHR_dedicated_allocation", "VK_KHR_get_memory_requirements2", "VK_KHR_image_format_list" };
 #ifdef _WIN32
-		if (app.apiVersion >= VK_API_VERSION_1_1)
+		if (app.apiVersion >= VK_API_VERSION_1_1) {
 			wanted.push_back("VK_KHR_external_memory_win32");
+			wanted.push_back("VK_KHR_external_semaphore_win32");
+			wanted.push_back("VK_KHR_external_fence_win32");
+		}
 #else
 		if (app.apiVersion >= VK_API_VERSION_1_1 && !std::getenv("OC_CONFORMANCE_NO_EXTERNAL_MEMORY"))
 			wanted.push_back("VK_KHR_external_memory_fd");
+		if (app.apiVersion >= VK_API_VERSION_1_1) {
+			wanted.push_back("VK_KHR_external_semaphore_fd");
+			wanted.push_back("VK_KHR_external_fence_fd");
+		}
 #endif
 		if (deviceExtensions) {
 			for (const std::string& e : deviceExtensions(instance, physical))
@@ -599,10 +637,12 @@ std::unique_ptr<GfxApi> MakeVkGfx(std::string* whyNot)
 	return g;
 }
 
-std::unique_ptr<GfxApi> MakeVkGfxWith(std::string* whyNot, const std::function<std::vector<std::string>(void*, void*)>& deviceExtensions)
+std::unique_ptr<GfxApi> MakeVkGfxWith(std::string* whyNot, const std::function<std::vector<std::string>(void*, void*)>& deviceExtensions,
+    const std::function<std::vector<std::string>()>& instanceExtensions)
 {
 	auto g = std::make_unique<VkGfx>();
 	g->deviceExtensions = deviceExtensions;
+	g->instanceExtensionsWanted = instanceExtensions;
 	if (!g->Init(whyNot))
 		return nullptr;
 	return g;
