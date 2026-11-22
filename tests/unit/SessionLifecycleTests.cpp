@@ -48,15 +48,18 @@ TEST_CASE("The event pump looks for the controllers only on a running session no
 TEST_CASE("A game has its controllers before its first frame, as on SteamVR")
 {
 	// A game that hasn't submitted yet, on a session that's there (args: scene app, helper session, first frame seen,
-	// session lost)
-	CHECK(XrBackend::EarlyHandsDue(true, false, false, false));
+	// session lost, runtime settled)
+	CHECK(XrBackend::EarlyHandsDue(true, false, false, false, false));
 	// From its first frame the runtime gives the profiles
-	CHECK_FALSE(XrBackend::EarlyHandsDue(true, false, true, false));
+	CHECK_FALSE(XrBackend::EarlyHandsDue(true, false, true, false, false));
 	// An overlay or background program's session is focused without frames; a helper's session isn't the game's
-	CHECK_FALSE(XrBackend::EarlyHandsDue(false, false, false, false));
-	CHECK_FALSE(XrBackend::EarlyHandsDue(true, true, false, false));
+	CHECK_FALSE(XrBackend::EarlyHandsDue(false, false, false, false, false));
+	CHECK_FALSE(XrBackend::EarlyHandsDue(true, true, false, false, false));
 	// No session: nothing to show the hands on
-	CHECK_FALSE(XrBackend::EarlyHandsDue(true, false, false, true));
+	CHECK_FALSE(XrBackend::EarlyHandsDue(true, false, false, true, false));
+	// The runtime has answered for the hands (its session focused a while without a first frame): a hand it took away
+	// isn't shown again
+	CHECK_FALSE(XrBackend::EarlyHandsDue(true, false, false, false, true));
 }
 
 TEST_CASE("A hand shown early is the runtime's to take away only once its session has been focused a while")

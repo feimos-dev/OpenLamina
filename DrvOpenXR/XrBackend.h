@@ -172,12 +172,11 @@ public:
 	    bool legacyInputAsked, bool handFound);
 
 	/**
-	 * Whether the controllers libmonado lists in the hands are shown before the runtime gives their profiles: for a
-	 * game (a scene application, not a helper's session) before its first frame, while its session is there. The runtime
-	 * gives profiles only to a focused session, which a game's is from its first Submit on; SteamVR has the controllers
-	 * from the start, and games and mods ask for them while loading (an unchecked "no device" index crashes some).
+	 * Whether the controllers libmonado lists in the hands are shown before the runtime gives their profiles: for a game
+	 * (not a helper's session) before its first frame, while its session is there and the runtime hasn't answered for
+	 * the hands yet (runtimeSettled). The runtime gives profiles only to a focused session; games ask while loading.
 	 */
-	static bool EarlyHandsDue(bool sceneApp, bool helperSession, bool firstFrameSeen, bool sessionLost);
+	static bool EarlyHandsDue(bool sceneApp, bool helperSession, bool firstFrameSeen, bool sessionLost, bool runtimeSettled);
 	/**
 	 * Whether a hand shown early is up to the runtime now: once the session has been focused a while (the game's input
 	 * synced), a profile still missing means no controller. Before that a missing profile is only not known yet.
@@ -493,13 +492,13 @@ private:
 	void MakeEarlyHands();
 	// Not while the constructor numbers the devices it has
 	std::atomic<bool> earlyHandsAllowed{ false };
-	std::atomic<int64_t> earlyHandsCheckedMs{ 0 };
+	// Held while looking: a thread asking at the same time waits for the hands rather than going without
+	std::mutex earlyHandsLock;
+	int64_t earlyHandsCheckedMs = 0; // under earlyHandsLock
 	// Whether each hand's controller is one MakeEarlyHands made, which the runtime hasn't answered for yet
 	std::atomic<bool> handEarly[2] = { false, false };
 	// When the session became FOCUSED (steady clock ms), 0 while it isn't
 	std::atomic<int64_t> focusedSinceMs{ 0 };
-	// When the event pump last asked the runtime about an early hand
-	std::atomic<int64_t> earlyHandsAskedMs{ 0 };
 	bool EarlyHandsSettledNow() const;
 	// The Vive trackers the runtime listed, to notice one going (no event says so)
 	std::atomic<uint32_t> viveTrackersListed{ 0 };

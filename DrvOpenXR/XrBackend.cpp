@@ -2273,9 +2273,9 @@ bool XrBackend::ControllerQueryDue(XrSessionState state, bool exitExpected, bool
 	return state == XR_SESSION_STATE_SYNCHRONIZED || state == XR_SESSION_STATE_VISIBLE || state == XR_SESSION_STATE_FOCUSED;
 }
 
-bool XrBackend::EarlyHandsDue(bool sceneApp, bool helperSession, bool firstFrameSeen, bool sessionLost)
+bool XrBackend::EarlyHandsDue(bool sceneApp, bool helperSession, bool firstFrameSeen, bool sessionLost, bool runtimeSettled)
 {
-	return sceneApp && !helperSession && !firstFrameSeen && !sessionLost;
+	return sceneApp && !helperSession && !firstFrameSeen && !sessionLost && !runtimeSettled;
 }
 
 bool XrBackend::EarlyHandSettled(XrSessionState state, int64_t focusedForMs)
@@ -2682,30 +2682,26 @@ void XrBackend::PumpEvents()
 	if (input && !exitExpected && !sessionLost && xr_session.get() && HandsWithoutControllersChanged())
 		UpdateInteractionProfile();
 
-	// A hand shown early that the runtime still hasn't answered for, once the session has been focused a while: asked
-	// once a second, which keeps it, gives it the runtime's profile, or takes it away if the runtime has no controller
-	if ((handEarly[0] || handEarly[1]) && !exitExpected && !sessionLost && xr_session.get() && EarlyHandsSettledNow()) {
-		const int64_t nowMs = SteadyMs();
-		int64_t last = earlyHandsAskedMs;
-		if (nowMs - last >= 1000 && earlyHandsAskedMs.compare_exchange_strong(last, nowMs))
-			UpdateInteractionProfile();
-	}
+	// A hand shown early that the runtime still hasn't answered for, once the session has been focused a while: kept,
+	// given the runtime's profile, or taken away if the runtime has no controller
+	if ((handEarly[0] || handEarly[1]) && !exitExpected && !sessionLost && xr_session.get() && EarlyHandsSettledNow())
+		UpdateInteractionProfile();
 }
 
 void XrBackend::MakeEarlyHands()
 {
-	if (!earlyHandsAllowed)
+	if (!earlyHandsAllowed || (Hand(XrController::XCT_LEFT) && Hand(XrController::XCT_RIGHT)))
 		return;
 	const bool firstFrameSeen = usingApplicationGraphicsAPI || appGraphicsUnusable;
-	if (!EarlyHandsDue(BaseClientCore::appType == vr::VRApplication_Scene, IsHelperSession(), firstFrameSeen, sessionLost))
+	if (!EarlyHandsDue(BaseClientCore::appType == vr::VRApplication_Scene, IsHelperSession(), firstFrameSeen, sessionLost,
+	        EarlyHandsSettledNow()))
 		return;
+	std::lock_guard<std::mutex> guard(earlyHandsLock);
 	const int64_t nowMs = SteadyMs();
-	int64_t last = earlyHandsCheckedMs;
-	if (nowMs - last < 500 || !earlyHandsCheckedMs.compare_exchange_strong(last, nowMs))
+	if (nowMs - earlyHandsCheckedMs < 500)
 		return;
+	earlyHandsCheckedMs = nowMs;
 	const bool hadHand = Hand(XrController::XCT_LEFT) || Hand(XrController::XCT_RIGHT);
-	if (Hand(XrController::XCT_LEFT) && Hand(XrController::XCT_RIGHT))
-		return;
 	LibMonado& monado = LibMonado::Get();
 	if (!monado.Available())
 		return;
@@ -3776,11 +3772,9 @@ void XrBackend::UpdateInteractionProfile()
 				// Runtime returned an unknown interaction profile: no controller until it gives one we know
 				OOVR_LOG_ONCEF("Runtime unexpectedly returned an unknown interaction profile: %s", path_name);
 			}
-		} else if (handEarly[handIndex] && !earlySettled) {
-			// A hand shown early whose profile the runtime doesn't know yet (its session not focused long enough): kept
 		} else {
-			// interaction profile lost/not detected
-			if (Hand(info.hand)) {
+			// interaction profile lost/not detected; a hand shown early stays until the runtime has had time to answer
+			if (Hand(info.hand) && !(handEarly[handIndex] && !earlySettled)) {
 				OOVR_LOGF("%s - No interaction profile detected", info.pathstr);
 				{
 					std::unique_lock handsLock(hands_mutex);
@@ -3798,7 +3792,7 @@ void XrBackend::UpdateInteractionProfile()
 				PostRoleChange();
 			}
 		}
-		// Settled: whatever the runtime said (a profile, one OpenLamina doesn't know, none), the hand isn't an early one
+		// Settled: no longer an early hand, whatever the runtime said
 		if (earlySettled)
 			handEarly[handIndex] = false;
 	}
