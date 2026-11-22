@@ -413,6 +413,10 @@ uint32_t ITrackedDevice::GetStringTrackedDeviceProperty(vr::ETrackedDeviceProper
 		return GetStringTrackedDeviceProperty(vr::Prop_TrackingSystemName_String, value, bufferSize, pErrorL);
 	}
 
+	// The driver's own name, which SteamVR's drivers also give as the tracking system's
+	if (prop == vr::Prop_ActualTrackingSystemName_String)
+		return GetStringTrackedDeviceProperty(vr::Prop_TrackingSystemName_String, value, bufferSize, pErrorL);
+
 	if (!oovr_global_configuration.AdmitUnknownProps())
 		UnknownProperty("string", DeviceIndex(), prop);
 

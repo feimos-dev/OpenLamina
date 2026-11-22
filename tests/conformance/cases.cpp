@@ -1176,6 +1176,8 @@ void DeviceIdentityCase(CaseContext& c)
 	stringProp("HMD RenderModelName", vr::Prop_RenderModelName_String, 64);
 	stringProp("HMD ControllerType", vr::Prop_ControllerType_String, 64);
 	stringProp("HMD TrackingSystemName in 3 bytes", vr::Prop_TrackingSystemName_String, 3);
+	stringProp("HMD ResourceRoot", vr::Prop_ResourceRoot_String, 64);
+	stringProp("HMD ActualTrackingSystemName", vr::Prop_ActualTrackingSystemName_String, 64);
 
 	Json::Value r;
 	vr::DistortionCoordinates_t d = sys003->ComputeDistortion(vr::Eye_Left, 0.25f, 0.75f);

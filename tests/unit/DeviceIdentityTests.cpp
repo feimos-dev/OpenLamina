@@ -255,6 +255,65 @@ TEST_CASE("Index_controller_answers_as_SteamVR_lighthouse_driver")
 	CHECK(left.GetBoolTrackedDeviceProperty(vr::Prop_HasControllerComponent_Bool, &error));
 }
 
+TEST_CASE("Resource_root_is_the_driver_folder")
+{
+	// As SteamVR's drivers answer it: the folder their resources are in, named in their input profile's path
+	IndexControllerInteractionProfile index;
+	ViveWandInteractionProfile wand;
+	OculusTouchInteractionProfile touch;
+	CHECK(ResourceRootOf(ControllerIdentity(index, vr::TrackedControllerRole_RightHand)) == "indexcontroller");
+	CHECK(ResourceRootOf(ControllerIdentity(wand, vr::TrackedControllerRole_LeftHand)) == "htc");
+	CHECK(ResourceRootOf(ControllerIdentity(touch, vr::TrackedControllerRole_LeftHand)) == "oculus");
+	CHECK(ResourceRootOf(TrackerIdentity("Some tracker", "")) == "htc");
+	// The generic headset's row: the Oculus driver's
+	const std::string noName;
+	CHECK(ResourceRootOf(HmdIdentity(noName)) == "oculus");
+	DeviceIdentity braces;
+	braces.renderModel = "{somedriver}some_model";
+	CHECK(ResourceRootOf(braces) == "somedriver");
+	braces.renderModel = "{}empty";
+	CHECK(ResourceRootOf(braces).empty());
+	braces.renderModel = "{unclosed";
+	CHECK(ResourceRootOf(braces).empty());
+}
+
+TEST_CASE("Resource_root_and_actual_tracking_system_answered")
+{
+	auto str = [](ITrackedDevice& device, vr::ETrackedDeviceProperty prop, vr::ETrackedPropertyError* error) {
+		char value[64] = {};
+		device.GetStringTrackedDeviceProperty(prop, value, sizeof(value), error);
+		return std::string(value);
+	};
+	IndexControllerInteractionProfile index;
+	XrController right(XrController::XCT_RIGHT, index);
+	vr::ETrackedPropertyError error = vr::TrackedProp_UnknownProperty;
+	CHECK(str(right, vr::Prop_ResourceRoot_String, &error) == "indexcontroller");
+	CHECK(error == vr::TrackedProp_Success);
+	error = vr::TrackedProp_UnknownProperty;
+	// The profile's tracking system, as Prop_TrackingSystemName_String gives it
+	CHECK(str(right, vr::Prop_ActualTrackingSystemName_String, &error) == "lighthouse");
+	CHECK(error == vr::TrackedProp_Success);
+
+	// A controller whose SteamVR driver folder isn't known: not answered; its tracking system still is
+	KhrSimpleInteractionProfile simple;
+	XrController left(XrController::XCT_LEFT, simple);
+	const std::string tracking = str(left, vr::Prop_TrackingSystemName_String, &error);
+	CHECK_FALSE(tracking.empty());
+	CHECK(str(left, vr::Prop_ResourceRoot_String, &error).empty());
+	CHECK(error == vr::TrackedProp_UnknownProperty);
+	CHECK(str(left, vr::Prop_ActualTrackingSystemName_String, &error) == tracking);
+
+	XrXDevPropertiesMNDX properties = {};
+	XrGenericTracker tracker(simple, properties, 0, XR_NULL_HANDLE);
+	CHECK(str(tracker, vr::Prop_ResourceRoot_String, &error) == "htc");
+	CHECK(str(tracker, vr::Prop_ActualTrackingSystemName_String, &error) == "lighthouse");
+
+	// Too small a buffer: the size needed, as for every string property
+	char tiny[3] = {};
+	CHECK(right.GetStringTrackedDeviceProperty(vr::Prop_ResourceRoot_String, tiny, sizeof(tiny), &error) == 16);
+	CHECK(error == vr::TrackedProp_BufferTooSmall);
+}
+
 TEST_CASE("Each_unknown_property_is_logged_once")
 {
 	OculusTouchInteractionProfile touch;

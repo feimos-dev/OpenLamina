@@ -20,6 +20,7 @@ DeviceIdentity DefaultHmd()
 	hmd.renderModel = "oculusHmdRenderModel";
 	hmd.controllerType = "oculus"; // VRChat ignores an HMD without one
 	hmd.registeredDeviceType = "oculus/F00BAAF00F";
+	hmd.resourceRoot = "oculus";
 	hmd.serial = "<unknown>";
 	return hmd;
 }
@@ -69,6 +70,15 @@ const ControllerRow* ControllerRowFor(const std::string& controllerType)
 	};
 	auto it = rows.find(controllerType);
 	return it == rows.end() ? nullptr : &it->second;
+}
+
+// The driver in braces at the start of a SteamVR resource path ("{htc}/input/vive_controller_profile.json"), else empty
+std::string DriverInBraces(const std::string& path)
+{
+	if (path.empty() || path[0] != '{')
+		return std::string();
+	size_t end = path.find('}');
+	return end == std::string::npos || end == 1 ? std::string() : path.substr(1, end - 1);
 }
 
 // The maker a runtime's device name starts with ("Pimax Dream Air"), as SteamVR's drivers name it
@@ -133,6 +143,14 @@ DeviceIdentity HmdIdentity(const std::string& xrSystemName, const RuntimeDevice&
 	return id;
 }
 
+std::string ResourceRootOf(const DeviceIdentity& id)
+{
+	if (!id.resourceRoot.empty())
+		return id.resourceRoot;
+	std::string root = DriverInBraces(id.inputProfilePath);
+	return root.empty() ? DriverInBraces(id.renderModel) : root;
+}
+
 uint64_t SupportedButtonsFor(const InteractionProfile& profile, vr::ETrackedControllerRole role)
 {
 	uint64_t buttons = vr::ButtonMaskFromId(vr::k_EButton_System);
@@ -191,6 +209,7 @@ DeviceIdentity TrackerIdentity(const std::string& xdevName, const std::string& s
 	id.manufacturer = "Oculus";
 	id.controllerType = "vive_tracker_handheld_object";
 	id.modelNumber = "Vive Tracker Handheld Object";
+	id.resourceRoot = "htc"; // SteamVR's Vive tracker profile is the htc driver's
 	// The xdev's own serial, else one made of its name
 	id.serial = !serial.empty() ? serial : "tracker-" + xdevName;
 	id.role = vr::TrackedControllerRole_Invalid;

@@ -14,6 +14,7 @@ struct DeviceIdentity {
 	// An empty string isn't answered by the table: the interaction profile's property, or the generic answer, is
 	std::string trackingSystem, manufacturer, model, modelNumber, renderModel, controllerType, registeredDeviceType,
 	    inputProfilePath, serial;
+	std::string resourceRoot;
 	uint64_t supportedButtons = 0;
 	vr::ETrackedControllerRole role = vr::TrackedControllerRole_Invalid;
 };
@@ -44,6 +45,10 @@ std::optional<vr::EVRControllerAxisType> AxisTypeFor(const std::string& openVrNa
 
 /** A tracker (XR_MNDX_xdev_space): the generic tracker answers, with its serial */
 DeviceIdentity TrackerIdentity(const std::string& xdevName, const std::string& serial);
+
+/** The SteamVR driver folder a device's resources are in (Prop_ResourceRoot_String): its row's, else the driver in
+ * braces at the start of its input profile path or render model ("{indexcontroller}/..."); empty when none says */
+std::string ResourceRootOf(const DeviceIdentity& id);
 
 /** EVRButtonId bits from the profile's valid input paths, for one hand (or both, for TrackedControllerRole_Invalid).
  * The system button is always there: the OpenXR runtime keeps it, as SteamVR's drivers report it. */
