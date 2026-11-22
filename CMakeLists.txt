@@ -150,6 +150,11 @@ if (NOT OpenXR_FOUND OR NOT jsoncpp_FOUND)
 	elseif (CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 		target_compile_options(jsoncpp PUBLIC $<$<COMPILE_LANGUAGE:CXX>:-Wno-deprecated-volatile>)
 	endif()
+	# Third-party code: newer compilers' warnings in it (GCC 16's -Wuninitialized in json_value.cpp) don't fail the
+	# build
+	if (NOT MSVC)
+		target_compile_options(jsoncpp PRIVATE -Wno-error)
+	endif()
 
 	set(jsoncppLib jsoncpp)
 
@@ -558,7 +563,12 @@ target_link_libraries(OCCore PRIVATE OpenVR Vulkan ${XrLib} ${jsoncppLib} ${glmL
 
 if (NOT WIN32 AND NOT ANDROID)
 	find_package(OpenGL REQUIRED) # for glGetError()
-	target_link_libraries(OCCore PRIVATE ${OPENGL_LIBRARIES})
+	# GL and GLX only: OPENGL_LIBRARIES also has GLU, which nothing uses
+	if (TARGET OpenGL::OpenGL AND TARGET OpenGL::GLX)
+		target_link_libraries(OCCore PRIVATE OpenGL::OpenGL OpenGL::GLX)
+	else ()
+		target_link_libraries(OCCore PRIVATE OpenGL::GL)
+	endif ()
 endif ()
 
 # Set up precompiled headers for OCCore
