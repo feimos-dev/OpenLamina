@@ -53,6 +53,20 @@ bool ExtHandInteractionProfile::ControllerInHands(const std::optional<std::strin
 	return isController(left) || isController(right);
 }
 
+bool ExtHandInteractionProfile::ControllerInHandsNow()
+{
+	LibMonado& monado = LibMonado::Get();
+	if (!monado.Available())
+		return false;
+	auto nameOf = [&](const char* role) -> std::optional<std::string> {
+		std::optional<LibMonado::DeviceInfo> info = monado.DeviceInfoForRole(role);
+		if (!info)
+			return std::nullopt;
+		return info->name;
+	};
+	return ControllerInHands(nameOf("left"), nameOf("right"));
+}
+
 namespace {
 // Once per session: every suggestion and the raw inputs of a session must agree
 std::mutex decisionLock;
@@ -81,13 +95,7 @@ bool ExtHandInteractionProfile::CanHaveBindings() const
 		decided = true;
 		return decided;
 	}
-	auto nameOf = [&](const char* role) -> std::optional<std::string> {
-		std::optional<LibMonado::DeviceInfo> info = monado.DeviceInfoForRole(role);
-		if (!info)
-			return std::nullopt;
-		return info->name;
-	};
-	decided = !ControllerInHands(nameOf("left"), nameOf("right"));
+	decided = !ControllerInHandsNow();
 	if (!decided)
 		OOVR_LOG("A controller is in the hands: the hand interaction profile isn't offered in this session");
 	return decided;
