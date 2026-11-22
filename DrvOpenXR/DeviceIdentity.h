@@ -43,6 +43,11 @@ DeviceIdentity ControllerIdentity(const InteractionProfile& profile, vr::ETracke
  * binding for (knuckles, oculus_touch, vive_controller); nothing for another */
 std::optional<vr::EVRControllerAxisType> AxisTypeFor(const std::string& openVrName, int axis);
 
+/** The interaction profile a controller of that name (libmonado's) most likely has, to show it before the runtime gives
+ * the profile (a game's first frames): Index, Vive, Cosmos, Focus 3, Touch and Windows Mixed Reality controllers by
+ * name, a simple controller for another. Null for no name, or a hand (hand tracking, or a controller made from it). */
+const char* EarlyControllerProfilePath(const std::string& runtimeDeviceName);
+
 /** A tracker (XR_MNDX_xdev_space): the generic tracker answers, with its serial */
 DeviceIdentity TrackerIdentity(const std::string& xdevName, const std::string& serial);
 

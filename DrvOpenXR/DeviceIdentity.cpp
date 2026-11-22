@@ -4,6 +4,7 @@
 
 #include "../OpenOVR/Misc/Input/Bindings/LegacyBindings.h"
 
+#include <algorithm>
 #include <array>
 #include <cctype>
 #include <map>
@@ -198,6 +199,33 @@ DeviceIdentity ControllerIdentity(const InteractionProfile& profile, vr::ETracke
 	}
 	id.supportedButtons = SupportedButtonsFor(profile, role);
 	return id;
+}
+
+const char* EarlyControllerProfilePath(const std::string& runtimeDeviceName)
+{
+	std::string name = runtimeDeviceName;
+	std::transform(name.begin(), name.end(), name.begin(), [](unsigned char c) { return (char)std::tolower(c); });
+	auto has = [&](const char* word) { return name.find(word) != std::string::npos; };
+	// A hand is shown as a controller only once hand tracking tracks it (HandWithoutController)
+	if (name.empty() || has("hand"))
+		return nullptr;
+	// Monado's names: "Valve Knuckles Left" (SteamVR's driver), "Valve Index Left Controller (vive)", "Oculus Touch
+	// (Left)", "WMR Left Controller", "HP Reverb G2 Left Controller"
+	if (has("knuckles") || has("index"))
+		return "/interaction_profiles/valve/index_controller";
+	if (has("cosmos"))
+		return "/interaction_profiles/htc/vive_cosmos_controller";
+	if (has("focus 3") || has("focus3"))
+		return "/interaction_profiles/htc/vive_focus3_controller";
+	if (has("vive") || has("wand"))
+		return "/interaction_profiles/htc/vive_controller";
+	if (has("touch") || has("oculus") || has("quest"))
+		return "/interaction_profiles/oculus/touch_controller";
+	if (has("reverb") || has("g2"))
+		return "/interaction_profiles/hp/mixed_reality_controller";
+	if (has("wmr") || has("mixed reality") || has("motion controller"))
+		return "/interaction_profiles/microsoft/motion_controller";
+	return "/interaction_profiles/khr/simple_controller";
 }
 
 DeviceIdentity TrackerIdentity(const std::string& xdevName, const std::string& serial)
