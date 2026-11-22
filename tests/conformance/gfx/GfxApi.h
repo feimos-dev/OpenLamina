@@ -200,9 +200,11 @@ inline std::vector<uint8_t> PatternTexels(Texels t, uint32_t w, uint32_t h, int 
 // gfx/*Gfx.cpp: Vulkan and OpenGL everywhere, the D3D kinds on Windows
 std::unique_ptr<GfxApi> MakeVkGfx(std::string* whyNot);
 // A Vulkan device with the device extensions deviceExtensions names for the instance and physical device made (as a
-// game asks OpenVR's GetVulkanDeviceExtensionsRequired before it makes its device), where the GPU has them
+// game asks OpenVR's GetVulkanDeviceExtensionsRequired before it makes its device), and the instance extensions
+// instanceExtensions names (GetVulkanInstanceExtensionsRequired), where the loader and GPU have them
 std::unique_ptr<GfxApi> MakeVkGfxWith(std::string* whyNot,
-    const std::function<std::vector<std::string>(void* instance, void* physicalDevice)>& deviceExtensions);
+    const std::function<std::vector<std::string>(void* instance, void* physicalDevice)>& deviceExtensions,
+    const std::function<std::vector<std::string>()>& instanceExtensions = nullptr);
 std::unique_ptr<GfxApi> MakeGLGfx(std::string* whyNot);
 #ifdef _WIN32
 std::unique_ptr<GfxApi> MakeD3D11Gfx(std::string* whyNot);

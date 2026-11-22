@@ -93,7 +93,8 @@ public:
 			I<PFN_vkDestroyInstance>("vkDestroyInstance")(instance, nullptr);
 	}
 
-	// The case's device extensions (MakeVkGfxWith), and the ones enabled
+	// The case's instance and device extensions (MakeVkGfxWith), and the device ones enabled
+	std::function<std::vector<std::string>()> instanceExtensionsWanted;
 	std::function<std::vector<std::string>(void*, void*)> deviceExtensions;
 	std::vector<std::string> enabledDeviceExtensions;
 
@@ -122,26 +123,32 @@ public:
 		uint32_t loaderVersion = VK_API_VERSION_1_0;
 		if (version && version(&loaderVersion) == VK_SUCCESS && loaderVersion >= VK_API_VERSION_1_1)
 			app.apiVersion = VK_API_VERSION_1_1;
-		// The instance extensions an OpenXR runtime asks games for (through GetVulkanInstanceExtensionsRequired), where
-		// the loader has them: a runtime may look up their functions through this instance
-		std::vector<const char*> instanceExtensions;
+		// The instance extensions runtimes ask games for (GetVulkanInstanceExtensionsRequired), where the loader has them
+		std::vector<std::string> wantedInstance = { "VK_KHR_get_physical_device_properties2", "VK_KHR_external_memory_capabilities",
+			"VK_KHR_external_semaphore_capabilities", "VK_KHR_external_fence_capabilities" };
+		if (instanceExtensionsWanted) {
+			for (const std::string& e : instanceExtensionsWanted())
+				wantedInstance.push_back(e);
+		}
 		auto enumerateInstanceExtensions = (PFN_vkEnumerateInstanceExtensionProperties)gipa(VK_NULL_HANDLE, "vkEnumerateInstanceExtensionProperties");
 		uint32_t instanceExtensionCount = 0;
+		std::vector<VkExtensionProperties> availableInstance;
 		if (enumerateInstanceExtensions && enumerateInstanceExtensions(nullptr, &instanceExtensionCount, nullptr) == VK_SUCCESS) {
-			std::vector<VkExtensionProperties> available(instanceExtensionCount);
-			if (enumerateInstanceExtensions(nullptr, &instanceExtensionCount, available.data()) == VK_SUCCESS) {
-				available.resize(instanceExtensionCount);
-				for (const char* wanted : { VK_KHR_GET_PHYSICAL_DEVICE_PROPERTIES_2_EXTENSION_NAME, VK_KHR_EXTERNAL_MEMORY_CAPABILITIES_EXTENSION_NAME,
-				         VK_KHR_EXTERNAL_SEMAPHORE_CAPABILITIES_EXTENSION_NAME, VK_KHR_EXTERNAL_FENCE_CAPABILITIES_EXTENSION_NAME }) {
-					for (const VkExtensionProperties& e : available) {
-						if (std::strcmp(e.extensionName, wanted) == 0) {
-							instanceExtensions.push_back(wanted);
-							break;
-						}
-					}
-				}
+			availableInstance.resize(instanceExtensionCount);
+			if (enumerateInstanceExtensions(nullptr, &instanceExtensionCount, availableInstance.data()) != VK_SUCCESS)
+				instanceExtensionCount = 0;
+			availableInstance.resize(instanceExtensionCount);
+		}
+		std::vector<std::string> instanceNames;
+		for (const std::string& w : wantedInstance) {
+			for (const VkExtensionProperties& e : availableInstance) {
+				if (w == e.extensionName && std::find(instanceNames.begin(), instanceNames.end(), w) == instanceNames.end())
+					instanceNames.push_back(w);
 			}
 		}
+		std::vector<const char*> instanceExtensions;
+		for (const std::string& n : instanceNames)
+			instanceExtensions.push_back(n.c_str());
 		VkInstanceCreateInfo ici{ VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO };
 		ici.pApplicationInfo = &app;
 		ici.enabledExtensionCount = (uint32_t)instanceExtensions.size();
@@ -630,10 +637,12 @@ std::unique_ptr<GfxApi> MakeVkGfx(std::string* whyNot)
 	return g;
 }
 
-std::unique_ptr<GfxApi> MakeVkGfxWith(std::string* whyNot, const std::function<std::vector<std::string>(void*, void*)>& deviceExtensions)
+std::unique_ptr<GfxApi> MakeVkGfxWith(std::string* whyNot, const std::function<std::vector<std::string>(void*, void*)>& deviceExtensions,
+    const std::function<std::vector<std::string>()>& instanceExtensions)
 {
 	auto g = std::make_unique<VkGfx>();
 	g->deviceExtensions = deviceExtensions;
+	g->instanceExtensionsWanted = instanceExtensions;
 	if (!g->Init(whyNot))
 		return nullptr;
 	return g;
