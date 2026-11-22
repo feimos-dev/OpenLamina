@@ -104,6 +104,12 @@ uint32_t XrTrackedDevice::GetStringTrackedDeviceProperty(vr::ETrackedDevicePrope
 	if (field && !field->empty())
 		return AnswerString(*field, value, bufferSize, pErrorL);
 
+	if (prop == vr::Prop_ResourceRoot_String) {
+		std::string root = ResourceRootOf(id);
+		if (!root.empty())
+			return AnswerString(root, value, bufferSize, pErrorL);
+	}
+
 	// Used by Firebird The Unfinished - see #58. Copied from SteamVR
 	if (prop == vr::Prop_DriverVersion_String)
 		return AnswerString("1.32.0", value, bufferSize, pErrorL);
