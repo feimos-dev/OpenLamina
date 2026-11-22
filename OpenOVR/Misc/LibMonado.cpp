@@ -196,21 +196,44 @@ std::optional<fs::path> LibMonado::LibraryFromManifest(const fs::path& manifest)
 		value = &root["runtime"]["MND_libmonado_path"];
 	else if (root["MND_libmonado_path"].isString())
 		value = &root["MND_libmonado_path"];
-	if (!value || value->asString().empty())
+	// The manifest's own folder, through every symbolic link on the way (as the loader does)
+	auto resolve = [&manifest](fs::path p) {
+		std::error_code ec;
+		fs::path folder = fs::weakly_canonical(manifest, ec).parent_path();
+		if (ec)
+			folder = fs::absolute(manifest, ec).parent_path();
+		if (p.is_relative())
+			p = folder / p;
+		return p.lexically_normal();
+	};
+	if (value && value->asString().empty())
 		return std::nullopt;
+	if (!value) {
+		// A manifest naming only Monado's runtime library: libmonado is installed beside it
+		if (!root["runtime"].isObject() || !root["runtime"]["library_path"].isString())
+			return std::nullopt;
+		fs::path runtime = PathFromUtf8(root["runtime"]["library_path"].asString());
+		if (!runtime.has_parent_path())
+			return std::nullopt;
+#ifdef _WIN32
+		const char *runtimeName = "openxr_monado.dll", *libmonadoName = "monado.dll";
+#else
+		const char *runtimeName = "libopenxr_monado.so", *libmonadoName = "libmonado.so";
+#endif
+		if (runtime.filename() != runtimeName)
+			return std::nullopt;
+		fs::path beside = resolve(runtime).parent_path() / libmonadoName;
+		std::error_code ec;
+		if (!fs::exists(beside, ec))
+			return std::nullopt;
+		return beside;
+	}
 	fs::path p = PathFromUtf8(value->asString());
 	// A bare file name (the soname distributions install) is for the loader's search, as the OpenXR loader treats
 	// library_path
 	if (!p.has_parent_path())
 		return p;
-	// The manifest's own folder, through every symbolic link on the way (as the loader does)
-	std::error_code ec;
-	fs::path folder = fs::weakly_canonical(manifest, ec).parent_path();
-	if (ec)
-		folder = fs::absolute(manifest, ec).parent_path();
-	if (p.is_relative())
-		p = folder / p;
-	return p.lexically_normal();
+	return resolve(p);
 }
 
 LibMonado::LibMonado(const std::string& runtimeName)
