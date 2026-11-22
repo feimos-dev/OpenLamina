@@ -895,7 +895,6 @@ bool BaseSystem::GetControllerState(vr::TrackedDeviceIndex_t controllerDeviceInd
 	// This won't work for games that need hand positions but don't use either legacy or new input, but
 	//  it seems unlikely any shipping game falls into that category.
 	// Until then: a blank state for a hand's controller, false for any other index, as the input system and SteamVR answer
-	// (a mod reads its own cache at the index when this says true)
 	if (!input) {
 		std::shared_ptr<ITrackedDevice> dev = BackendManager::Instance().GetDevice(controllerDeviceIndex);
 		const ITrackedDevice::TrackedDeviceType hand = dev ? dev->GetHand() : ITrackedDevice::HAND_NONE;

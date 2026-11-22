@@ -958,8 +958,7 @@ void OldOverlay(CaseContext& c)
 }
 
 // GetControllerState for an index that isn't a controller (expect/controller_state.json): false before the game's first
-// frame and after it, as OpenVR says ("Returns false if the controller index is invalid") and SteamVR answers. A mod
-// reads its own state for the index when it says true: the invalid index of a hand without a controller crashed one.
+// frame and after it, as OpenVR says ("Returns false if the controller index is invalid") and SteamVR answers.
 void ControllerState(CaseContext& c)
 {
 	Frames f;
