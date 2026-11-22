@@ -2691,7 +2691,8 @@ void XrBackend::PumpEvents()
 
 void XrBackend::MakeEarlyHands()
 {
-	if (!earlyHandsAllowed || (Hand(XrController::XCT_LEFT) && Hand(XrController::XCT_RIGHT)))
+	if (!earlyHandsAllowed || usingApplicationGraphicsAPI || appGraphicsUnusable || sessionLost
+	    || (Hand(XrController::XCT_LEFT) && Hand(XrController::XCT_RIGHT)))
 		return;
 	std::lock_guard<std::mutex> guard(earlyHandsLock);
 	// Asked under the lock: a thread that waited for it sees what the one before it did
@@ -3077,6 +3078,7 @@ void XrBackend::OnSessionCreated()
 	requestedRefreshRate = 0;
 
 	sessionState = XR_SESSION_STATE_UNKNOWN;
+	focusedSinceMs = 0;
 	inputFocusHad = false;
 	sessionActive = false;
 	renderingFrame = false;
