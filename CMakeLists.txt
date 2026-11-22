@@ -563,7 +563,12 @@ target_link_libraries(OCCore PRIVATE OpenVR Vulkan ${XrLib} ${jsoncppLib} ${glmL
 
 if (NOT WIN32 AND NOT ANDROID)
 	find_package(OpenGL REQUIRED) # for glGetError()
-	target_link_libraries(OCCore PRIVATE ${OPENGL_LIBRARIES})
+	# GL and GLX only: OPENGL_LIBRARIES also has GLU, which nothing uses
+	if (TARGET OpenGL::OpenGL AND TARGET OpenGL::GLX)
+		target_link_libraries(OCCore PRIVATE OpenGL::OpenGL OpenGL::GLX)
+	else ()
+		target_link_libraries(OCCore PRIVATE OpenGL::GL)
+	endif ()
 endif ()
 
 # Set up precompiled headers for OCCore
