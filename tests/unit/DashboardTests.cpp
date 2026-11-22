@@ -83,11 +83,12 @@ TEST_CASE("Press_toggles_on_release_and_hold_recentres")
 	CHECK(d.OnInput(false, false, 1.2) == none);
 	CHECK(!d.Open());
 
-	// A hold: a recentre from that hand when it's let go after being held long enough, and no dashboard
+	// A hold: a recentre from that hand once it has been held long enough, once, and no dashboard when it's let go
 	CHECK(d.OnInput(false, true, 2.0) == none);
-	CHECK(d.OnInput(false, true, 2.0 + Dashboard::kRecentreHold) == none);
+	CHECK(d.OnInput(false, true, 2.0 + Dashboard::kRecentreHold - 0.01) == none);
+	CHECK(d.OnInput(false, true, 2.0 + Dashboard::kRecentreHold) == 1);
 	CHECK(d.OnInput(false, true, 3.5) == none);
-	CHECK(d.OnInput(false, false, 3.6) == 1);
+	CHECK(d.OnInput(false, false, 3.6) == none);
 	CHECK(!d.Open());
 	// The next press is a press again
 	d.OnInput(true, false, 7.0);
@@ -96,25 +97,25 @@ TEST_CASE("Press_toggles_on_release_and_hold_recentres")
 
 	// A hold while it's open recentres and leaves it open
 	CHECK(d.OnInput(true, false, 8.0) == none);
-	CHECK(d.OnInput(true, false, 9.5) == none);
-	CHECK(d.OnInput(false, false, 9.6) == 0);
+	CHECK(d.OnInput(true, false, 9.5) == 0);
+	CHECK(d.OnInput(false, false, 9.6) == none);
 	CHECK(d.Open());
 }
 
-TEST_CASE("Hold_to_turn_the_controller_off_doesnt_recentre")
+TEST_CASE("Long_hold_recentres_once")
 {
 	const int none = Dashboard::kNoHand;
 	Dashboard d(Dashboard::Button::PressOrHold);
-	// Held past kPowerOffHold: neither a recentre nor the dashboard, held or let go
+	// Held on (turning the controller off): the one recentre at the second, nothing after, held or let go
 	CHECK(d.OnInput(false, true, 0.0) == none);
-	CHECK(d.OnInput(false, true, 1.5) == none);
-	CHECK(d.OnInput(false, true, Dashboard::kPowerOffHold) == none);
+	CHECK(d.OnInput(false, true, 1.5) == 1);
+	CHECK(d.OnInput(false, true, 3.0) == none);
 	CHECK(d.OnInput(false, true, 5.0) == none);
 	CHECK(d.OnInput(false, false, 5.1) == none);
 	CHECK(!d.Open());
-	// The controller gone while held (no button down from it): the same
+	// No input while held (the controller gone), let go after the second: neither a recentre nor the dashboard
 	CHECK(d.OnInput(true, false, 6.0) == none);
-	CHECK(d.OnInput(false, false, 6.0 + Dashboard::kPowerOffHold + 0.5) == none);
+	CHECK(d.OnInput(false, false, 6.0 + Dashboard::kRecentreHold + 0.5) == none);
 	CHECK(!d.Open());
 	// The next press is a press again
 	d.OnInput(true, false, 10.0);
@@ -129,14 +130,14 @@ TEST_CASE("Hold_with_both_hands")
 	// Both buttons down are one press, from the hand that began it
 	CHECK(d.OnInput(true, false, 0.0) == none);
 	CHECK(d.OnInput(true, true, 0.5) == none);
-	CHECK(d.OnInput(true, true, 1.2) == none);
-	CHECK(d.OnInput(false, false, 1.5) == 0);
+	CHECK(d.OnInput(true, true, 1.2) == 0);
+	CHECK(d.OnInput(false, false, 1.5) == none);
 	CHECK(!d.Open());
-	// One let go, the other still down: the same press, the other hand's when it's let go
+	// One let go, the other still down: the same press, the other hand's once the second is up
 	CHECK(d.OnInput(true, true, 2.0) == none);
 	CHECK(d.OnInput(false, true, 2.5) == none);
-	CHECK(d.OnInput(false, true, 3.2) == none);
-	CHECK(d.OnInput(false, false, 3.3) == 1);
+	CHECK(d.OnInput(false, true, 3.2) == 1);
+	CHECK(d.OnInput(false, false, 3.3) == none);
 	CHECK(!d.Open());
 
 	// Begun on the left, which is let go while the right holds on: the right hand's, timed from the start
@@ -144,8 +145,8 @@ TEST_CASE("Hold_with_both_hands")
 	CHECK(d.OnInput(true, true, 4.3) == none);
 	CHECK(d.OnInput(false, true, 4.6) == none);
 	CHECK(!d.Open());
-	CHECK(d.OnInput(false, true, 5.0) == none);
-	CHECK(d.OnInput(false, false, 5.1) == 1);
+	CHECK(d.OnInput(false, true, 5.0) == 1);
+	CHECK(d.OnInput(false, false, 5.1) == none);
 	CHECK(!d.Open());
 
 	// Both pressed and let go shortly: one press

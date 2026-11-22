@@ -27,7 +27,7 @@ public:
 	// How its button opens it. ini dashboardButton=system|system_long|menu|menu_long|off: the button is a controller's
 	// system button or the left menu button. Menu: each press opens or closes it. MenuLong: held for 0.6 s.
 	// PressOrHold (system): a press opens or closes it when the button is let go, and a hold of 1 s recentres instead,
-	// when it's let go. A hold of kPowerOffHold or more is the controller being turned off: nothing.
+	// as soon as the second is up (once a press; the hold that turns a controller off recentres on the way too).
 	enum class Button { MenuLong, Menu, PressOrHold, Off };
 
 	// The frame's canvas, and its size in metres: the panel in its middle, tabs above, "Quit game" below
@@ -37,8 +37,6 @@ public:
 	static constexpr double kLongPress = 0.6;
 	// How long the button is held to recentre (PressOrHold)
 	static constexpr double kRecentreHold = 1.0;
-	// How long a hold is taken to be turning the controller off (its system button held), with no recentre
-	static constexpr double kPowerOffHold = 3.0;
 	static constexpr int kNoHand = -1;
 
 	struct Rect {
@@ -55,7 +53,7 @@ public:
 	}
 
 	// The button of each hand (0 left, 1 right) at a time in seconds: opens and closes it. Returns the hand whose button
-	// was just let go after a recentre's hold (that press doesn't open or close it), else kNoHand.
+	// has now been held long enough to recentre (once a press, and that press doesn't open or close it), else kNoHand.
 	int OnInput(bool leftDown, bool rightDown, double now);
 	int OnInput(bool leftDown, double now) { return OnInput(leftDown, false, now); }
 	bool Open() const { return open; }
@@ -86,8 +84,7 @@ private:
 	bool held = false; // the button of either hand, at the last OnInput
 	double heldSince = 0;
 	int heldHand = 0; // the hand that began the press
-	int recentreHand = 0; // the hand a recentre would come from: the one that began the press, while it's held
-	bool toggledThisPress = false;
+	bool toggledThisPress = false; // or recentred
 	mutable std::vector<Tab> drawnTabs; // as last drawn, for OnClick
 };
 
