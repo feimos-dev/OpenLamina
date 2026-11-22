@@ -209,6 +209,52 @@ TEST_CASE("Controller_properties_by_hand")
 	CHECK(error == vr::TrackedProp_Success);
 }
 
+TEST_CASE("SteamVR_server_answers_for_every_device")
+{
+	// What SteamVR's server answers for every device whatever its driver, here for a controller of a profile that sets
+	// none of them
+	KhrSimpleInteractionProfile simple;
+	XrController left(XrController::XCT_LEFT, simple);
+	vr::ETrackedPropertyError error = vr::TrackedProp_UnknownProperty;
+	CHECK(left.GetBoolTrackedDeviceProperty(vr::Prop_ForceSystemLayerUseAppPoses_Bool, &error));
+	CHECK(error == vr::TrackedProp_Success);
+	CHECK(left.GetBoolTrackedDeviceProperty(vr::Prop_Hmd_AllowsClientToControlTextureIndex, &error));
+	for (vr::ETrackedDeviceProperty prop : { vr::Prop_HasCameraComponent_Bool, vr::Prop_HasDriverDirectModeComponent_Bool,
+	         vr::Prop_HasVirtualDisplayComponent_Bool }) {
+		error = vr::TrackedProp_UnknownProperty;
+		CHECK_FALSE(left.GetBoolTrackedDeviceProperty(prop, &error));
+		CHECK(error == vr::TrackedProp_Success);
+	}
+	error = vr::TrackedProp_UnknownProperty;
+	CHECK(left.GetInt32TrackedDeviceProperty(vr::Prop_ControllerHandSelectionPriority_Int32, &error) == 0);
+	CHECK(error == vr::TrackedProp_Success);
+	// Still unknown: a property SteamVR's server doesn't answer for every device
+	CHECK_FALSE(left.GetBoolTrackedDeviceProperty(vr::Prop_DeviceIsWireless_Bool, &error));
+	CHECK(error == vr::TrackedProp_UnknownProperty);
+}
+
+TEST_CASE("Index_controller_answers_as_SteamVR_lighthouse_driver")
+{
+	IndexControllerInteractionProfile index;
+	XrController left(XrController::XCT_LEFT, index);
+	XrController right(XrController::XCT_RIGHT, index);
+	vr::ETrackedPropertyError error = vr::TrackedProp_UnknownProperty;
+	CHECK(left.GetBoolTrackedDeviceProperty(vr::Prop_DeviceIsWireless_Bool, &error));
+	CHECK(error == vr::TrackedProp_Success);
+	CHECK(left.GetBoolTrackedDeviceProperty(vr::Prop_DeviceCanPowerOff_Bool, &error));
+	CHECK(left.GetBoolTrackedDeviceProperty(vr::Prop_Identifiable_Bool, &error));
+	CHECK_FALSE(left.GetBoolTrackedDeviceProperty(vr::Prop_Firmware_UpdateAvailable_Bool, &error));
+	CHECK(error == vr::TrackedProp_Success);
+	CHECK(left.GetFloatTrackedDeviceProperty(vr::Prop_DisplayMaxAnalogGain_Float, &error) == 1.0f);
+	char l[128] = {}, r[128] = {};
+	left.GetStringTrackedDeviceProperty(vr::Prop_NamedIconPathDeviceReady_String, l, sizeof(l), &error);
+	right.GetStringTrackedDeviceProperty(vr::Prop_NamedIconPathDeviceReady_String, r, sizeof(r), &error);
+	CHECK(std::string(l) == "{indexcontroller}/icons/left_controller_status_ready.png");
+	CHECK(std::string(r) == "{indexcontroller}/icons/right_controller_status_ready.png");
+	// Its own answer stays: an Index controller has a controller component
+	CHECK(left.GetBoolTrackedDeviceProperty(vr::Prop_HasControllerComponent_Bool, &error));
+}
+
 TEST_CASE("Each_unknown_property_is_logged_once")
 {
 	OculusTouchInteractionProfile touch;

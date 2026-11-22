@@ -20,6 +20,22 @@ TEST_CASE("The IPD before the runtime has views is a human one")
 	CHECK(hmd.GetIPD() == doctest::Approx(0.064f));
 }
 
+TEST_CASE("The headset answers as SteamVR does for every headset")
+{
+	XrHMD hmd;
+	vr::ETrackedPropertyError error = vr::TrackedProp_UnknownProperty;
+	CHECK(hmd.GetBoolTrackedDeviceProperty(vr::Prop_Hmd_AllowSupersampleFiltering_Bool, &error));
+	CHECK(error == vr::TrackedProp_Success);
+	CHECK(hmd.GetBoolTrackedDeviceProperty(vr::Prop_Hmd_SupportsAppThrottling_Bool, &error));
+	CHECK(hmd.GetBoolTrackedDeviceProperty(vr::Prop_ForceSystemLayerUseAppPoses_Bool, &error));
+	// Its own answer over the one for every device
+	CHECK(hmd.GetBoolTrackedDeviceProperty(vr::Prop_HasDriverDirectModeComponent_Bool, &error));
+	char icon[128] = {};
+	hmd.GetStringTrackedDeviceProperty(vr::Prop_NamedIconPathDeviceReady_String, icon, sizeof(icon), &error);
+	CHECK(std::string(icon) == "{system}/icons/headset_status_ready.png");
+	CHECK(error == vr::TrackedProp_Success);
+}
+
 TEST_CASE("The eyes are at the head, answered at once, while there is no session")
 {
 	REQUIRE(xr_gbl == nullptr);

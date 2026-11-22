@@ -58,6 +58,31 @@ IndexControllerInteractionProfile::IndexControllerInteractionProfile()
 		// system, menu and grip ones and the first three axes
 		{ vr::Prop_Axis2Type_Int32, { (int32_t)vr::k_eControllerAxis_Trigger } },
 		{ vr::Prop_SupportedButtons_Uint64, { (uint64_t)0x700000007ull } },
+		// As SteamVR's lighthouse driver answers for an Index controller
+		{ vr::Prop_DeviceIsWireless_Bool, { true } },
+		{ vr::Prop_DeviceCanPowerOff_Bool, { true } },
+		{ vr::Prop_Identifiable_Bool, { true } },
+		{ vr::Prop_WillDriftInYaw_Bool, { false } },
+		{ vr::Prop_ReportsTimeSinceVSync_Bool, { false } },
+		{ vr::Prop_HasDisplayComponent_Bool, { false } },
+		{ vr::Prop_SupportsRoomViewDepthProjection_Bool, { false } },
+		{ vr::Prop_DisplaySupportsAnalogGain_Bool, { false } },
+		{ vr::Prop_DisplayMinAnalogGain_Float, { 1.0f } },
+		{ vr::Prop_DisplayMaxAnalogGain_Float, { 1.0f } },
+		{ vr::Prop_DisplaySupportsRuntimeFramerateChange_Bool, { false } },
+		{ vr::Prop_Firmware_UpdateAvailable_Bool, { false } },
+		{ vr::Prop_Firmware_ManualUpdate_Bool, { false } },
+		{ vr::Prop_Firmware_ForceUpdateRequired_Bool, { false } },
+		{ vr::Prop_Firmware_RemindUpdate_Bool, { false } },
+		{ vr::Prop_Firmware_ManualUpdateURL_String, { std::string("https://developer.valvesoftware.com/wiki/SteamVR/HowTo_Update_Firmware") } },
+		{ vr::Prop_NamedIconPathDeviceOff_String, { std::string("{indexcontroller}/icons/left_controller_status_off.png"), std::string("{indexcontroller}/icons/right_controller_status_off.png") } },
+		{ vr::Prop_NamedIconPathDeviceSearching_String, { std::string("{indexcontroller}/icons/left_controller_status_searching.gif"), std::string("{indexcontroller}/icons/right_controller_status_searching.gif") } },
+		{ vr::Prop_NamedIconPathDeviceSearchingAlert_String, { std::string("{indexcontroller}/icons/left_controller_status_searching_alert.gif"), std::string("{indexcontroller}/icons/right_controller_status_searching_alert.gif") } },
+		{ vr::Prop_NamedIconPathDeviceReady_String, { std::string("{indexcontroller}/icons/left_controller_status_ready.png"), std::string("{indexcontroller}/icons/right_controller_status_ready.png") } },
+		{ vr::Prop_NamedIconPathDeviceReadyAlert_String, { std::string("{indexcontroller}/icons/left_controller_status_ready_alert.png"), std::string("{indexcontroller}/icons/right_controller_status_ready_alert.png") } },
+		{ vr::Prop_NamedIconPathDeviceNotReady_String, { std::string("{indexcontroller}/icons/left_controller_status_error.png"), std::string("{indexcontroller}/icons/right_controller_status_error.png") } },
+		{ vr::Prop_NamedIconPathDeviceStandby_String, { std::string("{indexcontroller}/icons/left_controller_status_off.png"), std::string("{indexcontroller}/icons/right_controller_status_off.png") } },
+		{ vr::Prop_NamedIconPathDeviceAlertLow_String, { std::string("{indexcontroller}/icons/left_controller_status_ready_low.png"), std::string("{indexcontroller}/icons/right_controller_status_ready_low.png") } },
 	};
 
 	/*
