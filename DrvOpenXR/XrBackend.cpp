@@ -164,6 +164,9 @@ XrBackend::XrBackend(bool useVulkanTmpGfx, bool useD3D11TmpGfx)
 		if (dev)
 			dev->InitialiseDevice(i);
 	}
+	// From here on (not while it's being made) the backend may show the hands before the game's first frame; they
+	// number themselves
+	earlyHandsAllowed = true;
 }
 
 XrBackend::~XrBackend()
@@ -2691,6 +2694,8 @@ void XrBackend::PumpEvents()
 
 void XrBackend::MakeEarlyHands()
 {
+	if (!earlyHandsAllowed)
+		return;
 	const bool firstFrameSeen = usingApplicationGraphicsAPI || appGraphicsUnusable;
 	if (!EarlyHandsDue(BaseClientCore::appType == vr::VRApplication_Scene, IsHelperSession(), firstFrameSeen, sessionLost))
 		return;

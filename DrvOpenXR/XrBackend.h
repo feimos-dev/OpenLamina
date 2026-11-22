@@ -491,6 +491,8 @@ private:
 	/** The controllers libmonado lists in the left and right roles, with the profiles their names suggest, while
 	 * EarlyHandsDue and a hand has none: looked for at most twice a second, from the game's device reads */
 	void MakeEarlyHands();
+	// Not while the constructor numbers the devices it has
+	std::atomic<bool> earlyHandsAllowed{ false };
 	std::atomic<int64_t> earlyHandsCheckedMs{ 0 };
 	// Whether each hand's controller is one MakeEarlyHands made, which the runtime hasn't answered for yet
 	std::atomic<bool> handEarly[2] = { false, false };
