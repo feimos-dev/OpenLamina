@@ -957,6 +957,36 @@ void OldOverlay(CaseContext& c)
 	c.core->Cleanup();
 }
 
+// GetControllerState for an index that isn't a controller (expect/controller_state.json): false before the game's first
+// frame and after it, as OpenVR says ("Returns false if the controller index is invalid") and SteamVR answers. A mod
+// reads its own state for the index when it says true: the invalid index of a hand without a controller crashed one.
+void ControllerState(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	vr::VRControllerState_t state{};
+	Json::Value r;
+	r["invalid before frames"] = f.sys->GetControllerState(vr::k_unTrackedDeviceIndexInvalid, &state, sizeof(state));
+	r["no device before frames"] = f.sys->GetControllerState(vr::k_unMaxTrackedDeviceCount - 1, &state, sizeof(state));
+	for (int frame = 1; frame <= 30; frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+		f.sys->GetControllerState(2, &state, sizeof(state));
+		f.comp->Submit(vr::Eye_Left, tex.get(), nullptr, vr::Submit_Default);
+		f.comp->Submit(vr::Eye_Right, tex.get(), nullptr, vr::Submit_Default);
+		vr::VREvent_t ev{};
+		while (f.sys->PollNextEvent(&ev, sizeof(ev))) {
+		}
+	}
+	r["invalid after frames"] = f.sys->GetControllerState(vr::k_unTrackedDeviceIndexInvalid, &state, sizeof(state));
+	r["no device after frames"] = f.sys->GetControllerState(vr::k_unMaxTrackedDeviceCount - 1, &state, sizeof(state));
+	r["right hand after frames"] = f.sys->GetControllerState(2, &state, sizeof(state));
+	c.Record("not a controller", r);
+	c.core->Cleanup();
+}
+
 // The remaining old versions (expect/old_misc.json): IVRApplications_001, IVRChaperone_002, IVRRenderModels_001,
 // IVRNotifications_001, IVRControlPanel_001 and IVRInput_003
 void OldMisc(CaseContext& c)
@@ -4146,6 +4176,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "old-overlay", OldOverlay },
 		{ "overlay-transforms", OverlayTransformsCase },
 		{ "old-misc", OldMisc },
+		{ "controller-state", ControllerState },
 		{ "new-interfaces", NewInterfaces },
 		{ "device-identity", DeviceIdentityCase },
 		{ "applications", ApplicationsCase },

@@ -51,6 +51,7 @@ check python3 tests/conformance/xr_failures.py --runtime "$build/$lib" --conform
 run --cases old-overlay --script tests/conformance/scripts/keyboard.json --ini tests/conformance/ini/keyboard_us.ini --expect tests/conformance/expect/old_overlay.json --out "$out"/old-overlay
 run --cases overlay-transforms --script tests/conformance/scripts/overlay_transforms.json --expect tests/conformance/expect/overlay_transforms.json --out "$out"/overlay-transforms
 run --cases old-misc --expect tests/conformance/expect/old_misc.json --out "$out"/old-misc
+run --cases controller-state --script tests/conformance/scripts/legacy_click.json --expect tests/conformance/expect/controller_state.json --out "$out"/controller-state
 run --cases new-interfaces --expect tests/conformance/expect/new_interfaces.json --out "$out"/new-interfaces
 run --cases device-identity --expect tests/conformance/expect/device_identity.json --out "$out"/device-identity
 run --cases applications --expect tests/conformance/expect/applications.json --out "$out"/applications
