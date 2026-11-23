@@ -32,6 +32,30 @@ TEST_CASE("Hmd_default_row_matches_todays_answers")
 	CHECK(hmd.role == vr::TrackedControllerRole_Invalid);
 }
 
+TEST_CASE("Early_controller_profile_from_the_runtime_device_name")
+{
+	auto path = [](const char* name) {
+		const char* p = EarlyControllerProfilePath(name);
+		return std::string(p ? p : "");
+	};
+	// Monado's names for them (SteamVR's driver, Monado's own drivers)
+	CHECK(path("Valve Knuckles Left") == "/interaction_profiles/valve/index_controller");
+	CHECK(path("Valve Index Right Controller (vive)") == "/interaction_profiles/valve/index_controller");
+	CHECK(path("HTC Vive Wand Left Controller (vive)") == "/interaction_profiles/htc/vive_controller");
+	CHECK(path("Vive Cosmos Right Controller") == "/interaction_profiles/htc/vive_cosmos_controller");
+	CHECK(path("Oculus Touch (Left)") == "/interaction_profiles/oculus/touch_controller");
+	CHECK(path("Oculus Rift S Right Touch Controller") == "/interaction_profiles/oculus/touch_controller");
+	CHECK(path("HP Reverb G2 Left Controller") == "/interaction_profiles/hp/mixed_reality_controller");
+	CHECK(path("WMR Right Controller") == "/interaction_profiles/microsoft/motion_controller");
+	// Another controller: a simple one, which every game's input has
+	CHECK(path("PS Move Controller") == "/interaction_profiles/khr/simple_controller");
+	CHECK(path("Fake Right") == "/interaction_profiles/khr/simple_controller");
+	// A hand isn't a controller until hand tracking tracks it; no name, nothing to go by
+	CHECK(path("Hand Tracking Left") == "");
+	CHECK(path("Left Camera based Hand Tracker Hand") == "");
+	CHECK(path("") == "");
+}
+
 TEST_CASE("Unknown_system_reports_itself")
 {
 	DeviceIdentity hmd = HmdIdentity("A headset nobody has heard of", {}, 0x1234, "Some Runtime 1.0");

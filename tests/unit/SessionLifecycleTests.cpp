@@ -45,6 +45,37 @@ TEST_CASE("The event pump looks for the controllers only on a running session no
 	CHECK_FALSE(XrBackend::ControllerQueryDue(XR_SESSION_STATE_FOCUSED, false, false, false, false, true));
 }
 
+TEST_CASE("A game has its controllers before its first frame, as on SteamVR")
+{
+	// A game that hasn't submitted yet, on a session that's there (args: scene app, helper session, first frame seen,
+	// session lost, runtime settled)
+	CHECK(XrBackend::EarlyHandsDue(true, false, false, false, false));
+	// From its first frame the runtime gives the profiles
+	CHECK_FALSE(XrBackend::EarlyHandsDue(true, false, true, false, false));
+	// An overlay or background program's session is focused without frames; a helper's session isn't the game's
+	CHECK_FALSE(XrBackend::EarlyHandsDue(false, false, false, false, false));
+	CHECK_FALSE(XrBackend::EarlyHandsDue(true, true, false, false, false));
+	// No session: nothing to show the hands on
+	CHECK_FALSE(XrBackend::EarlyHandsDue(true, false, false, true, false));
+	// The runtime has answered for the hands (its session focused a while without a first frame): a hand it took away
+	// isn't shown again
+	CHECK_FALSE(XrBackend::EarlyHandsDue(true, false, false, false, true));
+}
+
+TEST_CASE("A hand shown early is the runtime's to take away only once its session has been focused a while")
+{
+	const int64_t grace = XrBackend::kEarlyHandGraceMs;
+	// Focused long enough: the game's input has been synced, and a missing profile means no controller
+	CHECK(XrBackend::EarlyHandSettled(XR_SESSION_STATE_FOCUSED, grace));
+	CHECK(XrBackend::EarlyHandSettled(XR_SESSION_STATE_FOCUSED, grace * 10));
+	// Just focused, or not focused (no frames yet, or the frames started but no focus): the profile isn't known yet
+	CHECK_FALSE(XrBackend::EarlyHandSettled(XR_SESSION_STATE_FOCUSED, grace - 1));
+	CHECK_FALSE(XrBackend::EarlyHandSettled(XR_SESSION_STATE_FOCUSED, -1));
+	CHECK_FALSE(XrBackend::EarlyHandSettled(XR_SESSION_STATE_READY, grace * 10));
+	CHECK_FALSE(XrBackend::EarlyHandSettled(XR_SESSION_STATE_SYNCHRONIZED, grace * 10));
+	CHECK_FALSE(XrBackend::EarlyHandSettled(XR_SESSION_STATE_VISIBLE, grace * 10));
+}
+
 TEST_CASE("A refused frame is ended again with fewer layers only when a layer may be why")
 {
 	CHECK(XrBackend::EndFrameRefusalMayBeALayer(XR_ERROR_LAYER_INVALID));

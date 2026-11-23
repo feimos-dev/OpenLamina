@@ -894,8 +894,11 @@ bool BaseSystem::GetControllerState(vr::TrackedDeviceIndex_t controllerDeviceInd
 	//  be unnecessary.) and for games that load their manifest late (Jet Island does as of 29/05/2022).
 	// This won't work for games that need hand positions but don't use either legacy or new input, but
 	//  it seems unlikely any shipping game falls into that category.
+	// Until then: a blank state for a hand's controller, false for any other index, as the input system and SteamVR answer
 	if (!input) {
-		return true;
+		std::shared_ptr<ITrackedDevice> dev = BackendManager::Instance().GetDevice(controllerDeviceIndex);
+		const ITrackedDevice::TrackedDeviceType hand = dev ? dev->GetHand() : ITrackedDevice::HAND_NONE;
+		return hand == ITrackedDevice::HAND_LEFT || hand == ITrackedDevice::HAND_RIGHT;
 	}
 	if (frameNumber > 0 || BaseClientCore::appType == VRApplication_Overlay || BaseClientCore::appType == VRApplication_Background)
 		input->LoadEmptyManifestIfRequired();

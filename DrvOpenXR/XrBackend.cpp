@@ -4,12 +4,14 @@
 
 #include "XrBackend.h"
 #include "CpuSwapchain.h"
+#include "DeviceIdentity.h"
 #include "HelperSession.h"
 #include "OverlayTextureCopy.h"
 #include "OverlayTextureShare.h"
 #include "XrGenericTracker.h"
 #include "../OpenOVR/Misc/Input/ExtHandInteractionProfile.h"
 #include "../OpenOVR/Misc/Input/ViveTrackerRoles.h"
+#include "../OpenOVR/Misc/LibMonado.h"
 #include "generated/interfaces/vrtypes.h"
 
 #ifdef _WIN32
@@ -162,6 +164,9 @@ XrBackend::XrBackend(bool useVulkanTmpGfx, bool useD3D11TmpGfx)
 		if (dev)
 			dev->InitialiseDevice(i);
 	}
+	// From here on (not while it's being made) the backend may show the hands before the game's first frame; they
+	// number themselves
+	earlyHandsAllowed = true;
 }
 
 XrBackend::~XrBackend()
@@ -227,8 +232,10 @@ std::shared_ptr<ITrackedDevice> XrBackend::GetDevice(
 	case vr::k_unTrackedDeviceIndex_Hmd:
 		return GetPrimaryHMD();
 	case 1:
+		MakeEarlyHands();
 		return Hand(XrController::XCT_LEFT);
 	case 2:
+		MakeEarlyHands();
 		return Hand(XrController::XCT_RIGHT);
 	default:
 		std::shared_lock lock(generic_trackers_mutex);
@@ -245,8 +252,10 @@ std::shared_ptr<ITrackedDevice> XrBackend::GetDeviceByHand(
 {
 	switch (hand) {
 	case ITrackedDevice::HAND_LEFT:
+		MakeEarlyHands();
 		return Hand(XrController::XCT_LEFT);
 	case ITrackedDevice::HAND_RIGHT:
+		MakeEarlyHands();
 		return Hand(XrController::XCT_RIGHT);
 	default:
 		OOVR_SOFT_ABORTF("Cannot get hand by type '%d'", (int)hand);
@@ -2264,6 +2273,27 @@ bool XrBackend::ControllerQueryDue(XrSessionState state, bool exitExpected, bool
 	return state == XR_SESSION_STATE_SYNCHRONIZED || state == XR_SESSION_STATE_VISIBLE || state == XR_SESSION_STATE_FOCUSED;
 }
 
+bool XrBackend::EarlyHandsDue(bool sceneApp, bool helperSession, bool firstFrameSeen, bool sessionLost, bool runtimeSettled)
+{
+	return sceneApp && !helperSession && !firstFrameSeen && !sessionLost && !runtimeSettled;
+}
+
+bool XrBackend::EarlyHandSettled(XrSessionState state, int64_t focusedForMs)
+{
+	return state == XR_SESSION_STATE_FOCUSED && focusedForMs >= kEarlyHandGraceMs;
+}
+
+static int64_t SteadyMs()
+{
+	return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+bool XrBackend::EarlyHandsSettledNow() const
+{
+	const int64_t since = focusedSinceMs;
+	return EarlyHandSettled(sessionState, since ? SteadyMs() - since : -1);
+}
+
 bool XrBackend::EndFrameRefusalMayBeALayer(XrResult refusal)
 {
 	switch (refusal) {
@@ -2472,6 +2502,11 @@ void XrBackend::PumpEvents()
 			sessionState = changed->state;
 			if (sessionState == XR_SESSION_STATE_FOCUSED)
 				inputFocusHad = true;
+			// How long the session has been focused decides when an early hand is the runtime's to answer for
+			if (changed->state != XR_SESSION_STATE_FOCUSED)
+				focusedSinceMs = 0;
+			else if (!focusedSinceMs)
+				focusedSinceMs = SteadyMs();
 
 			// The headset in standby while its session is stopped (taken off, on runtimes that stop the session for it),
 			// out of it when the session is ready again (sessionEvents)
@@ -2629,9 +2664,11 @@ void XrBackend::PumpEvents()
 	// Nor while the session is made again for the game's actions, whose restart pumps on its own thread (when it ends
 	// a frame the game has open, and on the new session, which if headless is FOCUSED as soon as it has begun): the
 	// info set on the new session would keep the game's actions off it.
+	// A hand shown early (MakeEarlyHands) isn't one the runtime gave: the controllers are still looked for
+	const bool runtimeHand = (Hand(XrController::XCT_LEFT) && !handEarly[0]) || (Hand(XrController::XCT_RIGHT) && !handEarly[1]);
 	if (input
 	    && ControllerQueryDue(sessionState, exitExpected, restartingForInputs, input->AreActionsLoaded(), input->LegacyInputAsked(),
-	        Hand(XrController::XCT_LEFT) || Hand(XrController::XCT_RIGHT))
+	        runtimeHand)
 	    && InputsMayAttach()) {
 		// Under the session lock (shared, if it's free): not while another thread makes and binds the game's actions
 		SessionLock sessionLock(xr_session, SessionLock::TryShared{});
@@ -2644,6 +2681,86 @@ void XrBackend::PumpEvents()
 	// A hand without a controller is shown as one while hand tracking runs: checked once a second
 	if (input && !exitExpected && !sessionLost && xr_session.get() && HandsWithoutControllersChanged())
 		UpdateInteractionProfile();
+
+	// An early hand the runtime still hasn't answered for, its session focused a while: kept, given the runtime's
+	// profile, or taken away. Not while the session is made again for the game's inputs, nor before they may attach.
+	if ((handEarly[0] || handEarly[1]) && !exitExpected && !sessionLost && !restartingForInputs && xr_session.get()
+	    && EarlyHandsSettledNow() && InputsMayAttach())
+		UpdateInteractionProfile();
+}
+
+void XrBackend::MakeEarlyHands()
+{
+	if (!earlyHandsAllowed || usingApplicationGraphicsAPI || appGraphicsUnusable || sessionLost
+	    || (Hand(XrController::XCT_LEFT) && Hand(XrController::XCT_RIGHT)))
+		return;
+	std::lock_guard<std::mutex> guard(earlyHandsLock);
+	// Asked under the lock: a thread that waited for it sees what the one before it did
+	const bool firstFrameSeen = usingApplicationGraphicsAPI || appGraphicsUnusable;
+	if (!EarlyHandsDue(BaseClientCore::appType == vr::VRApplication_Scene, IsHelperSession(), firstFrameSeen, sessionLost,
+	        EarlyHandsSettledNow()))
+		return;
+	const int64_t nowMs = SteadyMs();
+	if (nowMs - earlyHandsCheckedMs < 500)
+		return;
+	earlyHandsCheckedMs = nowMs;
+	const bool hadHand = Hand(XrController::XCT_LEFT) || Hand(XrController::XCT_RIGHT);
+	LibMonado& monado = LibMonado::Get();
+	if (!monado.Available())
+		return;
+
+	BaseSystem* system = GetUnsafeBaseSystem();
+	const InteractionProfile* first = nullptr;
+	bool added = false;
+	for (int hand = 0; hand < 2; hand++) {
+		const XrController::XrControllerType type = hand == 0 ? XrController::XCT_LEFT : XrController::XCT_RIGHT;
+		if (Hand(type))
+			continue;
+		std::optional<LibMonado::DeviceInfo> device = monado.DeviceInfoForRole(hand == 0 ? "left" : "right");
+		if (!device)
+			continue;
+		const char* path = EarlyControllerProfilePath(device->name);
+		if (!path)
+			continue;
+		// A profile this instance doesn't offer (its extension missing): a simple controller
+		const InteractionProfile* profile = InteractionProfile::GetProfileByPath(path);
+		if (!profile)
+			profile = InteractionProfile::GetProfileByPath("/interaction_profiles/khr/simple_controller");
+		if (!profile)
+			continue;
+		{
+			std::unique_lock handsLock(hands_mutex);
+			std::shared_ptr<XrController>& slot = hand == 0 ? hand_left : hand_right;
+			if (slot)
+				continue; // the runtime's came meanwhile
+			slot = std::make_shared<XrController>(type, *profile);
+			handEarly[hand] = true;
+		}
+		OOVR_LOGF("%s - Before the game's first frame: '%s' shown with %s until the runtime gives its profile",
+		    hand == 0 ? "/user/hand/left" : "/user/hand/right", device->name.c_str(), profile->GetPath().c_str());
+		// A simple controller is only a fallback: the headset isn't named after it
+		if (!first && profile->GetPath() != "/interaction_profiles/khr/simple_controller")
+			first = profile;
+		added = true;
+		if (system) {
+			VREvent_t event = {
+				.eventType = VREvent_TrackedDeviceActivated,
+				.trackedDeviceIndex = (TrackedDeviceIndex_t)type + 1
+			};
+			system->_EnqueueEvent(event);
+		}
+	}
+	if (!added)
+		return;
+	PostRoleChange();
+	// The headset's identity from the controllers', as when the runtime gives them, if no hand gave it yet
+	if (!hadHand && first && hmd->SetInteractionProfile(first) && system) {
+		VREvent_t event = {
+			.eventType = VREvent_TrackedDeviceUpdated,
+			.trackedDeviceIndex = k_unTrackedDeviceIndex_Hmd
+		};
+		system->_EnqueueEvent(event);
+	}
 }
 
 const InteractionProfile* XrBackend::HandWithoutController(int hand)
@@ -2961,6 +3078,7 @@ void XrBackend::OnSessionCreated()
 	requestedRefreshRate = 0;
 
 	sessionState = XR_SESSION_STATE_UNKNOWN;
+	focusedSinceMs = 0;
 	inputFocusHad = false;
 	sessionActive = false;
 	renderingFrame = false;
@@ -3584,7 +3702,10 @@ void XrBackend::UpdateInteractionProfile()
 	bool hmdProfileSet = false;
 	// The headset's properties (from the controllers' profile) changed: the game is told once
 	bool hmdUpdated = false;
+	// A hand shown early is the runtime's to answer for once the session has been focused a while
+	const bool earlySettled = EarlyHandsSettledNow();
 	for (hand_info& info : hands) {
+		const int handIndex = info.hand == XrController::XCT_LEFT ? 0 : 1;
 		XrInteractionProfileState state{ XR_TYPE_INTERACTION_PROFILE_STATE };
 		XrPath path = XR_NULL_PATH;
 		OC_XR_LOG(xrStringToPath(xr_instance, info.pathstr, &path));
@@ -3619,8 +3740,12 @@ void XrBackend::UpdateInteractionProfile()
 						hmdProfileSet = true;
 					}
 					std::shared_ptr<XrController> current = Hand(info.hand);
-					if (current && current->GetInteractionProfile() == profile.get())
-						break; // unchanged: keep the device and its state
+					if (current && current->GetInteractionProfile() == profile.get()) {
+						// unchanged: keep the device and its state
+						if (handEarly[handIndex].exchange(false))
+							OOVR_LOGF("%s - Using interaction profile: %s (the one shown early)", info.pathstr, path_name);
+						break;
+					}
 
 					OOVR_LOGF("%s - Using interaction profile: %s", info.pathstr, path_name);
 					BaseSystem* system = GetUnsafeBaseSystem();
@@ -3635,6 +3760,7 @@ void XrBackend::UpdateInteractionProfile()
 					{
 						std::unique_lock handsLock(hands_mutex);
 						info.controller = std::make_shared<XrController>(info.hand, *profile);
+						handEarly[handIndex] = false;
 					}
 					if (system) {
 						VREvent_t event = {
@@ -3654,12 +3780,13 @@ void XrBackend::UpdateInteractionProfile()
 				OOVR_LOG_ONCEF("Runtime unexpectedly returned an unknown interaction profile: %s", path_name);
 			}
 		} else {
-			// interaction profile lost/not detected
-			if (Hand(info.hand)) {
+			// interaction profile lost/not detected; a hand shown early stays until the runtime has had time to answer
+			if (Hand(info.hand) && !(handEarly[handIndex] && !earlySettled)) {
 				OOVR_LOGF("%s - No interaction profile detected", info.pathstr);
 				{
 					std::unique_lock handsLock(hands_mutex);
 					info.controller.reset();
+					handEarly[handIndex] = false;
 				}
 				BaseSystem* system = GetUnsafeBaseSystem();
 				if (system) {
@@ -3672,6 +3799,9 @@ void XrBackend::UpdateInteractionProfile()
 				PostRoleChange();
 			}
 		}
+		// Settled: no longer an early hand, whatever the runtime said
+		if (earlySettled)
+			handEarly[handIndex] = false;
 	}
 
 	if (hmdUpdated) {

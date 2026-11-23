@@ -1,0 +1,10 @@
+{
+ "#": "GetControllerState for an index that isn't a controller (run.py --cases controller-state --script scripts/legacy_click.json --expect expect/controller_state.json): false for the invalid index and an index without a device, before the game's first frame and after it, as OpenVR says and SteamVR answers; true for the script's right hand once its controller is there.",
+ "controller-state/not a controller/-/-": {
+  "invalid before frames": false,
+  "no device before frames": false,
+  "invalid after frames": false,
+  "no device after frames": false,
+  "right hand after frames": true
+ }
+}
