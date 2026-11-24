@@ -9,6 +9,10 @@
 // Another program asks the scene app to open it (ShowDashboard) with a document that names no scene app:
 //   { "open": true, "requested_by": pid, "requested_start": its start time, "requested_at": wall time in seconds,
 //     "requested_overlay": key }
+// Another program can run the dashboard in the scene app's place (a dashboard of the runtime's, shown over every
+// game). It names itself as the host, and the scene app then leaves the button, the hold and the panel to it:
+//   { "host_pid": pid, "host_start": its start time, "open": bool, "quit_at": wall time in seconds }
+// While the host runs, "open" is the host's dashboard's, and a fresh "quit_at" asks the game to quit.
 
 #include "Canvas.h"
 
@@ -58,6 +62,8 @@ public:
 	int OnInput(bool leftDown, double now) { return OnInput(leftDown, false, now); }
 	bool Open() const { return open; }
 	void SetOpen(bool isOpen); // ShowDashboard, a quit, the store
+	// Another program runs the dashboard now: closed, and a press under way is no longer this one's
+	void GiveWay();
 
 	// The scene app's instance draws the frame: tabs with each program's name (from the store), and "Quit game"
 	void Draw(Canvas& canvas, const Json::Value& dashboardDoc, const Json::Value& overlaysDoc) const;
@@ -94,6 +100,12 @@ using ProcessAlive = std::function<bool(uint32_t pid, uint64_t start)>;
 bool DashboardDocOpen(const Json::Value& doc, const ProcessAlive& alive);
 // A request a scene app adopts: no scene app named, from a program that's still running, under 2 s old at nowWall
 bool DashboardDocRequest(const Json::Value& doc, double nowWall, const ProcessAlive& alive);
+
+// Another program runs the dashboard: the document names a host that's still running
+bool DashboardDocHosted(const Json::Value& doc, const ProcessAlive& alive);
+// The time of the host's request for the game to quit (its quit_at), if the document is a running host's and the
+// request is under 2 s old at nowWall; 0 otherwise
+double DashboardDocQuit(const Json::Value& doc, double nowWall, const ProcessAlive& alive);
 
 // The dashboardButton setting's button (Off for anything it doesn't name)
 Dashboard::Button DashboardButtonFromSetting(const std::string& setting);

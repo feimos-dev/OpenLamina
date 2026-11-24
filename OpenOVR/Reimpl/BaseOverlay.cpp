@@ -395,6 +395,10 @@ struct BaseOverlay::DashboardState {
 	// ShowDashboard in the scene app, from any thread: acted on by _UpdateDashboard; the overlay's key under layersLock
 	std::atomic<bool> openRequested{ false };
 	std::string requestedKey;
+	// Another program's dashboard (the document's host): whether this program has told the game it is open, and the
+	// quit request of it already passed on (the game's thread's)
+	bool hostOpen = false;
+	double hostQuitAt = 0;
 	// The store's Dashboard document, as last read: under layersLock
 	bool open = false;
 	uint32_t activePid = 0;
@@ -1227,8 +1231,39 @@ void BaseOverlay::_UpdateDashboard()
 		return;
 	}
 	Json::Value doc = store.Read(StoreDoc::Dashboard);
+	// Another program's dashboard, while that program runs: the button, the hold and the panel are its own
+	const bool hosted = DashboardDocHosted(doc, SharedStore::IsSameProcessAlive);
+	const bool hostOpen = hosted && doc["open"].isBool() && doc["open"].asBool();
 
-	if (sceneDashboard) {
+	if (sceneDashboard && hosted) {
+		// This program's dashboard closes without a word in the document, which is the host's now; counted as the
+		// host's, so the game is told it closed
+		if (d.dashboard.Open()) {
+			std::lock_guard<std::recursive_mutex> lock(layersLock);
+			d.dirty = true;
+			d.hostOpen = true;
+		}
+		d.dashboard.GiveWay();
+		if (d.openRequested.exchange(false))
+			OOVR_LOG_ONCE("ShowDashboard: the dashboard is another program's, which opens it itself");
+		d.recentreHand = Dashboard::kNoHand;
+		// The game is told of the host's dashboard as of its own: its input is held while it's open
+		if (hostOpen != d.hostOpen) {
+			d.hostOpen = hostOpen;
+			DashboardOpenChanged(hostOpen);
+		}
+		// The host's exit button: the game is asked to quit, once a request
+		const double quitAt = DashboardDocQuit(doc, WallSeconds(), SharedStore::IsSameProcessAlive);
+		if (quitAt > 0 && quitAt != d.hostQuitAt) {
+			d.hostQuitAt = quitAt;
+			OcPostEvent(VREvent_Quit, k_unTrackedDeviceIndexInvalid, VREvent_Data_t{}, false);
+		}
+	} else if (sceneDashboard) {
+		// A host that went away with its dashboard open: closed, as far as the game is told
+		if (d.hostOpen) {
+			d.hostOpen = false;
+			DashboardOpenChanged(false);
+		}
 		auto* backend = (XrBackend*)BackendManager::Instance().GetBackendInstance();
 		BaseInput* input = GetUnsafeBaseInput();
 		const bool available = input && backend && backend->IsInputAvailable();
@@ -1258,21 +1293,22 @@ void BaseOverlay::_UpdateDashboard()
 		} else if (!d.dashboard.Open() && PidOf(doc["scene_pid"]) == self && doc["open"].isBool() && doc["open"].asBool()) {
 			// The document says this program's dashboard is open when it isn't: it is put right
 			store.UpdateLater(StoreDoc::Dashboard, "", [self](Json::Value& written) {
-				if (written.isObject() && PidOf(written["scene_pid"]) == self)
+				if (written.isObject() && PidOf(written["scene_pid"]) == self && !DashboardDocHosted(written, SharedStore::IsSameProcessAlive))
 					written["open"] = false;
 			});
 		}
 		doc = store.Read(StoreDoc::Dashboard);
 	}
 
-	// The document as every program's dashboard overlays follow it: open while its scene app runs
+	// The document as every program's dashboard overlays follow it: open while its scene app runs. A host's dashboard
+	// is open as the document says, and shows no program's overlay
 	XrPosef panel{ { 0, 0, 0, 1 }, { 0, 0, 0 } };
-	const bool open = DashboardDocOpen(doc, SharedStore::IsSameProcessAlive) && PoseFromJson(doc["panel_pose"], panel);
+	const bool open = hosted ? hostOpen : DashboardDocOpen(doc, SharedStore::IsSameProcessAlive) && PoseFromJson(doc["panel_pose"], panel);
 	{
 		std::lock_guard<std::recursive_mutex> lock(layersLock);
 		d.open = open;
-		d.activePid = PidOf(doc["active_pid"]);
-		d.activeOverlay = doc["active_overlay"].isUInt64() ? doc["active_overlay"].asUInt64() : 0;
+		d.activePid = hosted ? 0 : PidOf(doc["active_pid"]);
+		d.activeOverlay = !hosted && doc["active_overlay"].isUInt64() ? doc["active_overlay"].asUInt64() : 0;
 		d.scenePid = PidOf(doc["scene_pid"]);
 		d.panelPose = panel;
 		// A dashboard overlay is told when it becomes the one shown, and when it no longer is
@@ -1451,6 +1487,8 @@ void BaseOverlay::DashboardChanged(bool open, const char* overlayKey)
 		const uint64_t activeOverlay = active ? active->handle : 0;
 		// From the frame: written by the store's writer thread, the whole document, so only the last is made
 		store.UpdateLater(StoreDoc::Dashboard, "open", [self, activePid, activeOverlay, panel](Json::Value& doc) {
+			if (DashboardDocHosted(doc, SharedStore::IsSameProcessAlive))
+				return;
 			doc = Json::Value(Json::objectValue);
 			doc["open"] = true;
 			doc["scene_pid"] = self;
@@ -1461,6 +1499,8 @@ void BaseOverlay::DashboardChanged(bool open, const char* overlayKey)
 		});
 	} else {
 		store.UpdateLater(StoreDoc::Dashboard, "open", [self](Json::Value& doc) {
+			if (DashboardDocHosted(doc, SharedStore::IsSameProcessAlive))
+				return;
 			doc = Json::Value(Json::objectValue);
 			doc["open"] = false;
 			doc["scene_pid"] = self;
@@ -1471,12 +1511,17 @@ void BaseOverlay::DashboardChanged(bool open, const char* overlayKey)
 		std::lock_guard<std::recursive_mutex> lock(layersLock);
 		d.dirty = true;
 	}
+	DashboardOpenChanged(open);
+}
+
+void BaseOverlay::DashboardOpenChanged(bool open)
+{
 	// The game's input is held while it's open, and the click or press that closed it isn't the game's
 	BaseInput::SetHeldByDashboard(open);
 	if (!open)
 		BaseInput::HoldUntilReleased();
 	vr::VREvent_Data_t data{};
-	data.process.pid = self;
+	data.process.pid = oc_current_pid();
 	OcPostEvent(open ? VREvent_DashboardActivated : VREvent_DashboardDeactivated, k_unTrackedDeviceIndex_Hmd, data, true);
 }
 
@@ -2366,7 +2411,8 @@ bool BaseOverlay::RemoteOverlayEntry(VROverlayHandle_t handle, Json::Value& entr
 		// The panel as the store's Dashboard document has it: where it is while it's open, shown only then
 		const Json::Value doc = SharedStore::Get().Read(StoreDoc::Dashboard);
 		XrPosef panel{ { 0, 0, 0, 1 }, { 0, 0, 0 } };
-		const bool open = DashboardDocOpen(doc, SharedStore::IsSameProcessAlive) && PoseFromJson(doc["panel_pose"], panel);
+		const bool open = !DashboardDocHosted(doc, SharedStore::IsSameProcessAlive) && DashboardDocOpen(doc, SharedStore::IsSameProcessAlive)
+			&& PoseFromJson(doc["panel_pose"], panel);
 		entry = Json::Value(Json::objectValue);
 		entry["key"] = "system.systemui";
 		entry["name"] = "System UI";
@@ -4337,6 +4383,11 @@ void BaseOverlay::ShowDashboard(const char* pchOverlayToShow)
 	if (!SharedStore::IsProcessAlive(PidOf(SharedStore::Get().Read(StoreDoc::Scene)["pid"])))
 		OOVR_LOG("ShowDashboard: no scene application is running to open the dashboard");
 	SharedStore::Get().Update(StoreDoc::Dashboard, [&](Json::Value& doc) {
+		// Another program's dashboard opens with its own button: there's nobody to ask
+		if (DashboardDocHosted(doc, SharedStore::IsSameProcessAlive)) {
+			OOVR_LOG_ONCE("ShowDashboard: the dashboard is another program's, which opens it itself");
+			return;
+		}
 		if (DashboardDocOpen(doc, SharedStore::IsSameProcessAlive))
 			return;
 		doc = Json::Value(Json::objectValue);
