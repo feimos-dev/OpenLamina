@@ -274,6 +274,7 @@ private:
 
 	// The scene app's dashboard opens or closes: the store, the events, the game's input
 	void DashboardChanged(bool open, const char* overlayKey = nullptr);
+	void DashboardOpenChanged(bool open);
 
 	// An overlay application's Vulkan or OpenGL texture that can't be copied onto its session's device, shown from an
 	// image of that device that shares its memory: false, changing nothing, if it can't be. Under the session's and the

@@ -77,6 +77,13 @@ void Dashboard::SetOpen(bool isOpen)
 	open = isOpen;
 }
 
+void Dashboard::GiveWay()
+{
+	open = false;
+	// A press that is held stays held, and done with: letting go of it later opens nothing
+	toggledThisPress = true;
+}
+
 std::vector<Dashboard::Tab> Dashboard::Tabs(const Json::Value& stored) const
 {
 	const Json::Value overlaysDoc = CheckedOverlaysDoc(stored);
@@ -168,6 +175,22 @@ bool DashboardDocRequest(const Json::Value& doc, double nowWall, const ProcessAl
 	const uint32_t by = PidOf(doc["requested_by"]);
 	const double at = doc["requested_at"].isNumeric() ? doc["requested_at"].asDouble() : 0;
 	return by && at > 0 && nowWall - at >= 0 && nowWall - at < 2.0 && alive(by, StartOf(doc["requested_start"]));
+}
+
+bool DashboardDocHosted(const Json::Value& doc, const ProcessAlive& alive)
+{
+	if (!doc.isObject())
+		return false;
+	const uint32_t host = PidOf(doc["host_pid"]);
+	return host && alive(host, StartOf(doc["host_start"]));
+}
+
+double DashboardDocQuit(const Json::Value& doc, double nowWall, const ProcessAlive& alive)
+{
+	if (!DashboardDocHosted(doc, alive) || !doc["quit_at"].isNumeric())
+		return 0;
+	const double at = doc["quit_at"].asDouble();
+	return at > 0 && nowWall - at >= 0 && nowWall - at < 2.0 ? at : 0;
 }
 
 std::optional<std::string> Dashboard::OnClick(float u, float v)

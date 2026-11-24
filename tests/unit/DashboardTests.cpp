@@ -291,6 +291,78 @@ TEST_CASE("Dashboard_document_stale_and_live")
 	CHECK(!DashboardDocRequest(request, 101, alive));
 }
 
+TEST_CASE("Dashboard_document_names_a_running_host")
+{
+	auto alive = [](uint32_t pid, uint64_t start) { return pid == 111 && start == 5; };
+	Json::Value doc(Json::objectValue);
+	CHECK(!DashboardDocHosted(doc, alive));
+	CHECK(!DashboardDocHosted(Json::Value(), alive));
+
+	doc["host_pid"] = 111;
+	doc["host_start"] = (Json::UInt64)5;
+	CHECK(DashboardDocHosted(doc, alive));
+	// Whatever a scene app left in it
+	doc["open"] = true;
+	doc["scene_pid"] = 222;
+	CHECK(DashboardDocHosted(doc, alive));
+	CHECK(!DashboardDocOpen(doc, alive));
+
+	// A host that has ended, or whose pid now belongs to another process: none
+	Json::Value gone = doc;
+	gone["host_pid"] = 222;
+	CHECK(!DashboardDocHosted(gone, alive));
+	gone = doc;
+	gone["host_start"] = (Json::UInt64)6;
+	CHECK(!DashboardDocHosted(gone, alive));
+	gone = doc;
+	gone["host_pid"] = "111";
+	CHECK(!DashboardDocHosted(gone, alive));
+}
+
+TEST_CASE("Dashboard_host_quit_request_is_live_for_two_seconds")
+{
+	auto alive = [](uint32_t pid, uint64_t start) { return pid == 111 && start == 5; };
+	Json::Value doc(Json::objectValue);
+	doc["host_pid"] = 111;
+	doc["host_start"] = (Json::UInt64)5;
+	CHECK(DashboardDocQuit(doc, 100, alive) == 0);
+
+	doc["quit_at"] = 100.0;
+	CHECK(DashboardDocQuit(doc, 100, alive) == 100.0);
+	CHECK(DashboardDocQuit(doc, 101.5, alive) == 100.0);
+	// Too old, or from the future
+	CHECK(DashboardDocQuit(doc, 102, alive) == 0);
+	CHECK(DashboardDocQuit(doc, 99, alive) == 0);
+	// Not a number, or not a running host's
+	doc["quit_at"] = "100";
+	CHECK(DashboardDocQuit(doc, 100, alive) == 0);
+	doc["quit_at"] = 100.0;
+	doc["host_pid"] = 222;
+	CHECK(DashboardDocQuit(doc, 100, alive) == 0);
+}
+
+TEST_CASE("Dashboard_gives_way_closed_and_drops_the_press_under_way")
+{
+	Dashboard d(Dashboard::Button::PressOrHold);
+	// Open, then a press begun
+	d.OnInput(true, false, 1.0);
+	d.OnInput(false, false, 1.1);
+	REQUIRE(d.Open());
+	d.OnInput(false, true, 2.0);
+
+	d.GiveWay();
+	CHECK(!d.Open());
+	// Letting go of that press opens nothing, and holding it on recentres nothing
+	CHECK(d.OnInput(false, true, 2.5) == Dashboard::kNoHand);
+	CHECK(d.OnInput(false, true, 4.0) == Dashboard::kNoHand);
+	CHECK(d.OnInput(false, false, 4.1) == Dashboard::kNoHand);
+	CHECK(!d.Open());
+	// The next press is this one's again
+	d.OnInput(true, false, 5.0);
+	d.OnInput(false, false, 5.1);
+	CHECK(d.Open());
+}
+
 TEST_CASE("Dashboard_primary_hand_is_the_laser_on_it_else_the_last_driver")
 {
 	CHECK(Dashboard::PrimaryHand(0, 1) == 0);
