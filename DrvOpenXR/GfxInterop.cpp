@@ -831,7 +831,8 @@ public:
 			layer = *slice;
 		else if (submitFlags & vr::Submit_VulkanTextureWithArrayData) {
 			const auto* array = (const vr::VRVulkanTextureArrayData_t*)data;
-			if (array->m_unArrayIndex >= array->m_unArraySize) {
+			// Past the array's size: left out. A size left 0 says nothing, so the layer is taken as it is.
+			if (array->m_unArraySize > 0 && array->m_unArrayIndex >= array->m_unArraySize) {
 				OOVR_LOG_ONCEF("Graphics interop: Vulkan array layer %u of %u: frame left out", array->m_unArrayIndex, array->m_unArraySize);
 				return {};
 			}

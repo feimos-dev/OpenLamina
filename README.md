@@ -119,6 +119,28 @@ Unpack `OpenLamina-Windows-Portable.zip` or `OpenLamina-Linux.tar.gz` and put th
 For one Windows game only, replace its `openvr_api.dll` with `vrclient_x64.dll` (or `vrclient.dll` for 32-bit games)
 renamed to `openvr_api.dll`. Keep a backup; verifying the game's files in Steam undoes it.
 
+### What an update checks
+
+The app and `install.sh --update` ask GitHub's API for the releases and take the newest one's files only from
+`https://github.com/` addresses. Each release has a `SHA256SUMS.txt` signed, with its tag, by OpenLamina's release key
+(`SHA256SUMS.txt.sig`, an ECDSA P-256 signature; the public key is `installer/release-key.pem`, built into the app and
+`install.sh`). An update is installed only if that signature checks out and the downloaded file has the SHA-256 the
+signed list gives; otherwise it is deleted and nothing changes. A release without the signature is refused, with a
+message saying so.
+
+That catches a download that was cut short or damaged, one changed on the way, and a release whose files were replaced
+on GitHub by someone without the release key, another release's signed files included. It doesn't help if the release
+key itself is stolen, or if the app or `install.sh` you already have was replaced. The key's private half is a secret
+of the repository's `release` environment, which only a release tag can use, and only after the maintainer approves
+the run. Releases before the signature (v1.0.0) aren't signed; their app doesn't check, so they still update to a
+signed release. To check a release by hand (v1.2.3, say):
+`{ echo 'OpenLamina v1.2.3'; cat SHA256SUMS.txt; } | openssl dgst -sha256 -verify release-key.pem -signature SHA256SUMS.txt.sig`,
+then `sha256sum -c --ignore-missing SHA256SUMS.txt`.
+
+`install.sh --update` needs `openssl` for the signature check. It fetches with curl, which it limits to https,
+redirects included. Without curl it uses wget, which follows a redirect to any address; the signature and the SHA-256
+still refuse a changed file.
+
 <a id="linux-notes"></a>
 ### Linux notes
 

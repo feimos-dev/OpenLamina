@@ -982,16 +982,23 @@ EVRRenderModelError BaseRenderModels::LoadIntoTextureD3D11_Async(TextureID_t tex
 	D3D11_TEXTURE2D_DESC desc;
 	output->GetDesc(&desc);
 
-	// Only four-byte RGBA targets can take the pixels
-	if (desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM && desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
-	    && desc.Format != DXGI_FORMAT_R8G8B8A8_TYPELESS) {
+	// Only four-byte RGBA targets can take the pixels, and only those a copy can write: not immutable or dynamic ones
+	// (the GPU doesn't write those), nor multisampled ones (a copy into one needs a source of the same sample count)
+	if ((desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM && desc.Format != DXGI_FORMAT_R8G8B8A8_UNORM_SRGB
+	        && desc.Format != DXGI_FORMAT_R8G8B8A8_TYPELESS)
+	    || desc.Usage == D3D11_USAGE_IMMUTABLE || desc.Usage == D3D11_USAGE_DYNAMIC || desc.SampleDesc.Count > 1) {
 		context->Release();
 		device->Release();
 		return VRRenderModelError_InvalidTexture;
 	}
 
-	// Since we don't know what the map flags are, make an identical texture and copy across: the texture scaled to the
-	// target's size, with a mip chain down from it for every array slice
+	// Since we don't know what the map flags are, make a texture of the same size and format and copy across: the
+	// texture scaled to the target's size, with a mip chain down from it for every array slice. A plain one, as D3D11
+	// takes initial data for: the target's binds, CPU access and flags (GENERATE_MIPS, say) aren't the copy's business.
+	desc.Usage = D3D11_USAGE_DEFAULT;
+	desc.BindFlags = 0;
+	desc.CPUAccessFlags = 0;
+	desc.MiscFlags = 0;
 	Image base = ResampleImage(*source, desc.Width, desc.Height);
 	std::vector<Image> mips = BuildMipChain(base, desc.MipLevels);
 	std::vector<D3D11_SUBRESOURCE_DATA> init;

@@ -342,11 +342,12 @@ namespace RuntimeSwitcher
             Updater.DeleteOtherFolders(downloads, release.Version);
             try
             {
+                string sha256 = await Updater.SignedSha256Async(release, Install.SetupAssetName);
                 // Held open, so the checked file is the one started.
-                using (await Updater.DownloadAsync(release.Asset(Install.SetupAssetName), setup,
+                using (await Updater.DownloadAsync(release.Asset(Install.SetupAssetName), sha256, setup,
                            new Progress<int>(p => _progress.Value = p)))
                 {
-                    // A game started during the download: Setup would ask it to close.
+                    // A game started during the download: Setup would stop on the file in use.
                     if (Install.InUse())
                         throw new IOException("A game started using OpenLamina during the download. Close it, then " +
                                               "update again.");

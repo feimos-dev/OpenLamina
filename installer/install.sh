@@ -6,6 +6,13 @@ set -eu
 REPOSITORY=feimos-dev/OpenLamina
 FLATPAK_STEAM=com.valvesoftware.Steam
 ARCHIVE=OpenLamina-Linux.tar.gz
+# The release key's public half (installer/release-key.pem): --update installs an archive only with the SHA-256 a
+# release's SHA256SUMS.txt lists, and only if SHA256SUMS.txt.sig is the signature, with this key, of the line
+# "OpenLamina <tag>" followed by that file.
+RELEASE_KEY='-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEGlkOmFuwlxKh/FdPbJukNV++m2P8
+dOp7PlGOisvwXzn70Yw68wxRs0kNZVuogHjZU8VPJ5sxwkjTT2VBICKQaA==
+-----END PUBLIC KEY-----'
 
 usage() {
 	cat <<'EOF'
@@ -25,7 +32,8 @@ Commands (one; with none, install):
                     OpenLamina-kept-<date and time> next to it.
   --status          Say what OpenVR games use, what is installed, and the OpenXR runtime.
   --update [--pre]  Download the newest release from github.com/feimos-dev/OpenLamina (--pre: pre-releases too),
-                    check its SHA-256, and install it if it is newer. The switch is left as it is.
+                    check it against the release's signed SHA256SUMS.txt, and install it if it is newer. The switch
+                    is left as it is.
   --launch-options  Print the Steam launch options games in the Steam Runtime (most Proton games) need to reach your
                     OpenXR runtime.
   -h, --help        This.
@@ -34,7 +42,7 @@ Steam installed as a Flatpak (com.valvesoftware.Steam) has its own openvrpaths.v
 ~/.local/share, so for it the copy goes in ~/.var/app/com.valvesoftware.Steam/.local/share/OpenLamina. That is
 chosen by itself when only Flatpak Steam is found; --flatpak or --native chooses.
 
-Needs python3 (to edit the JSON file); --update also needs curl or wget, and sha256sum.
+Needs python3 (to edit the JSON file); --update also needs curl or wget, sha256sum and openssl.
 EOF
 }
 
@@ -230,9 +238,16 @@ def main(command, *args):
         print(m.group(1) if m and version_key(m.group(1)) else "")
     elif command == "newest":
         # GitHub's release list on stdin: the newest release newer than the installed version (empty: none) with the
-        # archive and its SHA-256, as "version<TAB>url<TAB>sha256".
+        # archive and its SHA-256, as "version<TAB>url<TAB>sha256<TAB>sums url<TAB>signature url<TAB>tag", the sums
+        # and signature urls the addresses of its SHA256SUMS.txt and SHA256SUMS.txt.sig ("-" for one it hasn't).
         installed, pre, asset_name = args
         best = None
+
+        # An https address on github.com, as GitHub gives every release file; anything else isn't fetched
+        def address(asset):
+            url = asset.get("browser_download_url") or ""
+            return url if url.startswith("https://github.com/") and not re.search(r"\s", url) else None
+
         for release in json.load(sys.stdin):
             if release.get("draft") or (release.get("prerelease") and pre != "1"):
                 continue
@@ -241,14 +256,15 @@ def main(command, *args):
             key = version_key(version)
             if key is None or (installed and version_key(installed) and key <= version_key(installed)):
                 continue
+            signed = {a.get("name"): address(a) for a in release.get("assets") or []
+                      if a.get("name") in ("SHA256SUMS.txt", "SHA256SUMS.txt.sig")}
             for asset in release.get("assets") or []:
                 digest = asset.get("digest") or ""
-                # An https address on github.com, as GitHub gives every release file; anything else isn't fetched
-                url = asset.get("browser_download_url") or ""
-                if (asset.get("name") == asset_name and re.fullmatch(r"sha256:[0-9a-fA-F]{64}", digest)
-                        and url.startswith("https://github.com/") and not re.search(r"\s", url)):
+                url = address(asset)
+                if asset.get("name") == asset_name and re.fullmatch(r"sha256:[0-9a-fA-F]{64}", digest) and url:
                     if best is None or key > best[0]:
-                        best = (key, version, url, digest[7:].lower())
+                        best = (key, version, url, digest[7:].lower(), signed.get("SHA256SUMS.txt") or "-",
+                                signed.get("SHA256SUMS.txt.sig") or "-", tag)
         if best:
             print("\t".join(best[1:]))
 
@@ -436,6 +452,8 @@ keep_own_files() {
 	say "Kept the files you put in $copy/bin: they are in $aside/bin."
 }
 
+# curl takes https only, redirects included. wget, used where there's no curl, follows a redirect to any address: the
+# first address is always https://github.com/, and a changed download is still refused by its SHA-256.
 fetch() {
 	if command -v curl >/dev/null 2>&1; then
 		curl -fsSL --proto =https --proto-redir =https -H "User-Agent: OpenLamina-installer" "$1"
@@ -448,6 +466,11 @@ fetch() {
 
 update() {
 	command -v sha256sum >/dev/null 2>&1 || die "--update needs sha256sum (coreutils)."
+	command -v openssl >/dev/null 2>&1 || die "--update needs openssl, to check the release's signature."
+	case $RELEASE_KEY in
+	-----BEGIN*) ;;
+	*) die "This install.sh has no release key to check updates with: download the new release from https://github.com/$REPOSITORY/releases." ;;
+	esac
 	installed=
 	[ -f "$copy/bin/linux64/vrclient.so" ] && installed=$(installed_version)
 	releases=$(fetch "https://api.github.com/repos/$REPOSITORY/releases?per_page=30") ||
@@ -457,17 +480,33 @@ update() {
 		say "No newer release${installed:+ than $installed}$([ $pre = 0 ] && printf ' (--pre includes pre-releases)')."
 		return
 	fi
-	IFS='	' read -r version url sha <<EOF
+	IFS='	' read -r version url sha sums_url sig_url tag <<EOF
 $newest
 EOF
+	if [ "$sums_url" = - ] || [ "$sig_url" = - ]; then
+		die "OpenLamina $version was refused: the release has no signed checksums (SHA256SUMS.txt and SHA256SUMS.txt.sig)."
+	fi
 	say "Downloading OpenLamina $version"
 	work=$(mktemp -d)
 	trap 'rm -rf "$work"' EXIT
 	# sh runs the EXIT trap on exit, not when killed by a signal.
 	trap 'exit 130' INT TERM HUP
+	# The checksums first: only what they list, signed with the release key, is installed
+	printf '%s\n' "$RELEASE_KEY" >"$work/release-key.pem"
+	fetch "$sums_url" >"$work/SHA256SUMS.txt" || die "Couldn't download $sums_url."
+	fetch "$sig_url" >"$work/SHA256SUMS.txt.sig" || die "Couldn't download $sig_url."
+	# Signed with the tag, so one release's checksums can't pass for another's
+	{ printf 'OpenLamina %s\n' "$tag" && cat "$work/SHA256SUMS.txt"; } >"$work/signed"
+	if ! openssl dgst -sha256 -verify "$work/release-key.pem" -signature "$work/SHA256SUMS.txt.sig" \
+		"$work/signed" >/dev/null 2>&1; then
+		die "OpenLamina $version was refused: its SHA256SUMS.txt isn't signed for $tag with OpenLamina's release key."
+	fi
+	signed=$(awk -v name="$ARCHIVE" '$0 == $1 "  " name && $1 ~ /^[0-9a-fA-F]+$/ && length($1) == 64 { print tolower($1); n++ } END { if (n != 1) exit 1 }' \
+		"$work/SHA256SUMS.txt") || die "OpenLamina $version was refused: its signed SHA256SUMS.txt doesn't list $ARCHIVE once."
+	[ "$signed" = "$sha" ] || die "OpenLamina $version was refused: GitHub lists another SHA-256 for $ARCHIVE than its signed SHA256SUMS.txt."
 	fetch "$url" >"$work/$ARCHIVE" || die "Couldn't download $url."
 	actual=$(sha256sum "$work/$ARCHIVE" | cut -d' ' -f1)
-	[ "$actual" = "$sha" ] || die "$ARCHIVE was refused: its SHA-256 is $actual, but GitHub lists $sha."
+	[ "$actual" = "$signed" ] || die "$ARCHIVE was refused: its SHA-256 is $actual, but the signed checksums list $signed."
 	tar -xzf "$work/$ARCHIVE" -C "$work"
 	sh "$work/OpenLamina/install.sh" --no-switch "$target_flag"
 }

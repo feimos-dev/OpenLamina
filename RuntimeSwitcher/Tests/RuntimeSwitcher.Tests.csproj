@@ -12,6 +12,8 @@
   <ItemGroup>
     <Compile Include="../Core/*.cs" Link="Core/%(Filename)%(Extension)" />
     <None Include="../../tests/version_order.json" Link="version_order.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../installer/release-key.pem" Link="release-key.pem" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../installer/install.sh" Link="install.sh" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 
   <ItemGroup>

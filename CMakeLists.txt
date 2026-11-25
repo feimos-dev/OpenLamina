@@ -66,7 +66,7 @@ else ()
 	# There is also -Bsymbolic set when linking the final shared library, see the bottom of this file
 	# FIXME the Vulkan functions still get exported, hopefully they won't fight with the application's ones.
     add_definitions(-fvisibility=hidden)
-	add_compile_options(-Wall -Wextra -Wpedantic -pedantic-errors -Wno-unused-parameter -Wno-missing-field-initializers -Wno-format-security)
+	add_compile_options(-Wall -Wextra -Wpedantic -pedantic-errors -Wno-unused-parameter -Wno-missing-field-initializers -Wformat-security)
 	set(ERROR_ON_WARNING_FLAG -Werror)
 endif ()
 if (ERROR_ON_WARNING)

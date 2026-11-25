@@ -162,6 +162,14 @@ TEST_CASE("Devices of a class are sorted right to left")
 	// No array: the count only
 	CHECK(system.GetSortedTrackedDeviceIndicesOfClass(vr::TrackedDeviceClass_Controller, nullptr, 3, vr::k_unTrackedDeviceIndexInvalid) == 4);
 	CHECK(system.GetSortedTrackedDeviceIndicesOfClass(vr::TrackedDeviceClass_HMD, nullptr, 0, vr::k_unTrackedDeviceIndexInvalid) == 0);
+
+	// A device gone: its slot keeps its class, but it isn't listed
+	slots.backend->devices.erase(4);
+	CHECK(system.GetTrackedDeviceClass(4) == vr::TrackedDeviceClass_Controller);
+	CHECK(system.GetSortedTrackedDeviceIndicesOfClass(vr::TrackedDeviceClass_Controller, out, 8, vr::k_unTrackedDeviceIndexInvalid) == 3);
+	CHECK(out[0] == 2);
+	CHECK(out[1] == 1);
+	CHECK(out[2] == 3);
 }
 
 #include "Misc/xrmoreutils.h"

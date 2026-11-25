@@ -149,6 +149,15 @@ void VkCompositor::CopyToSwapchain(const vr::Texture_t* texture, const vr::VRTex
 	}
 	// A sample count left 0 is a single-sampled image
 	const uint32_t sampleCount = std::max(1u, tex->m_nSampleCount);
+	// The array data's layer past its size: refused. A size left 0 says nothing, so the layer is taken as it is.
+	if (!submitSlice && (submitFlags & vr::Submit_VulkanTextureWithArrayData)) {
+		const auto* array = static_cast<const vr::VRVulkanTextureArrayData_t*>(tex);
+		if (array->m_unArraySize > 0 && array->m_unArrayIndex >= array->m_unArraySize) {
+			OOVR_LOG_ONCEF("A Vulkan texture's array layer %u of %u: not used", array->m_unArrayIndex, array->m_unArraySize);
+			lastResult = XR_ERROR_VALIDATION_FAILURE;
+			return;
+		}
+	}
 
 	// The command buffers are of the first texture's device and queue family
 	if (tex->m_pDevice != appDevice) {

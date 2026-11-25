@@ -955,3 +955,79 @@ TEST_CASE("Render_model_names_that_failed_make_room_for_new_ones")
 	CHECK((int)rm.LoadRenderModel_Async("oc_test_make_room_last", &model) == 100); // Loading
 	BaseRenderModels::WaitForLoads();
 }
+
+#if defined(_WIN32) && defined(SUPPORT_DX11)
+#include "IVRRenderModels_006.h"
+#include <d3d11.h>
+
+// A game's D3D11 texture that D3D11 takes no initial data for (one that generates its mips, a render target) still
+// gets the model's texture; one a copy can't write (multisampled, dynamic) is refused
+TEST_CASE("Render_model_textures_load_into_D3D11_textures_made_for_other_uses")
+{
+	ID3D11Device* device = nullptr;
+	ID3D11DeviceContext* context = nullptr;
+	if (FAILED(D3D11CreateDevice(nullptr, D3D_DRIVER_TYPE_WARP, nullptr, 0, nullptr, 0, D3D11_SDK_VERSION, &device, nullptr, &context)) || !device) {
+		MESSAGE("No WARP device here");
+		return;
+	}
+	BaseRenderModels rm;
+	OOVR_RenderModel_t* model = nullptr;
+	REQUIRE((int)rm.LoadRenderModelNow("renderLeftHand", &model) == 0);
+	REQUIRE(model != nullptr);
+	// The structs are SteamVR's newest layout
+	const OOVR_TextureID_t id = reinterpret_cast<const vr::IVRRenderModels_006::RenderModel_t*>(model)->diffuseTextureId;
+	rm.FreeRenderModel(model);
+	OOVR_RenderModel_TextureMap_t* map = nullptr;
+	for (int i = 0; i < 100 && (int)rm.LoadTexture_Async(id, &map) == 100; i++)
+		BaseRenderModels::WaitForLoads();
+	REQUIRE(map != nullptr);
+	const uint8_t* expected = reinterpret_cast<const vr::IVRRenderModels_006::RenderModel_TextureMap_t*>(map)->rubTextureMapData;
+
+	D3D11_TEXTURE2D_DESC desc{};
+	desc.Width = desc.Height = 8;
+	desc.MipLevels = 0; // the whole chain
+	desc.ArraySize = 1;
+	desc.Format = DXGI_FORMAT_R8G8B8A8_UNORM;
+	desc.SampleDesc.Count = 1;
+	desc.BindFlags = D3D11_BIND_RENDER_TARGET | D3D11_BIND_SHADER_RESOURCE;
+	desc.MiscFlags = D3D11_RESOURCE_MISC_GENERATE_MIPS;
+	ID3D11Texture2D* target = nullptr;
+	REQUIRE(SUCCEEDED(device->CreateTexture2D(&desc, nullptr, &target)));
+	CHECK((int)rm.LoadIntoTextureD3D11_Async(id, target) == 0);
+
+	// Its first level has the texture's colour
+	D3D11_TEXTURE2D_DESC readDesc = desc;
+	readDesc.MipLevels = 1;
+	readDesc.Usage = D3D11_USAGE_STAGING;
+	readDesc.BindFlags = 0;
+	readDesc.MiscFlags = 0;
+	readDesc.CPUAccessFlags = D3D11_CPU_ACCESS_READ;
+	ID3D11Texture2D* read = nullptr;
+	REQUIRE(SUCCEEDED(device->CreateTexture2D(&readDesc, nullptr, &read)));
+	context->CopySubresourceRegion(read, 0, 0, 0, 0, target, 0, nullptr);
+	D3D11_MAPPED_SUBRESOURCE mapped{};
+	REQUIRE(SUCCEEDED(context->Map(read, 0, D3D11_MAP_READ, 0, &mapped)));
+	const uint8_t* pixel = (const uint8_t*)mapped.pData;
+	for (int c = 0; c < 4; c++)
+		CHECK(pixel[c] == expected[c]);
+	context->Unmap(read, 0);
+	read->Release();
+	target->Release();
+
+	// Multisampled: refused, as a copy into it can't be made
+	D3D11_TEXTURE2D_DESC msaa = desc;
+	msaa.MipLevels = 1;
+	msaa.MiscFlags = 0;
+	msaa.SampleDesc.Count = 4;
+	UINT quality = 0;
+	if (SUCCEEDED(device->CheckMultisampleQualityLevels(msaa.Format, 4, &quality)) && quality > 0
+	    && SUCCEEDED(device->CreateTexture2D(&msaa, nullptr, &target))) {
+		CHECK((int)rm.LoadIntoTextureD3D11_Async(id, target) == 400); // VRRenderModelError_InvalidTexture
+		target->Release();
+	}
+
+	rm.FreeTexture(map);
+	context->Release();
+	device->Release();
+}
+#endif

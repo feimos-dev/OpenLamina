@@ -72,8 +72,10 @@ UninstallDisplayName=OpenLamina
 WizardStyle=modern
 Compression=lzma2/max
 SolidCompression=yes
-; A game holding the DLLs: Setup offers to close it (and the app, during an update).
+; Setup closes the app's window (OpenLamina.exe, during an update from it), never a game: a game holding the DLLs makes
+; Setup stop on the file in use instead, so a silent Setup can't ask a game to close.
 CloseApplications=yes
+CloseApplicationsFilter=OpenLamina.exe
 RestartApplications=no
 TimeStampsInUTC=yes
 TouchDate={#TouchDate}
