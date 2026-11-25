@@ -476,7 +476,7 @@ void oovr_message_raw(const char* message, const char* title)
 		// Not found (or not startable): the next one
 		if (posix_spawnp(&pid, argv[0], nullptr, nullptr, argv.data(), environ) != 0)
 			continue;
-		int status = 0;
+		int status = -1; // not an exit, if it can't be waited for
 		while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
 		}
 		message_displayed = WIFEXITED(status) && WEXITSTATUS(status) == 0;
