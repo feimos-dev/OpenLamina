@@ -1,9 +1,10 @@
 # Builds OpenLamina for Windows and Linux, 64- and 32-bit, the Windows installer, and packs the archives (scripts/ci;
 # the same scripts build locally).
 #
-# A pushed version tag (v1.2.3 or v1.2.3-rc.1) also signs the Windows files (Azure Artifact Signing: the two DLLs,
-# OpenLamina.exe, the uninstaller and the installer) and makes a draft release with everything, to check and publish by
-# hand. Only the sign job can sign them: it runs in the "release" environment, which takes v* tags only and waits for
+# A version tag (v1.2.3 or v1.2.3-rc.1) also signs the Windows files (Azure Artifact Signing: the two DLLs,
+# OpenLamina.exe, the uninstaller and the installer) and puts everything on its release: a pushed tag gets a new draft
+# release, to check and publish by hand; a tag made by publishing a release on GitHub's release page, or one with a
+# draft saved there, gets the files added to that release. Only the sign job can sign them: it runs in the "release" environment, which takes v* tags only and waits for
 # an approval, and it alone may ask GitHub for the token Azure takes. It builds none of OpenLamina's code and restores
 # none of its packages: it signs what the jobs before it built, taken by the id of their upload, with the pinned
 # signing library and Inno Setup.
@@ -590,24 +591,15 @@ jobs:
       to-sign: ${{ steps.to-sign.outputs.artifact-id }}
     steps:
       # Before anything is built or signed for it: the app and install.sh take only a tag of this form
-      # (ReleaseVersion.IsValid, version_key in install.sh), and a release that exists already can't take the files
+      # (ReleaseVersion.IsValid, version_key in install.sh)
       - name: Release tag
         if: github.ref_type == 'tag'
         shell: pwsh
-        env:
-          GH_TOKEN: ${{ github.token }}
-          GH_REPO: ${{ github.repository }}
         run: |
           if ($env:GITHUB_REF_NAME -cnotmatch '^[vV][0-9]+(\.[0-9]+)*(-[0-9A-Za-z.-]+)?$') {
             "::error::$env:GITHUB_REF_NAME isn't a release version (v1.2.3 or v1.2.3-rc.1): updates would never offer it."
             exit 1
           }
-          gh release view $env:GITHUB_REF_NAME *> $null
-          if ($LASTEXITCODE -eq 0) {
-            "::error::A release for $env:GITHUB_REF_NAME exists already: files can't be added to it. Push a new tag instead."
-            exit 1
-          }
-          exit 0
 
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -880,13 +872,15 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          set -- dist/OpenLamina-Windows-Installer.exe dist/OpenLamina-Windows-Portable.zip dist/OpenLamina-Linux.tar.gz \
-            dist/OpenLamina-Source.tar.gz dist/SHA256SUMS.txt dist/SHA256SUMS.txt.sig
-          # A published release's files can't be changed, so a release starts from a pushed tag, never from GitHub's
-          # release page: this makes the draft with every file, to publish by hand.
+          set -- dist/OpenLamina-Windows-Portable.zip dist/OpenLamina-Linux.tar.gz dist/OpenLamina-Source.tar.gz \
+            dist/OpenLamina-Windows-Installer.exe
           if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
-            echo "::error::A release for $GITHUB_REF_NAME exists already: files can't be added to it. Push a new tag instead."
-            exit 1
+            # Made on GitHub's release page: add the files, and keep its title and notes. The signed checksums first
+            # and the installer last: an update takes a release once it has the installer, and then needs the others.
+            gh release upload "$GITHUB_REF_NAME" dist/SHA256SUMS.txt dist/SHA256SUMS.txt.sig --clobber
+            gh release upload "$GITHUB_REF_NAME" "$@" --clobber
+          else
+            gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+              --title "OpenLamina ${GITHUB_REF_NAME#v}" --notes-file dist/RELEASE_NOTES.md \
+              dist/SHA256SUMS.txt dist/SHA256SUMS.txt.sig "$@"
           fi
-          gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
-            --title "OpenLamina ${GITHUB_REF_NAME#v}" --notes-file dist/RELEASE_NOTES.md "$@"
