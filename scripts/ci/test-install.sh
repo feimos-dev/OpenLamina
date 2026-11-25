@@ -235,7 +235,7 @@ updater=$work/install-no-key.sh
 refused "a release with no release key pinned" "no release key"
 # The archive's own install.sh: its key (or, before the key is made, none) didn't sign the test's checksums
 updater=$installer
-refused "a release the test's key signed, with the installer's own key" "no release key|isn't signed with"
+refused "a release the test's key signed, with the installer's own key" "no release key|isn't signed for"
 updater=$work/install-test-key.sh
 unsigned=1
 releases "$good_url" "$sha" v99999.0.0 false
