@@ -76,9 +76,9 @@ Your headset's OpenXR runtime has to be the active one. Downloads are on the
 
 ### Windows
 
-Run `OpenLamina-Windows-Installer.exe`. It installs for your user only, no administrator needed. It isn't signed yet, so if
-Windows says it "protected your PC", choose *More info*, then *Run anyway*. Leave *Use OpenLamina for OpenVR games
-now* ticked.
+Run `OpenLamina-Windows-Installer.exe`. It installs for your user only, no administrator needed. If Windows says it
+"protected your PC", choose *More info*, confirm the publisher is Finn Zeruhn, then *Run anyway*. Leave *Use
+OpenLamina for OpenVR games now* ticked.
 
 The **OpenLamina** app can:
 
@@ -259,6 +259,9 @@ scripts\ci\build-windows.ps1 -Arch x64 -Vulkan C:\vcpkg\installed\x64-windows
 **Installers:** `RuntimeSwitcher/` is the Windows app (C#, .NET Framework 4.8), `installer/OpenLamina.iss` the Windows
 installer and `installer/install.sh` the Linux one. `scripts/ci/build-installer.ps1` builds the Windows installer
 (needs the .NET SDK 8 and Inno Setup 6).
+
+**Releases:** a pushed `v*` tag builds and tests everything, signs the Windows files and the checksums, and makes a
+draft release. Signing waits for the maintainer's approval; every other build is unsigned.
 
 The OpenVR headers are split per interface version and the interface stubs are generated during the build; `doc/`
 explains how. To add a new OpenVR SDK, add its `openvr.h` to `OpenVRHeaders/`, refresh
