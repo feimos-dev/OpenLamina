@@ -587,6 +587,35 @@ void VkOdd(CaseContext& c)
 		r["dump_join"] = RectJoin(512, 512);
 	}
 	c.Record("fields left 0", r);
+
+	// Array data (Submit_VulkanTextureWithArrayData) of one-layer textures: layer 1 of 1 (refused as an invalid
+	// texture), then layer 0 with the size left 0 (taken as it is: shown)
+	Json::Value a;
+	if (left.Made() && right.Made()) {
+		vr::VRVulkanTextureArrayData_t data[2];
+		GfxTexture* eyes[2] = { &left, &right };
+		vr::Texture_t textures[2];
+		for (int eye = 0; eye < 2; eye++) {
+			static_cast<vr::VRVulkanTextureData_t&>(data[eye]) = eyes[eye]->vk;
+			textures[eye] = *eyes[eye]->Texture();
+			textures[eye].handle = &data[eye];
+		}
+		auto submitBoth = [&](uint32_t index, uint32_t size, const char* name) {
+			for (vr::VRVulkanTextureArrayData_t& d : data) {
+				d.m_unArrayIndex = index;
+				d.m_unArraySize = size;
+			}
+			vr::TrackedDevicePose_t poses[16];
+			s.comp->WaitGetPoses(poses, 16, nullptr, 0);
+			a[std::string(name) + " left"] = (int)s.comp->Submit(vr::Eye_Left, &textures[0], &kFull, vr::Submit_VulkanTextureWithArrayData);
+			a[std::string(name) + " right"] = (int)s.comp->Submit(vr::Eye_Right, &textures[1], &kFull, vr::Submit_VulkanTextureWithArrayData);
+		};
+		submitBoth(1, 1, "past_size");
+		submitBoth(0, 0, "size_0");
+	} else {
+		a["error"] = "the pattern textures couldn't be made";
+	}
+	c.Record("array data", a);
 }
 
 // A Vulkan game whose textures change size from frame to frame (dynamic resolution): 800, 640, 720 and then 960 pixels a
