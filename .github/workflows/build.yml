@@ -1,7 +1,12 @@
 # Builds OpenLamina for Windows and Linux, 64- and 32-bit, the Windows installer, and packs the archives (scripts/ci;
-# the same scripts build locally). A version tag (v1.2.3 or v1.2.3-rc.1, the forms the release job takes) also puts them
-# on its release: a pushed tag gets a new draft release, to check and publish by hand; a tag made by publishing a
-# release on GitHub's release page gets the files added to that release.
+# the same scripts build locally).
+#
+# A pushed version tag (v1.2.3 or v1.2.3-rc.1) also signs the Windows files (Azure Artifact Signing: the two DLLs,
+# OpenLamina.exe, the uninstaller and the installer) and makes a draft release with everything, to check and publish by
+# hand. Only the sign job can sign them: it runs in the "release" environment, which takes v* tags only and waits for
+# an approval, and it alone may ask GitHub for the token Azure takes. It builds none of OpenLamina's code and restores
+# none of its packages: it signs what the jobs before it built, taken by the id of their upload, with the pinned
+# signing library and Inno Setup.
 name: Build
 
 on:
@@ -27,6 +32,10 @@ jobs:
     name: Windows ${{ matrix.arch }}
     runs-on: windows-2025
     timeout-minutes: 45
+    # The id of each build's upload: a later job that takes the DLL by it gets this upload, not another of the same name.
+    outputs:
+      x64: ${{ steps.dll.outputs.x64 }}
+      x86: ${{ steps.dll.outputs.x86 }}
     strategy:
       fail-fast: false
       matrix:
@@ -343,10 +352,19 @@ jobs:
             conformance/**/logs/
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: upload
         with:
           name: windows-${{ matrix.arch }}
           path: build/bin/${{ matrix.dll }}
           if-no-files-found: error
+
+      - name: The upload's id
+        id: dll
+        shell: pwsh
+        env:
+          ARCH: ${{ matrix.arch }}
+          ID: ${{ steps.upload.outputs.artifact-id }}
+        run: '"$env:ARCH=$env:ID" >> $env:GITHUB_OUTPUT'
 
   linux:
     name: Linux ${{ matrix.arch }}
@@ -568,24 +586,43 @@ jobs:
     needs: windows
     runs-on: windows-2025
     timeout-minutes: 20
+    outputs:
+      to-sign: ${{ steps.to-sign.outputs.artifact-id }}
     steps:
+      # Before anything is built or signed for it: the app and install.sh take only a tag of this form
+      # (ReleaseVersion.IsValid, version_key in install.sh), and a release that exists already can't take the files
+      - name: Release tag
+        if: github.ref_type == 'tag'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          if ($env:GITHUB_REF_NAME -cnotmatch '^[vV][0-9]+(\.[0-9]+)*(-[0-9A-Za-z.-]+)?$') {
+            "::error::$env:GITHUB_REF_NAME isn't a release version (v1.2.3 or v1.2.3-rc.1): updates would never offer it."
+            exit 1
+          }
+          gh release view $env:GITHUB_REF_NAME *> $null
+          if ($LASTEXITCODE -eq 0) {
+            "::error::A release for $env:GITHUB_REF_NAME exists already: files can't be added to it. Push a new tag instead."
+            exit 1
+          }
+          exit 0
+
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           submodules: recursive
 
+      # Each into a folder named after its upload: windows-x64, windows-x86
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           path: artifacts
-          pattern: 'windows-*'
+          artifact-ids: ${{ needs.windows.outputs.x64 }},${{ needs.windows.outputs.x86 }}
 
       - name: Inno Setup
         shell: pwsh
         run: |
-          $iscc = Join-Path ${env:ProgramFiles(x86)} 'Inno Setup 6\ISCC.exe'
-          # Pinned, and installed over any other version the runner image has.
-          choco install innosetup --version=6.7.1 --allow-downgrade --no-progress -y
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          & $iscc /? | Select-Object -First 1
+          scripts/ci/get-inno-setup.ps1
           dotnet --version
 
       - name: Build
@@ -605,47 +642,10 @@ jobs:
           if ($a -eq $b) { "::notice::OpenLamina-Windows-Installer.exe is the same bytes when built again ($a)." }
           else { "::error::OpenLamina-Windows-Installer.exe differs when built again ($a, $b)."; exit 1 }
 
-      # The setup as the app's update and other programs run it, on the runner's own (throwaway) user: a silent install
-      # with /SWITCH puts the folder first in openvrpaths.vrpath, and the silent uninstall takes it out and removes it
+      # On the runner's own (throwaway) user
       - name: Install and uninstall
         shell: pwsh
-        run: |
-          $setup = (Resolve-Path build/installer/OpenLamina-Windows-Installer.exe).Path
-          $folder = Join-Path $env:LOCALAPPDATA 'Programs\OpenLamina'
-          $paths = Join-Path $env:LOCALAPPDATA 'openvr\openvrpaths.vrpath'
-          $log = Join-Path $env:RUNNER_TEMP 'setup.log'
-          $uninstallLog = Join-Path $env:RUNNER_TEMP 'uninstall.log'
-          function Fail([string]$message) {
-            "::error::$message"
-            foreach ($file in $log, $uninstallLog) { if (Test-Path -LiteralPath $file) { "--- $file"; Get-Content -LiteralPath $file } }
-            exit 1
-          }
-          function Runtimes {
-            if (-not (Test-Path -LiteralPath $paths)) { return @() }
-            @((Get-Content -LiteralPath $paths -Raw | ConvertFrom-Json).runtime | Where-Object { $_ } | ForEach-Object { $_.TrimEnd('\', '/') })
-          }
-          if (Test-Path -LiteralPath $folder) { Fail "$folder exists before the install: the runner isn't clean." }
-
-          $p = Start-Process -FilePath $setup -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SWITCH', "/LOG=`"$log`"" -Wait -PassThru
-          if ($p.ExitCode -ne 0) { Fail "The silent install with /SWITCH exited with code $($p.ExitCode) (100: the switch failed)." }
-          foreach ($file in 'bin\vrclient_x64.dll', 'bin\vrclient.dll', 'bin\version.txt', 'OpenLamina.exe', 'SOURCE.txt', 'unins000.exe') {
-            if (-not (Test-Path -LiteralPath (Join-Path $folder $file))) { Fail "The install has no $file in $folder." }
-          }
-          $first = @(Runtimes)[0]
-          if (-not $first -or -not [string]::Equals($first, $folder, [StringComparison]::OrdinalIgnoreCase)) {
-            Fail "After the install with /SWITCH, the first runtime in $paths is '$first', not $folder."
-          }
-          "Installed in $folder and first in $paths."
-
-          $p = Start-Process -FilePath (Join-Path $folder 'unins000.exe') -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=`"$uninstallLog`"" -Wait -PassThru
-          if ($p.ExitCode -ne 0) { Fail "The silent uninstall exited with code $($p.ExitCode)." }
-          # The uninstaller finishes from a copy of itself in the temporary folder: wait for the folder to go (at most a minute)
-          for ($i = 0; $i -lt 60 -and (Test-Path -LiteralPath $folder); $i++) { Start-Sleep -Seconds 1 }
-          if (Test-Path -LiteralPath $folder) { Fail "The uninstall left ${folder}: $((Get-ChildItem -LiteralPath $folder -Recurse -Force).FullName -join ', ')" }
-          if (@(Runtimes) | Where-Object { [string]::Equals($_, $folder, [StringComparison]::OrdinalIgnoreCase) }) {
-            Fail "After the uninstall, $paths still lists $folder."
-          }
-          "Uninstalled: $folder is gone and $paths doesn't list it."
+        run: scripts/ci/test-installer.ps1 -Setup build/installer/OpenLamina-Windows-Installer.exe
 
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
@@ -653,9 +653,126 @@ jobs:
           path: build/installer/OpenLamina-Windows-Installer.exe
           if-no-files-found: error
 
+      # For a release: the folder and the app this job built, which the sign job signs and packs again.
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        id: to-sign
+        if: startsWith(github.ref, 'refs/tags/v')
+        with:
+          name: to-sign
+          path: |
+            build/installer/OpenLamina/
+            build/installer/switcher/
+          if-no-files-found: error
+
+  # The only job that can sign with Azure. It asks for the approval once everything else has passed.
+  sign:
+    name: Sign
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [installer, linux, linux-variants, monado]
+    runs-on: windows-2025
+    timeout-minutes: 20
+    environment: release
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # By its id: what the installer job uploaded, whatever else in this run has that name by now.
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          artifact-ids: ${{ needs.installer.outputs.to-sign }}
+          path: build/installer
+
+      # The signing library runs on it.
+      - uses: actions/setup-dotnet@26b0ec14cb23fa6904739307f278c14f94c95bf1 # v5.4.0
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Inno Setup
+        shell: pwsh
+        run: scripts/ci/get-inno-setup.ps1
+
+      - name: The signing library
+        shell: pwsh
+        env:
+          ENDPOINT: ${{ vars.SIGNING_ENDPOINT }}
+          ACCOUNT: ${{ vars.SIGNING_ACCOUNT }}
+          CERTIFICATE_PROFILE: ${{ vars.SIGNING_PROFILE }}
+        run: >-
+          scripts/ci/get-signing-library.ps1 -Out (Join-Path $env:RUNNER_TEMP 'signing')
+          -Endpoint $env:ENDPOINT -Account $env:ACCOUNT -CertificateProfile $env:CERTIFICATE_PROFILE
+
+      # No secret: Azure takes GitHub's token for this job, in this environment, of this repository.
+      - name: Azure
+        uses: azure/login@a641126d1b8aa4d1fa005f4f92df94a3a4c4c906 # v3.1.0
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          allow-no-subscriptions: true
+
+      - name: Sign the DLLs and the app, then build and sign the installer
+        shell: pwsh
+        run: |
+          # GitHub's token behind the login lasts minutes, and without it the Azure CLI can't get a token for another
+          # service. So the signing service's token is taken now: the installer, signed last, gets the cached one.
+          az account get-access-token --resource https://codesigning.azure.net --query expiresOn --output tsv
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          scripts/ci/build-installer.ps1 -Sign -Version ($env:GITHUB_REF_NAME -replace '^v', '') -Out build/installer
+          # What the next jobs take: the installer, and the DLLs under their build artifacts' names, for the zip.
+          foreach ($folder in 'build/signed/windows-x64', 'build/signed/windows-x86') { New-Item -ItemType Directory -Force -Path $folder | Out-Null }
+          Copy-Item build/installer/OpenLamina-Windows-Installer.exe build/signed/
+          Copy-Item build/installer/OpenLamina/bin/vrclient_x64.dll build/signed/windows-x64/
+          Copy-Item build/installer/OpenLamina/bin/vrclient.dll build/signed/windows-x86/
+
+      - name: Azure, signed out
+        if: always()
+        shell: pwsh
+        run: az account clear
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: signed
+          path: build/signed/
+          if-no-files-found: error
+
+  # The signatures again, on a machine that never had the signing tools, and the signed setup installed and uninstalled.
+  signed-check:
+    name: Signed installer
+    needs: sign
+    runs-on: windows-2025
+    timeout-minutes: 10
+    outputs:
+      signer: ${{ steps.signatures.outputs.signer }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          sparse-checkout: scripts/ci
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: signed
+          path: signed
+
+      - name: Signatures
+        id: signatures
+        shell: pwsh
+        run: >-
+          scripts/ci/check-signatures.ps1 signed/OpenLamina-Windows-Installer.exe
+          signed/windows-x64/vrclient_x64.dll signed/windows-x86/vrclient.dll
+
+      - name: Install and uninstall
+        shell: pwsh
+        run: scripts/ci/test-installer.ps1 -Setup signed/OpenLamina-Windows-Installer.exe -Signed
+
   package:
     name: Archives
-    needs: [windows, linux, installer]
+    needs: [windows, linux, installer, signed-check]
+    # A release packs the signed files, so it waits for them; any other run has none and goes on without.
+    if: >-
+      ${{ !cancelled() && needs.windows.result == 'success' && needs.linux.result == 'success'
+      && needs.installer.result == 'success'
+      && needs.signed-check.result == (startsWith(github.ref, 'refs/tags/v') && 'success' || 'skipped') }}
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
@@ -669,15 +786,35 @@ jobs:
           pattern: '{windows,linux}-x*'
 
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.signed-check.result == 'skipped'
         with:
           name: installer
           path: installer-build
 
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        if: needs.signed-check.result == 'success'
+        with:
+          name: signed
+          path: signed
+
+      # The signed DLLs take the place of the builds' in the zip, and the signed installer goes with the archives.
+      - name: The signed files
+        if: needs.signed-check.result == 'success'
+        run: |
+          cp signed/windows-x64/vrclient_x64.dll artifacts/windows-x64/vrclient_x64.dll
+          cp signed/windows-x86/vrclient.dll artifacts/windows-x86/vrclient.dll
+          mkdir installer-build
+          cp signed/OpenLamina-Windows-Installer.exe installer-build/
+
       - name: Pack
+        env:
+          SIGNER: ${{ needs.signed-check.outputs.signer }}
         run: |
           if [ "$GITHUB_REF_TYPE" = tag ]; then version=${GITHUB_REF_NAME#v}; else version=dev-${GITHUB_SHA:0:12}; fi
+          signer=()
+          if [ -n "$SIGNER" ]; then signer=(--signer "$SIGNER"); fi
           python3 scripts/ci/package.py --version "$version" --artifacts artifacts --out dist --repository "$GITHUB_REPOSITORY" \
-            --installer installer-build/OpenLamina-Windows-Installer.exe
+            --installer installer-build/OpenLamina-Windows-Installer.exe "${signer[@]}"
 
       - name: Try install.sh
         run: |
@@ -703,14 +840,6 @@ jobs:
     permissions:
       contents: write
     steps:
-      # The app and install.sh take only a tag of this form (ReleaseVersion.IsValid, version_key in install.sh)
-      - name: Release tag
-        run: |
-          if ! printf '%s\n' "$GITHUB_REF_NAME" | grep -Eqx '[vV][0-9]+(\.[0-9]+)*(-[0-9A-Za-z.-]+)?'; then
-            echo "::error::$GITHUB_REF_NAME isn't a release version (v1.2.3 or v1.2.3-rc.1): updates would never offer it."
-            exit 1
-          fi
-
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           name: OpenLamina
@@ -753,10 +882,11 @@ jobs:
         run: |
           set -- dist/OpenLamina-Windows-Installer.exe dist/OpenLamina-Windows-Portable.zip dist/OpenLamina-Linux.tar.gz \
             dist/OpenLamina-Source.tar.gz dist/SHA256SUMS.txt dist/SHA256SUMS.txt.sig
+          # A published release's files can't be changed, so a release starts from a pushed tag, never from GitHub's
+          # release page: this makes the draft with every file, to publish by hand.
           if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
-            # Made on GitHub's release page: add the files, and keep its title and notes.
-            gh release upload "$GITHUB_REF_NAME" "$@" --clobber
-          else
-            gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
-              --title "OpenLamina ${GITHUB_REF_NAME#v}" --notes-file dist/RELEASE_NOTES.md "$@"
+            echo "::error::A release for $GITHUB_REF_NAME exists already: files can't be added to it. Push a new tag instead."
+            exit 1
           fi
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag \
+            --title "OpenLamina ${GITHUB_REF_NAME#v}" --notes-file dist/RELEASE_NOTES.md "$@"

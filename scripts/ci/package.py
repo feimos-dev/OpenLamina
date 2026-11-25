@@ -2,7 +2,7 @@
 """Packs OpenLamina's release archives from the release workflow's build artifacts.
 
     scripts/ci/package.py --version VERSION --artifacts DIR --out DIR [--os windows linux] [--repository OWNER/NAME]
-                          [--installer OpenLamina-Windows-Installer.exe]
+                          [--installer OpenLamina-Windows-Installer.exe] [--signer NAME]
     scripts/ci/package.py --version VERSION --artifacts DIR --windows-folder DIR [--repository OWNER/NAME]
 
 DIR of --artifacts has a folder per build, named as the workflow's artifacts: windows-x64 (vrclient_x64.dll),
@@ -200,16 +200,20 @@ def write_source_tar(out: Path, prefix: str, mtime: int) -> None:
     write_tar_gz(out, add)
 
 
-def notes(version: str, commit: str, repository: str, sums: str, installer: bool) -> str:
+def notes(version: str, commit: str, repository: str, sums: str, installer: bool, signer: str | None = None) -> str:
     setup_row = (
         "| **Windows** (most people) | `OpenLamina-Windows-Installer.exe` |\n"
         if installer
         else ""
     )
+    signature = (
+        f"If Windows says it protected your PC, choose *More info*, confirm the publisher is {signer}, then *Run anyway*."
+        if signer
+        else "It isn't signed yet, so if Windows says it protected your PC, choose *More info*, then *Run anyway*."
+    )
     windows = (
-        "**Windows:** run `OpenLamina-Windows-Installer.exe`. No administrator needed. It isn't signed yet, so if Windows "
-        "says it protected your PC, choose *More info*, then *Run anyway*. The OpenLamina app in the Start menu switches "
-        "between OpenLamina and SteamVR, and updates OpenLamina.\n\n"
+        f"**Windows:** run `OpenLamina-Windows-Installer.exe`. No administrator needed. {signature} The OpenLamina app in "
+        "the Start menu switches between OpenLamina and SteamVR, and updates OpenLamina.\n\n"
         if installer
         else ""
     )
@@ -243,6 +247,7 @@ def main() -> None:
     parser.add_argument("--os", nargs="+", choices=["windows", "linux"], default=["windows", "linux"])
     parser.add_argument("--repository", default="feimos-dev/OpenLamina")
     parser.add_argument("--installer", type=Path, help="OpenLamina-Windows-Installer.exe, to put with the archives")
+    parser.add_argument("--signer", help="who signed the installer and the DLLs, for the release notes")
     args = parser.parse_args()
 
     commit = git("rev-parse", "HEAD").strip()
@@ -272,7 +277,7 @@ def main() -> None:
 
     sums = "".join(f"{hashlib.sha256(path.read_bytes()).hexdigest()}  {path.name}\n" for path in made)
     (args.out / "SHA256SUMS.txt").write_text(sums, newline="\n")
-    (args.out / "RELEASE_NOTES.md").write_text(notes(args.version, commit, args.repository, sums, bool(args.installer)), newline="\n")
+    (args.out / "RELEASE_NOTES.md").write_text(notes(args.version, commit, args.repository, sums, bool(args.installer), args.signer), newline="\n")
     for path in made:
         print(f"{path} ({path.stat().st_size // 1024} KB)")
 
