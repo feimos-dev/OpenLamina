@@ -7,7 +7,8 @@ REPOSITORY=feimos-dev/OpenLamina
 FLATPAK_STEAM=com.valvesoftware.Steam
 ARCHIVE=OpenLamina-Linux.tar.gz
 # The release key's public half (installer/release-key.pem): --update installs an archive only with the SHA-256 a
-# release's SHA256SUMS.txt lists, and only if SHA256SUMS.txt.sig is that file's signature with this key.
+# release's SHA256SUMS.txt lists, and only if SHA256SUMS.txt.sig is the signature, with this key, of the line
+# "OpenLamina <tag>" followed by that file.
 RELEASE_KEY='REPLACE-WITH-THE-RELEASE-PUBLIC-KEY'
 
 usage() {
@@ -234,8 +235,8 @@ def main(command, *args):
         print(m.group(1) if m and version_key(m.group(1)) else "")
     elif command == "newest":
         # GitHub's release list on stdin: the newest release newer than the installed version (empty: none) with the
-        # archive and its SHA-256, as "version<TAB>url<TAB>sha256<TAB>sums url<TAB>signature url", the last two the
-        # addresses of its SHA256SUMS.txt and SHA256SUMS.txt.sig ("-" for one it hasn't).
+        # archive and its SHA-256, as "version<TAB>url<TAB>sha256<TAB>sums url<TAB>signature url<TAB>tag", the sums
+        # and signature urls the addresses of its SHA256SUMS.txt and SHA256SUMS.txt.sig ("-" for one it hasn't).
         installed, pre, asset_name = args
         best = None
         for release in json.load(sys.stdin):
@@ -258,7 +259,7 @@ def main(command, *args):
                 if asset.get("name") == asset_name and re.fullmatch(r"sha256:[0-9a-fA-F]{64}", digest) and url:
                     if best is None or key > best[0]:
                         best = (key, version, url, digest[7:].lower(), signed.get("SHA256SUMS.txt") or "-",
-                                signed.get("SHA256SUMS.txt.sig") or "-")
+                                signed.get("SHA256SUMS.txt.sig") or "-", tag)
         if best:
             print("\t".join(best[1:]))
 
@@ -474,7 +475,7 @@ update() {
 		say "No newer release${installed:+ than $installed}$([ $pre = 0 ] && printf ' (--pre includes pre-releases)')."
 		return
 	fi
-	IFS='	' read -r version url sha sums_url sig_url <<EOF
+	IFS='	' read -r version url sha sums_url sig_url tag <<EOF
 $newest
 EOF
 	if [ "$sums_url" = - ] || [ "$sig_url" = - ]; then
@@ -489,11 +490,13 @@ EOF
 	printf '%s\n' "$RELEASE_KEY" >"$work/release-key.pem"
 	fetch "$sums_url" >"$work/SHA256SUMS.txt" || die "Couldn't download $sums_url."
 	fetch "$sig_url" >"$work/SHA256SUMS.txt.sig" || die "Couldn't download $sig_url."
+	# Signed with the tag, so one release's checksums can't pass for another's
+	{ printf 'OpenLamina %s\n' "$tag" && cat "$work/SHA256SUMS.txt"; } >"$work/signed"
 	if ! openssl dgst -sha256 -verify "$work/release-key.pem" -signature "$work/SHA256SUMS.txt.sig" \
-		"$work/SHA256SUMS.txt" >/dev/null 2>&1; then
-		die "OpenLamina $version was refused: its SHA256SUMS.txt isn't signed with OpenLamina's release key."
+		"$work/signed" >/dev/null 2>&1; then
+		die "OpenLamina $version was refused: its SHA256SUMS.txt isn't signed for $tag with OpenLamina's release key."
 	fi
-	signed=$(awk -v name="$ARCHIVE" '$2 == name && $1 ~ /^[0-9a-fA-F]+$/ && length($1) == 64 { print tolower($1); n++ } END { if (n != 1) exit 1 }' \
+	signed=$(awk -v name="$ARCHIVE" '$0 == $1 "  " name && $1 ~ /^[0-9a-fA-F]+$/ && length($1) == 64 { print tolower($1); n++ } END { if (n != 1) exit 1 }' \
 		"$work/SHA256SUMS.txt") || die "OpenLamina $version was refused: its signed SHA256SUMS.txt doesn't list $ARCHIVE once."
 	[ "$signed" = "$sha" ] || die "OpenLamina $version was refused: GitHub lists another SHA-256 for $ARCHIVE than its signed SHA256SUMS.txt."
 	fetch "$url" >"$work/$ARCHIVE" || die "Couldn't download $url."

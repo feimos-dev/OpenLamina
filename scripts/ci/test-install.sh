@@ -178,10 +178,16 @@ hex=$(sha256sum "$archive" | cut -d' ' -f1)
 sha=sha256:$hex
 zero=0000000000000000000000000000000000000000000000000000000000000000
 good_url=https://github.com/feimos-dev/OpenLamina/releases/download/v99999.0.0/OpenLamina-Linux.tar.gz
-# sums <sha256 of the archive> [<key>]: SHA256SUMS.txt listing it, signed with the test key (or <key>)
+# sign [<key> [<tag>]]: STUB_SIG made from STUB_SUMS as the release job makes it, with the test key (or <key>), for
+# v99999.0.0 (or <tag>)
+sign() {
+	{ printf 'OpenLamina %s\n' "${2:-v99999.0.0}" && cat "$STUB_SUMS"; } >"$work/signed"
+	openssl dgst -sha256 -sign "${1:-$work/test-key.pem}" -out "$STUB_SIG" "$work/signed" || fail "openssl couldn't sign the test checksums."
+}
+# sums <sha256 of the archive> [<key> [<tag>]]: SHA256SUMS.txt listing it, signed
 sums() {
 	printf '%s  OpenLamina-Source.tar.gz\n%s  OpenLamina-Linux.tar.gz\n' "$zero" "$1" >"$STUB_SUMS"
-	openssl dgst -sha256 -sign "${2:-$work/test-key.pem}" -out "$STUB_SIG" "$STUB_SUMS" || fail "openssl couldn't sign the test checksums."
+	sign "${2:-}" "${3:-}"
 }
 # releases <url or -> <digest> <tag> <prerelease> [<tag> <prerelease> ...]: one release per tag, each with the archive
 # and, unless $unsigned is 1, SHA256SUMS.txt and its signature
@@ -237,22 +243,25 @@ refused "a release without signed checksums" "has no signed checksums"
 unsigned=0
 releases "$good_url" "$sha" v99999.0.0 false
 sums "$hex" "$work/other-key.pem"
-refused "a release whose checksums another key signed" "isn't signed with OpenLamina's release key"
+refused "a release whose checksums another key signed" "isn't signed for v99999.0.0 with"
+sums "$hex" "" v99998.0.0
+refused "another release's signed checksums" "isn't signed for v99999.0.0 with"
 sums "$hex"
 printf 'changed\n' >>"$STUB_SUMS"
-refused "a release whose checksums changed after signing" "isn't signed with OpenLamina's release key"
+refused "a release whose checksums changed after signing" "isn't signed for v99999.0.0 with"
 sums "$zero"
 refused "a release whose signed checksums list another SHA-256 than GitHub" "GitHub lists another SHA-256"
 releases "$good_url" sha256:$zero v99999.0.0 false
 refused "an archive whose SHA-256 isn't the signed one" "was refused: its SHA-256 is"
-printf '%s  OpenLamina-Source.tar.gz\n' "$hex" >"$STUB_SUMS"
-openssl dgst -sha256 -sign "$work/test-key.pem" -out "$STUB_SIG" "$STUB_SUMS"
+printf '%s  OpenLamina-Source.tar.gz\n%s *OpenLamina-Linux.tar.gz\n' "$hex" "$hex" >"$STUB_SUMS"
+sign
 releases "$good_url" "$sha" v99999.0.0 false
 refused "an archive the signed checksums don't list" "doesn't list OpenLamina-Linux.tar.gz"
-sums "$hex"
+sums "$hex" "" v99998.0.0
 releases "$good_url" "$sha" v99999.0.0-rc.2 true v99999.0.0-rc.10 true v99998.0.0 false
 update || fail "--update failed: $(cat "$work/log")"
 grep -q "Downloading OpenLamina 99998.0.0" "$work/log" || fail "--update didn't choose 99998.0.0: $(cat "$work/log")"
+sums "$hex" "" v99999.0.0-rc.10
 update --pre || fail "--update --pre failed: $(cat "$work/log")"
 grep -q "Downloading OpenLamina 99999.0.0-rc.10" "$work/log" || fail "--update --pre didn't choose 99999.0.0-rc.10: $(cat "$work/log")"
 [ -f "$copy/bin/linux64/vrclient.so" ] || fail "--update didn't install the archive."
