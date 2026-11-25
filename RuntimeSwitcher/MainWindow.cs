@@ -347,7 +347,7 @@ namespace RuntimeSwitcher
                 using (await Updater.DownloadAsync(release.Asset(Install.SetupAssetName), sha256, setup,
                            new Progress<int>(p => _progress.Value = p)))
                 {
-                    // A game started during the download: Setup would ask it to close.
+                    // A game started during the download: Setup would stop on the file in use.
                     if (Install.InUse())
                         throw new IOException("A game started using OpenLamina during the download. Close it, then " +
                                               "update again.");
