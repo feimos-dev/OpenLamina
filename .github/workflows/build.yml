@@ -698,7 +698,7 @@ jobs:
     needs: [package, linux-variants, monado]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
-    # For the SUMS_SIGNING_KEY secret: v* tags only, after an approval
+    # For the SUMS_SIGNING_KEY secret (the environment's settings take v* tags only, after an approval)
     environment: release
     permissions:
       contents: write
@@ -716,9 +716,9 @@ jobs:
           name: OpenLamina
           path: dist
 
-      # SHA256SUMS.txt signed with the release key, an ECDSA P-256 key in PEM (the environment's SUMS_SIGNING_KEY), and
-      # checked with the key the archive's install.sh pins, which OpenLamina.exe pins too: they install only a file the
-      # signed checksums list
+      # The line "OpenLamina <tag>" and SHA256SUMS.txt signed with the release key, an ECDSA P-256 key in PEM (the
+      # environment's SUMS_SIGNING_KEY), and checked with the key the archive's install.sh pins, which OpenLamina.exe
+      # pins too: they install only a file the signed checksums list
       - name: Sign the checksums
         env:
           SIGNING_KEY: ${{ secrets.SUMS_SIGNING_KEY }}
@@ -730,7 +730,9 @@ jobs:
           key=$RUNNER_TEMP/sums-key.pem pinned=$RUNNER_TEMP/pinned-key.pem
           trap 'rm -f "$key"' EXIT
           (umask 077 && printf '%s\n' "$SIGNING_KEY" >"$key")
-          openssl dgst -sha256 -sign "$key" -out dist/SHA256SUMS.txt.sig dist/SHA256SUMS.txt
+          (cd dist && sha256sum -c SHA256SUMS.txt)
+          { printf 'OpenLamina %s\n' "$GITHUB_REF_NAME" && cat dist/SHA256SUMS.txt; } >"$RUNNER_TEMP/signed"
+          openssl dgst -sha256 -sign "$key" -out dist/SHA256SUMS.txt.sig "$RUNNER_TEMP/signed"
           python3 -c '
           import re, sys, tarfile
           with tarfile.open(sys.argv[1]) as t:
@@ -739,7 +741,7 @@ jobs:
           if not m:
               sys.exit("::error::The archive'"'"'s install.sh pins no release key (installer/release-key.pem).")
           open(sys.argv[2], "w").write(m.group(1) + "\n")' dist/OpenLamina-Linux.tar.gz "$pinned"
-          if ! openssl dgst -sha256 -verify "$pinned" -signature dist/SHA256SUMS.txt.sig dist/SHA256SUMS.txt; then
+          if ! openssl dgst -sha256 -verify "$pinned" -signature dist/SHA256SUMS.txt.sig "$RUNNER_TEMP/signed"; then
             echo "::error::SUMS_SIGNING_KEY isn't the key install.sh and OpenLamina.exe pin: updates would refuse this release."
             exit 1
           fi
