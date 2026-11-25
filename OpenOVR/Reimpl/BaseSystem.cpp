@@ -403,20 +403,22 @@ uint32_t BaseSystem::GetSortedTrackedDeviceIndicesOfClass(ETrackedDeviceClass ta
 			toLocal = glm::inverse(S2G_m34(pose.mDeviceToAbsoluteTracking));
 	}
 
+	// The devices that are there: a slot that keeps its class after its device went (GetTrackedDeviceClass) isn't
+	// listed, as IsTrackedDeviceConnected answers false for it
 	std::vector<DeviceSortKey> found;
 	for (vr::TrackedDeviceIndex_t dev = 0; dev < vr::k_unMaxTrackedDeviceCount; dev++) {
 		if (GetTrackedDeviceClass(dev) != targetClass)
 			continue;
+		std::shared_ptr<ITrackedDevice> device = BackendManager::Instance().GetDevice(dev);
+		if (!device)
+			continue;
 
 		DeviceSortKey key{ dev, false, 0.0f };
-		std::shared_ptr<ITrackedDevice> device = BackendManager::Instance().GetDevice(dev);
-		if (device) {
-			vr::TrackedDevicePose_t pose = {};
-			device->GetPose(vr::TrackingUniverseStanding, &pose, TrackingStateType_Now);
-			if (pose.bPoseIsValid) {
-				key.hasPosition = true;
-				key.right = (toLocal * S2G_m34(pose.mDeviceToAbsoluteTracking))[3].x;
-			}
+		vr::TrackedDevicePose_t pose = {};
+		device->GetPose(vr::TrackingUniverseStanding, &pose, TrackingStateType_Now);
+		if (pose.bPoseIsValid) {
+			key.hasPosition = true;
+			key.right = (toLocal * S2G_m34(pose.mDeviceToAbsoluteTracking))[3].x;
 		}
 		found.push_back(key);
 	}
