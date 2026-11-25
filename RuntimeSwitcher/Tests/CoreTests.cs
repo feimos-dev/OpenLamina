@@ -464,7 +464,7 @@ namespace RuntimeSwitcher.Tests
         {
             byte[] body = Encoding.ASCII.GetBytes("the setup");
             Task server = Serve(body);
-            using (FileStream file = await Updater.DownloadAsync(Asset(Sha256Hex(body), body.Length), Destination, null))
+            using (FileStream file = await Updater.DownloadAsync(Asset(Sha256Hex(body), body.Length), Sha256Hex(body), Destination, null))
             {
                 var read = new byte[body.Length + 1];
                 Assert.Equal(body.Length, file.Read(read, 0, read.Length));
@@ -481,7 +481,7 @@ namespace RuntimeSwitcher.Tests
             byte[] body = Encoding.ASCII.GetBytes("not the setup");
             Task server = Serve(body);
             await Assert.ThrowsAsync<InvalidDataException>(() =>
-                Updater.DownloadAsync(Asset(new string('0', 64), body.Length), Destination, null));
+                Updater.DownloadAsync(Asset(new string('0', 64), body.Length), new string('0', 64), Destination, null));
             await server.WaitAsync(TimeSpan.FromSeconds(10));
             Assert.False(File.Exists(Destination));
             Assert.False(File.Exists(Destination + ".part"));
@@ -493,7 +493,7 @@ namespace RuntimeSwitcher.Tests
             byte[] body = new byte[200000];
             Task server = Serve(body);
             await Assert.ThrowsAsync<InvalidDataException>(() =>
-                Updater.DownloadAsync(Asset(Sha256Hex(body), 1000), Destination, null));
+                Updater.DownloadAsync(Asset(Sha256Hex(body), 1000), Sha256Hex(body), Destination, null));
             await server.WaitAsync(TimeSpan.FromSeconds(10));
             Assert.False(File.Exists(Destination));
             Assert.False(File.Exists(Destination + ".part"));
@@ -504,7 +504,7 @@ namespace RuntimeSwitcher.Tests
         {
             byte[] body = new byte[1000];
             Task server = Serve(body, stall: true);
-            Task<FileStream> download = Updater.DownloadAsync(Asset(Sha256Hex(body), body.Length), Destination, null,
+            Task<FileStream> download = Updater.DownloadAsync(Asset(Sha256Hex(body), body.Length), Sha256Hex(body), Destination, null,
                 TimeSpan.FromSeconds(1));
             Assert.Same(download, await Task.WhenAny(download, Task.Delay(TimeSpan.FromSeconds(8))));
             await Assert.ThrowsAsync<IOException>(() => download);

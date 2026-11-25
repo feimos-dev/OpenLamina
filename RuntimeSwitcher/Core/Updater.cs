@@ -8,7 +8,10 @@ using System.Threading.Tasks;
 
 namespace RuntimeSwitcher.Core
 {
-    /// <summary>Asks GitHub for the fork's releases and downloads a release's file, checked against its SHA-256.</summary>
+    /// <summary>
+    /// Asks GitHub for the fork's releases and downloads a release's file, checked against the SHA-256 its signed
+    /// SHA256SUMS.txt lists (<see cref="SignedSums"/>).
+    /// </summary>
     public static class Updater
     {
         private static readonly Lazy<HttpClient> Client = new Lazy<HttpClient>(() =>
@@ -33,18 +36,72 @@ namespace RuntimeSwitcher.Core
         /// <summary>A download that receives nothing for this long is given up.</summary>
         public static readonly TimeSpan DefaultReadTimeout = TimeSpan.FromSeconds(60);
 
+        /// <summary>The most a release's SHA256SUMS.txt or its signature may be.</summary>
+        public const int MaxSumsBytes = 64 * 1024;
+
         /// <summary>
-        /// Downloads <paramref name="asset"/> to <paramref name="destination"/> and keeps it only if its SHA-256 is the
-        /// one GitHub lists. <paramref name="progress"/> gets 0–100. Returns the file open for reading, with only
-        /// reading shared, so it can't be changed or replaced between the check and its use; dispose it after.
-        /// Throws an IOException when nothing arrives for <paramref name="readTimeout"/> (default
-        /// <see cref="DefaultReadTimeout"/>), and an InvalidDataException for more bytes than GitHub lists.
+        /// The SHA-256 of <paramref name="release"/>'s <paramref name="assetName"/> from its SHA256SUMS.txt, once its
+        /// signature (SHA256SUMS.txt.sig) is checked with <paramref name="publicKey"/> (default: the pinned
+        /// <see cref="SignedSums.PublicKey"/>). Throws an InvalidDataException saying why when the release has no such
+        /// files on github.com or they don't check out (<see cref="SignedSums.Expected"/>).
         /// </summary>
-        public static async Task<FileStream> DownloadAsync(ReleaseAsset asset, string destination,
+        public static async Task<string> SignedSha256Async(Release release, string assetName,
+            string publicKey = SignedSums.PublicKey, TimeSpan readTimeout = default)
+        {
+            ReleaseAsset asset = release.Asset(assetName);
+            ReleaseAsset sums = release.Asset(SignedSums.SumsName), signature = release.Asset(SignedSums.SignatureName);
+            if (asset == null)
+                throw new InvalidDataException($"The release has no {assetName}.");
+            if (!SignedSums.IsPinned(publicKey))
+                SignedSums.Expected(null, null, assetName, null, publicKey); // throws: no key
+            if (sums == null || signature == null || !Releases.IsGitHubUrl(sums.DownloadUrl) ||
+                !Releases.IsGitHubUrl(signature.DownloadUrl))
+                throw new InvalidDataException(
+                    $"The release was refused: it has no signed checksums ({SignedSums.SumsName} and {SignedSums.SignatureName}).");
+            byte[] sumsBytes = await GetSmallAsync(sums, readTimeout).ConfigureAwait(false);
+            byte[] signatureBytes = await GetSmallAsync(signature, readTimeout).ConfigureAwait(false);
+            return SignedSums.Expected(sumsBytes, signatureBytes, assetName, asset.Sha256, publicKey);
+        }
+
+        // A file of at most MaxSumsBytes, in memory
+        private static async Task<byte[]> GetSmallAsync(ReleaseAsset asset, TimeSpan readTimeout)
+        {
+            if (readTimeout <= TimeSpan.Zero)
+                readTimeout = DefaultReadTimeout;
+            using (HttpResponseMessage response = await Client.Value
+                       .GetAsync(asset.DownloadUrl, HttpCompletionOption.ResponseHeadersRead).ConfigureAwait(false))
+            {
+                response.EnsureSuccessStatusCode();
+                using (Stream input = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
+                using (var output = new MemoryStream())
+                {
+                    var buffer = new byte[8192];
+                    int read;
+                    while ((read = await ReadWithin(input, buffer, response, readTimeout).ConfigureAwait(false)) > 0)
+                    {
+                        if (output.Length + read > MaxSumsBytes)
+                            throw new InvalidDataException($"{asset.Name} was refused: it is larger than {MaxSumsBytes} bytes.");
+                        output.Write(buffer, 0, read);
+                    }
+
+                    return output.ToArray();
+                }
+            }
+        }
+
+        /// <summary>
+        /// Downloads <paramref name="asset"/> to <paramref name="destination"/> and keeps it only if its SHA-256 is
+        /// <paramref name="sha256"/> (from <see cref="SignedSha256Async"/>). <paramref name="progress"/> gets 0–100.
+        /// Returns the file open for reading, with only reading shared, so it can't be changed or replaced between the
+        /// check and its use; dispose it after. Throws an IOException when nothing arrives for
+        /// <paramref name="readTimeout"/> (default <see cref="DefaultReadTimeout"/>), and an InvalidDataException for
+        /// more bytes than GitHub lists.
+        /// </summary>
+        public static async Task<FileStream> DownloadAsync(ReleaseAsset asset, string sha256, string destination,
             IProgress<int> progress, TimeSpan readTimeout = default)
         {
-            if (asset.Sha256 == null)
-                throw new InvalidDataException($"GitHub lists no SHA-256 for {asset.Name}.");
+            if (sha256 == null)
+                throw new InvalidDataException($"No checked SHA-256 for {asset.Name}.");
             if (readTimeout <= TimeSpan.Zero)
                 readTimeout = DefaultReadTimeout;
             Directory.CreateDirectory(Path.GetDirectoryName(destination));
@@ -91,7 +148,7 @@ namespace RuntimeSwitcher.Core
             try
             {
                 string actual = Sha256Of(file);
-                if (actual == asset.Sha256)
+                if (actual == sha256)
                 {
                     file.Position = 0;
                     return file;
@@ -100,7 +157,7 @@ namespace RuntimeSwitcher.Core
                 file.Dispose();
                 File.Delete(destination);
                 throw new InvalidDataException(
-                    $"{asset.Name} was refused: its SHA-256 is {actual}, but GitHub lists {asset.Sha256}.");
+                    $"{asset.Name} was refused: its SHA-256 is {actual}, but the signed checksums list {sha256}.");
             }
             catch
             {
