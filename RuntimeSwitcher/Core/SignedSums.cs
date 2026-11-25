@@ -27,7 +27,8 @@ namespace RuntimeSwitcher.Core
         /// The release key's public half: the base64 between the PEM lines of installer/release-key.pem (its
         /// SubjectPublicKeyInfo). install.sh pins the same key; a test checks the three agree.
         /// </summary>
-        public const string PublicKey = Placeholder;
+        public const string PublicKey =
+            "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEGlkOmFuwlxKh/FdPbJukNV++m2P8dOp7PlGOisvwXzn70Yw68wxRs0kNZVuogHjZU8VPJ5sxwkjTT2VBICKQaA==";
 
         public static bool IsPinned(string publicKey) => publicKey != null && publicKey != Placeholder;
 

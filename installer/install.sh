@@ -9,7 +9,10 @@ ARCHIVE=OpenLamina-Linux.tar.gz
 # The release key's public half (installer/release-key.pem): --update installs an archive only with the SHA-256 a
 # release's SHA256SUMS.txt lists, and only if SHA256SUMS.txt.sig is the signature, with this key, of the line
 # "OpenLamina <tag>" followed by that file.
-RELEASE_KEY='REPLACE-WITH-THE-RELEASE-PUBLIC-KEY'
+RELEASE_KEY='-----BEGIN PUBLIC KEY-----
+MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEGlkOmFuwlxKh/FdPbJukNV++m2P8
+dOp7PlGOisvwXzn70Yw68wxRs0kNZVuogHjZU8VPJ5sxwkjTT2VBICKQaA==
+-----END PUBLIC KEY-----'
 
 usage() {
 	cat <<'EOF'
