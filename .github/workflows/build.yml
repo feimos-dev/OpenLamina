@@ -698,6 +698,8 @@ jobs:
     needs: [package, linux-variants, monado]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    # For the SUMS_SIGNING_KEY secret: v* tags only, after an approval
+    environment: release
     permissions:
       contents: write
     steps:
@@ -714,13 +716,41 @@ jobs:
           name: OpenLamina
           path: dist
 
+      # SHA256SUMS.txt signed with the release key, an ECDSA P-256 key in PEM (the environment's SUMS_SIGNING_KEY), and
+      # checked with the key the archive's install.sh pins, which OpenLamina.exe pins too: they install only a file the
+      # signed checksums list
+      - name: Sign the checksums
+        env:
+          SIGNING_KEY: ${{ secrets.SUMS_SIGNING_KEY }}
+        run: |
+          if [ -z "$SIGNING_KEY" ]; then
+            echo "::error::The release environment has no SUMS_SIGNING_KEY secret: the checksums can't be signed."
+            exit 1
+          fi
+          key=$RUNNER_TEMP/sums-key.pem pinned=$RUNNER_TEMP/pinned-key.pem
+          trap 'rm -f "$key"' EXIT
+          (umask 077 && printf '%s\n' "$SIGNING_KEY" >"$key")
+          openssl dgst -sha256 -sign "$key" -out dist/SHA256SUMS.txt.sig dist/SHA256SUMS.txt
+          python3 -c '
+          import re, sys, tarfile
+          with tarfile.open(sys.argv[1]) as t:
+              text = t.extractfile("OpenLamina/install.sh").read().decode("utf-8")
+          m = re.search(r"^RELEASE_KEY=\x27(-----BEGIN PUBLIC KEY-----[^\x27]*)\x27", text, re.M)
+          if not m:
+              sys.exit("::error::The archive'"'"'s install.sh pins no release key (installer/release-key.pem).")
+          open(sys.argv[2], "w").write(m.group(1) + "\n")' dist/OpenLamina-Linux.tar.gz "$pinned"
+          if ! openssl dgst -sha256 -verify "$pinned" -signature dist/SHA256SUMS.txt.sig dist/SHA256SUMS.txt; then
+            echo "::error::SUMS_SIGNING_KEY isn't the key install.sh and OpenLamina.exe pin: updates would refuse this release."
+            exit 1
+          fi
+
       - name: Put the files on the release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
           set -- dist/OpenLamina-Windows-Installer.exe dist/OpenLamina-Windows-Portable.zip dist/OpenLamina-Linux.tar.gz \
-            dist/OpenLamina-Source.tar.gz dist/SHA256SUMS.txt
+            dist/OpenLamina-Source.tar.gz dist/SHA256SUMS.txt dist/SHA256SUMS.txt.sig
           if gh release view "$GITHUB_REF_NAME" > /dev/null 2>&1; then
             # Made on GitHub's release page: add the files, and keep its title and notes.
             gh release upload "$GITHUB_REF_NAME" "$@" --clobber
