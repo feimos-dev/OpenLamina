@@ -101,6 +101,18 @@ public:
 	XruCachedViews GetCachedViews(XrSpace space);
 
 	/**
+	 * With parallelProjections, the eye's orientation in the head as the runtime last gave it, which the cached views
+	 * are turned back by: false before it's known, with the option off, or for a view that couldn't be made parallel.
+	 */
+	bool ParallelEyeInHead(int eye, XrQuaternionf* orientation);
+
+	/**
+	 * With parallelProjections, how much wider and taller the larger of the widened views is than the runtime's, so an
+	 * image that size keeps the runtime's detail: false before it's known, or with the option off.
+	 */
+	bool ParallelImageScale(float* width, float* height);
+
+	/**
 	 * Discard all cached xrLocateViews results: the next GetCachedViews asks the runtime again.
 	 */
 	void ClearCachedViews();
@@ -122,6 +134,14 @@ private:
 	std::mutex cachedViewsMtx{};
 
 	std::unordered_map<XrSpace, XruCachedViews> cachedViews{};
+
+	// With parallelProjections: each eye's orientation in the head, the last the runtime gave; guarded by cachedViewsMtx
+	bool eyesInHeadKnown = false;
+	XrQuaternionf eyesInHead[XruEyeCount] = { { 0, 0, 0, 1 }, { 0, 0, 0, 1 } };
+	bool eyesParallel[XruEyeCount] = { false, false };
+	float parallelWidthScale = 1.0f, parallelHeightScale = 1.0f;
+	// Turns views located in `space` to look straight ahead, as ParallelProjections says; called with cachedViewsMtx held
+	void MakeViewsParallel(XrSpace space, const XrViewLocateInfo& locateInfo, const XrViewState& viewState, XrView* views);
 };
 
 class SessionLock;

@@ -2,11 +2,15 @@
 
 #include "xrutil.h"
 
+#include <algorithm>
+#include <glm/gtc/quaternion.hpp>
 #include <mutex>
 #include <thread>
 #include <time.h>
 
 #include "Drivers/Backend.h"
+#include "Misc/Config.h"
+#include "Misc/xrmoreutils.h"
 #include "convert.h"
 #include "xr_ext.h"
 
@@ -332,6 +336,8 @@ XruCachedViews XrSessionGlobals::GetCachedViews(XrSpace space)
 	XrView views[XruEyeCount] = { { XR_TYPE_VIEW }, { XR_TYPE_VIEW } };
 	const XrResult located = xrLocateViews(xr_session.get(), &locateInfo, &viewState, XruEyeCount, &viewCount, views);
 	OOVR_FAILED_XR_SOFT_ABORT(located);
+	if (XR_SUCCEEDED(located) && viewCount == XruEyeCount && oovr_global_configuration.ParallelProjections())
+		MakeViewsParallel(space, locateInfo, viewState, views);
 
 	XruCachedViews cws;
 	cws.viewState = viewState;
@@ -341,6 +347,75 @@ XruCachedViews XrSessionGlobals::GetCachedViews(XrSpace space)
 	if (XR_SUCCEEDED(located) && viewCount == XruEyeCount)
 		cachedViews[space] = cws;
 	return cws;
+}
+
+void XrSessionGlobals::MakeViewsParallel(XrSpace space, const XrViewLocateInfo& locateInfo, const XrViewState& viewState, XrView* views)
+{
+	// The eyes' orientations in the head: from these views where they are the head's, else asked in the view space
+	XrViewState inHeadState = viewState;
+	XrView inHead[XruEyeCount] = { views[0], views[1] };
+	if (space != viewSpace) {
+		XrViewLocateInfo headInfo = locateInfo;
+		headInfo.space = viewSpace;
+		inHeadState = { XR_TYPE_VIEW_STATE };
+		inHead[0] = inHead[1] = { XR_TYPE_VIEW };
+		uint32_t count = 0;
+		if (XR_FAILED(xrLocateViews(xr_session.get(), &headInfo, &inHeadState, XruEyeCount, &count, inHead)) || count != XruEyeCount)
+			inHeadState.viewStateFlags = 0;
+	}
+	if (inHeadState.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT) {
+		for (int eye = 0; eye < XruEyeCount; eye++)
+			eyesInHead[eye] = inHead[eye].pose.orientation;
+		if (!eyesInHeadKnown) {
+			glm::quat left = X2G_quat(eyesInHead[0]), right = X2G_quat(eyesInHead[1]);
+			XrView probe[XruEyeCount] = { views[0], views[1] };
+			for (int eye = 0; eye < XruEyeCount; eye++)
+				xr_utils::ParallelView(probe[eye], eyesInHead[eye]);
+			OOVR_LOGF("parallelProjections: the eyes are turned %.2f and %.2f degrees from the head; the game's views look "
+			          "straight ahead, left eye's field of view %.2f..%.2f by %.2f..%.2f degrees (was %.2f..%.2f by %.2f..%.2f)",
+			    glm::degrees(glm::angle(left)), glm::degrees(glm::angle(right)),
+			    glm::degrees(probe[0].fov.angleLeft), glm::degrees(probe[0].fov.angleRight),
+			    glm::degrees(probe[0].fov.angleDown), glm::degrees(probe[0].fov.angleUp),
+			    glm::degrees(views[0].fov.angleLeft), glm::degrees(views[0].fov.angleRight),
+			    glm::degrees(views[0].fov.angleDown), glm::degrees(views[0].fov.angleUp));
+		}
+		eyesInHeadKnown = true;
+	}
+	if (!eyesInHeadKnown)
+		return;
+	float widthScale = 1.0f, heightScale = 1.0f;
+	for (int eye = 0; eye < XruEyeCount; eye++) {
+		const XrFovf turned = views[eye].fov;
+		eyesParallel[eye] = xr_utils::ParallelView(views[eye], eyesInHead[eye]);
+		glm::vec2 scale = xr_utils::TangentSpanScale(turned, views[eye].fov);
+		widthScale = std::max(widthScale, scale.x);
+		heightScale = std::max(heightScale, scale.y);
+	}
+	parallelWidthScale = widthScale;
+	parallelHeightScale = heightScale;
+}
+
+bool XrSessionGlobals::ParallelImageScale(float* width, float* height)
+{
+	if (!oovr_global_configuration.ParallelProjections())
+		return false;
+	std::lock_guard lock(cachedViewsMtx);
+	if (!eyesInHeadKnown)
+		return false;
+	*width = parallelWidthScale;
+	*height = parallelHeightScale;
+	return true;
+}
+
+bool XrSessionGlobals::ParallelEyeInHead(int eye, XrQuaternionf* orientation)
+{
+	if (!oovr_global_configuration.ParallelProjections() || eye < 0 || eye >= XruEyeCount)
+		return false;
+	std::lock_guard lock(cachedViewsMtx);
+	if (!eyesInHeadKnown || !eyesParallel[eye])
+		return false;
+	*orientation = eyesInHead[eye];
+	return true;
 }
 
 const std::vector<int64_t>& XrSessionGlobals::SwapchainFormats()

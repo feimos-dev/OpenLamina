@@ -82,6 +82,9 @@ run --cases eye-gaze --script tests/conformance/scripts/eye_gaze.json --expect t
 run --cases eye-gaze --script tests/conformance/scripts/eye_gaze_canted.json --manifest tests/unit/data/manifest_basic.json --expect tests/conformance/expect/eye_gaze_canted.json --out "$out"/eye-gaze-canted
 run --cases eye-gaze --script tests/conformance/scripts/eye_gaze.json --manifest tests/unit/data/manifest_basic.json --ini tests/conformance/ini/eye_tracking_off.ini --expect tests/conformance/expect/eye_gaze_off.json --out "$out"/eye-gaze-off
 run --cases eye-gaze --manifest tests/unit/data/manifest_basic.json --expect tests/conformance/expect/eye_gaze_off.json --out "$out"/eye-gaze-noext
+# The eyes the game is told on a canted headset: turned as the runtime has them, and parallel with parallelProjections
+run --cases eye-views --script tests/conformance/scripts/canted.json --expect tests/conformance/expect/eye_views_canted.json --out "$out"/eye-views-canted
+run --cases eye-views --script tests/conformance/scripts/canted.json --ini tests/conformance/ini/parallel_projections.ini --expect tests/conformance/expect/eye_views_parallel.json --out "$out"/eye-views-parallel
 # IVRInput's eye tracking action: a manifest with a binding file naming it, a gaze without a position, eyeTracking=off
 run --cases eye-tracking --script tests/conformance/scripts/eye_gaze.json --manifest tests/unit/data/manifest_eye_tracking.json --expect tests/conformance/expect/eye_tracking.json --out "$out"/eye-tracking
 run --cases eye-tracking --script tests/conformance/scripts/eye_gaze_no_position.json --manifest tests/unit/data/manifest_eye_tracking.json --expect tests/conformance/expect/eye_tracking.json --out "$out"/eye-tracking-no-position

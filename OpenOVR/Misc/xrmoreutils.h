@@ -8,6 +8,7 @@
 
 #include "generated/interfaces/vrtypes.h"
 #include <glm/mat4x4.hpp>
+#include <glm/vec2.hpp>
 #include <openxr/openxr.h>
 #include <optional>
 
@@ -26,6 +27,19 @@ XrTime PoseTimeForState(bool latest, XrTime requested, XrTime now, XrTime frameT
 // Moves two eyes apart by offset (closer together for a negative one), each by half of it along the line between them;
 // eyes at the same place stay
 void WidenEyes(XrPosef& left, XrPosef& right, float offset);
+
+// A view turned to look where the head looks, for a game that renders both eyes facing straight ahead: `eyeInHead` is
+// the view's orientation in the head. The field of view grows to take in all of the view's. A view that turns so far
+// that part of it is behind the head stays as it is, and the answer is false.
+bool ParallelView(XrView& view, const XrQuaternionf& eyeInHead);
+
+// How much wider (x) and taller (y) `to` is than `from`, measured on the z = -1 plane: the image size that keeps a
+// view's detail when its field of view changes from one to the other
+glm::vec2 TangentSpanScale(const XrFovf& from, const XrFovf& to);
+
+// A point given as tangents on a view's z = -1 plane, as the head sees it through ParallelView's view: unchanged where
+// it's behind the head
+XrVector2f ParallelTangents(const XrVector2f& tangents, const XrQuaternionf& eyeInHead);
 
 // The heading of a pose's forward direction as a rotation about the vertical axis, ignoring pitch and roll
 XrQuaternionf YawOnly(const XrQuaternionf& orientation);

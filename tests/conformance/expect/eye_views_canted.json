@@ -1,0 +1,25 @@
+{
+ "#": "With scripts/canted.json: views turned 10 degrees outwards, 40 degrees towards the nose and 45 the other ways. Without parallelProjections the game is told the eyes as the runtime has them: turned, with the runtime's field of view (tan 40 = 0.8391) and image size.",
+ "eye-views/left eye/-/-": {
+  "raw": {
+   "bottom": 1.0,
+   "left": -1.0,
+   "right": 0.8391,
+   "top": -1.0
+  },
+  "turn_deg": 10.0
+ },
+ "eye-views/right eye/-/-": {
+  "raw": {
+   "bottom": 1.0,
+   "left": -0.8391,
+   "right": 1.0,
+   "top": -1.0
+  },
+  "turn_deg": -10.0
+ },
+ "eye-views/recommended size/-/-": {
+  "height": 1920,
+  "width": 1920
+ }
+}

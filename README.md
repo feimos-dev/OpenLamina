@@ -217,6 +217,7 @@ On Windows the app's *Settings* window edits the common options. An unknown opti
 | `handColour` | `#4c4c4c` | Colour of those hands. |
 | `useSubmittedPose` | on | Place each frame by the head pose the game rendered it with. |
 | `submitDepth` | on | Pass the game's depth to the runtime for reprojection. |
+| `parallelProjections` | `auto` | On a headset with outward-turned eyes, give the game eyes that look straight ahead, for games whose image is hard to focus on such a headset. `auto` turns it on for the games known to need it ([the list](OpenOVR/Misc/ParallelProjectionGames.inc)); `true` or `false` for every game. On Windows, a game's own choice in the OpenLamina app's per-app settings (right-click the game, Parallel projections) comes first. |
 | `mirrorWindow` | off | A desktop window with the left eye, for games that ask for one (Windows). |
 | `enableHiddenMeshFix` | on | Fit the hidden area mask to the view. Turn off if you see black areas at the edges. |
 | `hiddenMeshVerticalScale` | `1.0` | Shrink the rendered area at the top and bottom for performance (0.5 to 1.0). |

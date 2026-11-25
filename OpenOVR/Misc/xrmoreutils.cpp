@@ -7,6 +7,8 @@
 #include "xrmoreutils.h"
 #include <convert.h>
 #include <cmath>
+#include <glm/common.hpp>
+#include <glm/gtc/quaternion.hpp>
 
 XrTime xr_utils::PoseTimeForPrediction(float secondsFromNow, XrTime now, XrTime frameTime)
 {
@@ -48,6 +50,59 @@ void xr_utils::WidenEyes(XrPosef& left, XrPosef& right, float offset)
 	glm::vec3 half = glm::normalize(apart) * (offset / 2);
 	left.position = G2X_v3f(l - half);
 	right.position = G2X_v3f(r + half);
+}
+
+// A direction from the eye through `tangents` on its z = -1 plane, as tangents on the head's; false behind the head
+static bool HeadTangents(glm::vec2 tangents, const glm::quat& eyeInHead, glm::vec2* out)
+{
+	glm::vec3 direction = eyeInHead * glm::vec3(tangents.x, tangents.y, -1.0f);
+	if (!(direction.z < -1e-4f))
+		return false;
+	*out = glm::vec2(direction.x, direction.y) / -direction.z;
+	return true;
+}
+
+bool xr_utils::ParallelView(XrView& view, const XrQuaternionf& eyeInHead)
+{
+	glm::quat eye = glm::normalize(X2G_quat(eyeInHead));
+	// An eye that isn't turned keeps its view exactly
+	if (glm::length(glm::vec3(eye.x, eye.y, eye.z)) < 1e-6f)
+		return true;
+	const XrFovf& fov = view.fov;
+	const float left = tanf(fov.angleLeft), right = tanf(fov.angleRight), up = tanf(fov.angleUp), down = tanf(fov.angleDown);
+	// The edges stay straight lines on the head's plane: the corners bound them
+	const glm::vec2 corners[] = { { left, up }, { right, up }, { left, down }, { right, down } };
+	glm::vec2 low(INFINITY), high(-INFINITY);
+	for (const glm::vec2& corner : corners) {
+		glm::vec2 point;
+		if (!HeadTangents(corner, eye, &point))
+			return false;
+		low = glm::min(low, point);
+		high = glm::max(high, point);
+	}
+	view.fov.angleLeft = atanf(low.x);
+	view.fov.angleRight = atanf(high.x);
+	view.fov.angleUp = atanf(high.y);
+	view.fov.angleDown = atanf(low.y);
+	view.pose.orientation = G2X_quat(glm::normalize(X2G_quat(view.pose.orientation) * glm::inverse(eye)));
+	return true;
+}
+
+glm::vec2 xr_utils::TangentSpanScale(const XrFovf& from, const XrFovf& to)
+{
+	const float fromWidth = tanf(from.angleRight) - tanf(from.angleLeft), fromHeight = tanf(from.angleUp) - tanf(from.angleDown);
+	const float toWidth = tanf(to.angleRight) - tanf(to.angleLeft), toHeight = tanf(to.angleUp) - tanf(to.angleDown);
+	if (!(fromWidth > 0.0f) || !(fromHeight > 0.0f) || !(toWidth > 0.0f) || !(toHeight > 0.0f))
+		return glm::vec2(1.0f);
+	return glm::vec2(toWidth / fromWidth, toHeight / fromHeight);
+}
+
+XrVector2f xr_utils::ParallelTangents(const XrVector2f& tangents, const XrQuaternionf& eyeInHead)
+{
+	glm::vec2 point;
+	if (!HeadTangents(glm::vec2(tangents.x, tangents.y), glm::normalize(X2G_quat(eyeInHead)), &point))
+		return tangents;
+	return { point.x, point.y };
 }
 
 XrQuaternionf xr_utils::YawOnly(const XrQuaternionf& orientation)

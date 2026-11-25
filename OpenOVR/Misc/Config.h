@@ -3,6 +3,8 @@
 #include <mutex>
 #include <string>
 
+#include "ParallelProjections.h"
+
 // openlamina.ini's options. The file is read at the first question, not when the library is loaded (the program's
 // logging and working directory are its own by then).
 class Config {
@@ -25,6 +27,13 @@ public:
 	inline bool UseSubmittedPose() const { return Loaded().useSubmittedPose; }
 	/** With Submit_TextureWithDepth, where the runtime has XR_KHR_composition_layer_depth: each view gets the depth */
 	inline bool SubmitDepth() const { return Loaded().submitDepth; }
+	/**
+	 * On a headset whose eyes are turned outwards: the game is given eyes that look straight ahead, each with a field
+	 * of view widened to take in the turned one, for games that render as if the eyes were never turned. The game
+	 * list's choice for this program, else openlamina.ini's (auto, true or false), else on for the games known to need
+	 * it (ParallelProjections.h).
+	 */
+	inline bool ParallelProjections() const { return Loaded().parallelProjectionsOn; }
 	/** Frames of OpenLamina's own while the game runs none: the game's last frame again, its overlays and its skybox */
 	inline bool OwnFrames() const { return Loaded().ownFrames; }
 	/** A desktop window with the game's left eye, when the game asks for one (IVRCompositor::ShowMirrorWindow) */
@@ -84,6 +93,8 @@ private:
 	bool initUsingVulkan = false;
 	bool useSubmittedPose = true;
 	bool submitDepth = true;
+	parallel_projections::Choice parallelProjections = parallel_projections::Choice::Automatic;
+	bool parallelProjectionsOn = false;
 	bool ownFrames = true;
 	bool mirrorWindow = false;
 	bool keyboard = true;

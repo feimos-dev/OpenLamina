@@ -686,4 +686,27 @@ namespace RuntimeSwitcher.Tests
             }
         }
     }
+
+    public class ParallelProjectionGamesTests
+    {
+        [Fact]
+        public void TheLibrarysListIsEmbedded()
+        {
+            Assert.Equal("Elite Dangerous",
+                ParallelProjectionGames.Find(@"A:\SteamLibrary\steamapps\common\Elite Dangerous\EliteDangerous64.exe"));
+            Assert.Equal("Elite Dangerous", ParallelProjectionGames.Find("ELITEDANGEROUS64.EXE"));
+            Assert.Null(ParallelProjectionGames.Find(@"C:\Games\hlvr.exe"));
+            Assert.Null(ParallelProjectionGames.Find(null));
+        }
+
+        [Fact]
+        public void ReadsEntriesAndSkipsComments()
+        {
+            var games = ParallelProjectionGames.Parse(
+                "// { \"Commented.exe\", \"Not a game\" },\n{ \"A.exe\", \"Game A\" },\n  {\"b.exe\",\"Game B\"},\n");
+            Assert.Equal(2, games.Count);
+            Assert.Equal("Game A", ParallelProjectionGames.Find(games, "/games/a.EXE"));
+            Assert.Equal("Game B", ParallelProjectionGames.Find(games, "B.exe"));
+        }
+    }
 }

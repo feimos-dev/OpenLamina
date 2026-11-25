@@ -147,6 +147,7 @@ add_executable(oc_unit_tests
 	unit/HmdTests.cpp
 	unit/SessionLifecycleTests.cpp
 	unit/DeviceSlotsTests.cpp
+	unit/ParallelProjectionsTests.cpp
 	unit/EntryPointsTests.cpp
 	unit/BaseMailboxTests.cpp
 	unit/BaseResourcesTests.cpp
