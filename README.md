@@ -260,8 +260,9 @@ scripts\ci\build-windows.ps1 -Arch x64 -Vulkan C:\vcpkg\installed\x64-windows
 installer and `installer/install.sh` the Linux one. `scripts/ci/build-installer.ps1` builds the Windows installer
 (needs the .NET SDK 8 and Inno Setup 6).
 
-**Releases:** a pushed `v*` tag builds and tests everything, signs the Windows files and the checksums, and makes a
-draft release. Signing waits for the maintainer's approval; every other build is unsigned.
+**Releases:** a `v*` tag builds and tests everything, signs the Windows files and the checksums, and puts the files on
+its release: a new draft for a pushed tag, or the release made on GitHub's release page. Signing waits for the
+maintainer's approval; every other build is unsigned.
 
 The OpenVR headers are split per interface version and the interface stubs are generated during the build; `doc/`
 explains how. To add a new OpenVR SDK, add its `openvr.h` to `OpenVRHeaders/`, refresh
