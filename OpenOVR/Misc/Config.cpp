@@ -1,7 +1,9 @@
 #include "stdafx.h"
 
 #include "Config.h"
+#include "JsonFile.h"
 #include "Numbers.h"
+#include "Reimpl/BaseClientCore.h"
 #include "ini.h"
 
 #include <algorithm>
@@ -170,6 +172,20 @@ static string parse_handController(string orig, string name, int line)
 	return val;
 }
 
+// parallelProjections: auto, or a boolean
+static parallel_projections::Choice parse_parallel(string orig, string name, int line)
+{
+	if (str_tolower(orig) == "auto") {
+		OOVR_LOGF("Setting config param %s to auto", name.c_str());
+		return parallel_projections::Choice::Automatic;
+	}
+	try {
+		return parse_bool(orig, name, line) ? parallel_projections::Choice::On : parallel_projections::Choice::Off;
+	} catch (const BadConfigValue&) {
+		BAD_VALUE("Value " + orig + " for " + name + " on line " + to_string(line) + " is neither auto nor a boolean - true/on/enabled/false/off/disabled");
+	}
+}
+
 int Config::ini_handler(void* user, const char* pSection,
     const char* pName, const char* pValue,
     int lineno)
@@ -205,6 +221,7 @@ int Config::ini_handler(void* user, const char* pSection,
 		CFGOPT(bool, initUsingVulkan);
 		CFGOPT(bool, useSubmittedPose);
 		CFGOPT(bool, submitDepth);
+		CFGOPT(parallel, parallelProjections);
 		CFGOPT(bool, ownFrames);
 		CFGOPT(bool, mirrorWindow);
 		CFGOPT(bool, keyboard);
@@ -367,6 +384,21 @@ void Config::Read()
 	// No file is no problem: the options are optional, and keep their defaults
 	if (found > 1)
 		OOVR_LOGF("%d config files read; each later one overrides the keys it sets", found);
+
+	// The game list's choice for this program: apps-config.json next to the DLL, written by the settings app
+	const std::string appPath = BaseClientCore::GetAppPath();
+	parallel_projections::Choice perApp = parallel_projections::Choice::Automatic;
+#ifdef _WIN32
+	Json::Value apps;
+	if (oc_read_json_file(std::filesystem::path(BaseClientCore::GetDllDir() + L"apps-config.json"), apps)) {
+		const Json::Value app = apps.get(appPath, Json::Value());
+		if (app.isObject() && app["parallel_projections"].isBool())
+			perApp = app["parallel_projections"].asBool() ? parallel_projections::Choice::On : parallel_projections::Choice::Off;
+	}
+#endif
+	parallel_projections::Decision decision = parallel_projections::Decide(perApp, parallelProjections, appPath);
+	parallelProjectionsOn = decision.on;
+	OOVR_LOGF("parallelProjections %s: %s", decision.on ? "on" : "off", decision.reason.c_str());
 }
 
 Config::~Config()

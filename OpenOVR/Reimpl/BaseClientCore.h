@@ -17,11 +17,9 @@ public:
 	static inline vr::EVRApplicationType appType = vr::VRApplication_Max;
 	// The folder of OpenComposite's DLL, ending with a separator
 	static std::wstring GetDllDir();
-
-private:
+	// The program's executable, UTF-8: the key of its entries in applist.json and apps-config.json
 	static std::string GetAppPath();
 
-public:
 	/** Initializes the system */
 	vr::EVRInitError Init(vr::EVRApplicationType eApplicationType, const char* pStartupInfo);
 

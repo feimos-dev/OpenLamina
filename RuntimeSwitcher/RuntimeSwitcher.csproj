@@ -41,6 +41,8 @@
   <ItemGroup>
     <!-- icon.ico (drawn by art/icon/make_icon.py) is embedded a second time for AppIcon; ApplicationIcon only sets the exe's. -->
     <EmbeddedResource Include="icon.ico" LogicalName="OpenLamina.icon.ico" />
+    <!-- The games the library turns parallel projections on for by itself, read by Core/ParallelProjectionGames.cs. -->
+    <EmbeddedResource Include="../OpenOVR/Misc/ParallelProjectionGames.inc" LogicalName="OpenLamina.ParallelProjectionGames.inc" />
   </ItemGroup>
 
   <ItemGroup>

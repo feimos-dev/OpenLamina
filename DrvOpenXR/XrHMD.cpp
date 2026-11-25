@@ -50,16 +50,28 @@ void XrHMD::GetRecommendedRenderTargetSize(uint32_t* width, uint32_t* height)
 	float scale = BaseSettings::RenderScale(SharedStore::Get(), oovr_global_configuration.SupersampleRatio());
 	answeredRenderScale = scale;
 
+	// With parallelProjections the views are wider and taller than the runtime's: the image grows with them, so the
+	// detail stays the runtime's. The views are located first if no frame has yet.
+	float widthScale = 1.0f, heightScale = 1.0f;
+	if (oovr_global_configuration.ParallelProjections()) {
+		auto sessionLock = xr_session.lock_shared();
+		if (xr_gbl) {
+			xr_gbl->GetCachedViews(xr_gbl->viewSpace);
+			if (!xr_gbl->ParallelImageScale(&widthScale, &heightScale))
+				OOVR_LOG_ONCE("parallelProjections: the eyes' turn isn't known yet, so the image size is the runtime's");
+		}
+	}
+
 	// One size for both eyes: what the larger of the two needs, within what the smaller can have
 	const XrViewConfigurationView& left = xr_main_view(XruEyeLeft);
 	const XrViewConfigurationView& right = xr_main_view(XruEyeRight);
 	auto smaller = [](uint32_t a, uint32_t b) { return a && b ? std::min(a, b) : std::max(a, b); };
 	if (width)
 		*width = ScaledImageSize(std::max(left.recommendedImageRectWidth, right.recommendedImageRectWidth),
-		    smaller(left.maxImageRectWidth, right.maxImageRectWidth), scale);
+		    smaller(left.maxImageRectWidth, right.maxImageRectWidth), scale * widthScale);
 	if (height)
 		*height = ScaledImageSize(std::max(left.recommendedImageRectHeight, right.recommendedImageRectHeight),
-		    smaller(left.maxImageRectHeight, right.maxImageRectHeight), scale);
+		    smaller(left.maxImageRectHeight, right.maxImageRectHeight), scale * heightScale);
 }
 
 // from BaseSystem
@@ -342,10 +354,17 @@ vr::HiddenAreaMesh_t XrHMD::GetHiddenAreaMesh(vr::EVREye eEye, vr::EHiddenAreaMe
 	float ftop, fbottom, fleft, fright;
 	GetProjectionRaw(eEye, &fleft, &fright, &ftop, &fbottom);
 
+	// The runtime's mask is in its own turned view: with parallelProjections, moved onto the game's straight one
+	// (GetProjectionRaw has located the views)
+	XrQuaternionf eyeInHead;
+	const bool parallel = xr_gbl && xr_gbl->ParallelEyeInHead((int)eye, &eyeInHead);
+
 	for (uint32_t i = 0; i < mask.indexCountOutput; i++) {
 		if (indices[i] >= mask.vertexCountOutput)
 			return HiddenAreaMesh(nullptr, 0);
 		XrVector2f v = vertices[indices[i]];
+		if (parallel)
+			v = xr_utils::ParallelTangents(v, eyeInHead);
 
 		if (oovr_global_configuration.EnableHiddenMeshFix()) {
 			if (fabs(v.y - ftop) > 0.001 && fabs(v.y - fbottom) > 0.001) {

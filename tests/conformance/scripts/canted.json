@@ -1,0 +1,6 @@
+{
+  "#": "A headset whose views are each turned 10 degrees outwards and see 40 degrees towards the nose (45 the other ways)",
+  "extensions": ["XR_KHR_D3D11_enable"],
+  "cant_deg": 10,
+  "fov_inner_deg": 40
+}

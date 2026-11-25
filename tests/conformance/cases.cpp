@@ -2302,6 +2302,50 @@ void EyeGazeCase(CaseContext& c)
 	c.core->Cleanup();
 }
 
+// The eyes as the game is told them (expect/eye_views*.json), on the stand-in with scripts/canted.json, after 10
+// frames: each eye's turn about the head's up axis (degrees, positive to the left), its GetProjectionRaw and the
+// recommended image size. Values are rounded to 4 places.
+void EyeViewsCase(CaseContext& c)
+{
+	Frames f;
+	if (!OpenFrames(c, f))
+		return;
+	vr::EVRInitError le;
+	auto* sys = (vr::IVRSystem_026::IVRSystem*)c.core->GetGenericInterface("IVRSystem_026", &le);
+	if (!sys) {
+		c.Record("no IVRSystem_026", Err(le));
+		c.core->Cleanup();
+		return;
+	}
+	auto round4 = [](double v) { return std::round(v * 10000) / 10000; };
+	callers::Texture tex(ArgSet::Valid, *c.call);
+	for (int frame = 1; frame <= 10; frame++) {
+		vr::TrackedDevicePose_t poses[16];
+		f.comp->WaitGetPoses(poses, 16, nullptr, 0);
+		f.comp->Submit(vr::Eye_Left, tex.get(), nullptr, vr::Submit_Default);
+		f.comp->Submit(vr::Eye_Right, tex.get(), nullptr, vr::Submit_Default);
+	}
+	for (vr::EVREye eye : { vr::Eye_Left, vr::Eye_Right }) {
+		Json::Value r;
+		vr::HmdMatrix34_t m = sys->GetEyeToHeadTransform(eye);
+		r["turn_deg"] = round4(std::atan2((double)m.m[0][2], (double)m.m[2][2]) * 180.0 / 3.14159265358979);
+		float left = 0, right = 0, top = 0, bottom = 0;
+		sys->GetProjectionRaw(eye, &left, &right, &top, &bottom);
+		r["raw"]["left"] = round4(left);
+		r["raw"]["right"] = round4(right);
+		r["raw"]["top"] = round4(top);
+		r["raw"]["bottom"] = round4(bottom);
+		c.Record(eye == vr::Eye_Left ? "left eye" : "right eye", r);
+	}
+	uint32_t w = 0, h = 0;
+	sys->GetRecommendedRenderTargetSize(&w, &h);
+	Json::Value size;
+	size["width"] = w;
+	size["height"] = h;
+	c.Record("recommended size", size);
+	c.core->Cleanup();
+}
+
 // IVRInput's eye tracking action (expect/eye_tracking.json), on the stand-in with scripts/eye_gaze.json and
 // --manifest manifest_eye_tracking.json: the gaze as the game sees it at frames 30 (tracked), 55 (not tracked) and
 // 75 (not valid), in the standing and seated spaces, and the argument errors at frame 30. Values are rounded to 4
@@ -4190,6 +4234,7 @@ const std::map<std::string, CaseFn>& conformance::Cases()
 		{ "input-primary-hand", InputPrimaryHandCase },
 		{ "binding-info", BindingInfoCase },
 		{ "eye-gaze", EyeGazeCase },
+		{ "eye-views", EyeViewsCase },
 		{ "eye-tracking", EyeTrackingInputCase },
 		{ "input-threads", InputThreadsCase },
 		{ "events-listen", EventsListenCase },

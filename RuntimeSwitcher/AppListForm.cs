@@ -37,9 +37,23 @@ namespace RuntimeSwitcher
         private const string KeyGlobalConfig = "***GlobalConfig";
         private const string KeyDefaultRuntime = "default_runtime";
 
+        private readonly ToolStripMenuItem _parallelAuto = new ToolStripMenuItem("Automatic");
+        private readonly ToolStripMenuItem _parallelOn = new ToolStripMenuItem("On");
+        private readonly ToolStripMenuItem _parallelOff = new ToolStripMenuItem("Off");
+        private readonly ToolStripMenuItem _parallelMenu = new ToolStripMenuItem("Parallel projections");
+
         public AppListForm(string appListPath, string configPath)
         {
             InitializeComponent();
+
+            _parallelAuto.Click += (sender, e) => SetParallelProjections(null);
+            _parallelOn.Click += (sender, e) => SetParallelProjections(true);
+            _parallelOff.Click += (sender, e) => SetParallelProjections(false);
+            contextMenuStrip1.Items.Add(new ToolStripSeparator());
+            _parallelMenu.DropDownItems.AddRange(new ToolStripItem[] { _parallelAuto, _parallelOn, _parallelOff });
+            contextMenuStrip1.Items.Add(_parallelMenu);
+            contextMenuStrip1.Opening += (sender, e) => ShowParallelProjections();
+            appsList.ShowItemToolTips = true;
 
             this._configPath = configPath;
             _config = ReadAppListFile(configPath);
@@ -154,6 +168,8 @@ namespace RuntimeSwitcher
         {
             ListViewItem item = _items[app];
             item.Text = app.Name;
+            item.ToolTipText = $"{app.Path}\nParallel projections: {(app.ParallelProjectionsOn ? "on" : "off")}" +
+                               (app.ParallelProjections == null ? " (automatic)" : "");
             switch (app.SelectedRuntime)
             {
                 case VRApp.Runtime.Default:
@@ -194,6 +210,36 @@ namespace RuntimeSwitcher
             {
                 VRApp app = _itemApps[item];
                 app.SelectedRuntime = runtime;
+                UpdateViewFor(app);
+            }
+
+            Save();
+        }
+
+        private List<VRApp> SelectedApps() =>
+            appsList.SelectedItems.Cast<ListViewItem>().Select(item => _itemApps[item]).ToList();
+
+        /// <summary>The selected programs' choice ticked, and what automatic is for them, where they all agree.</summary>
+        private void ShowParallelProjections()
+        {
+            List<VRApp> apps = SelectedApps();
+            _parallelMenu.Enabled = apps.Count > 0;
+            List<bool?> choices = apps.Select(a => a.ParallelProjections).Distinct().ToList();
+            bool? choice = choices.Count == 1 ? choices[0] : null;
+            bool agree = choices.Count == 1;
+            _parallelAuto.Checked = agree && choice == null;
+            _parallelOn.Checked = agree && choice == true;
+            _parallelOff.Checked = agree && choice == false;
+
+            List<bool> automatic = apps.Select(a => Core.ParallelProjectionGames.Find(a.Path) != null).Distinct().ToList();
+            _parallelAuto.Text = automatic.Count == 1 ? $"Automatic ({(automatic[0] ? "on" : "off")})" : "Automatic";
+        }
+
+        private void SetParallelProjections(bool? on)
+        {
+            foreach (VRApp app in SelectedApps())
+            {
+                app.ParallelProjections = on;
                 UpdateViewFor(app);
             }
 
@@ -286,6 +332,24 @@ namespace RuntimeSwitcher
                         _config["runtime"] = JToken.FromObject(value);
                 }
             }
+
+            /// <summary>On or off for this program, or null for automatic: on for the games known to need it.</summary>
+            public bool? ParallelProjections
+            {
+                get => _config["parallel_projections"]?.Type == JTokenType.Boolean
+                    ? _config["parallel_projections"].ToObject<bool>()
+                    : (bool?)null;
+                set
+                {
+                    if (value == null)
+                        _config.Remove("parallel_projections");
+                    else
+                        _config["parallel_projections"] = value.Value;
+                }
+            }
+
+            /// <summary>Whether the library gives this program parallel projections.</summary>
+            public bool ParallelProjectionsOn => ParallelProjections ?? Core.ParallelProjectionGames.Find(Path) != null;
 
             public VRApp(string exeName, JObject data, JObject config)
             {

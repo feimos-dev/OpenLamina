@@ -6,6 +6,7 @@ OpenOVR/Misc/Config.cpp|parse_dashboard|BAD_VALUE|1|throws BadConfigValue, which
 OpenOVR/Misc/Config.cpp|parse_float|BAD_VALUE|2|throws BadConfigValue, which ini_handler in the same file catches: a bad openlamina.ini value keeps its default
 OpenOVR/Misc/Config.cpp|parse_handController|BAD_VALUE|1|throws BadConfigValue, which ini_handler in the same file catches: a bad openlamina.ini value keeps its default
 OpenOVR/Misc/Config.cpp|parse_layout|BAD_VALUE|1|throws BadConfigValue, which ini_handler in the same file catches: a bad openlamina.ini value keeps its default
+OpenOVR/Misc/Config.cpp|parse_parallel|BAD_VALUE|1|throws BadConfigValue, which ini_handler in the same file catches: a bad openlamina.ini value keeps its default
 OpenOVR/Misc/Config.cpp|parse_uint32_t|BAD_VALUE|1|throws BadConfigValue, which ini_handler in the same file catches: a bad openlamina.ini value keeps its default
 OpenOVR/Misc/SoftFail.cpp|oc_entry_exception|throw|1|rethrows the exception being handled inside a try whose catch (...) is the next line, to read its message: it never leaves the function
 OpenOVR/Misc/SoftFail.cpp|oc_soft_fail|oovr_abort_raw|1|stopOnSoftAbort, a debugging setting off by default: an unsupported call then stops the game on purpose

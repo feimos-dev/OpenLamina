@@ -1,0 +1,25 @@
+{
+ "#": "As eye_views_canted.json with ini/parallel_projections.ini: the eyes look straight ahead, each field of view widened to take in the turned one (the left eye 55 degrees left, 30 right, tan 50.95 = 1.2328 up and down), and the image grows with it ((tan 55 + tan 30) / (1 + tan 40) wider, 1.2328 taller).",
+ "eye-views/left eye/-/-": {
+  "raw": {
+   "bottom": 1.2328,
+   "left": -1.4281,
+   "right": 0.5774,
+   "top": -1.2328
+  },
+  "turn_deg": 0.0
+ },
+ "eye-views/right eye/-/-": {
+  "raw": {
+   "bottom": 1.2328,
+   "left": -0.5774,
+   "right": 1.4281,
+   "top": -1.2328
+  },
+  "turn_deg": 0.0
+ },
+ "eye-views/recommended size/-/-": {
+  "height": 2367,
+  "width": 2094
+ }
+}

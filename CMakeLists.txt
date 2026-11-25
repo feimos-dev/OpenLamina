@@ -344,6 +344,9 @@ add_library(OCCore STATIC
 	OpenOVR/Misc/Config.cpp
 	OpenOVR/Misc/Numbers.cpp
 	OpenOVR/Misc/JsonFile.cpp
+	OpenOVR/Misc/ParallelProjections.cpp
+	OpenOVR/Misc/ParallelProjections.h
+	OpenOVR/Misc/ParallelProjectionGames.inc
 	OpenOVR/Misc/PathUtf8.cpp
 	OpenOVR/Misc/SteamVRPaths.cpp
 	OpenOVR/Misc/SteamVRRenderModels.cpp
