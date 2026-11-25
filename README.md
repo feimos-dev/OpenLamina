@@ -34,7 +34,8 @@ merged anything since July 2025, so this picks up its open merge requests and co
   like Skyrim VR. Vive Cosmos, Vive Focus 3 and Pico controllers are supported.
 - **Overlay apps work.** Desktop+ and other overlay apps run beside the game on runtimes that allow it, such as
   Monado. A dashboard opens with the system button, controllers act as a mouse on overlays, and the in-game keyboard
-  and message boxes are back.
+  and message boxes are back. A program with its own dashboard over every game, such as
+  [Mirador](https://github.com/feimos-dev/Mirador)'s, can take the system button and the dashboard over from the game.
 - **Recentre and room setup.** Hold the system button to recentre. Settings, the room setup and app registrations are
   shared between programs as SteamVR shares them. A boundary is drawn where the runtime shows none.
 - **Eye-tracked foveated rendering** in games that support it, on headsets with eye tracking.
