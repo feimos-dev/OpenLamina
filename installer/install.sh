@@ -436,6 +436,8 @@ keep_own_files() {
 	say "Kept the files you put in $copy/bin: they are in $aside/bin."
 }
 
+# curl takes https only, redirects included. wget, used where there's no curl, follows a redirect to any address: the
+# first address is always https://github.com/, and a changed download is still refused by its SHA-256.
 fetch() {
 	if command -v curl >/dev/null 2>&1; then
 		curl -fsSL --proto =https --proto-redir =https -H "User-Agent: OpenLamina-installer" "$1"

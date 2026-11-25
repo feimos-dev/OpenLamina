@@ -119,6 +119,17 @@ Unpack `OpenLamina-Windows-Portable.zip` or `OpenLamina-Linux.tar.gz` and put th
 For one Windows game only, replace its `openvr_api.dll` with `vrclient_x64.dll` (or `vrclient.dll` for 32-bit games)
 renamed to `openvr_api.dll`. Keep a backup; verifying the game's files in Steam undoes it.
 
+### What an update checks
+
+The app and `install.sh --update` ask GitHub's API for the releases, take the newest one's file only from an
+`https://github.com/` address, and install it only if its SHA-256 is the one GitHub lists for it; otherwise it is
+deleted and nothing changes. That catches a download that was cut short or damaged, and one changed on the way by
+anything that isn't GitHub. It doesn't catch a release that was itself changed: the SHA-256 comes from the same answer
+as the address, so whoever can replace a release's files on GitHub can change both. No signature is checked.
+
+`install.sh` fetches with curl, which it limits to https, redirects included. Without curl it uses wget, which follows
+a redirect to any address; the SHA-256 check still refuses a changed file.
+
 <a id="linux-notes"></a>
 ### Linux notes
 
