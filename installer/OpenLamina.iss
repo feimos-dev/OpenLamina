@@ -9,6 +9,7 @@
 ; Built by scripts/ci/build-installer.ps1, which passes:
 ;   /DAppVersion=2026.11.06 /DNumericVersion=2026.11.6.0 /DFolder=<the OpenLamina folder, as in the zip>
 ;   /DSwitcher=<RuntimeSwitcher's build output> /DOutput=<folder for OpenLamina-Windows-Installer.exe>
+; and for a release /DSignTool=<name> /S<name>=<command>: Inno Setup signs the uninstaller and the installer with it.
 ;
 ; Command line, besides Inno Setup's own (/SILENT, /VERYSILENT, /SUPPRESSMSGBOXES, ...):
 ;   /SWITCH         with /SILENT or /VERYSILENT: OpenVR games use OpenLamina afterwards; if that fails, Setup
@@ -80,6 +81,11 @@ RestartApplications=no
 TimeStampsInUTC=yes
 TouchDate={#TouchDate}
 TouchTime={#TouchTime}
+#ifdef SignTool
+SignTool={#SignTool}
+; The sign tool tries again by itself.
+SignToolRetryCount=0
+#endif
 
 [Messages]
 FinishedLabel=OpenLamina is installed. Its app (OpenLamina, in the Start menu) switches OpenVR games between OpenLamina and SteamVR.
