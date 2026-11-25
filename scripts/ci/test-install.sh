@@ -251,7 +251,7 @@ printf 'changed\n' >>"$STUB_SUMS"
 refused "a release whose checksums changed after signing" "isn't signed for v99999.0.0 with"
 sums "$zero"
 refused "a release whose signed checksums list another SHA-256 than GitHub" "GitHub lists another SHA-256"
-releases "$good_url" sha256:$zero v99999.0.0 false
+releases "$good_url" "sha256:$zero" v99999.0.0 false
 refused "an archive whose SHA-256 isn't the signed one" "was refused: its SHA-256 is"
 printf '%s  OpenLamina-Source.tar.gz\n%s *OpenLamina-Linux.tar.gz\n' "$hex" "$hex" >"$STUB_SUMS"
 sign
