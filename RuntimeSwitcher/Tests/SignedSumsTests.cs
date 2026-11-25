@@ -16,6 +16,7 @@ namespace RuntimeSwitcher.Tests
             "1111111111111111111111111111111111111111111111111111111111111111  OpenLamina-Windows-Portable.zip\n" +
             "2222222222222222222222222222222222222222222222222222222222222222  OpenLamina-Windows-Installer.exe\n");
 
+        private const string Tag = "v9.0.0";
         private const string Setup = "OpenLamina-Windows-Installer.exe";
         private const string SetupSha = "2222222222222222222222222222222222222222222222222222222222222222";
 
@@ -36,9 +37,9 @@ namespace RuntimeSwitcher.Tests
             var (key, publicKey) = NewKey();
             using (key)
             {
-                byte[] signature = Sign(key, Sums);
-                Assert.Equal(SetupSha, SignedSums.Expected(Sums, signature, Setup, null, publicKey));
-                Assert.Equal(SetupSha, SignedSums.Expected(Sums, signature, Setup, SetupSha, publicKey));
+                byte[] signature = Sign(key, SignedSums.SignedMessage(Tag, Sums));
+                Assert.Equal(SetupSha, SignedSums.Expected(Tag, Sums, signature, Setup, null, publicKey));
+                Assert.Equal(SetupSha, SignedSums.Expected(Tag, Sums, signature, Setup, SetupSha, publicKey));
             }
         }
 
@@ -50,13 +51,89 @@ namespace RuntimeSwitcher.Tests
             using (key)
             using (other)
             {
-                Assert.Throws<InvalidDataException>(() => SignedSums.Expected(Sums, Sign(other, Sums), Setup, null, publicKey));
+                Assert.Throws<InvalidDataException>(() => SignedSums.Expected(Tag, Sums, Sign(other, SignedSums.SignedMessage(Tag, Sums)), Setup, null, publicKey));
                 byte[] changed = (byte[])Sums.Clone();
                 changed[70] ^= 1;
-                Assert.Throws<InvalidDataException>(() => SignedSums.Expected(changed, Sign(key, Sums), Setup, null, publicKey));
-                Assert.Throws<InvalidDataException>(() => SignedSums.Expected(Sums, new byte[0], Setup, null, publicKey));
+                Assert.Throws<InvalidDataException>(() => SignedSums.Expected(Tag, changed, Sign(key, SignedSums.SignedMessage(Tag, Sums)), Setup, null, publicKey));
+                Assert.Throws<InvalidDataException>(() => SignedSums.Expected(Tag, Sums, new byte[0], Setup, null, publicKey));
                 Assert.Throws<InvalidDataException>(() =>
-                    SignedSums.Expected(Sums, Encoding.ASCII.GetBytes("not a signature"), Setup, null, publicKey));
+                    SignedSums.Expected(Tag, Sums, Encoding.ASCII.GetBytes("not a signature"), Setup, null, publicKey));
+            }
+        }
+
+        [Fact]
+        public void AnotherReleasesSignedChecksumsAreRefused()
+        {
+            var (key, publicKey) = NewKey();
+            using (key)
+            {
+                byte[] older = Sign(key, SignedSums.SignedMessage("v8.0.0", Sums));
+                Assert.Throws<InvalidDataException>(() => SignedSums.Expected(Tag, Sums, older, Setup, null, publicKey));
+                // The bare checksums, unsigned for any tag
+                Assert.Throws<InvalidDataException>(() => SignedSums.Expected(Tag, Sums, Sign(key, Sums), Setup, null, publicKey));
+            }
+        }
+
+        /// <summary>
+        /// openssl's signatures, as the release job makes them, with a key made for the test; skipped (with a
+        /// message) where there's no openssl to run
+        /// </summary>
+        [Fact]
+        public void OpensslSignaturesAreAccepted()
+        {
+            string folder = Path.Combine(Path.GetTempPath(), "oc-openssl-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(folder);
+            try
+            {
+                string key = Path.Combine(folder, "key.pem"), pub = Path.Combine(folder, "pub.pem");
+                string message = Path.Combine(folder, "message"), sig = Path.Combine(folder, "sig");
+                if (!Openssl($"ecparam -name prime256v1 -genkey -noout -out \"{key}\""))
+                {
+                    Console.WriteLine("No openssl here: openssl's signatures weren't tried.");
+                    return;
+                }
+
+                Assert.True(Openssl($"ec -in \"{key}\" -pubout -out \"{pub}\""));
+                File.WriteAllBytes(message, SignedSums.SignedMessage(Tag, Sums));
+                string publicKey = string.Concat(File.ReadAllLines(pub).Where(l => !l.StartsWith("-----")));
+                // Signatures are 70 to 72 bytes, as r and s need a leading zero byte or not: several cover them
+                for (int i = 0; i < 12; i++)
+                {
+                    Assert.True(Openssl($"dgst -sha256 -sign \"{key}\" -out \"{sig}\" \"{message}\""));
+                    Assert.Equal(SetupSha, SignedSums.Expected(Tag, Sums, File.ReadAllBytes(sig), Setup, SetupSha, publicKey));
+                }
+            }
+            finally
+            {
+                Directory.Delete(folder, true);
+            }
+        }
+
+        private static bool Openssl(string arguments)
+        {
+            try
+            {
+                using (var p = System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo("openssl", arguments)
+                       {
+                           UseShellExecute = false,
+                           RedirectStandardOutput = true,
+                           RedirectStandardError = true,
+                       }))
+                {
+                    p.StandardOutput.ReadToEnd();
+                    p.StandardError.ReadToEnd();
+                    if (!p.WaitForExit(30000))
+                    {
+                        p.Kill();
+                        return false;
+                    }
+
+                    return p.ExitCode == 0;
+                }
+            }
+            catch (System.ComponentModel.Win32Exception)
+            {
+                return false;
             }
         }
 
@@ -66,11 +143,11 @@ namespace RuntimeSwitcher.Tests
             var (key, publicKey) = NewKey();
             using (key)
             {
-                byte[] signature = Sign(key, Sums);
+                byte[] signature = Sign(key, SignedSums.SignedMessage(Tag, Sums));
                 Assert.Throws<InvalidDataException>(() =>
-                    SignedSums.Expected(Sums, signature, "OpenLamina-Linux.tar.gz", null, publicKey));
+                    SignedSums.Expected(Tag, Sums, signature, "OpenLamina-Linux.tar.gz", null, publicKey));
                 Assert.Throws<InvalidDataException>(() =>
-                    SignedSums.Expected(Sums, signature, Setup, new string('3', 64), publicKey));
+                    SignedSums.Expected(Tag, Sums, signature, Setup, new string('3', 64), publicKey));
             }
         }
 
@@ -81,7 +158,7 @@ namespace RuntimeSwitcher.Tests
             using (key)
             {
                 InvalidDataException e = Assert.Throws<InvalidDataException>(() =>
-                    SignedSums.Expected(Sums, Sign(key, Sums), Setup, null, SignedSums.Placeholder));
+                    SignedSums.Expected(Tag, Sums, Sign(key, SignedSums.SignedMessage(Tag, Sums)), Setup, null, SignedSums.Placeholder));
                 Assert.Contains("no release key", e.Message);
             }
         }
@@ -93,6 +170,20 @@ namespace RuntimeSwitcher.Tests
         [InlineData("not base64!")]
         public void OnlyAP256KeyIsTaken(string publicKey) =>
             Assert.Throws<InvalidDataException>(() => SignedSums.ParsePublicKey(publicKey));
+
+        [Fact]
+        public void APointOffTheCurveIsRefusedAsAKey()
+        {
+            var (key, publicKey) = NewKey();
+            using (key)
+            {
+                byte[] der = Convert.FromBase64String(publicKey);
+                der[der.Length - 1] ^= 1;
+                Assert.Throws<InvalidDataException>(() =>
+                    SignedSums.Expected(Tag, Sums, Sign(key, SignedSums.SignedMessage(Tag, Sums)), Setup, null,
+                        Convert.ToBase64String(der)));
+            }
+        }
 
         [Fact]
         public void DerSignaturesBecomeRAndS()
@@ -120,6 +211,7 @@ namespace RuntimeSwitcher.Tests
             Assert.Equal(SetupSha, SignedSums.Find(text, Setup));
             Assert.Null(SignedSums.Find(text, "Installer.exe"));
             Assert.Null(SignedSums.Find(text + SetupSha + "  " + Setup + "\n", Setup));
+            Assert.Null(SignedSums.Find(SetupSha + " *" + Setup + "\n", Setup));
         }
 
         [Fact]

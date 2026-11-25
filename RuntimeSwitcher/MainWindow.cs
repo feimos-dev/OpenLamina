@@ -342,9 +342,8 @@ namespace RuntimeSwitcher
             Updater.DeleteOtherFolders(downloads, release.Version);
             try
             {
-                // Held open, so the checked file is the one started.
-                // Only with the SHA-256 the release's signed checksums list
                 string sha256 = await Updater.SignedSha256Async(release, Install.SetupAssetName);
+                // Held open, so the checked file is the one started.
                 using (await Updater.DownloadAsync(release.Asset(Install.SetupAssetName), sha256, setup,
                            new Progress<int>(p => _progress.Value = p)))
                 {

@@ -48,19 +48,18 @@ namespace RuntimeSwitcher.Core
         public static async Task<string> SignedSha256Async(Release release, string assetName,
             string publicKey = SignedSums.PublicKey, TimeSpan readTimeout = default)
         {
+            SignedSums.RequirePinned(publicKey);
             ReleaseAsset asset = release.Asset(assetName);
             ReleaseAsset sums = release.Asset(SignedSums.SumsName), signature = release.Asset(SignedSums.SignatureName);
             if (asset == null)
                 throw new InvalidDataException($"The release has no {assetName}.");
-            if (!SignedSums.IsPinned(publicKey))
-                SignedSums.Expected(null, null, assetName, null, publicKey); // throws: no key
             if (sums == null || signature == null || !Releases.IsGitHubUrl(sums.DownloadUrl) ||
                 !Releases.IsGitHubUrl(signature.DownloadUrl))
                 throw new InvalidDataException(
                     $"The release was refused: it has no signed checksums ({SignedSums.SumsName} and {SignedSums.SignatureName}).");
             byte[] sumsBytes = await GetSmallAsync(sums, readTimeout).ConfigureAwait(false);
             byte[] signatureBytes = await GetSmallAsync(signature, readTimeout).ConfigureAwait(false);
-            return SignedSums.Expected(sumsBytes, signatureBytes, assetName, asset.Sha256, publicKey);
+            return SignedSums.Expected(release.Tag, sumsBytes, signatureBytes, assetName, asset.Sha256, publicKey);
         }
 
         // A file of at most MaxSumsBytes, in memory

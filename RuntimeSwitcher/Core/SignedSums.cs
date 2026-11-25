@@ -10,8 +10,10 @@ namespace RuntimeSwitcher.Core
 {
     /// <summary>
     /// A release's SHA256SUMS.txt and its signature, SHA256SUMS.txt.sig: what the release job made with
-    /// <c>openssl dgst -sha256 -sign</c> and the release key, an ECDSA P-256 signature in DER. A file of a release is
-    /// installed only with the SHA-256 these list, and only if they are signed with the key pinned here.
+    /// <c>openssl dgst -sha256 -sign</c> and the release key, an ECDSA P-256 signature in DER of the line
+    /// "OpenLamina &lt;tag&gt;" and then SHA256SUMS.txt (<see cref="SignedMessage"/>), so one release's checksums can't
+    /// pass for another's. A file of a release is installed only with the SHA-256 these list, and only if they are
+    /// signed with the key pinned here.
     /// </summary>
     public static class SignedSums
     {
@@ -28,6 +30,17 @@ namespace RuntimeSwitcher.Core
         public const string PublicKey = Placeholder;
 
         public static bool IsPinned(string publicKey) => publicKey != null && publicKey != Placeholder;
+
+        public static void RequirePinned(string publicKey)
+        {
+            if (!IsPinned(publicKey))
+                throw new InvalidDataException("This build of OpenLamina has no release key to check updates with. " +
+                                               "Download the new release from the releases page.");
+        }
+
+        /// <summary>What the release job signs: "OpenLamina &lt;tag&gt;\n", then SHA256SUMS.txt as it is.</summary>
+        public static byte[] SignedMessage(string tag, byte[] sums) =>
+            Encoding.UTF8.GetBytes($"OpenLamina {tag}\n").Concat(sums).ToArray();
 
         // SubjectPublicKeyInfo of an uncompressed P-256 point: SEQUENCE { SEQUENCE { id-ecPublicKey, prime256v1 },
         // BIT STRING { 04 X Y } }, X and Y 32 bytes each
@@ -98,7 +111,7 @@ namespace RuntimeSwitcher.Core
             return at == der.Length ? result : null;
         }
 
-        // A DER length of at most two bytes after its first
+        // The lengths a P-256 signature has: one byte, or 0x81 and one byte of at least 0x80
         private static bool ReadLength(byte[] der, ref int at, out int length)
         {
             length = 0;
@@ -111,22 +124,29 @@ namespace RuntimeSwitcher.Core
                 return true;
             }
 
-            int count = first & 0x7f;
-            if (count < 1 || count > 2 || at + count > der.Length)
+            if (first != 0x81 || at >= der.Length || der[at] < 0x80)
                 return false;
-            for (int i = 0; i < count; i++)
-                length = (length << 8) | der[at++];
-            return length >= 0x80;
+            length = der[at++];
+            return true;
         }
 
-        /// <summary>Whether <paramref name="signature"/> (DER) signs <paramref name="sums"/> with the key.</summary>
-        public static bool Verify(byte[] sums, byte[] signature, string publicKey)
+        /// <summary>Whether <paramref name="signature"/> (DER) signs <paramref name="message"/> with the key.</summary>
+        public static bool Verify(byte[] message, byte[] signature, string publicKey)
         {
             byte[] raw = DerToP1363(signature);
             if (raw == null)
                 return false;
-            using (ECDsa key = ECDsa.Create(ParsePublicKey(publicKey)))
-                return key.VerifyData(sums, raw, HashAlgorithmName.SHA256);
+            ECParameters parameters = ParsePublicKey(publicKey);
+            try
+            {
+                using (ECDsa key = ECDsa.Create(parameters))
+                    return key.VerifyData(message, raw, HashAlgorithmName.SHA256);
+            }
+            catch (Exception e) when (e is CryptographicException || e is PlatformNotSupportedException)
+            {
+                // A point that isn't on the curve
+                throw new InvalidDataException("The release key isn't an ECDSA P-256 public key.");
+            }
         }
 
         /// <summary>
@@ -136,7 +156,7 @@ namespace RuntimeSwitcher.Core
         public static string Find(string sums, string fileName)
         {
             List<string> found = (sums ?? "").Split('\n')
-                .Select(line => Regex.Match(line.TrimEnd('\r'), @"^([0-9a-fA-F]{64}) [ *](.+)$"))
+                .Select(line => Regex.Match(line.TrimEnd('\r'), @"^([0-9a-fA-F]{64})  (.+)$"))
                 .Where(m => m.Success && m.Groups[2].Value == fileName)
                 .Select(m => m.Groups[1].Value.ToLowerInvariant())
                 .ToList();
@@ -144,22 +164,22 @@ namespace RuntimeSwitcher.Core
         }
 
         /// <summary>
-        /// The SHA-256 of <paramref name="fileName"/> from a release's signed checksums, after checking the signature
-        /// with <paramref name="publicKey"/>. Throws an InvalidDataException saying why for anything else: no key
-        /// pinned, a signature that doesn't match, the file not listed, or a SHA-256 other than the one GitHub lists.
+        /// The SHA-256 of <paramref name="fileName"/> from the signed checksums of the release tagged
+        /// <paramref name="tag"/>, after checking the signature with <paramref name="publicKey"/>. Throws an
+        /// InvalidDataException saying why for anything else: no key pinned, a signature that doesn't match (or is
+        /// another release's), the file not listed, or a SHA-256 other than the one GitHub lists.
         /// </summary>
-        public static string Expected(byte[] sums, byte[] signature, string fileName, string githubSha256,
+        public static string Expected(string tag, byte[] sums, byte[] signature, string fileName, string githubSha256,
             string publicKey)
         {
-            if (!IsPinned(publicKey))
-                throw new InvalidDataException("This build of OpenLamina has no release key to check updates with. " +
-                                               "Download the new release from the releases page.");
-            if (!Verify(sums, signature, publicKey))
+            RequirePinned(publicKey);
+            if (!Verify(SignedMessage(tag, sums), signature, publicKey))
                 throw new InvalidDataException(
-                    $"The release was refused: its {SumsName} isn't signed with OpenLamina's release key.");
+                    $"The release was refused: its {SumsName} isn't signed for {tag} with OpenLamina's release key.");
             string sha = Find(Encoding.UTF8.GetString(sums), fileName);
             if (sha == null)
                 throw new InvalidDataException($"The release was refused: its signed {SumsName} doesn't list {fileName}.");
+            // GitHub's listed digest, when there is one (FindUpdate takes only releases with it), must agree
             if (githubSha256 != null && githubSha256 != sha)
                 throw new InvalidDataException(
                     $"The release was refused: GitHub lists another SHA-256 for {fileName} than its signed {SumsName}.");
