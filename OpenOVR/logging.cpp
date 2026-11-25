@@ -20,7 +20,11 @@
 #include <direct.h> // _mkdir
 #endif
 #ifndef _WIN32
+#include <spawn.h>
+#include <sys/wait.h>
 #include <unistd.h>
+#include <vector>
+extern char** environ;
 #endif
 
 // strftime format
@@ -455,24 +459,32 @@ void oovr_message_raw(const char* message, const char* title)
 	// Display a message box on Windows
 	MessageBoxA(nullptr, message, title, MB_OK);
 #else
-	// Try using zenity or kdialog on Linux, otherwise just print to stderr
+	// zenity or kdialog on Linux, started with the title and message as arguments (no shell reads them), otherwise
+	// just print to stderr. zenity's --text is markup, so --no-markup keeps it as text.
+	const std::string titleText = title ? title : "", messageText = message ? message : "";
+	const std::vector<std::vector<std::string>> dialogs = {
+		{ "zenity", "--error", "--no-markup", "--title", titleText, "--text", messageText },
+		{ "kdialog", "--title", titleText, "--error", messageText },
+	};
 	bool message_displayed = false;
-
-	std::stringstream command;
-
-	if (system("type zenity") == 0) {
-		command << "zenity --error --title=\"" << title << "\" --text=\"" << message << "\"";
-	} else if (system("type kdialog") == 0) {
-		command << "kdialog --title \"" << title << "\" --error \"" << message << "\"";
-	}
-
-	auto c = command.str();
-	if (!c.empty()) {
-		message_displayed = system(c.c_str()) == 0;
+	for (const std::vector<std::string>& dialog : dialogs) {
+		std::vector<char*> argv;
+		for (const std::string& a : dialog)
+			argv.push_back(const_cast<char*>(a.c_str()));
+		argv.push_back(nullptr);
+		pid_t pid = 0;
+		// Not found (or not startable): the next one
+		if (posix_spawnp(&pid, argv[0], nullptr, nullptr, argv.data(), environ) != 0)
+			continue;
+		int status = 0;
+		while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+		}
+		message_displayed = WIFEXITED(status) && WEXITSTATUS(status) == 0;
+		break;
 	}
 
 	if (!message_displayed) {
-		std::cerr << "OOVR_MESSAGE: " << title << ": " << message << std::endl;
+		std::cerr << "OOVR_MESSAGE: " << titleText << ": " << messageText << std::endl;
 	}
 #endif
 }
