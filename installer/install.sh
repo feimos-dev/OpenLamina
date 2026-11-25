@@ -239,6 +239,12 @@ def main(command, *args):
         # and signature urls the addresses of its SHA256SUMS.txt and SHA256SUMS.txt.sig ("-" for one it hasn't).
         installed, pre, asset_name = args
         best = None
+
+        # An https address on github.com, as GitHub gives every release file; anything else isn't fetched
+        def address(asset):
+            url = asset.get("browser_download_url") or ""
+            return url if url.startswith("https://github.com/") and not re.search(r"\s", url) else None
+
         for release in json.load(sys.stdin):
             if release.get("draft") or (release.get("prerelease") and pre != "1"):
                 continue
@@ -247,10 +253,6 @@ def main(command, *args):
             key = version_key(version)
             if key is None or (installed and version_key(installed) and key <= version_key(installed)):
                 continue
-            # An https address on github.com, as GitHub gives every release file; anything else isn't fetched
-            def address(asset):
-                url = asset.get("browser_download_url") or ""
-                return url if url.startswith("https://github.com/") and not re.search(r"\s", url) else None
             signed = {a.get("name"): address(a) for a in release.get("assets") or []
                       if a.get("name") in ("SHA256SUMS.txt", "SHA256SUMS.txt.sig")}
             for asset in release.get("assets") or []:
