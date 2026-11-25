@@ -121,14 +121,24 @@ renamed to `openvr_api.dll`. Keep a backup; verifying the game's files in Steam 
 
 ### What an update checks
 
-The app and `install.sh --update` ask GitHub's API for the releases, take the newest one's file only from an
-`https://github.com/` address, and install it only if its SHA-256 is the one GitHub lists for it; otherwise it is
-deleted and nothing changes. That catches a download that was cut short or damaged, and one changed on the way by
-anything that isn't GitHub. It doesn't catch a release that was itself changed: the SHA-256 comes from the same answer
-as the address, so whoever can replace a release's files on GitHub can change both. No signature is checked.
+The app and `install.sh --update` ask GitHub's API for the releases and take the newest one's files only from
+`https://github.com/` addresses. Each release has a `SHA256SUMS.txt` signed with OpenLamina's release key
+(`SHA256SUMS.txt.sig`, an ECDSA P-256 signature; the public key is `installer/release-key.pem`, built into the app and
+`install.sh`). An update is installed only if that signature checks out and the downloaded file has the SHA-256 the
+signed list gives; otherwise it is deleted and nothing changes. A release without the signature is refused, with a
+message saying so.
 
-`install.sh` fetches with curl, which it limits to https, redirects included. Without curl it uses wget, which follows
-a redirect to any address; the SHA-256 check still refuses a changed file.
+That catches a download that was cut short or damaged, one changed on the way, and a release whose files were replaced
+on GitHub by someone without the release key. It doesn't help if the release key itself is stolen, or if the app or
+`install.sh` you already have was replaced. The key's private half is a secret of the repository's `release`
+environment, which only a release tag can use, and only after the maintainer approves the run. Releases before the
+signature (v1.0.0) aren't signed; their app doesn't check, so they still update to a signed release. To check a
+release by hand: `openssl dgst -sha256 -verify release-key.pem -signature SHA256SUMS.txt.sig SHA256SUMS.txt`, then
+`sha256sum -c --ignore-missing SHA256SUMS.txt`.
+
+`install.sh --update` needs `openssl` for the signature check. It fetches with curl, which it limits to https,
+redirects included. Without curl it uses wget, which follows a redirect to any address; the signature and the SHA-256
+still refuse a changed file.
 
 <a id="linux-notes"></a>
 ### Linux notes
