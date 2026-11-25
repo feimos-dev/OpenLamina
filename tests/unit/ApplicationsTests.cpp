@@ -563,15 +563,18 @@ TEST_CASE("Application_list_changes_are_announced")
 	CHECK(apps.RemoveApplicationManifest(PathToUtf8(Data("echo.vrmanifest")).c_str()) == VRApplicationError_None);
 	CHECK(CountEvents(vr::VREvent_ApplicationListUpdated) == 2);
 
-	// A template launch adds an application
+	// A template launch adds an application while it starts; one whose program can't be started takes it away again,
+	// and both changes are announced
 	fs::path manifest = dir.path / "template.vrmanifest";
 	std::ofstream(manifest) << R"({"applications":[{"app_key":"oc.test.template","launch_type":"binary",)"
 	                           R"("binary_path":"/nonexistent/oc_test_binary","is_template":true}]})";
 	CHECK(apps.AddApplicationManifest(PathToUtf8(manifest).c_str()) == VRApplicationError_None);
 	size_t before = CountEvents(vr::VREvent_ApplicationListUpdated);
-	apps.LaunchTemplateApplication("oc.test.template", "oc.test.instance", nullptr, 0);
-	CHECK(apps.IsApplicationInstalled("oc.test.instance"));
-	CHECK(CountEvents(vr::VREvent_ApplicationListUpdated) == before + 1);
+	CHECK(apps.LaunchTemplateApplication("oc.test.template", "oc.test.instance", nullptr, 0) != VRApplicationError_None);
+	CHECK_FALSE(apps.IsApplicationInstalled("oc.test.instance"));
+	CHECK(CountEvents(vr::VREvent_ApplicationListUpdated) == before + 2);
+	// The key is free again
+	CHECK(apps.LaunchTemplateApplication("oc.test.template", "oc.test.instance", nullptr, 0) != VRApplicationError_AppKeyAlreadyExists);
 }
 
 TEST_CASE("Scene_process_changes_are_announced")

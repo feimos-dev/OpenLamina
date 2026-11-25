@@ -869,7 +869,17 @@ EVRApplicationError BaseApplications::LaunchTemplateApplication(const char* pchT
 		PostApplicationListUpdated();
 	uint32_t started = 0;
 	EVRApplicationError error = Launch(AppManifestEntry::FromJson(app), "", &started);
-	if (error == VRApplicationError_None && started) {
+	if (error != VRApplicationError_None) {
+		// Nothing was started for it: the instance goes again
+		bool removed = false;
+		bool rewritten = UpdateApplications(Store(), [&](Json::Value& doc) {
+			removed = doc["manifests"].isObject() && doc["manifests"].isMember(path);
+			if (removed)
+				doc["manifests"].removeMember(path);
+		});
+		if (rewritten && removed)
+			PostApplicationListUpdated();
+	} else if (started) {
 		// The instance lasts as long as the program started for it, not the one that asked
 		UpdateApplications(Store(), [&](Json::Value& doc) {
 			if (doc["manifests"].isMember(path))
